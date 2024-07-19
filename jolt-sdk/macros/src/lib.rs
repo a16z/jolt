@@ -3,27 +3,36 @@
 extern crate proc_macro;
 
 use core::panic;
-use std::collections::HashMap;
 
-use common::{
-    constants::{
-        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    },
-    rv_trace::MemoryLayout,
-};
+use common::{attributes::parse_attributes, rv_trace::MemoryLayout};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{
-    parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, PatType,
-    ReturnType, Type,
-};
+use std::sync::Once;
+use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, PatType, ReturnType, Type};
+
+static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
 pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttributeArgs);
     let func = parse_macro_input!(item as ItemFn);
-    MacroBuilder::new(attr, func).build()
+    let mut builder = MacroBuilder::new(attr, func);
+
+    let mut token_stream = builder.build();
+
+    // Add wasm utilities and functions if the function is marked as wasm
+    if builder.has_wasm_attr() {
+        // wasm utilities should only be added once
+        WASM_IMPORTS_INIT.call_once(|| {
+            let wasm_utilities: TokenStream = builder.make_wasm_utilities().into();
+            token_stream.extend(wasm_utilities);
+        });
+        let wasm_token_stream: TokenStream = builder.make_wasm_function().into();
+        token_stream.extend(wasm_token_stream);
+    }
+
+    token_stream
 }
 
 struct MacroBuilder {
@@ -49,7 +58,7 @@ impl MacroBuilder {
         }
     }
 
-    fn build(&self) -> TokenStream {
+    fn build(&mut self) -> TokenStream {
         let build_fn = self.make_build_fn();
         let execute_fn = self.make_execute_function();
         let analyze_fn = self.make_analyze_function();
@@ -90,7 +99,7 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         quote! {
-            #[cfg(not(feature = "guest"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_fn_name() -> (
                 impl Fn(#(#input_types),*) -> #prove_output_ty,
                 impl Fn(jolt::RV32IHyraxProof) -> bool
@@ -128,6 +137,7 @@ impl MacroBuilder {
         let body = &self.func.block;
 
         quote! {
+            #[cfg(not(target_arch = "wasm32"))]
              pub fn #fn_name(#inputs) #output {
                  #body
              }
@@ -151,6 +161,7 @@ impl MacroBuilder {
         });
 
         quote! {
+             #[cfg(not(target_arch = "wasm32"))]
              #[cfg(not(feature = "guest"))]
              pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
                 #imports
@@ -176,7 +187,7 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
         quote! {
-            #[cfg(not(feature = "guest"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
                 jolt::JoltPreprocessing<jolt::F, jolt::PCS>
@@ -228,7 +239,7 @@ impl MacroBuilder {
 
         let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
         quote! {
-            #[cfg(not(feature = "guest"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
                 preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::PCS>,
@@ -263,7 +274,7 @@ impl MacroBuilder {
     }
 
     fn make_main_func(&self) -> TokenStream2 {
-        let attributes = self.parse_attributes();
+        let attributes = parse_attributes(&self.attr);
         let memory_layout =
             MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
         let input_start = memory_layout.input_start;
@@ -402,8 +413,39 @@ impl MacroBuilder {
         }
     }
 
+    fn make_wasm_utilities(&self) -> TokenStream2 {
+        quote! {
+            #[cfg(target_arch = "wasm32")]
+            use wasm_bindgen::prelude::*;
+            #[cfg(target_arch = "wasm32")]
+            use std::vec::Vec;
+            #[cfg(target_arch = "wasm32")]
+            use rmp_serde::Deserializer;
+            #[cfg(target_arch = "wasm32")]
+            use serde::{Deserialize, Serialize};
+
+            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
+            use jolt::host::ELFInstruction;
+
+            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
+            #[derive(Serialize, Deserialize)]
+            struct DecodedData {
+                bytecode: Vec<ELFInstruction>,
+                memory_init: Vec<(u64, u8)>,
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            fn deserialize_from_bin<'a, T: Deserialize<'a>>(
+                data: &'a [u8],
+            ) -> Result<T, rmp_serde::decode::Error> {
+                let mut de = Deserializer::new(data);
+                Deserialize::deserialize(&mut de)
+            }
+        }
+    }
+
     fn make_set_linker_parameters(&self) -> TokenStream2 {
-        let attributes = self.parse_attributes();
+        let attributes = parse_attributes(&self.attr);
         let mut code: Vec<TokenStream2> = Vec::new();
 
         let value = attributes.memory_size;
@@ -440,47 +482,6 @@ impl MacroBuilder {
             quote! {
                 program.set_std(false);
             }
-        }
-    }
-
-    fn parse_attributes(&self) -> Attributes {
-        let mut attributes = HashMap::<_, u64>::new();
-        for attr in &self.attr {
-            match attr {
-                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
-                    let value: u64 = match lit {
-                        Lit::Int(lit) => lit.base10_parse().unwrap(),
-                        _ => panic!("expected integer literal"),
-                    };
-                    let ident = &path.get_ident().expect("Expected identifier");
-                    match ident.to_string().as_str() {
-                        "memory_size" => attributes.insert("memory_size", value),
-                        "stack_size" => attributes.insert("stack_size", value),
-                        "max_input_size" => attributes.insert("max_input_size", value),
-                        "max_output_size" => attributes.insert("max_output_size", value),
-                        _ => panic!("invalid attribute"),
-                    };
-                }
-                _ => panic!("expected integer literal"),
-            }
-        }
-
-        let memory_size = *attributes
-            .get("memory_size")
-            .unwrap_or(&DEFAULT_MEMORY_SIZE);
-        let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
-        let max_input_size = *attributes
-            .get("max_input_size")
-            .unwrap_or(&DEFAULT_MAX_INPUT_SIZE);
-        let max_output_size = *attributes
-            .get("max_output_size")
-            .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
-
-        Attributes {
-            memory_size,
-            stack_size,
-            max_input_size,
-            max_output_size,
         }
     }
 
@@ -523,11 +524,35 @@ impl MacroBuilder {
     fn get_func_selector(&self) -> Option<String> {
         proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
     }
-}
 
-struct Attributes {
-    memory_size: u64,
-    stack_size: u64,
-    max_input_size: u64,
-    max_output_size: u64,
+    fn has_wasm_attr(&self) -> bool {
+        parse_attributes(&self.attr).wasm
+    }
+
+    fn make_wasm_function(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let verify_wasm_fn_name = Ident::new(&format!("verify_{}", fn_name), fn_name.span());
+
+        quote! {
+            #[wasm_bindgen]
+            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
+            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
+                use jolt::{Jolt, Proof, RV32IJoltVM};
+
+                let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
+                let proof = Proof::deserialize_from_bytes(proof_bytes).unwrap();
+
+                let preprocessing = RV32IJoltVM::preprocess(
+                    decoded_preprocessing_data.bytecode,
+                    decoded_preprocessing_data.memory_init,
+                    1 << 20,
+                    1 << 20,
+                    1 << 24,
+                );
+
+                let result = RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments);
+                result.is_ok()
+            }
+        }
+    }
 }

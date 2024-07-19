@@ -60,7 +60,7 @@ macro_rules! instruction_set {
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
-        #[repr(usize)]
+        #[repr(u8)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
         pub enum $enum_name<F: JoltField> { $($alias($struct)),+ }
@@ -77,7 +77,9 @@ macro_rules! subtable_enum {
 
         impl<F: JoltField> From<$enum_name<F>> for usize {
             fn from(subtable: $enum_name<F>) -> usize {
-                unsafe { *<*const _>::from(&subtable).cast::<usize>() }
+                // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+                let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
+                byte as usize
             }
         }
         impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
