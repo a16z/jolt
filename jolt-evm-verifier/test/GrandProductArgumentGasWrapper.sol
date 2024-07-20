@@ -15,6 +15,7 @@ error SumcheckFailed();
 
 contract GrandProductArgumentGasWrapper is TestBase {
     using FiatShamirTranscript for Transcript;
+
     bool private enableLogging = vm.envOr("BENCHMARK_LOGGING", false);
 
     function conditionalLog(string memory message) internal view {
@@ -29,7 +30,6 @@ contract GrandProductArgumentGasWrapper is TestBase {
         }
     }
 
-
     function verifySumcheckLayer(
         Jolt.BatchedGrandProductLayerProof memory layer,
         Transcript memory transcript,
@@ -40,11 +40,9 @@ contract GrandProductArgumentGasWrapper is TestBase {
         return GrandProductArgument.verifySumcheckLayer(layer, transcript, claim, degree_bound, num_rounds);
     }
 
-
     function buildEqEval(Fr[] memory rGrandProduct, Fr[] memory rSumcheck) public pure returns (Fr eqEval) {
         return GrandProductArgument.buildEqEval(rGrandProduct, rSumcheck);
     }
-
 
     function verifySumcheckClaim(
         Jolt.BatchedGrandProductLayerProof[] memory layerProofs,
@@ -56,16 +54,18 @@ contract GrandProductArgumentGasWrapper is TestBase {
         Fr[] memory rGrandProduct,
         Transcript memory transcript
     ) public pure returns (Fr[] memory newClaims, Fr[] memory newRGrandProduct) {
-        return GrandProductArgument.verifySumcheckClaim(layerProofs, layerIndex, coeffs, sumcheckClaim, eqEval, claims, rGrandProduct, transcript);
+        return GrandProductArgument.verifySumcheckClaim(
+            layerProofs, layerIndex, coeffs, sumcheckClaim, eqEval, claims, rGrandProduct, transcript
+        );
     }
 
-    function verify(
-        Jolt.BatchedGrandProductProof memory proof,
-        Fr[] memory claims,
-        Transcript memory transcript
-    ) external view returns (Fr[] memory) {
+    function verify(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims, Transcript memory transcript)
+        external
+        view
+        returns (Fr[] memory)
+    {
         Fr[] memory rGrandProduct = new Fr[](0);
-        uint gasUsed = gasleft();
+        uint256 gasUsed = gasleft();
 
         for (uint256 i = 0; i < proof.layers.length; i++) {
             conditionalLog("[grand-product] round:", i);

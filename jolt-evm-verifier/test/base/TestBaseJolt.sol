@@ -18,7 +18,6 @@ error SumcheckFailed();
 contract TestGrandProduct is TestBase {
     using FiatShamirTranscript for Transcript;
 
-
     function testValidGrandProductProof() public {
         // Inits the transcript with the same string label as the rust code
         Transcript memory transcript = FiatShamirTranscript.new_transcript("test_transcript", 4);
@@ -50,6 +49,5 @@ contract TestGrandProduct is TestBase {
         GrandProductArgumentGasWrapper wrapper = new GrandProductArgumentGasWrapper();
 
         wrapper.verify(proof, claims, transcript);
-
     }
 }

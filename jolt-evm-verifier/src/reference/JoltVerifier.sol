@@ -112,11 +112,11 @@ library GrandProductArgument {
         return (newClaims, newRGrandProduct);
     }
 
-    function verify(
-        Jolt.BatchedGrandProductProof memory proof,
-        Fr[] memory claims,
-        Transcript memory transcript
-    ) public pure returns (Fr[] memory) {
+    function verify(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims, Transcript memory transcript)
+        public
+        pure
+        returns (Fr[] memory)
+    {
         Fr[] memory rGrandProduct = new Fr[](0);
 
         for (uint256 i = 0; i < proof.layers.length; i++) {
