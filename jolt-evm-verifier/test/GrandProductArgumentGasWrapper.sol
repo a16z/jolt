@@ -15,7 +15,7 @@ error SumcheckFailed();
 
 contract GrandProductArgumentGasWrapper is TestBase {
     using FiatShamirTranscript for Transcript;
-    bool private enableLogging = vm.envBool("BENCHMARK_LOGGING");
+    bool private enableLogging = vm.envOr("BENCHMARK_LOGGING", false);
 
     function conditionalLog(string memory message) internal view {
         if (enableLogging) {
