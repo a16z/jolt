@@ -8,6 +8,8 @@ use std::io::Read;
 
 use crate::msm::VariableBaseMSM;
 
+use crate::msm::Icicle;
+
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PedersenGenerators<G: CurveGroup> {
     pub generators: Vec<G>,
@@ -49,12 +51,12 @@ impl<G: CurveGroup> PedersenGenerators<G> {
     }
 }
 
-pub trait PedersenCommitment<G: CurveGroup>: Sized {
+pub trait PedersenCommitment<G: CurveGroup + Icicle>: Sized {
     fn commit(&self, gens: &PedersenGenerators<G>) -> G;
     fn commit_vector(inputs: &[Self], bases: &[G::Affine]) -> G;
 }
 
-impl<G: CurveGroup> PedersenCommitment<G> for G::ScalarField {
+impl<G: CurveGroup + Icicle> PedersenCommitment<G> for G::ScalarField {
     #[tracing::instrument(skip_all, name = "PedersenCommitment::commit")]
     fn commit(&self, gens: &PedersenGenerators<G>) -> G {
         assert_eq!(gens.generators.len(), 1);

@@ -18,6 +18,8 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
+use crate::msm::Icicle;
+
 pub struct SurgePolys<F, PCS>
 where
     F: JoltField,

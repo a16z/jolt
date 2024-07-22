@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+jolt-sdk = { path = "../../jolt-sdk", features = ["host", "icicle"] }
 guest = { package = "stdlib-guest", path = "./guest" }
+
+[features]
+icicle = ["jolt-sdk/icicle"]
