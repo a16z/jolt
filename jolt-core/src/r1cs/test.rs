@@ -124,11 +124,12 @@ pub fn simp_test_builder_key<F: JoltField>(
         }
     }
     // Q[n] + 4 - S[n+1] == 0
-    let offset_eq_constraint = OffsetEqConstraint::new(
-        (SimpTestIn::S, true),
-        (SimpTestIn::Q, false),
-        (SimpTestIn::S + -4, true),
-    );
+    // let offset_eq_constraint = OffsetEqConstraint::new(
+    //     (SimpTestIn::S, true),
+    //     (SimpTestIn::Q, false),
+    //     (SimpTestIn::S + -4, true),
+    // );
+    let offset_eq_constraint = OffsetEqConstraint::empty();
 
     let constraints = TestConstraints();
     constraints.build_constraints(&mut uniform_builder);
@@ -172,4 +173,59 @@ pub fn simp_test_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
     big_a[row_3_index + 16] = F::from_u64(4).unwrap();
 
     (big_a, big_b, big_c)
+}
+
+
+#[allow(non_camel_case_types)]
+#[derive(
+    strum_macros::EnumIter,
+    strum_macros::EnumCount,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
+#[repr(usize)]
+pub enum MediumTestIn {
+    Q,
+    R,
+    S,
+    T,
+}
+impl ConstraintInput for MediumTestIn {}
+impl_r1cs_input_lc_conversions!(MediumTestIn);
+
+pub fn add_mul_builder_key<F: JoltField>() -> (CombinedUniformBuilder<F, MediumTestIn>, UniformSpartanKey<F>) {
+    let mut uniform_builder = R1CSBuilder::<F, MediumTestIn>::new();
+
+    struct TestConstraints();
+    impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+        type Inputs = MediumTestIn;
+        fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+            // if (Q) { R * S == T }
+            // else   { R + S == T }
+            // let prod = builder.allocate_prod(MediumTestIn::R, MediumTestIn::S);
+            // builder.constrain_eq_conditional(MediumTestIn::Q - 1, MediumTestIn::R + MediumTestIn::S, MediumTestIn::T);
+
+            // if (Q) { R == T }
+            // else { R == S }
+            builder.constrain_eq_conditional(MediumTestIn::Q, MediumTestIn::R, MediumTestIn::T);
+            builder.constrain_eq_conditional(MediumTestIn::Q - 1, MediumTestIn::R, MediumTestIn::S);
+        }
+    }
+
+    let constraints = TestConstraints();
+    constraints.build_constraints(&mut uniform_builder);
+
+    let _num_steps: usize = 3;
+    let num_steps_pad = 4;
+    let combined_builder =
+        CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, OffsetEqConstraint::empty());
+    let key = UniformSpartanKey::from_builder(&combined_builder);
+
+    (combined_builder, key)
 }

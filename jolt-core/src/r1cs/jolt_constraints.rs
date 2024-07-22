@@ -1,6 +1,6 @@
 use crate::{
     assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
-    jolt::vm::rv32i_vm::C,
+    jolt::vm::rv32i_vm::C, r1cs::ops::{Term, LC},
 };
 
 use super::{
@@ -229,6 +229,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
+
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_x, x);
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_y, y);
 

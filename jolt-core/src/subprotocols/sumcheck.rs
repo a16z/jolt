@@ -120,25 +120,40 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                         .map(|poly| poly[mle_half + poly_term_i])
                         .collect();
                     accum[1] += comb_func(&params_one);
+                    println!("params_one {params_one:?}");
 
                     // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
                     // D_n(index, 0) = D_{n-1}[LOW]
                     // D_n(index, 1) = D_{n-1}[HIGH]
                     // D_n(index, 2) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                    //      D_n(index, 2) = (1 - 2) * D[LOW] + 2 * D[HIGH] = 2 * D[HIGH] - D[LOW]
                     // D_n(index, 3) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                    //      D_n(index, 2) = (1 - 3) * D[LOW] + 3 * D[HIGH] = D[HIGH] + 2 * [ D[HIGH] - D[LOW] ]
                     // ...
-                    let mut existing_term = params_one;
+
+                    // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+                    // D_n(index, 0) = D_{n-1}[LOW]
+                    // D_n(index, 1) = D_{n-1}[HIGH]
+                    // z_0 = Binius((1,0))
+                    // z_1 = Binius((1,1))
+                    // D_n(index, z_0) = (1 + z_0) * D[LOW] + z_0 * D[HIGH]
+                    // D_n(index, z_1) =
+                    // let mut existing_term = params_one;
                     for eval_i in 2..(combined_degree + 1) {
                         let mut poly_evals = vec![F::zero(); polys.len()];
                         for poly_i in 0..polys.len() {
+                            // let poly = &polys[poly_i];
+                            // poly_evals[poly_i] = existing_term[poly_i]
+                            //     + poly[mle_half + poly_term_i]
+                            //     - poly[poly_term_i];
                             let poly = &polys[poly_i];
-                            poly_evals[poly_i] = existing_term[poly_i]
-                                + poly[mle_half + poly_term_i]
-                                - poly[poly_term_i];
+                            let r = F::from_u64(eval_i as u64).unwrap();
+                            poly_evals[poly_i] = (F::one() - r) * poly[poly_term_i]
+                                + r * poly[mle_half + poly_term_i];
                         }
 
                         accum[eval_i] += comb_func(&poly_evals);
-                        existing_term = poly_evals;
+                        // existing_term = poly_evals;
                     }
                     accum
                 })
@@ -155,9 +170,16 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                         .sum::<F>();
                 });
 
+
+            println!("evals: {eval_points:?}");
             let round_uni_poly = UniPoly::from_evals(&eval_points);
+            println!(
+                "[{_round}] eval(0) + eval(1) = {:?}",
+                eval_points[0] + eval_points[1]
+            );
 
             // append the prover's message to the transcript
+            println!("[{_round}] appending to transcript: {round_uni_poly:?}");
             round_uni_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
@@ -169,6 +191,9 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             compressed_polys.push(round_uni_poly.compress());
         }
 
+        polys
+            .iter()
+            .for_each(|poly| debug_assert_eq!(poly.len(), 1));
         let final_evals = polys.iter().map(|poly| poly[0]).collect();
 
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
@@ -196,34 +221,54 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 // eval 0: bound_func is A(low)
                 let eval_point_0 = comb_func(&poly_A[i], &poly_B[i], &poly_C[i], &poly_D[i]);
 
-                let m_A = poly_A[len + i] - poly_A[i];
-                let m_B = poly_B[len + i] - poly_B[i];
-                let m_C = poly_C[len + i] - poly_C[i];
-                let m_D = poly_D[len + i] - poly_D[i];
+                // let m_A = poly_A[len + i] - poly_A[i];
+                // let m_B = poly_B[len + i] - poly_B[i];
+                // let m_C = poly_C[len + i] - poly_C[i];
+                // let m_D = poly_D[len + i] - poly_D[i];
+
+                let low = i;
+                let high = len + i;
 
                 // eval 2: bound_func is -A(low) + 2*A(high)
-                let poly_A_bound_point = poly_A[len + i] + m_A;
-                let poly_B_bound_point = poly_B[len + i] + m_B;
-                let poly_C_bound_point = poly_C[len + i] + m_C;
-                let poly_D_bound_point = poly_D[len + i] + m_D;
+                let r = F::from_u64(2 as u64).unwrap();
                 let eval_point_2 = comb_func(
-                    &poly_A_bound_point,
-                    &poly_B_bound_point,
-                    &poly_C_bound_point,
-                    &poly_D_bound_point,
+                    &((F::one() + r) * poly_A[low] + r * poly_A[high]),
+                    &((F::one() + r) * poly_B[low] + r * poly_B[high]),
+                    &((F::one() + r) * poly_C[low] + r * poly_C[high]),
+                    &((F::one() + r) * poly_D[low] + r * poly_D[high]),
                 );
+                // poly_evals[poly_i] = (F::one() + r) * poly[poly_term_i] + r * poly[mle_half + poly_term_i];
+                // let r = F::from(2u64).unwrap();
+                // let poly_A_bound_point = poly_A[len + i] + m_A;
+                // let poly_B_bound_point = poly_B[len + i] + m_B;
+                // let poly_C_bound_point = poly_C[len + i] + m_C;
+                // let poly_D_bound_point = poly_D[len + i] + m_D;
+                // let eval_point_2 = comb_func(
+                //     &poly_A_bound_point,
+                //     &poly_B_bound_point,
+                //     &poly_C_bound_point,
+                //     &poly_D_bound_point,
+                // );
 
                 // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-                let poly_A_bound_point = poly_A_bound_point + m_A;
-                let poly_B_bound_point = poly_B_bound_point + m_B;
-                let poly_C_bound_point = poly_C_bound_point + m_C;
-                let poly_D_bound_point = poly_D_bound_point + m_D;
+                // let poly_A_bound_point = poly_A_bound_point + m_A;
+                // let poly_B_bound_point = poly_B_bound_point + m_B;
+                // let poly_C_bound_point = poly_C_bound_point + m_C;
+                // let poly_D_bound_point = poly_D_bound_point + m_D;
+                // let eval_point_3 = comb_func(
+                //     &poly_A_bound_point,
+                //     &poly_B_bound_point,
+                //     &poly_C_bound_point,
+                //     &poly_D_bound_point,
+                // );
+                let r = F::from_u64(3).unwrap();
                 let eval_point_3 = comb_func(
-                    &poly_A_bound_point,
-                    &poly_B_bound_point,
-                    &poly_C_bound_point,
-                    &poly_D_bound_point,
+                    &((F::one() + r) * poly_A[low] + r * poly_A[high]),
+                    &((F::one() + r) * poly_B[low] + r * poly_B[high]),
+                    &((F::one() + r) * poly_C[low] + r * poly_C[high]),
+                    &((F::one() + r) * poly_D[low] + r * poly_D[high]),
                 );
+
                 (eval_point_0, eval_point_2, eval_point_3)
             })
             .reduce(
@@ -264,6 +309,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     eval_point_2,
                     eval_point_3,
                 ];
+                println!("EVALS: {evals:?}");
                 UniPoly::from_evals(&evals)
             };
 
@@ -302,6 +348,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         )
     }
 
+    // Sam plan
+    // Flatten W
+    // Evaluate {0,1,2} normally
+
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_quadratic")]
     // A fork of `prove_quad` with the 0th round unrolled from the rest of the
     // for loop. This allows us to pass in `W` and `X` as references instead of
@@ -309,6 +359,172 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
     // an expensive concatenation. We defer the actual instantation of a
     // `MultilinearPolynomial` to the end of the 0th round.
     pub fn prove_spartan_quadratic<P: IndexablePoly<F>>(
+        claim: &F,
+        num_rounds: usize,
+        poly_A: &mut DensePolynomial<F>,
+        W: &P,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>, Vec<F>) {
+        const NEW: bool = true;
+
+        if NEW {
+            let len = poly_A.len() / 2;
+            let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
+            let zero = F::zero();
+            let one = [F::one()];
+            let Z_iter = W_iter
+                .chain(one.par_iter())
+                .chain(rayon::iter::repeatn(&zero, len - 1));
+            let flat_z: Vec<F> = Z_iter.cloned().collect();
+            let poly_z = DensePolynomial::new(flat_z);
+            assert_eq!(poly_A.len(), poly_z.len());
+
+            let comb_func = |inputs: &[F]| -> F {
+                assert_eq!(inputs.len(), 2);
+                inputs[0] * inputs[1]
+            };
+            let mut polys_vec = vec![poly_A.clone(), poly_z];
+            SumcheckInstanceProof::prove_arbitrary(
+                claim,
+                num_rounds,
+                &mut polys_vec,
+                comb_func,
+                2,
+                transcript,
+            )
+        } else {
+            let mut r: Vec<F> = Vec::with_capacity(num_rounds);
+            let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+            let mut claim_per_round = *claim;
+
+            /*          Round 0 START         */
+
+            let len = poly_A.len() / 2;
+            assert_eq!(len, W.len());
+
+            let poly = {
+                // eval_point_0 = \sum_i A[i] * B[i]
+                // where B[i] = W[i] for i in 0..len
+                let eval_point_0: F = (0..len)
+                    .into_par_iter()
+                    .map(|i| {
+                        if poly_A[i].is_zero() || W[i].is_zero() {
+                            F::zero()
+                        } else {
+                            poly_A[i] * W[i]
+                        }
+                    })
+                    .sum();
+                // eval_point_2 = \sum_i (2 * A[len + i] - A[i]) * (2 * B[len + i] - B[i])
+                // where B[i] = W[i] for i in 0..len, B[len] = 1, and B[i] = 0 for i > len
+                let mut eval_point_2: F = (1..len)
+                    .into_par_iter()
+                    .map(|i| {
+                        if W[i].is_zero() {
+                            F::zero()
+                        } else {
+                            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+                            let poly_B_bound_point = -W[i];
+                            mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
+                        }
+                    })
+                    .sum();
+                eval_point_2 += mul_0_optimized(
+                    &(poly_A[len] + poly_A[len] - poly_A[0]),
+                    &(F::from_u64(2).unwrap() - W[0]),
+                );
+
+                let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
+                println!("evals: {evals:?}");
+                UniPoly::from_evals(&evals)
+            };
+
+            // append the prover's message to the transcript
+            println!("[0] appending to transcript: {poly:?}");
+            poly.append_to_transcript(transcript);
+
+            //derive the verifier's challenge for the next round
+            let r_i: F = transcript.challenge_scalar();
+            r.push(r_i);
+            polys.push(poly.compress());
+
+            // Set up next round
+            claim_per_round = poly.evaluate(&r_i);
+
+            // bound all tables to the verifier's challenge
+            let (_, mut poly_B) = rayon::join(
+                || poly_A.bound_poly_var_top_zero_optimized(&r_i),
+                || {
+                    // Simulates `poly_B.bound_poly_var_top(&r_i)`
+                    // We need to do this because we don't actually have
+                    // a `MultilinearPolynomial` instance for `poly_B` yet,
+                    // only the constituents of its (Lagrange basis) coefficients
+                    // `W` and `X`.
+                    let zero = F::zero();
+                    let one = [F::one()];
+                    let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
+                    let Z_iter = W_iter
+                        .chain(one.par_iter())
+                        .chain(rayon::iter::repeatn(&zero, len));
+                    let left_iter = Z_iter.clone().take(len);
+                    let right_iter = Z_iter.skip(len).take(len);
+                    let B = left_iter
+                        .zip(right_iter)
+                        .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
+                        .collect();
+                    DensePolynomial::new(B)
+                },
+            );
+
+            /*          Round 0 END          */
+
+            for i in 1..num_rounds {
+                let poly = {
+                    let (eval_point_0, eval_point_2) =
+                        Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
+
+                    let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
+                    UniPoly::from_evals(&evals)
+                };
+
+                // append the prover's message to the transcript
+                println!("[{i}] appending to transcript: {poly:?}");
+                poly.append_to_transcript(transcript);
+
+                //derive the verifier's challenge for the next round
+                let r_i: F = transcript.challenge_scalar();
+
+                r.push(r_i);
+                polys.push(poly.compress());
+
+                // Set up next round
+                claim_per_round = poly.evaluate(&r_i);
+
+                // bound all tables to the verifier's challenege
+                rayon::join(
+                    || poly_A.bound_poly_var_top_zero_optimized(&r_i),
+                    || poly_B.bound_poly_var_top_zero_optimized(&r_i),
+                );
+
+                if i == num_rounds - 1 {
+                    assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
+                }
+            }
+
+            let evals = vec![poly_A[0], poly_B[0]];
+            drop_in_background_thread(poly_B);
+
+            (SumcheckInstanceProof::new(polys), r, evals)
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_quadratic")]
+    // A fork of `prove_quad` with the 0th round unrolled from the rest of the
+    // for loop. This allows us to pass in `W` and `X` as references instead of
+    // passing them in as a single `MultilinearPolynomial`, which would require
+    // an expensive concatenation. We defer the actual instantation of a
+    // `MultilinearPolynomial` to the end of the 0th round.
+    pub fn prove_spartan_quadratic_old<P: IndexablePoly<F>>(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
@@ -504,6 +720,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         // verify that there is a univariate polynomial for each round
         assert_eq!(self.compressed_polys.len(), num_rounds);
         for i in 0..self.compressed_polys.len() {
+            println!("[{i}] hint = eval(0) + eval(1) = {e:?}");
             let poly = self.compressed_polys[i].decompress(&e);
 
             // verify degree bound
@@ -518,6 +735,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
             // append the prover's message to the transcript
+            println!("[{i}] appending to transcript: {poly:?}");
             poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
