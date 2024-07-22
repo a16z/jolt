@@ -616,7 +616,7 @@ mod quark_grand_product_tests {
     fn quark_e2e() {
         const LAYER_SIZE: usize = 1 << 8;
 
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9 as u64);
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9_u64);
 
         let leaves_1: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(LAYER_SIZE)
@@ -645,7 +645,7 @@ mod quark_grand_product_tests {
     fn quark_hybrid_e2e() {
         const LAYER_SIZE: usize = 1 << 8;
 
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9 as u64);
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9_u64);
 
         let leaves_1: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(LAYER_SIZE)

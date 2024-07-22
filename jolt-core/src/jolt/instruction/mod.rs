@@ -74,7 +74,9 @@ pub trait JoltInstructionSet:
     JoltInstruction + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + Send + Sync
 {
     fn enum_index(instruction: &Self) -> usize {
-        unsafe { *<*const _>::from(instruction).cast::<u8>() as usize }
+        // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+        let byte = unsafe { *(instruction as *const Self as *const u8) };
+        byte as usize
     }
 }
 
@@ -133,16 +135,17 @@ pub mod beq;
 pub mod bge;
 pub mod bgeu;
 pub mod bne;
+pub mod div;
 pub mod divu;
 pub mod lb;
 pub mod lh;
-pub mod movsign;
 pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
 pub mod mulu;
 pub mod or;
+pub mod rem;
 pub mod remu;
 pub mod sb;
 pub mod sh;
@@ -154,9 +157,11 @@ pub mod srl;
 pub mod sub;
 pub mod sw;
 pub mod virtual_advice;
-pub mod virtual_assert_eq_signs;
-pub mod virtual_assert_lt_abs;
 pub mod virtual_assert_lte;
+pub mod virtual_assert_valid_div0;
+pub mod virtual_assert_valid_signed_remainder;
+pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_movsign;
 pub mod xor;
 
 #[cfg(test)]

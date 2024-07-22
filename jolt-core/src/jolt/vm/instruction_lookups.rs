@@ -1261,7 +1261,7 @@ where
         round_uni_poly: UniPoly<F>,
         transcript: &mut ProofTranscript,
     ) -> F {
-        round_uni_poly.append_to_transcript(transcript);
+        round_uni_poly.compress().append_to_transcript(transcript);
 
         transcript.challenge_scalar::<F>()
     }

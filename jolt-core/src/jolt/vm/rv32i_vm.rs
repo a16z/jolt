@@ -1,4 +1,11 @@
 use crate::field::JoltField;
+use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
+use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
+use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
+use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
+use crate::poly::commitment::hyrax::HyraxScheme;
+use ark_bn254::{Fr, G1Projective};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -6,24 +13,25 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::{Jolt, JoltProof};
+use super::{Jolt, JoltCommitments, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    movsign::MOVSIGNInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
-    mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
-    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
-    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, virtual_advice::ADVICEInstruction,
-    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
-    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
-    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
+    mul::MULInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction,
+    sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction, slt::SLTInstruction,
+    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
+    sw::SWInstruction, virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+    virtual_movsign::MOVSIGNInstruction, xor::XORInstruction, JoltInstruction, JoltInstructionSet,
+    SubtableIndices,
 };
 use crate::jolt::subtable::{
-    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
-    gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-    or::OrSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable, sra_sign::SraSignSubtable,
-    srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
+    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
+    left_is_zero::LeftIsZeroSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+    ltu::LtuSubtable, or::OrSubtable, right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable,
+    sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable,
+    SubtableId,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
@@ -57,7 +65,7 @@ macro_rules! instruction_set {
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
-        #[repr(usize)]
+        #[repr(u8)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
         pub enum $enum_name<F: JoltField> { $($alias($struct)),+ }
@@ -74,7 +82,9 @@ macro_rules! subtable_enum {
 
         impl<F: JoltField> From<$enum_name<F>> for usize {
             fn from(subtable: $enum_name<F>) -> usize {
-                unsafe { *<*const _>::from(&subtable).cast::<usize>() }
+                // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+                let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
+                byte as usize
             }
         }
         impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
@@ -110,16 +120,17 @@ instruction_set!(
   MULHU: MULHUInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
-  VIRTUAL_ASSERT_LT_ABS: ASSERTLTABSInstruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_EQ_SIGNS: ASSERTEQSIGNSInstruction
+  VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction,
+  VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
   AND: AndSubtable<F>,
   EQ_ABS: EqAbsSubtable<F>,
-  EQ_MSB: EqMSBSubtable<F>,
   EQ: EqSubtable<F>,
-  GT_MSB: GtMSBSubtable<F>,
+  LEFT_MSB: LeftMSBSubtable<F>,
+  RIGHT_MSB: RightMSBSubtable<F>,
   IDENTITY: IdentitySubtable<F>,
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
@@ -137,7 +148,10 @@ subtable_enum!(
   SRL3: SrlSubtable<F, 3, WORD_SIZE>,
   TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
   TRUNCATE_BYTE: TruncateOverflowSubtable<F, 8>,
-  XOR: XorSubtable<F>
+  XOR: XorSubtable<F>,
+  LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
+  RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
+  DIV_BY_ZERO: DivByZeroSubtable<F>
 );
 
 // ==================== JOLT ====================
@@ -157,6 +171,40 @@ where
 }
 
 pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
+
+use eyre::Result;
+use std::fs::File;
+use std::path::PathBuf;
+
+pub type PCS = HyraxScheme<G1Projective>;
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct RV32IHyraxProof {
+    pub proof: RV32IJoltProof<Fr, PCS>,
+    pub commitments: JoltCommitments<PCS>,
+}
+
+impl RV32IHyraxProof {
+    /// Gets the byte size of the full proof
+    pub fn size(&self) -> Result<usize> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer.len())
+    }
+
+    /// Saves the proof to a file
+    pub fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
+        let file = File::create(path.into())?;
+        self.serialize_compressed(file)?;
+        Ok(())
+    }
+
+    /// Reads a proof from a file
+    pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
+        let file = File::open(path.into())?;
+        Ok(RV32IHyraxProof::deserialize_compressed(file)?)
+    }
+}
 
 // ==================== TEST ====================
 
