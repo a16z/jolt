@@ -204,6 +204,19 @@ impl RV32IHyraxProof {
         let file = File::open(path.into())?;
         Ok(RV32IHyraxProof::deserialize_compressed(file)?)
     }
+
+    /// Serializes the proof to a byte vector
+    pub fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Deserializes a proof from a byte vector
+    pub fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
+        let cursor = std::io::Cursor::new(bytes);
+        Ok(RV32IHyraxProof::deserialize_compressed(cursor)?)
+    }
 }
 
 // ==================== TEST ====================
