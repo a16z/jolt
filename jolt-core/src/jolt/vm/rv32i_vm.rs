@@ -321,6 +321,33 @@ mod tests {
     // }
 
     #[test]
+    fn muldiv_e2e_hyrax() {
+        let mut program = host::Program::new("muldiv-guest");
+        program.set_input(&123u32);
+        program.set_input(&234u32);
+        program.set_input(&345u32);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
+                io_device,
+                trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
+
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
     fn sha3_e2e_hyrax() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
 

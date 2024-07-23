@@ -11,32 +11,68 @@ use crate::jolt::instruction::{
 pub struct MULHSUInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WORD_SIZE> {
-    fn virtual_sequence(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        assert_eq!(trace_row.instruction.opcode, RV32IM::MULHSU);
-        // MULHSU operands
-        let x = trace_row.register_state.rs1_val.unwrap();
-        let y = trace_row.register_state.rs2_val.unwrap();
+    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
+        assert_eq!(instruction.opcode, RV32IM::MULHSU);
         // MULHSU source registers
-        let r_x = trace_row.instruction.rs1;
-        let r_y = trace_row.instruction.rs2;
+        let r_x = instruction.rs1;
+        let r_y = instruction.rs2;
         // Virtual registers used in sequence
         let v_sx = Some(virtual_register_index(0));
         let v_1 = Some(virtual_register_index(1));
         let v_2 = Some(virtual_register_index(2));
 
         let mut virtual_sequence = vec![];
+        virtual_sequence.push(ELFInstruction {
+            address: instruction.address,
+            opcode: RV32IM::VIRTUAL_MOVSIGN,
+            rs1: r_x,
+            rs2: None,
+            rd: v_sx,
+            imm: None,
+            virtual_sequence_index: Some(0),
+        });
+        virtual_sequence.push(ELFInstruction {
+            address: instruction.address,
+            opcode: RV32IM::MULHU,
+            rs1: r_x,
+            rs2: r_y,
+            rd: v_1,
+            imm: None,
+            virtual_sequence_index: Some(1),
+        });
+        virtual_sequence.push(ELFInstruction {
+            address: instruction.address,
+            opcode: RV32IM::MULU,
+            rs1: v_sx,
+            rs2: r_y,
+            rd: v_2,
+            imm: None,
+            virtual_sequence_index: Some(2),
+        });
+        virtual_sequence.push(ELFInstruction {
+            address: instruction.address,
+            opcode: RV32IM::ADD,
+            rs1: v_1,
+            rs2: v_2,
+            rd: instruction.rd,
+            imm: None,
+            virtual_sequence_index: Some(3),
+        });
+        virtual_sequence
+    }
+
+    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
+        assert_eq!(trace_row.instruction.opcode, RV32IM::MULHSU);
+        // MULHSU operands
+        let x = trace_row.register_state.rs1_val.unwrap();
+        let y = trace_row.register_state.rs2_val.unwrap();
+
+        let virtual_instructions = Self::virtual_sequence(trace_row.instruction);
+        let mut virtual_trace = vec![];
 
         let s_x = MOVSIGNInstruction::<WORD_SIZE>(x).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_MOVSIGN,
-                rs1: r_x,
-                rs2: None,
-                rd: v_sx,
-                imm: None,
-                virtual_sequence_index: Some(0),
-            },
+        virtual_trace.push(RVTraceRow {
+            instruction: virtual_instructions[virtual_trace.len()].clone(),
             register_state: RegisterState {
                 rs1_val: Some(x),
                 rs2_val: None,
@@ -47,16 +83,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
         });
 
         let xy_high_bits = MULHUInstruction::<WORD_SIZE>(x, y).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::MULHU,
-                rs1: r_x,
-                rs2: r_y,
-                rd: v_1,
-                imm: None,
-                virtual_sequence_index: Some(1),
-            },
+        virtual_trace.push(RVTraceRow {
+            instruction: virtual_instructions[virtual_trace.len()].clone(),
             register_state: RegisterState {
                 rs1_val: Some(x),
                 rs2_val: Some(y),
@@ -67,16 +95,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
         });
 
         let sx_y_low_bits = MULUInstruction::<WORD_SIZE>(s_x, y).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::MULU,
-                rs1: v_sx,
-                rs2: r_y,
-                rd: v_2,
-                imm: None,
-                virtual_sequence_index: Some(2),
-            },
+        virtual_trace.push(RVTraceRow {
+            instruction: virtual_instructions[virtual_trace.len()].clone(),
             register_state: RegisterState {
                 rs1_val: Some(s_x),
                 rs2_val: Some(y),
@@ -87,16 +107,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
         });
 
         let result = ADDInstruction::<WORD_SIZE>(xy_high_bits, sx_y_low_bits).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::ADD,
-                rs1: v_1,
-                rs2: v_2,
-                rd: trace_row.instruction.rd,
-                imm: None,
-                virtual_sequence_index: Some(3),
-            },
+        virtual_trace.push(RVTraceRow {
+            instruction: virtual_instructions[virtual_trace.len()].clone(),
             register_state: RegisterState {
                 rs1_val: Some(xy_high_bits),
                 rs2_val: Some(sx_y_low_bits),
@@ -105,7 +117,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             memory_state: None,
             advice_value: None,
         });
-        virtual_sequence
+        virtual_trace
     }
 }
 
@@ -151,7 +163,7 @@ mod test {
             advice_value: None,
         };
 
-        let virtual_sequence = MULHSUInstruction::<32>::virtual_sequence(mulhsu_trace_row);
+        let virtual_sequence = MULHSUInstruction::<32>::virtual_trace(mulhsu_trace_row);
         let mut registers = vec![0u64; REGISTER_COUNT as usize];
         registers[r_x as usize] = x;
         registers[r_y as usize] = y;

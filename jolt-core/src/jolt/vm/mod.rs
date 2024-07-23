@@ -13,7 +13,12 @@ use strum::EnumCount;
 
 use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
 use crate::jolt::{
-    instruction::JoltInstruction, subtable::JoltSubtableSet,
+    instruction::{
+        div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
+        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction, JoltInstruction,
+        VirtualInstructionSequence,
+    },
+    subtable::JoltSubtableSet,
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
@@ -281,8 +286,17 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
-            .iter()
-            .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
+            .into_iter()
+            .flat_map(|instruction| match instruction.opcode {
+                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
+                _ => vec![instruction],
+            })
+            .map(|instruction| BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction))
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 

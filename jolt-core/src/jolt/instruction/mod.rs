@@ -126,7 +126,8 @@ impl From<Range<usize>> for SubtableIndices {
 }
 
 pub trait VirtualInstructionSequence {
-    fn virtual_sequence(trace_row: RVTraceRow) -> Vec<RVTraceRow>;
+    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction>;
+    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow>;
 }
 
 pub mod add;

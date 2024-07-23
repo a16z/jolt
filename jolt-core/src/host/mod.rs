@@ -178,12 +178,12 @@ impl Program {
         let trace: Vec<_> = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
-                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(row),
+                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {
