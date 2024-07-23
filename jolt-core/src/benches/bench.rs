@@ -1,3 +1,4 @@
+use crate::field::binius::BiniusField;
 use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
@@ -5,8 +6,13 @@ use crate::jolt::vm::Jolt;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
+use crate::poly::commitment::mock::MockCommitScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
+use crate::r1cs::spartan;
+use crate::subprotocols::sumcheck::{BiniusSpartanSumcheckBackend, CurveSpartanSumcheckBackend};
 use ark_bn254::{Bn254, Fr, G1Projective};
+use ark_std::rand::Rng;
+use ark_std::test_rng;
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -14,6 +20,7 @@ pub enum PCSType {
     Hyrax,
     Zeromorph,
     HyperKZG,
+    Binius,
 }
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -22,6 +29,7 @@ pub enum BenchType {
     Sha2,
     Sha3,
     Sha2Chain,
+    Spartan
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -38,6 +46,7 @@ pub fn benchmarks(
             BenchType::Sha3 => sha3::<Fr, HyraxScheme<G1Projective>>(),
             BenchType::Sha2Chain => sha2chain::<Fr, HyraxScheme<G1Projective>>(),
             BenchType::Fibonacci => fibonacci::<Fr, HyraxScheme<G1Projective>>(),
+            BenchType::Spartan => spartan(false),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::Zeromorph => match bench_type {
@@ -54,6 +63,10 @@ pub fn benchmarks(
             BenchType::Fibonacci => fibonacci::<Fr, HyperKZG<Bn254>>(),
             _ => panic!("BenchType does not have a mapping"),
         },
+        PCSType::Binius => match bench_type {
+            BenchType::Spartan => spartan(true),
+            _ => panic!("BenchType does not have a mapping"),
+        }
         _ => panic!("PCS Type does not have a mapping"),
     }
 }
@@ -80,6 +93,46 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     prove_example::<Vec<u8>, PCS, F>("sha3-guest", &vec![5u8; 2048])
+}
+
+
+fn spartan(binius: bool) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    const LOG_LEN: usize = 28;
+    const LEN: usize = 1 << LOG_LEN;
+    const SPARSITY: f64 = 0.35; // pct non-zeros
+
+    let bz: Vec<u64> = vec![1; LEN];
+    let mut az: Vec<u64> = Vec::new();
+    let mut rng = test_rng();
+    for i in 0..LEN {
+        let prob: f64 = rng.gen();
+        if prob < SPARSITY {
+            az.push(i as u64);
+        } else {
+            az.push(0);
+        }
+    }
+    let cz = az.clone();
+
+    if binius {
+        use binius_field::BinaryField128bPolyval as BF;
+        type Field = BiniusField<BF>;
+
+        let task = move || {
+            spartan::bench::cubic_sumcheck::<Field, MockCommitScheme<Field>, BiniusSpartanSumcheckBackend>(az, bz, cz);
+        };
+
+        vec![(tracing::info_span!("Binius"), Box::new(task))]
+    } else {
+        type Field = ark_bn254::Fr;
+
+        let task = move || {
+            spartan::bench::cubic_sumcheck::<Field, MockCommitScheme<Field>, CurveSpartanSumcheckBackend>(az, bz, cz);
+            // spartan::bench::cubic_sumcheck::<Field, MockCommitScheme<Field>, BiniusSpartanSumcheckBackend>(az, bz, cz);
+        };
+
+        vec![(tracing::info_span!("Curve"), Box::new(task))]
+    }
 }
 
 #[allow(dead_code)]

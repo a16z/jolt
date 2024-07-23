@@ -215,7 +215,6 @@ impl<F: JoltField> SparsePolynomial<F> {
         }
     }
 
-    #[cfg(test)]
     #[tracing::instrument(skip_all)]
     pub fn to_dense(self) -> DensePolynomial<F> {
         use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
@@ -293,6 +292,9 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
             let dense_range_end = range.0;
 
             if a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
+                let inner_span = tracing::span!(tracing::Level::DEBUG, "a");
+                let inner_enter = inner_span.enter();
+                let _enter = span.enter();
                 let a_start = a_sparse_i;
                 // Scan over a until the corresponding dense index is out of range
                 while a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
@@ -303,6 +305,8 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
             }
 
             if c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
+                let inner_span = tracing::span!(tracing::Level::DEBUG, "c");
+                let inner_enter = inner_span.enter();
                 let c_start = c_sparse_i;
                 // Scan over c until the corresponding dense index is out of range
                 while c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {

@@ -5,6 +5,8 @@ use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::special_polys::SegmentedPaddedWitness;
+use crate::subprotocols::sumcheck::CurveSpartanSumcheckBackend;
+use crate::subprotocols::sumcheck::SpartanSumcheckBackend;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
@@ -84,7 +86,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
-    pub fn prove_precommitted<I: ConstraintInput>(
+    pub fn prove_precommitted<I: ConstraintInput, S: SpartanSumcheckBackend<F>>(
         generators: &C::Setup,
         constraint_builder: CombinedUniformBuilder<F, I>,
         key: &UniformSpartanKey<F>,
@@ -112,35 +114,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let aux = &segmented_padded_witness.segments[I::COUNT..];
         let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
 
-        let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
-            // Below is an optimized form of: *A * (*B * *C - *D)
-            if az.is_zero() || bz.is_zero() {
-                if cz.is_zero() {
-                    F::zero()
-                } else {
-                    *eq * (-(*cz))
-                }
-            } else {
-                let inner = *az * *bz - *cz;
-                if inner.is_zero() {
-                    F::zero()
-                } else {
-                    *eq * inner
-                }
-            }
-        };
-
-        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_cubic::<_>(
-                &F::zero(), // claim is zero
-                num_rounds_x,
-                &mut poly_tau,
-                &mut az,
-                &mut bz,
-                &mut cz,
-                comb_func_outer,
-                transcript,
-            );
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = S::prove_spartan_cubic(&F::zero(), num_rounds_x, &mut poly_tau, &mut az, &mut bz, &mut cz, transcript);
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
         drop_in_background_thread((az, bz, cz, poly_tau));
 
@@ -169,14 +143,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
-                &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
-                num_rounds_y,
-                &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                &segmented_padded_witness,
-                transcript,
-            );
+        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) = S::prove_spartan_quadratic(&claim_inner_joint, num_rounds_y, &mut poly_ABC, &segmented_padded_witness, transcript);
         drop_in_background_thread(poly_ABC);
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
@@ -300,41 +267,135 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     }
 }
 
+pub mod bench {
+    use ark_std::{log2, test_rng};
+
+    use crate::r1cs::special_polys::SparsePolynomial;
+
+    use super::*;
+
+    pub fn cubic_sumcheck<F: JoltField, PCS: CommitmentScheme<Field = F>, S: SpartanSumcheckBackend<F>>(az: Vec<u64>, bz: Vec<u64>, cz: Vec<u64>){
+        // Test sum_{x \ in {0,1}^n}{eq(r, x) * [Az(x) * Bz(x) - Cz(x)} = 0
+
+        // 1. Compute eq_table = eq(r, _)
+        // 2. Assign Az, Bz, Cz
+        // 3. Test Az * Bz - Cz == 0
+        // 4. Sumcheck
+        //      - Evaluate at {0, 1, 2, 3}
+        //      - Bind
+        // 5. Sumcheck verifier
+
+        let len: usize = az.len();
+        assert_eq!(bz.len(), len);
+        assert_eq!(cz.len(), len);
+        let log_len: usize = log2(len) as usize;
+
+
+        let mut rng = test_rng();
+        let r_eq: Vec<F> = (0..log_len).into_iter().map(|_| F::random(&mut rng)).collect();
+
+        // 1. Compute eq_table = eq(r, _)
+        let mut tau = DensePolynomial::new(EqPolynomial::evals(&r_eq));
+
+        // 2. Assign Az, Bz, Cz
+        let az = az.into_iter().map(|item| F::from_u64(item).unwrap()).collect();
+        let bz = bz.into_iter().map(|item| F::from_u64(item).unwrap()).collect();
+        let cz = cz.into_iter().map(|item| F::from_u64(item).unwrap()).collect();
+        let sparsify = |vec: Vec<F>| -> Vec<(F, usize)> {
+            vec.into_iter().enumerate().flat_map(|(index, item)| {
+                if item.is_zero() {
+                    None
+                } else {
+                    Some((item, index))
+                }
+            }).collect()
+        };
+        let mut az_poly = SparsePolynomial::new(log_len, sparsify(az));
+        let mut bz_poly = SparsePolynomial::new(log_len, sparsify(bz) );
+        let mut cz_poly = SparsePolynomial::new(log_len, sparsify(cz));
+
+        let v_tau = tau.clone();
+        let v_az_poly = az_poly.clone().to_dense();
+        let v_bz_poly = bz_poly.clone().to_dense();
+        let v_cz_poly = cz_poly.clone().to_dense();
+
+        // 3. Test Az * Bz - Cz == 0
+        for ((az, bz), cz) in v_az_poly.evals_ref().iter().zip(v_bz_poly.evals_ref()).zip(v_cz_poly.evals_ref()) {
+            assert_eq!(*az * bz, *cz);
+        }
+
+        // 4. Sumcheck
+        //      - Evaluate at {0, 1, 2, 3}
+        //      - Bind
+
+        let mut transcript = ProofTranscript::new(b"test");
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = S::prove_spartan_cubic(
+                &F::from_u64(0).unwrap(),
+                log_len,
+                &mut tau,
+                &mut az_poly,
+                &mut bz_poly,
+                &mut cz_poly,
+                &mut transcript,
+            );
+        assert_eq!(outer_sumcheck_claims.len(), 4);
+
+        let mut verify_transcript = ProofTranscript::new(b"test");
+        let (f_r, r) = outer_sumcheck_proof.verify(F::from_u64(0).unwrap(), log_len, 3, &mut verify_transcript).unwrap();
+        assert_eq!(outer_sumcheck_r, r);
+        assert_eq!(outer_sumcheck_claims.len(), 4);
+
+        let rev_r: Vec<F> = r.clone().into_iter().rev().collect();
+        let tau_r = v_tau.evaluate(&rev_r);
+        let az_r = v_az_poly.evaluate(&rev_r);
+        let bz_r = v_bz_poly.evaluate(&rev_r);
+        let cz_r = v_cz_poly.evaluate(&rev_r);
+        assert_eq!(outer_sumcheck_claims[0], tau_r);
+        assert_eq!(outer_sumcheck_claims[1], az_r);
+        assert_eq!(outer_sumcheck_claims[2], bz_r);
+        assert_eq!(outer_sumcheck_claims[3], cz_r);
+        let verifier_eval = tau_r * (az_r * bz_r - cz_r);
+
+        assert_eq!(f_r, verifier_eval);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use ark_std::One;
+    use ark_std::{test_rng, One};
+
+    use binius_field::BinaryField128bPolyval as BF;
 
     use crate::{
-        poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme},
-        r1cs::test::{simp_test_builder_key, SimpTestIn},
+        field::binius::BiniusField, poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme, mock::MockCommitScheme}, r1cs::{special_polys::SparsePolynomial, test::{simp_test_builder_key, SimpTestIn}}, subprotocols::sumcheck::BiniusSpartanSumcheckBackend
     };
 
     use super::*;
 
-    #[test]
-    fn integration() {
+    fn integration_test<F: JoltField, PCS: CommitmentScheme<Field = F>, S: SpartanSumcheckBackend<F>>() {
         let (builder, key) = simp_test_builder_key();
-        let witness_segments: Vec<Vec<Fr>> = vec![
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
+        let witness_segments: Vec<Vec<F>> = vec![
+            vec![F::one(), F::from_u64(5).unwrap(), F::from_u64(9).unwrap(), F::from_u64(13).unwrap()], /* Q */
+            vec![F::one(), F::from_u64(5).unwrap(), F::from_u64(9).unwrap(), F::from_u64(13).unwrap()], /* R */
+            vec![F::one(), F::from_u64(5).unwrap(), F::from_u64(9).unwrap(), F::from_u64(13).unwrap()], /* S */
         ];
 
         // Create a witness and commit
-        let witness_segments_ref: Vec<&[Fr]> = witness_segments
+        let witness_segments_ref: Vec<&[F]> = witness_segments
             .iter()
             .map(|segment| segment.as_slice())
             .collect();
-        let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
+        let gens = PCS::setup(&[CommitShape::new(16, BatchType::Small)]);
         let witness_commitment =
-            HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+            PCS::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
 
         // Prove spartan!
         let mut prover_transcript = ProofTranscript::new(b"stuff");
         let proof =
-            UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
+            UniformSpartanProof::<F, PCS>::prove_precommitted::<
                 SimpTestIn,
+                S
             >(
                 &gens,
                 builder,
@@ -354,5 +415,42 @@ mod test {
                 &mut verifier_transcript,
             )
             .expect("Spartan verifier failed");
+    }
+
+    #[test]
+    fn curve_integration_test() {
+        integration_test::<Fr, HyraxScheme<ark_bn254::G1Projective>, CurveSpartanSumcheckBackend>();
+    }
+
+    // TODO(sragss): 
+    // - Doesn't work because SimpTest non_uniform_constraints includes integer arthmetic
+    // - Make seperate working constraint system
+
+    // #[test]
+    // fn binius_integration_test() {
+    //     type Field = BiniusField<BF>;
+    //     integration_test::<Field, MockCommitScheme<Field>, BiniusSpartanSumcheckBackend>();
+    // }
+
+    fn cubic_sumcheck_test<F: JoltField, PCS: CommitmentScheme<Field = F>, S: SpartanSumcheckBackend<F>>(){
+        const LOG_LEN: usize = 4;
+        const LEN: usize = 1 << LOG_LEN;
+
+        let az: Vec<u64> = vec![1; LEN];
+        let bz: Vec<u64> = (0..LEN).into_iter().map(|i| i as u64).collect();
+        let cz: Vec<u64> = (0..LEN).into_iter().map(|i| i as u64).collect();
+
+        bench::cubic_sumcheck::<F, PCS, S>(az, bz, cz);
+    }
+
+    #[test]
+    fn curve_cubic_sumcheck_test() {
+        cubic_sumcheck_test::<Fr, HyraxScheme<ark_bn254::G1Projective>, CurveSpartanSumcheckBackend>();
+    }
+
+    #[test]
+    fn binius_cubic_sumcheck_test() {
+        type Field = BiniusField<BF>;
+        cubic_sumcheck_test::<Field, MockCommitScheme<Field>, BiniusSpartanSumcheckBackend>();
     }
 }
