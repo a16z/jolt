@@ -292,26 +292,37 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
             let dense_range_end = range.0;
 
             if a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
-                let inner_span = tracing::span!(tracing::Level::DEBUG, "a");
-                let inner_enter = inner_span.enter();
-                let _enter = span.enter();
                 let a_start = a_sparse_i;
-                // Scan over a until the corresponding dense index is out of range
-                while a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
-                    a_sparse_i += 1;
+                // Use binary search to find the first index where the dense index is out of range
+                let mut left = a_sparse_i;
+                let mut right = a.Z.len();
+                while left < right {
+                    let mid = (left + right) / 2;
+                    if a.Z[mid].1 < dense_range_end {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
                 }
+                a_sparse_i = left;
 
                 a_chunks[chunk_index - 1] = &a.Z[a_start..a_sparse_i];
             }
 
             if c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
-                let inner_span = tracing::span!(tracing::Level::DEBUG, "c");
-                let inner_enter = inner_span.enter();
                 let c_start = c_sparse_i;
-                // Scan over c until the corresponding dense index is out of range
-                while c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
-                    c_sparse_i += 1;
+                // Use binary search to find the first index where the dense index is out of range
+                let mut left = c_sparse_i;
+                let mut right = c.Z.len();
+                while left < right {
+                    let mid = (left + right) / 2;
+                    if c.Z[mid].1 < dense_range_end {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
                 }
+                c_sparse_i = left;
 
                 c_chunks[chunk_index - 1] = &c.Z[c_start..c_sparse_i];
             }

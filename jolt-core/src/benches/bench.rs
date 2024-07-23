@@ -99,7 +99,7 @@ where
 fn spartan(binius: bool) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     const LOG_LEN: usize = 28;
     const LEN: usize = 1 << LOG_LEN;
-    const SPARSITY: f64 = 0.35; // pct non-zeros
+    const SPARSITY: f64 = 0.2; // pct non-zeros
 
     let bz: Vec<u64> = vec![1; LEN];
     let mut az: Vec<u64> = Vec::new();
