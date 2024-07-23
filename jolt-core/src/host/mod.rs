@@ -25,7 +25,9 @@ use crate::{
     field::JoltField,
     jolt::{
         instruction::{
-            mulh::MULHInstruction, mulhsu::MULHSUInstruction, VirtualInstructionSequence,
+            div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
+            mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
+            VirtualInstructionSequence,
         },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
@@ -178,10 +180,10 @@ impl Program {
             .flat_map(|row| match row.instruction.opcode {
                 tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(row),
                 tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::DIV => todo!(),
-                tracer::RV32IM::DIVU => todo!(),
-                tracer::RV32IM::REM => todo!(),
-                tracer::RV32IM::REMU => todo!(),
+                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(row),
+                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(row),
+                tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(row),
+                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(row),
                 _ => vec![row],
             })
             .map(|row| {
