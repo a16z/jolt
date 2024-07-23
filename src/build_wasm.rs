@@ -10,7 +10,7 @@ use eyre::Result;
 use jolt_core::host::{ELFInstruction, Program};
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
-use syn::{Attribute, ItemFn, Meta};
+use syn::{Attribute, ItemFn, Meta, PathSegment};
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
 
 #[derive(Serialize, Deserialize)]
@@ -79,21 +79,12 @@ fn extract_provable_functions() -> Vec<FunctionAttributes> {
 }
 
 fn is_provable(attr: &Attribute) -> bool {
-    if let Some(ident) = attr.path.get_ident() {
-        if ident == "jolt" {
-            if let Ok(syn::Meta::List(meta_list)) = attr.parse_meta() {
-                return meta_list.nested.iter().any(|nested| {
-                    if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested {
-                        if let Some(ident) = path.get_ident() {
-                            return ident == "provable";
-                        }
-                    }
-                    false
-                });
-            }
+    if attr.path.segments.len() == 2 {
+        let segments: Vec<&PathSegment> = attr.path.segments.iter().collect();
+        if let [first, second] = segments.as_slice() {
+            return first.ident == "jolt" && second.ident == "provable";
         }
     }
-
     false
 }
 
@@ -279,6 +270,7 @@ pub fn build_wasm() {
     println!("Building the project with wasm-pack...");
     let functions = extract_provable_functions();
     let function_names: Vec<String> = functions.iter().map(|f| f.func_name.clone()).collect();
+    println!("Found {:?}", function_names);
     let is_std = is_std().expect("Failed to check if std feature is enabled");
     for function in functions {
         preprocess_and_save(&function.func_name, &function.attributes, is_std)
