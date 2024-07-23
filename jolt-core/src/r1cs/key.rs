@@ -378,7 +378,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
             let row_constr_eq_non_uni =
                 EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
 
-            debug_assert_eq!(
+            assert_eq!(
                 row_constr_eq_non_uni,
                 eq_rx_constr[self.uniform_r1cs.num_rows + i]
             );
