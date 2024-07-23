@@ -5,7 +5,7 @@ use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
-use ark_std::{One, UniformRand};
+use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -188,12 +188,14 @@ where
         proof: &P::G1Affine,
         evaluation: &P::ScalarField,
     ) -> Result<bool, ProofVerifyError> {
-        let lhs = P::pairing(
-            commitment.into_group() - vk.g1.into_group() * evaluation,
-            vk.g2,
-        );
-        let rhs = P::pairing(proof, vk.beta_g2.into_group() - (vk.g2 * point));
-        Ok(lhs == rhs)
+        Ok(P::multi_pairing(
+            [
+                commitment.into_group() - vk.g1.into_group() * evaluation,
+                -proof.into_group(),
+            ],
+            [vk.g2, (vk.beta_g2.into_group() - (vk.g2 * point)).into()],
+        )
+        .is_zero())
     }
 }
 
