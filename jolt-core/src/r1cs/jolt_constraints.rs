@@ -22,7 +22,11 @@ pub fn construct_jolt_constraints<F: JoltField>(
         (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
     );
 
-    CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, non_uniform_constraint)
+    CombinedUniformBuilder::construct(
+        uniform_builder,
+        padded_trace_length,
+        vec![non_uniform_constraint],
+    )
 }
 
 // TODO(#377): Dedupe OpFlags / CircuitFlags
@@ -283,10 +287,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 mod tests {
     use super::*;
 
-    use crate::{
-        jolt::vm::rv32i_vm::RV32I,
-        r1cs::builder::{CombinedUniformBuilder, OffsetEqConstraint},
-    };
+    use crate::{jolt::vm::rv32i_vm::RV32I, r1cs::builder::CombinedUniformBuilder};
 
     use ark_bn254::Fr;
     use ark_std::Zero;
@@ -308,11 +309,8 @@ mod tests {
         jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
-        let combined_builder = CombinedUniformBuilder::construct(
-            uniform_builder,
-            num_steps,
-            OffsetEqConstraint::empty(),
-        );
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction
