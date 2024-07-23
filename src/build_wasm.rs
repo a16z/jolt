@@ -270,7 +270,6 @@ pub fn build_wasm() {
     println!("Building the project with wasm-pack...");
     let functions = extract_provable_functions();
     let function_names: Vec<String> = functions.iter().map(|f| f.func_name.clone()).collect();
-    println!("Found {:?}", function_names);
     let is_std = is_std().expect("Failed to check if std feature is enabled");
     for function in functions {
         preprocess_and_save(&function.func_name, &function.attributes, is_std)
