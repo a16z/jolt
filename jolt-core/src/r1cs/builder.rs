@@ -667,7 +667,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     }
 
     pub(super) fn offset_eq_constraint_rows(&self) -> usize {
-        self.uniform_repeat
+        self.uniform_repeat * self.offset_equality_constraints.len()
     }
 
     /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
@@ -824,7 +824,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let (mut az_sparse, mut bz_sparse, cz_sparse) = par_flatten_triple(
             uni_constraint_evals,
             unsafe_allocate_sparse_zero_vec,
-            self.uniform_repeat, // Capacity overhead for offset_eq constraints.
+            self.offset_eq_constraint_rows(), // Capacity overhead for offset_eq constraints.
         );
 
         // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
