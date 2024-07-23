@@ -1,3 +1,4 @@
+use crate::field::binius::BiniusField;
 use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
@@ -6,7 +7,9 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
+use crate::r1cs::spartan;
 use ark_bn254::{Bn254, Fr, G1Projective};
+use binius_field::BinaryField128bPolyval;
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -14,6 +17,7 @@ pub enum PCSType {
     Hyrax,
     Zeromorph,
     HyperKZG,
+    Binius
 }
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -22,6 +26,7 @@ pub enum BenchType {
     Sha2,
     Sha3,
     Sha2Chain,
+    Spartan,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -38,6 +43,7 @@ pub fn benchmarks(
             BenchType::Sha3 => sha3::<Fr, HyraxScheme<G1Projective>>(),
             BenchType::Sha2Chain => sha2chain::<Fr, HyraxScheme<G1Projective>>(),
             BenchType::Fibonacci => fibonacci::<Fr, HyraxScheme<G1Projective>>(),
+            BenchType::Spartan => spartan::<Fr>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::Zeromorph => match bench_type {
@@ -45,6 +51,7 @@ pub fn benchmarks(
             BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254>>(),
             BenchType::Sha2Chain => sha2chain::<Fr, Zeromorph<Bn254>>(),
             BenchType::Fibonacci => fibonacci::<Fr, Zeromorph<Bn254>>(),
+            BenchType::Spartan => spartan::<BiniusField<BinaryField128bPolyval>>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -80,6 +87,18 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     prove_example::<Vec<u8>, PCS, F>("sha3-guest", &vec![5u8; 2048])
+}
+
+fn spartan<F>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
+where 
+    F: JoltField,
+{
+    let task = move || {
+        spartan::bench::bench::<F>();
+    };
+
+    vec![(tracing::info_span!("Spartan"), Box::new(task))]
+
 }
 
 #[allow(dead_code)]

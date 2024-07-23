@@ -487,6 +487,118 @@ mod test {
     }
 }
 
+pub mod bench {
+    use super::*;
+    use crate::{field::binius::BiniusField, impl_r1cs_input_lc_conversions, poly::commitment::{commitment_scheme::{CommitShape, CommitmentScheme}, mock::MockCommitScheme}, r1cs::builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder}};
+    use binius_field::BinaryField128bPolyval as BF;
+
+    #[allow(non_camel_case_types)]
+    #[derive(
+        strum_macros::EnumIter,
+        strum_macros::EnumCount,
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Hash,
+    )]
+    #[repr(usize)]
+    pub enum MediumTestIn {
+        Q,
+        R,
+        S,
+        T,
+    }
+    impl ConstraintInput for MediumTestIn {}
+    impl_r1cs_input_lc_conversions!(MediumTestIn);
+
+    pub fn bench<F: JoltField>() {
+
+        let mut uniform_builder = R1CSBuilder::<F, MediumTestIn>::new();
+
+        struct TestConstraints();
+        impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+            type Inputs = MediumTestIn;
+            fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+                // if (Q) { R * S == T }
+                // else   { R + S == T }
+                // let prod = builder.allocate_prod(MediumTestIn::R, MediumTestIn::S);
+                // builder.constrain_eq_conditional(MediumTestIn::Q - 1, MediumTestIn::R + MediumTestIn::S, MediumTestIn::T);
+    
+                // if (Q) { R == T }
+                // else { R == S }
+                builder.constrain_eq_conditional(MediumTestIn::Q, MediumTestIn::R, MediumTestIn::T);
+                builder.constrain_eq_conditional(MediumTestIn::Q - 1, MediumTestIn::R, MediumTestIn::S);
+            }
+        }
+    
+        let constraints = TestConstraints();
+        constraints.build_constraints(&mut uniform_builder);
+    
+        let repeat = 1 << 25;
+        let num_steps_pad = 4 * repeat;
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, OffsetEqConstraint::empty());
+        let key = UniformSpartanKey::from_builder(&combined_builder);
+
+        
+        // type Fr = BiniusField<BF>;
+        let witness_segments: Vec<Vec<F>> = vec![
+            vec![F::from_u64(1).unwrap(), F::from_u64(1).unwrap(), F::from_u64(0).unwrap(), F::from_u64(1).unwrap()], /* Q */
+            vec![F::from_u64(5).unwrap(), F::from_u64(8).unwrap(), F::from_u64(10).unwrap(), F::from_u64(400).unwrap()], /* R */
+            vec![F::from_u64(9).unwrap(), F::from_u64(4).unwrap(), F::from_u64(10).unwrap(), F::from_u64(10).unwrap()], /* S */
+            vec![F::from_u64(5).unwrap(), F::from_u64(8).unwrap(), F::from_u64(7).unwrap(), F::from_u64(400).unwrap()], /* T */
+        ];
+        let witness_segments: Vec<Vec<F>> = witness_segments
+            .into_iter()
+            .map(|segment| {
+                let mut extended_segment = Vec::with_capacity(segment.len() * repeat);
+                for _ in 0..repeat {
+                    extended_segment.extend_from_slice(&segment);
+                }
+                extended_segment
+            })
+            .collect();
+
+        // Create a witness and commit
+        let witness_segments_ref: Vec<&[F]> = witness_segments
+            .iter()
+            .map(|segment| segment.as_slice())
+            .collect();
+        let gens = MockCommitScheme::<F>::setup(&[CommitShape::new(16 * repeat, BatchType::Small)]);
+        let witness_commitment =
+            MockCommitScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+
+        // Prove spartan!
+        let mut prover_transcript = ProofTranscript::new(b"stuff");
+        let proof =
+            UniformSpartanProof::<F, MockCommitScheme<F>>::prove_precommitted::<
+                MediumTestIn,
+            >(
+                &gens,
+                combined_builder,
+                &key,
+                witness_segments,
+                &mut prover_transcript,
+            )
+            .unwrap();
+
+        let mut verifier_transcript = ProofTranscript::new(b"stuff");
+        let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
+        proof
+            .verify_precommitted(
+                &key,
+                witness_commitment_ref,
+                &gens,
+                &mut verifier_transcript,
+            )
+            .expect("Spartan verifier failed");
+    }    
+}
+
 
 #[cfg(test)]
 mod binius_test {

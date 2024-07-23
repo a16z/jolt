@@ -530,7 +530,7 @@ impl<I: ConstraintInput> OffsetEqConstraint<I> {
         }
     }
 
-    #[cfg(test)]
+    // #[cfg(test)]
     pub fn empty() -> Self {
         Self::new(
             (LC::new(vec![]), false),

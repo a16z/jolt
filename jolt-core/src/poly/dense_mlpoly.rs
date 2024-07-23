@@ -83,6 +83,7 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_top_par(&mut self, r: &F) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);
