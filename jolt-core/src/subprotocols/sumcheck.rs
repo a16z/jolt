@@ -440,16 +440,10 @@ impl<F: JoltField /*+ ark_ff::PrimeField */> SpartanSumcheckBackend<F> for Curve
             claim_per_round = poly.evaluate(&r_i);
 
             // bound all tables to the verifier's challenege
-            rayon::join(
-                || poly_eq.bound_poly_var_bot_01_optimized(&r_i),
-                || rayon::join(
-                    || poly_A.bound_poly_var_bot_par(&r_i),
-                    || rayon::join(
-                        || poly_B.bound_poly_var_bot_par(&r_i),
-                        || poly_C.bound_poly_var_bot_par(&r_i)
-                    )
-                )
-            );
+            poly_eq.bound_poly_var_bot_01_optimized(&r_i);
+            poly_A.bound_poly_var_bot_par(&r_i);
+            poly_B.bound_poly_var_bot_par(&r_i);
+            poly_C.bound_poly_var_bot_par(&r_i);
         }
 
         assert_eq!(poly_eq.len(), 1);
@@ -800,11 +794,6 @@ impl<F: JoltField> SpartanSumcheckBackend<F> for BiniusSpartanSumcheckBackend {
         let mut poly_z = DensePolynomial::new(flat_z);
         assert_eq!(poly_A.len(), poly_z.len());
 
-        // let comb_func = |inputs: &[F]| -> F {
-        //     debug_assert_eq!(inputs.len(), 2);
-        //     inputs[0].mul_0_optimized(inputs[1])
-        // };
-
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
@@ -836,7 +825,6 @@ impl<F: JoltField> SpartanSumcheckBackend<F> for BiniusSpartanSumcheckBackend {
                     }
                 );
 
-            // println!("evals: {eval_points:?}");
             let round_uni_poly = UniPoly::from_evals(&vec![eval_points.0, eval_points.1, eval_points.2]);
             round_uni_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();

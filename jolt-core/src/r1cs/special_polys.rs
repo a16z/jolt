@@ -123,7 +123,7 @@ impl<F: JoltField> SparsePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot_par(&mut self, r: &F) {
         // TODO(sragss): better parallelism.
-        let (chunks, _range) = self.chunk_no_split_siblings(rayon::current_num_threads() * 8);
+        let (chunks, _range) = self.chunk_no_split_siblings(rayon::current_num_threads() * 2);
 
         // Calc chunk sizes post-binding for pre-allocation.
         let count_span = tracing::span!(tracing::Level::DEBUG, "counting");
@@ -134,10 +134,10 @@ impl<F: JoltField> SparsePolynomial<F> {
                 // Count each pair of siblings if at least one is present.
                 chunk
                     .iter()
-                    .enumerate()
-                    .filter(|(i, (_value, index))| {
+                    .zip(chunk.iter().skip(1).chain(std::iter::once(&(F::zero(), usize::MAX))))
+                    .filter(|((_value, index), (_next_value, next_index))| {
                         // Always count odd, only count even indices when the paired odd index is not present.
-                        !index.is_even() || i + 1 >= chunk.len() || index + 1 != chunk[i + 1].1
+                        !index.is_even() || *index + 1 != *next_index
                     })
                     .count()
             })
