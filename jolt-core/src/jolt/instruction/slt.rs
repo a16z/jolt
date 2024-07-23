@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{
-        eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
-        lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
+        eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+        ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
     },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
@@ -23,8 +23,8 @@ impl JoltInstruction for SLTInstruction {
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
-        let gt_msb = vals_by_subtable[0];
-        let eq_msb = vals_by_subtable[1];
+        let left_msb = vals_by_subtable[0];
+        let right_msb = vals_by_subtable[1];
         let ltu = vals_by_subtable[2];
         let eq = vals_by_subtable[3];
         let lt_abs = vals_by_subtable[4];
@@ -41,7 +41,9 @@ impl JoltInstruction for SLTInstruction {
         }
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
-        gt_msb[0] + eq_msb[0] * ltu_sum
+        left_msb[0] * (F::one() - right_msb[0])
+            + (left_msb[0] * right_msb[0] + (F::one() - left_msb[0]) * (F::one() - right_msb[0]))
+                * ltu_sum
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -54,8 +56,8 @@ impl JoltInstruction for SLTInstruction {
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
             (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
             (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),

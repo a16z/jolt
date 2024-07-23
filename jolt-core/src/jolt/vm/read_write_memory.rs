@@ -964,16 +964,14 @@ pub struct MemoryCommitment<C: CommitmentScheme> {
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for MemoryCommitment<C> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"MemoryCommitment_begin");
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"MemoryCommitment_begin");
         for commitment in &self.trace_commitments {
-            commitment.append_to_transcript(b"trace_commit", transcript);
+            commitment.append_to_transcript(transcript);
         }
-        self.v_final_commitment
-            .append_to_transcript(b"v_final_commit", transcript);
-        self.t_final_commitment
-            .append_to_transcript(b"t_final_commit", transcript);
-        transcript.append_message(label, b"MemoryCommitment_end");
+        self.v_final_commitment.append_to_transcript(transcript);
+        self.t_final_commitment.append_to_transcript(transcript);
+        transcript.append_message(b"MemoryCommitment_end");
     }
 }
 
@@ -1510,7 +1508,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self {
         let num_rounds = polynomials.memory_size.log_2();
-        let r_eq = transcript.challenge_vector(b"output_sumcheck", num_rounds);
+        let r_eq = transcript.challenge_vector(num_rounds);
         let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_eq));
 
         let io_witness_range: Vec<_> = (0..polynomials.memory_size as u64)
@@ -1588,7 +1586,7 @@ where
         commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let r_eq = transcript.challenge_vector(b"output_sumcheck", proof.num_rounds);
+        let r_eq = transcript.challenge_vector(proof.num_rounds);
 
         let (sumcheck_claim, r_sumcheck) =
             proof

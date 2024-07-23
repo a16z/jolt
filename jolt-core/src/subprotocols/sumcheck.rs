@@ -40,17 +40,18 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
 
         for _round in 0..self.num_rounds() {
             let cubic_poly = self.compute_cubic(coeffs, eq_poly, previous_claim);
+            let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
-            cubic_poly.append_to_transcript(b"poly", transcript);
+            compressed_poly.append_to_transcript(transcript);
             //derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar(b"challenge_nextround");
+            let r_j = transcript.challenge_scalar();
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
             self.bind(eq_poly, &r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
-            cubic_polys.push(cubic_poly.compress());
+            cubic_polys.push(compressed_poly);
         }
 
         debug_assert_eq!(eq_poly.len(), 1);
@@ -156,17 +157,18 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 });
 
             let round_uni_poly = UniPoly::from_evals(&eval_points);
+            let round_compressed_poly = round_uni_poly.compress();
 
             // append the prover's message to the transcript
-            round_uni_poly.append_to_transcript(b"poly", transcript);
-            let r_j = transcript.challenge_scalar(b"challenge_nextround");
+            round_compressed_poly.append_to_transcript(transcript);
+            let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
             polys
                 .par_iter_mut()
                 .for_each(|poly| poly.bound_poly_var_top(&r_j));
-            compressed_polys.push(round_uni_poly.compress());
+            compressed_polys.push(round_compressed_poly);
         }
 
         let final_evals = polys.iter().map(|poly| poly[0]).collect();
@@ -215,27 +217,27 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     let m_C = c_high - c_low;
 
                     // eval 2
-                    let poly_A_bound_point = poly_eq[dense_index + 1] + m_eq;
-                    let poly_B_bound_point = a_high + m_A;
-                    let poly_C_bound_point = b_high + m_B;
-                    let poly_D_bound_point = c_high + m_C;
+                    let poly_eq_bound_point = poly_eq[dense_index + 1] + m_eq;
+                    let poly_A_bound_point = a_high + m_A;
+                    let poly_B_bound_point = b_high + m_B;
+                    let poly_C_bound_point = c_high + m_C;
                     eval_point_2 += comb_func(
+                        &poly_eq_bound_point,
                         &poly_A_bound_point,
                         &poly_B_bound_point,
                         &poly_C_bound_point,
-                        &poly_D_bound_point,
                     );
 
                     // eval 3
-                    let poly_A_bound_point = poly_A_bound_point + m_eq;
-                    let poly_B_bound_point = poly_B_bound_point + m_A;
-                    let poly_C_bound_point = poly_C_bound_point + m_B;
-                    let poly_D_bound_point = poly_D_bound_point + m_C;
+                    let poly_eq_bound_point = poly_eq_bound_point + m_eq;
+                    let poly_A_bound_point = poly_A_bound_point + m_A;
+                    let poly_B_bound_point = poly_B_bound_point + m_B;
+                    let poly_C_bound_point = poly_C_bound_point + m_C;
                     eval_point_3 += comb_func(
+                        &poly_eq_bound_point,
                         &poly_A_bound_point,
                         &poly_B_bound_point,
                         &poly_C_bound_point,
-                        &poly_D_bound_point,
                     );
                 }
                 (eval_point_0, eval_point_2, eval_point_3)
@@ -282,19 +284,21 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 UniPoly::from_evals(&evals)
             };
 
+            let compressed_poly = poly.compress();
+
             // append the prover's message to the transcript
-            poly.append_to_transcript(b"poly", transcript);
+            compressed_poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar(b"challenge_nextround");
+            let r_i = transcript.challenge_scalar();
             r.push(r_i);
-            polys.push(poly.compress());
+            polys.push(compressed_poly);
 
             // Set up next round
             claim_per_round = poly.evaluate(&r_i);
 
             // bound all tables to the verifier's challenege
-            poly_eq.bound_poly_var_bot(&r_i);
+            poly_eq.bound_poly_var_bot_01_optimized(&r_i);
             poly_A.bound_poly_var_bot_par(&r_i);
             poly_B.bound_poly_var_bot_par(&r_i);
             poly_C.bound_poly_var_bot_par(&r_i);
@@ -370,13 +374,14 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             UniPoly::from_evals(&evals)
         };
 
+        let compressed_poly = poly.compress();
         // append the prover's message to the transcript
-        poly.append_to_transcript(b"poly", transcript);
+        compressed_poly.append_to_transcript(transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F = transcript.challenge_scalar(b"challenge_nextround");
+        let r_i: F = transcript.challenge_scalar();
         r.push(r_i);
-        polys.push(poly.compress());
+        polys.push(compressed_poly);
 
         // Set up next round
         claim_per_round = poly.evaluate(&r_i);
@@ -417,14 +422,15 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 UniPoly::from_evals(&evals)
             };
 
+            let compressed_poly = poly.compress();
             // append the prover's message to the transcript
-            poly.append_to_transcript(b"poly", transcript);
+            compressed_poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F = transcript.challenge_scalar(b"challenge_nextround");
+            let r_i: F = transcript.challenge_scalar();
 
             r.push(r_i);
-            polys.push(poly.compress());
+            polys.push(compressed_poly);
 
             // Set up next round
             claim_per_round = poly.evaluate(&r_i);
@@ -528,10 +534,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
             // append the prover's message to the transcript
-            poly.append_to_transcript(b"poly", transcript);
+            self.compressed_polys[i].append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar(b"challenge_nextround");
+            let r_i = transcript.challenge_scalar();
 
             r.push(r_i);
 

@@ -783,48 +783,46 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         // uniform_constraints: Xz[0..uniform_constraint_rows]
         let span = tracing::span!(tracing::Level::DEBUG, "uniform_evals");
         let _enter = span.enter();
-        let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> =
-            self.uniform_builder
-                .constraints
-                .par_iter()
-                .enumerate()
-                .map(|(constraint_index, constraint)| {
-                    let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
+        let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> = self
+            .uniform_builder
+            .constraints
+            .par_iter()
+            .enumerate()
+            .map(|(constraint_index, constraint)| {
+                let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
 
-                    let mut evaluate_lc_chunk = |lc: &LC<I>| {
-                        if lc.terms().len() != 0 {
-                            let inputs = batch_inputs(lc);
-                            lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
+                let mut evaluate_lc_chunk = |lc: &LC<I>| {
+                    if !lc.terms().is_empty() {
+                        let inputs = batch_inputs(lc);
+                        lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
 
-                            // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
-                            let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
-                            dense_output_buffer.iter().enumerate().for_each(
-                                |(local_index, item)| {
-                                    if !item.is_zero() {
-                                        let global_index =
-                                            constraint_index * self.uniform_repeat + local_index;
-                                        sparse.push((*item, global_index));
-                                    }
-                                },
-                            );
-                            sparse
-                        } else {
-                            vec![]
+                        // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
+                        let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
+                        for (local_index, item) in dense_output_buffer.iter().enumerate() {
+                            if !item.is_zero() {
+                                let global_index =
+                                    constraint_index * self.uniform_repeat + local_index;
+                                sparse.push((*item, global_index));
+                            }
                         }
-                    };
+                        sparse
+                    } else {
+                        vec![]
+                    }
+                };
 
-                    let a_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.a);
-                    let b_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.b);
-                    let c_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.c);
+                let a_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.a);
+                let b_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.b);
+                let c_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.c);
 
-                    (a_chunk, b_chunk, c_chunk)
-                })
-                .collect();
+                (a_chunk, b_chunk, c_chunk)
+            })
+            .collect();
 
         let (mut az_sparse, mut bz_sparse, cz_sparse) = par_flatten_triple(
             uni_constraint_evals,
             unsafe_allocate_sparse_zero_vec,
-            self.offset_eq_constraint_rows(), // Capacity overhead for offset_eq constraints.
+            self.offset_eq_constraint_rows(),
         );
 
         // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
@@ -847,43 +845,37 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 .1
                 .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
 
-            let dense_az_bz: Vec<(F, F)> = (0..self.uniform_repeat)
-                .into_par_iter()
-                .map(|step_index| {
-                    // Write corresponding values, if outside the step range, only include the constant.
-                    let a_step = step_index + if constr.a.0 { 1 } else { 0 };
-                    let b_step = step_index + if constr.b.0 { 1 } else { 0 };
-                    let a = eq_a_evals
-                        .get(a_step)
-                        .cloned()
-                        .unwrap_or(constr.a.1.constant_term_field());
-                    let b = eq_b_evals
-                        .get(b_step)
-                        .cloned()
-                        .unwrap_or(constr.b.1.constant_term_field());
-                    let az = a - b;
+            (0..self.uniform_repeat).for_each(|step_index| {
+                // Write corresponding values, if outside the step range, only include the constant.
+                let a_step = step_index + constr.a.0 as usize;
+                let b_step = step_index + constr.b.0 as usize;
+                let a = eq_a_evals
+                    .get(a_step)
+                    .cloned()
+                    .unwrap_or(constr.a.1.constant_term_field());
+                let b = eq_b_evals
+                    .get(b_step)
+                    .cloned()
+                    .unwrap_or(constr.b.1.constant_term_field());
+                let az = a - b;
 
-                    let condition_step = step_index + if constr.cond.0 { 1 } else { 0 };
-                    let bz = condition_evals
-                        .get(condition_step)
-                        .cloned()
-                        .unwrap_or(constr.cond.1.constant_term_field());
-                    (az, bz)
-                })
-                .collect();
-
-            // Sparsify: take only the non-zero elements
-            for (local_index, (az, bz)) in dense_az_bz.iter().enumerate() {
                 let global_index =
-                    uniform_constraint_rows + constr_i * self.uniform_repeat + local_index;
+                    uniform_constraint_rows + self.uniform_repeat * constr_i + step_index;
                 if !az.is_zero() {
-                    az_sparse.push((*az, global_index));
+                    az_sparse.push((az, global_index));
                 }
+
+                let condition_step = step_index + constr.cond.0 as usize;
+                let bz = condition_evals
+                    .get(condition_step)
+                    .cloned()
+                    .unwrap_or(constr.cond.1.constant_term_field());
                 if !bz.is_zero() {
-                    bz_sparse.push((*bz, global_index));
+                    bz_sparse.push((bz, global_index));
                 }
-            }
+            });
         }
+        drop(_enter);
 
         let num_vars = self.constraint_rows().next_power_of_two().log_2();
         let az_poly = SparsePolynomial::new(num_vars, az_sparse);

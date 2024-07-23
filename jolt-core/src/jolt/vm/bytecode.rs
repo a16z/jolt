@@ -350,15 +350,14 @@ pub struct BytecodeCommitment<C: CommitmentScheme> {
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for BytecodeCommitment<C> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_protocol_name(label);
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_protocol_name(b"Bytecode Commitments");
 
         for commitment in &self.trace_commitments {
-            commitment.append_to_transcript(b"trace", transcript);
+            commitment.append_to_transcript(transcript);
         }
 
-        self.t_final_commitment
-            .append_to_transcript(b"final", transcript);
+        self.t_final_commitment.append_to_transcript(transcript);
     }
 }
 

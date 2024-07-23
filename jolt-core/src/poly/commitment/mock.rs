@@ -24,8 +24,8 @@ pub struct MockCommitment<F: JoltField> {
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"mocker");
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"mocker");
     }
 }
 

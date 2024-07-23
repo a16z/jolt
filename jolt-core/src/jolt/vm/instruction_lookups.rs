@@ -79,15 +79,15 @@ pub struct InstructionCommitment<C: CommitmentScheme> {
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for InstructionCommitment<C> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"InstructionCommitment_begin");
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"InstructionCommitment_begin");
         for commitment in &self.trace_commitment {
-            commitment.append_to_transcript(b"trace_commitment", transcript);
+            commitment.append_to_transcript(transcript);
         }
         for commitment in &self.final_commitment {
-            commitment.append_to_transcript(b"final_commitment", transcript);
+            commitment.append_to_transcript(transcript);
         }
-        transcript.append_message(label, b"InstructionCommitment_end");
+        transcript.append_message(b"InstructionCommitment_end");
     }
 }
 
@@ -617,7 +617,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Instruction lookups memory checking"
+        b"Instruction lookups check"
     }
 }
 
@@ -817,7 +817,7 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         let trace_length = polynomials.dim[0].len();
-        let r_eq = transcript.challenge_vector(b"Jolt instruction lookups", trace_length.log_2());
+        let r_eq = transcript.challenge_vector(trace_length.log_2());
 
         let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq);
         let mut eq_poly = DensePolynomial::new(eq_evals);
@@ -876,10 +876,7 @@ where
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
 
-        let r_eq = transcript.challenge_vector(
-            b"Jolt instruction lookups",
-            proof.primary_sumcheck.num_rounds,
-        );
+        let r_eq = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);
 
         // TODO: compartmentalize all primary sumcheck logic
         let (claim_last, r_primary_sumcheck) = proof.primary_sumcheck.sumcheck_proof.verify(
@@ -1264,9 +1261,9 @@ where
         round_uni_poly: UniPoly<F>,
         transcript: &mut ProofTranscript,
     ) -> F {
-        round_uni_poly.append_to_transcript(b"poly", transcript);
+        round_uni_poly.compress().append_to_transcript(transcript);
 
-        transcript.challenge_scalar::<F>(b"challenge_nextround")
+        transcript.challenge_scalar::<F>()
     }
 
     /// Combines the subtable values given by `vals` and the flag values given by `flags`.

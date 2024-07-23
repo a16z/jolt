@@ -23,33 +23,6 @@ impl<F: JoltField> SparsePolynomial<F> {
         SparsePolynomial { num_vars, Z }
     }
 
-    // TODO(sragss): rm
-    #[tracing::instrument(skip_all)]
-    pub fn from_dense_evals(num_vars: usize, evals: Vec<F>) -> Self {
-        assert!(num_vars.pow2() >= evals.len());
-        let non_zero_count: usize = evals
-            .par_chunks(10_000)
-            .map(|chunk| chunk.iter().filter(|f| !f.is_zero()).count())
-            .sum();
-
-        let span_allocate = tracing::span!(tracing::Level::DEBUG, "allocate");
-        let _enter_allocate = span_allocate.enter();
-        let mut sparse: Vec<(F, usize)> = unsafe_allocate_sparse_zero_vec(non_zero_count);
-        drop(_enter_allocate);
-
-        let span_copy = tracing::span!(tracing::Level::DEBUG, "copy");
-        let _enter_copy = span_copy.enter();
-        let mut sparse_index = 0;
-        for (dense_index, dense) in evals.iter().enumerate() {
-            if !dense.is_zero() {
-                sparse[sparse_index] = (*dense, dense_index);
-                sparse_index += 1;
-            }
-        }
-        drop(_enter_copy);
-        Self::new(num_vars, sparse)
-    }
-
     /// Computes the $\tilde{eq}$ extension polynomial.
     /// return 1 when a == r, otherwise return 0.
     fn compute_chi(a: &[bool], r: &[F]) -> F {
@@ -288,7 +261,14 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         // B is assumed most dense. Parallelism depends on evenly distributing B across threads.
         assert!(b.Z.len() >= a.Z.len() && b.Z.len() >= c.Z.len());
 
-        // TODO(sragss): Explain the strategy
+        // We'd like to scan over 3 SparsePolynomials (a,b,c) in `n` chunks for parallelism.
+        // With dense polynomials we could split directly by index, with SparsePolynomials we don't
+        // know the distribution of indices in the polynomials in advance.
+        // Further, the dense indices do not match: a[i].dense_index != b[i].dense_index != c[i].dense_index
+        // We expect b.len() >> max(a.len(), c.len()), so we'll split b first and use as a guide for (a,c).
+        // We'll split it into `n` chunks of roughly even length, but we will not split "sibling" dense indices across
+        // chunks as the presence of the pair is relevant to downstream algos.
+        // Dense siblings: (0,1), (2,3), ...
 
         let (b_chunks, mut dense_ranges) = b.chunk_no_split_siblings(n);
         let highest_non_zero = [&a.Z, &b.Z, &c.Z]
@@ -303,35 +283,38 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         // Create chunks of (a, c) which overlap with b's sparse indices
         let mut a_chunks: Vec<&[(F, usize)]> = vec![&[]; n];
         let mut c_chunks: Vec<&[(F, usize)]> = vec![&[]; n];
-        let mut a_i = 0;
-        let mut c_i = 0;
+        let mut a_sparse_i = 0;
+        let mut c_sparse_i = 0;
         let span = tracing::span!(tracing::Level::DEBUG, "a_c_chunking");
         let _enter = span.enter();
+        // Using b's dense_ranges as a guide, fill out (a_chunks, c_chunks)
         for (chunk_index, range) in dense_ranges.iter().enumerate().skip(1) {
             // Find the corresponding a, c chunks
-            let prev_chunk_end = range.0;
+            let dense_range_end = range.0;
 
-            if a_i < a.Z.len() && a.Z[a_i].1 < prev_chunk_end {
-                let a_start = a_i;
-                while a_i < a.Z.len() && a.Z[a_i].1 < prev_chunk_end {
-                    a_i += 1;
+            if a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
+                let a_start = a_sparse_i;
+                // Scan over a until the corresponding dense index is out of range
+                while a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
+                    a_sparse_i += 1;
                 }
 
-                a_chunks[chunk_index - 1] = &a.Z[a_start..a_i];
+                a_chunks[chunk_index - 1] = &a.Z[a_start..a_sparse_i];
             }
 
-            if c_i < c.Z.len() && c.Z[c_i].1 < prev_chunk_end {
-                let c_start = c_i;
-                while c_i < c.Z.len() && c.Z[c_i].1 < prev_chunk_end {
-                    c_i += 1;
+            if c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
+                let c_start = c_sparse_i;
+                // Scan over c until the corresponding dense index is out of range
+                while c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
+                    c_sparse_i += 1;
                 }
 
-                c_chunks[chunk_index - 1] = &c.Z[c_start..c_i];
+                c_chunks[chunk_index - 1] = &c.Z[c_start..c_sparse_i];
             }
         }
         drop(_enter);
-        a_chunks[n - 1] = &a.Z[a_i..];
-        c_chunks[n - 1] = &c.Z[c_i..];
+        a_chunks[n - 1] = &a.Z[a_sparse_i..];
+        c_chunks[n - 1] = &c.Z[c_sparse_i..];
 
         #[cfg(test)]
         {
@@ -340,6 +323,7 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
             assert_eq!(c_chunks.concat(), c.Z);
         }
 
+        // Assemble the triple iterator objects
         let mut iterators: Vec<SparseTripleIterator<'a, F>> = Vec::with_capacity(n);
         for (((a_chunk, b_chunk), c_chunk), range) in a_chunks
             .iter()
@@ -548,7 +532,7 @@ mod tests {
 
         let r = Fr::from(121);
         sparse.bound_poly_var_bot(&r);
-        dense.bound_poly_var_bot(&r);
+        dense.bound_poly_var_bot_01_optimized(&r);
         assert_eq!(sparse.to_dense(), dense);
     }
 
@@ -564,7 +548,7 @@ mod tests {
 
         let r = Fr::from(121);
         sparse.bound_poly_var_bot(&r);
-        dense.bound_poly_var_bot(&r);
+        dense.bound_poly_var_bot_01_optimized(&r);
         assert_eq!(sparse.to_dense(), dense);
     }
 
@@ -595,7 +579,7 @@ mod tests {
 
         let r = Fr::from(121);
         sparse.bound_poly_var_bot(&r);
-        dense.bound_poly_var_bot(&r);
+        dense.bound_poly_var_bot_01_optimized(&r);
         assert_eq!(sparse.to_dense(), dense);
     }
 

@@ -3429,7 +3429,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "SLL",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shl(cpu.x[f.rs2] as u32));
+            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shl(cpu.x[f.rs2] as u32 & 0b11111));
             Ok(())
         },
         disassemble: dump_format_r,
@@ -3543,7 +3543,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "SRA",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shr(cpu.x[f.rs2] as u32));
+            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shr(cpu.x[f.rs2] as u32 & 0b11111));
             Ok(())
         },
         disassemble: dump_format_r,
@@ -3631,7 +3631,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let f = parse_format_r(word);
             cpu.x[f.rd] = cpu.sign_extend(
                 cpu.unsigned_data(cpu.x[f.rs1])
-                    .wrapping_shr(cpu.x[f.rs2] as u32) as i64,
+                    .wrapping_shr(cpu.x[f.rs2] as u32 & 0b11111) as i64,
             );
             Ok(())
         },

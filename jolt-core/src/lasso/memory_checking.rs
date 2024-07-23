@@ -35,10 +35,10 @@ pub struct MultisetHashes<F: JoltField> {
 
 impl<F: JoltField> MultisetHashes<F> {
     pub fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_scalars(b"Read multiset hashes", &self.read_hashes);
-        transcript.append_scalars(b"Write multiset hashes", &self.write_hashes);
-        transcript.append_scalars(b"Init multiset hashes", &self.init_hashes);
-        transcript.append_scalars(b"Final multiset hashes", &self.final_hashes);
+        transcript.append_scalars(&self.read_hashes);
+        transcript.append_scalars(&self.write_hashes);
+        transcript.append_scalars(&self.init_hashes);
+        transcript.append_scalars(&self.final_hashes);
     }
 }
 
@@ -160,8 +160,8 @@ where
         Vec<F>,
     ) {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
+        let gamma: F = transcript.challenge_scalar();
+        let tau: F = transcript.challenge_scalar();
 
         transcript.append_protocol_name(Self::protocol_name());
 
@@ -333,8 +333,8 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
+        let gamma: F = transcript.challenge_scalar();
+        let tau: F = transcript.challenge_scalar();
 
         transcript.append_protocol_name(Self::protocol_name());
 

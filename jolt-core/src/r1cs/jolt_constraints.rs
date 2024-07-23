@@ -129,8 +129,9 @@ pub enum JoltIn {
     IF_MulHu,
     IF_Virt_Adv,
     IF_Virt_Assert_LTE,
-    IF_Virt_Assert_LT_ABS,
-    IF_Virt_Assert_EQ_SIGNS,
+    IF_Virt_Assert_VALID_SIGNED_REMAINDER,
+    IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
+    IF_Virt_Assert_VALID_DIV0,
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
 impl ConstraintInput for JoltIn {}
@@ -154,7 +155,7 @@ impl UniformJoltConstraints {
 impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_EQ_SIGNS);
+        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_VALID_DIV0);
         for flag in flags {
             cs.constrain_binary(flag);
         }
@@ -295,7 +296,7 @@ mod tests {
     #[test]
     fn instruction_flags_length() {
         assert_eq!(
-            input_range!(JoltIn::IF_Add, JoltIn::IF_Virt_Assert_EQ_SIGNS).len(),
+            input_range!(JoltIn::IF_Add, JoltIn::IF_Virt_Assert_VALID_DIV0).len(),
             RV32I::COUNT
         );
     }

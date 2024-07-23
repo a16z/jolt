@@ -125,17 +125,11 @@ pub struct JoltCommitments<PCS: CommitmentScheme> {
 
 impl<PCS: CommitmentScheme> JoltCommitments<PCS> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        self.bytecode.append_to_transcript(b"bytecode", transcript);
-        self.read_write_memory
-            .append_to_transcript(b"read_write_memory", transcript);
-        self.timestamp_range_check
-            .append_to_transcript(b"timestamp_range_check", transcript);
-        self.instruction_lookups
-            .append_to_transcript(b"instruction_lookups", transcript);
-        self.r1cs
-            .as_ref()
-            .unwrap()
-            .append_to_transcript(b"r1cs", transcript);
+        self.bytecode.append_to_transcript(transcript);
+        self.read_write_memory.append_to_transcript(transcript);
+        self.timestamp_range_check.append_to_transcript(transcript);
+        self.instruction_lookups.append_to_transcript(transcript);
+        self.r1cs.as_ref().unwrap().append_to_transcript(transcript);
     }
 }
 
@@ -375,7 +369,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             padded_trace_length,
         );
 
-        transcript.append_scalar(b"spartan key", &spartan_key.vk_digest);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         jolt_commitments.r1cs = Some(r1cs_commitments);
         jolt_commitments.append_to_transcript(&mut transcript);
@@ -439,7 +433,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
-        transcript.append_scalar(b"spartan key", &proof.r1cs.key.vk_digest);
+        transcript.append_scalar(&proof.r1cs.key.vk_digest);
 
         commitments.append_to_transcript(&mut transcript);
 
@@ -688,16 +682,16 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         program_io: &JoltDevice,
         trace_length: usize,
     ) {
-        transcript.append_u64(b"Unpadded trace length", trace_length as u64);
-        transcript.append_u64(b"C", C as u64);
-        transcript.append_u64(b"M", M as u64);
-        transcript.append_u64(b"# instructions", Self::InstructionSet::COUNT as u64);
-        transcript.append_u64(b"# subtables", Self::Subtables::COUNT as u64);
-        transcript.append_u64(b"Max input size", program_io.memory_layout.max_input_size);
-        transcript.append_u64(b"Max output size", program_io.memory_layout.max_output_size);
-        transcript.append_bytes(b"Program inputs", &program_io.inputs);
-        transcript.append_bytes(b"Program outputs", &program_io.outputs);
-        transcript.append_u64(b"Program panic", program_io.panic as u64);
+        transcript.append_u64(trace_length as u64);
+        transcript.append_u64(C as u64);
+        transcript.append_u64(M as u64);
+        transcript.append_u64(Self::InstructionSet::COUNT as u64);
+        transcript.append_u64(Self::Subtables::COUNT as u64);
+        transcript.append_u64(program_io.memory_layout.max_input_size);
+        transcript.append_u64(program_io.memory_layout.max_output_size);
+        transcript.append_bytes(&program_io.inputs);
+        transcript.append_bytes(&program_io.outputs);
+        transcript.append_u64(program_io.panic as u64);
     }
 }
 

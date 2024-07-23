@@ -104,7 +104,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar(b"t"))
+            .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
@@ -112,20 +112,20 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let aux = &segmented_padded_witness.segments[I::COUNT..];
         let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
 
-        let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
+        let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
-            if B.is_zero() || C.is_zero() {
-                if D.is_zero() {
+            if az.is_zero() || bz.is_zero() {
+                if cz.is_zero() {
                     F::zero()
                 } else {
-                    *A * (-(*D))
+                    *eq * (-(*cz))
                 }
             } else {
-                let inner = *B * *C - *D;
+                let inner = *az * *bz - *cz;
                 if inner.is_zero() {
                     F::zero()
                 } else {
-                    *A * inner
+                    *eq * inner
                 }
             }
         };
@@ -151,14 +151,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             outer_sumcheck_claims[2],
             outer_sumcheck_claims[3],
         );
-        ProofTranscript::append_scalars(
-            transcript,
-            b"claims_outer",
-            [claim_Az, claim_Bz, claim_Cz].as_slice(),
-        );
+        ProofTranscript::append_scalars(transcript, [claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
-        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = claim_Az
             + r_inner_sumcheck_RLC * claim_Bz
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
@@ -232,7 +228,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar(b"t"))
+            .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
 
         let (claim_outer_final, r_x) = self
@@ -252,7 +248,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         }
 
         transcript.append_scalars(
-            b"claims_outer",
             [
                 self.outer_sumcheck_claims.0,
                 self.outer_sumcheck_claims.1,
@@ -262,7 +257,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         );
 
         // inner sum-check
-        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r_inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * self.outer_sumcheck_claims.2;

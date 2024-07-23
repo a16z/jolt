@@ -91,7 +91,7 @@ mod test {
     use super::MOVSIGNInstruction;
 
     #[test]
-    fn movsign_instruction_32_e2e() {
+    fn virtual_movsign_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
@@ -105,7 +105,7 @@ mod test {
     }
 
     #[test]
-    fn movsign_instruction_64_e2e() {
+    fn virtual_movsign_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;

@@ -221,15 +221,15 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         }
 
         // We bind to these polynomials
-        transcript.append_scalars(b"grand product claim", &products);
+        transcript.append_scalars(&products);
         let g_commitment = C::batch_commit_polys(&g_polys, setup, BatchType::Big);
         for g in g_commitment.iter() {
-            g.append_to_transcript(b"f commitment", transcript);
+            g.append_to_transcript(transcript);
         }
 
         // Now we do the sumcheck using the prove arbitrary
         // First instantiate our polynomials
-        let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", v_variables);
+        let tau: Vec<C::Field> = transcript.challenge_vector(v_variables);
         let evals: DensePolynomial<<C as CommitmentScheme>::Field> =
             DensePolynomial::new(EqPolynomial::evals(&tau));
         //We add evals as the second to last polynomial in the sumcheck
@@ -243,8 +243,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         sumcheck_polys.push(eq_sum);
 
         // Sample a constant to do a random linear combination to combine the sumchecks
-        let r_combination: Vec<C::Field> =
-            transcript.challenge_vector(b"for the random linear comb", g_polys.len());
+        let r_combination: Vec<C::Field> = transcript.challenge_vector(g_polys.len());
 
         // We define a closure using vals[i] = f(1, x), vals[i+1] = f(x, 0), vals[i+2] = f(x, 1)
         let output_check_fn = |vals: &[C::Field]| -> C::Field {
@@ -333,15 +332,14 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         setup: &C::Setup,
     ) -> Result<(Vec<C::Field>, Vec<C::Field>), QuarkError> {
         // First we append the claimed values for the commitment and the product
-        transcript.append_scalars(b"grand product claim", claims);
+        transcript.append_scalars(claims);
         for g in self.g_commitment.iter() {
-            g.append_to_transcript(b"f commitment", transcript);
+            g.append_to_transcript(transcript);
         }
 
         //Next sample the tau and construct the evals poly
-        let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", n_rounds);
-        let r_combination: Vec<C::Field> =
-            transcript.challenge_vector(b"for the random linear comb", self.g_commitment.len());
+        let tau: Vec<C::Field> = transcript.challenge_vector(n_rounds);
+        let r_combination: Vec<C::Field> = transcript.challenge_vector(self.g_commitment.len());
 
         // Our sumcheck is expected to equal the RLC of the claims
         let claim_rlc: C::Field = claims
@@ -538,9 +536,9 @@ fn line_reduce<C: CommitmentScheme>(
         .collect();
 
     // We add these to the transcript then sample an r which depends on them all
-    transcript.append_scalars(b"claims for line reduction 0", &openings_0);
-    transcript.append_scalars(b"claims for line reduction 1", &openings_1);
-    let rand: C::Field = transcript.challenge_scalar(b"loading r_star");
+    transcript.append_scalars(&openings_0);
+    transcript.append_scalars(&openings_1);
+    let rand: C::Field = transcript.challenge_scalar();
 
     // Now calculate l(rand) = r.rand if is before or rand.r if not is before
     let mut r_star = r.to_vec();
@@ -589,9 +587,9 @@ fn line_reduce_verify<F: JoltField>(
     transcript: &mut ProofTranscript,
 ) -> (Vec<F>, Vec<F>) {
     // To get our random we first append the openings data
-    transcript.append_scalars(b"claims for line reduction 0", &data.0);
-    transcript.append_scalars(b"claims for line reduction 1", &data.1);
-    let rand: F = transcript.challenge_scalar(b"loading r_star");
+    transcript.append_scalars(&data.0);
+    transcript.append_scalars(&data.1);
+    let rand: F = transcript.challenge_scalar();
 
     // Compute l(rand) = (r, rand) or (rand,r)
     let mut r_star = r.to_vec();

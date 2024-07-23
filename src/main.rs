@@ -1,3 +1,5 @@
+mod build_wasm;
+
 use std::{
     fs::{self, File},
     io::Write,
@@ -8,6 +10,7 @@ use eyre::Result;
 use rand::prelude::SliceRandom;
 use sysinfo::System;
 
+use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
 
 #[derive(Parser)]
@@ -23,23 +26,32 @@ enum Command {
     New {
         /// Project name
         name: String,
+        /// Whether to generate WASM compatible files
+        #[arg(short, long)]
+        wasm: bool,
     },
     /// Installs the required RISC-V toolchains for Rust
     InstallToolchain,
+    /// Handles preprocessing and generates WASM compatible files
+    BuildWasm,
 }
 
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::New { name } => create_project(name),
+        Command::New { name, wasm } => create_project(name, wasm),
         Command::InstallToolchain => install_toolchain(),
+        Command::BuildWasm => build_wasm(),
     }
 }
 
-fn create_project(name: String) {
+fn create_project(name: String, wasm: bool) {
     create_folder_structure(&name).expect("could not create directory");
     create_host_files(&name).expect("file creation failed");
     create_guest_files(&name).expect("file creation failed");
+    if wasm {
+        modify_cargo_toml(&name).expect("Failed to update Cargo.toml");
+    }
 }
 
 fn install_toolchain() {
