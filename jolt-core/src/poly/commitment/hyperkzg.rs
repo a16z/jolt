@@ -270,7 +270,7 @@ where
     let R = W[0] + W[1] * d_0 + W[2] * d_1;
 
     // Check that e(L, vk.H) == e(R, vk.tau_H)
-    (P::pairing(L, vk.kzg_vk.g2)) == (P::pairing(R, vk.kzg_vk.beta_g2))
+    P::multi_pairing([L, -R], [vk.kzg_vk.g2, vk.kzg_vk.beta_g2]).is_zero()
 }
 
 #[derive(Clone)]
@@ -332,6 +332,9 @@ where
 
             polys.push(Pi);
         }
+
+        assert_eq!(polys.len(), ell);
+        assert_eq!(polys[ell - 1].len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
         // Compute commitments in parallel

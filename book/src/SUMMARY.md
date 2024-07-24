@@ -9,6 +9,7 @@
         - [Hosts](./usage/hosts.md)
     - [Allocators](./usage/allocators.md)
     - [Standard Library](./usage/stdlib.md)
+    - [WASM Support](./usage/wasm_support.md)
     - [Troubleshooting](./usage/troubleshooting.md)
 - [Contributors](./contributors.md)
     - [How it works](./how_it_works.md)

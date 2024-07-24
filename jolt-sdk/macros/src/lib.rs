@@ -537,10 +537,10 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, Proof, RV32IJoltVM};
+                use jolt::{Jolt, RV32IHyraxProof, RV32IJoltVM};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = Proof::deserialize_from_bytes(proof_bytes).unwrap();
+                let proof = RV32IHyraxProof::deserialize_from_bytes(proof_bytes).unwrap();
 
                 let preprocessing = RV32IJoltVM::preprocess(
                     decoded_preprocessing_data.bytecode,
