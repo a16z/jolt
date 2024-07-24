@@ -21,8 +21,5 @@ contract SpartanVerifier is HyperKZG {
     using FrLib for Fr;
     using SumcheckVerifier for SumcheckInstanceProof;
 
-
-    function verifySpartanR1CS(SpartanProof memory proof) internal pure {
-
-    }
+    function verifySpartanR1CS(SpartanProof memory proof) internal pure {}
 }

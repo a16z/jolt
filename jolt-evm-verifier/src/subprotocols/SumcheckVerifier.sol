@@ -14,14 +14,20 @@ library SumcheckVerifier {
     using FiatShamirTranscript for Transcript;
     using FrLib for Fr;
 
-    /// Verifies the sumcheck component pre opening proof. The opening proof must be done 
+    /// Verifies the sumcheck component pre opening proof. The opening proof must be done
     /// later. Since the inputs are not trusted we don't use Fr and instead mod all inputs.
     /// @param transcript The running fiat shamir transcript
     /// @param proof The sumcheck proof
     /// @param claim The claimed sum
     /// @param num_rounds The depth of the sumcheck
     /// @param degree The degree of the interpolating univariate polynomials
-    function verify_sumcheck(Transcript memory transcript, SumcheckInstanceProof memory proof, Fr claim, uint256 num_rounds, uint256 degree) internal pure returns(Fr, Fr[] memory) {
+    function verify_sumcheck(
+        Transcript memory transcript,
+        SumcheckInstanceProof memory proof,
+        Fr claim,
+        uint256 num_rounds,
+        uint256 degree
+    ) internal pure returns (Fr, Fr[] memory) {
         if (proof.compressedPolys.length != num_rounds || degree > 3) {
             revert SumcheckFailed();
         }
@@ -56,18 +62,21 @@ library SumcheckVerifier {
     /// @param compressedCoeffs The compressed coefficients of the poly
     /// @param hint The hint to help recover the linear term
     /// @param point The point we evaluate at
-    function evaluateCompressed(uint256[] memory compressedCoeffs, Fr hint, Fr point) internal pure returns (Fr linear) {
+    function evaluateCompressed(uint256[] memory compressedCoeffs, Fr hint, Fr point)
+        internal
+        pure
+        returns (Fr linear)
+    {
         // Calculate the implied linear term
         // We are anti jumpi and try to minimize them
         Fr c0 = FrLib.from(compressedCoeffs[0]);
         Fr c2 = FrLib.from(compressedCoeffs[1]);
-        Fr c3 = (compressedCoeffs.length == 2) ? Fr.wrap(0): FrLib.from(compressedCoeffs[2]);
-        Fr c1 = hint - Fr.wrap(2)*c0 - c2 - c3;
+        Fr c3 = (compressedCoeffs.length == 2) ? Fr.wrap(0) : FrLib.from(compressedCoeffs[2]);
+        Fr c1 = hint - Fr.wrap(2) * c0 - c2 - c3;
         // Evaluate
         Fr x = point;
-        Fr eval = c0 + c1*x;
-        x = x*x;
-        return(eval + c2*x + c3*x*point);
+        Fr eval = c0 + c1 * x;
+        x = x * x;
+        return (eval + c2 * x + c3 * x * point);
     }
-
 }
