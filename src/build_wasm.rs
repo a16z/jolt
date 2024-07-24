@@ -10,7 +10,7 @@ use eyre::Result;
 use jolt_core::host::{ELFInstruction, Program};
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
-use syn::{Attribute, ItemFn, Meta};
+use syn::{Attribute, ItemFn, Meta, PathSegment};
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
 
 #[derive(Serialize, Deserialize)]
@@ -79,21 +79,12 @@ fn extract_provable_functions() -> Vec<FunctionAttributes> {
 }
 
 fn is_provable(attr: &Attribute) -> bool {
-    if let Some(ident) = attr.path.get_ident() {
-        if ident == "jolt" {
-            if let Ok(syn::Meta::List(meta_list)) = attr.parse_meta() {
-                return meta_list.nested.iter().any(|nested| {
-                    if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested {
-                        if let Some(ident) = path.get_ident() {
-                            return ident == "provable";
-                        }
-                    }
-                    false
-                });
-            }
+    if attr.path.segments.len() == 2 {
+        let segments: Vec<&PathSegment> = attr.path.segments.iter().collect();
+        if let [first, second] = segments.as_slice() {
+            return first.ident == "jolt" && second.ident == "provable";
         }
     }
-
     false
 }
 
@@ -117,13 +108,13 @@ fn is_std() -> Option<bool> {
     let dependencies = doc["dependencies"]["jolt"].as_inline_table()?;
     let package = dependencies.get("package")?.as_str()?;
 
-    let path = dependencies
-        .get("path")
-        .expect("Failed to get path")
+    let git = dependencies
+        .get("git")
+        .expect("Failed to get git-path")
         .as_str()
-        .expect("Failed to get path");
+        .expect("Failed to get git-path as string");
 
-    if package == "jolt-sdk" && path == "../../wasm-jolt/jolt-sdk" {
+    if package == "jolt-sdk" && git == "https://github.com/a16z/jolt" {
         return Some(
             dependencies
                 .get("features")

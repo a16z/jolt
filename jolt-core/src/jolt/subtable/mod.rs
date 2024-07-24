@@ -30,14 +30,17 @@ pub trait JoltSubtableSet<F: JoltField>:
 }
 
 pub mod and;
+pub mod div_by_zero;
 pub mod eq;
 pub mod eq_abs;
-pub mod eq_msb;
-pub mod gt_msb;
 pub mod identity;
+pub mod left_is_zero;
+pub mod left_msb;
 pub mod lt_abs;
 pub mod ltu;
 pub mod or;
+pub mod right_is_zero;
+pub mod right_msb;
 pub mod sign_extend;
 pub mod sll;
 pub mod sra_sign;

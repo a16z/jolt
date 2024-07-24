@@ -22,7 +22,11 @@ pub fn construct_jolt_constraints<F: JoltField>(
         (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
     );
 
-    CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, non_uniform_constraint)
+    CombinedUniformBuilder::construct(
+        uniform_builder,
+        padded_trace_length,
+        vec![non_uniform_constraint],
+    )
 }
 
 // TODO(#377): Dedupe OpFlags / CircuitFlags
@@ -125,8 +129,9 @@ pub enum JoltIn {
     IF_MulHu,
     IF_Virt_Adv,
     IF_Virt_Assert_LTE,
-    IF_Virt_Assert_LT_ABS,
-    IF_Virt_Assert_EQ_SIGNS,
+    IF_Virt_Assert_VALID_SIGNED_REMAINDER,
+    IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
+    IF_Virt_Assert_VALID_DIV0,
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
 impl ConstraintInput for JoltIn {}
@@ -150,7 +155,7 @@ impl UniformJoltConstraints {
 impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_EQ_SIGNS);
+        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_VALID_DIV0);
         for flag in flags {
             cs.constrain_binary(flag);
         }
@@ -282,10 +287,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 mod tests {
     use super::*;
 
-    use crate::{
-        jolt::vm::rv32i_vm::RV32I,
-        r1cs::builder::{CombinedUniformBuilder, OffsetEqConstraint},
-    };
+    use crate::{jolt::vm::rv32i_vm::RV32I, r1cs::builder::CombinedUniformBuilder};
 
     use ark_bn254::Fr;
     use ark_std::Zero;
@@ -294,7 +296,7 @@ mod tests {
     #[test]
     fn instruction_flags_length() {
         assert_eq!(
-            input_range!(JoltIn::IF_Add, JoltIn::IF_Virt_Assert_EQ_SIGNS).len(),
+            input_range!(JoltIn::IF_Add, JoltIn::IF_Virt_Assert_VALID_DIV0).len(),
             RV32I::COUNT
         );
     }
@@ -307,11 +309,8 @@ mod tests {
         jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
-        let combined_builder = CombinedUniformBuilder::construct(
-            uniform_builder,
-            num_steps,
-            OffsetEqConstraint::empty(),
-        );
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction
