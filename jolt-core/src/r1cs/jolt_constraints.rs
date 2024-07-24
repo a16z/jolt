@@ -17,9 +17,9 @@ pub fn construct_jolt_constraints<F: JoltField>(
     constraints.build_constraints(&mut uniform_builder);
 
     let non_uniform_constraint = OffsetEqConstraint::new(
-        (JoltIn::PcIn, true),
+        (JoltIn::Bytecode_ELFAddress, true),
         (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), false),
-        (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
+        (4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS, true),
     );
 
     CombinedUniformBuilder::construct(
@@ -100,7 +100,7 @@ pub enum JoltIn {
     OpFlags_SignImm,
     OpFlags_IsConcat,
     OpFlags_IsVirtualSequence,
-    OpFlags_IsVirtual,
+    OpFlags_IsAssert,
 
     // Instruction Flags
     // Should match JoltInstructionSet
@@ -164,7 +164,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
-        let real_pc = 4i64 * JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RS1_Read);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
@@ -262,7 +262,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
             JoltIn::LookupOutput,
         );
         let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
-        let lhs = JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let lhs = JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
@@ -271,12 +271,12 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         let next_pc_jump = cs.allocate_if_else(
             JoltIn::OpFlags_IsJmp,
             JoltIn::LookupOutput + 4,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + 4,
+            4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + 4,
         );
 
         let next_pc_jump_branch = cs.allocate_if_else(
             branch_and_lookup_output,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed,
+            4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
             next_pc_jump,
         );
         assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);

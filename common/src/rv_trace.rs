@@ -287,7 +287,7 @@ impl ELFInstruction {
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
-        // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
+        // loads, stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
         flags[6] = !matches!(
             self.opcode,
             RV32IM::SB
@@ -301,7 +301,12 @@ impl ELFInstruction {
             | RV32IM::BGEU
             | RV32IM::JAL
             | RV32IM::JALR
-            | RV32IM::LUI,
+            | RV32IM::LUI
+            | RV32IM::VIRTUAL_ASSERT_EQ
+            | RV32IM::VIRTUAL_ASSERT_LTE
+            | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
+            | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
         );
 
         let mask = 1u32 << 31;
