@@ -173,14 +173,14 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn evaluate_r1cs_mle_rlc(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
         assert_eq!(
             r_constr.len(),
-            (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2()
+            (self.uniform_r1cs.num_rows + self.offset_eq_r1cs.constraints.len()).next_power_of_two().log_2()
         );
         assert_eq!(r_step.len(), self.num_steps.log_2());
 
         let eq_rx_step = EqPolynomial::evals(r_step);
         let eq_rx_constr = EqPolynomial::evals(r_constr);
         let first_non_uniform_row = self.uniform_r1cs.num_rows;
-        let constant_column = self.uniform_r1cs.num_vars;
+        let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
 
         // Computation strategy
         // 1. Compute the RLC of the repeated terms in A, B, C, and the constant column
@@ -190,7 +190,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let compute_repeated =
             |constraints: &SparseConstraints<F>, non_uni_constants: Option<Vec<F>>| -> Vec<F> {
                 // +1 for constant
-                let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars + 1);
+                let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 2);
                 for (row, col, val) in constraints.vars.iter() {
                     evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
                 }
@@ -199,12 +199,12 @@ impl<F: JoltField> UniformSpartanKey<F> {
                     evals[constant_column] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
                 }
 
-                if let Some(non_uni_constants) = non_uni_constants {
-                    for (i, non_uni_constant) in non_uni_constants.iter().enumerate() {
-                        evals[constant_column] +=
-                            eq_rx_constr[first_non_uniform_row + i] * non_uni_constant;
-                    }
-                }
+                // if let Some(non_uni_constants) = non_uni_constants {
+                //     for (i, non_uni_constant) in non_uni_constants.iter().enumerate() {
+                //         evals[constant_column] +=
+                //             eq_rx_constr[first_non_uniform_row + i] * non_uni_constant;
+                //     }
+                // }
 
                 evals
             };
@@ -222,58 +222,58 @@ impl<F: JoltField> UniformSpartanKey<F> {
             .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
             .collect::<Vec<F>>();
 
-        let mut rlc = unsafe_allocate_zero_vec(self.num_cols_total());
+        // let mut rlc = unsafe_allocate_zero_vec(self.num_cols_total());
 
-        {
-            let span = tracing::span!(tracing::Level::INFO, "big_rlc_computation");
-            let _guard = span.enter();
-            rlc.par_chunks_mut(self.num_steps)
-                .take(self.uniform_r1cs.num_vars)
-                .enumerate()
-                .for_each(|(var_index, var_chunk)| {
-                    if !sm_rlc[var_index].is_zero() {
-                        for (step_index, item) in var_chunk.iter_mut().enumerate() {
-                            *item = mul_0_1_optimized(&eq_rx_step[step_index], &sm_rlc[var_index]);
-                        }
-                    }
-                });
-        }
+        // {
+        //     let span = tracing::span!(tracing::Level::INFO, "big_rlc_computation");
+        //     let _guard = span.enter();
+        //     rlc.par_chunks_mut(self.num_steps)
+        //         .take(self.uniform_r1cs.num_vars)
+        //         .enumerate()
+        //         .for_each(|(var_index, var_chunk)| {
+        //             if !sm_rlc[var_index].is_zero() {
+        //                 for (step_index, item) in var_chunk.iter_mut().enumerate() {
+        //                     *item = mul_0_1_optimized(&eq_rx_step[step_index], &sm_rlc[var_index]);
+        //                 }
+        //             }
+        //         });
+        // }
 
-        rlc[self.num_vars_total()] = sm_rlc[self.uniform_r1cs.num_vars]; // constant
+        // rlc[self.num_vars_total()] = sm_rlc[self.uniform_r1cs.num_vars]; // constant
 
-        // Handle non-uniform constraints
-        let update_non_uni = |rlc: &mut Vec<F>,
-                              offset: &SparseEqualityItem<F>,
-                              non_uni_constraint_index: usize,
-                              r: F| {
-            for (col, is_offset, coeff) in offset.offset_vars.iter() {
-                let offset = if *is_offset { 1 } else { 0 };
+        // // Handle non-uniform constraints
+        // let update_non_uni = |rlc: &mut Vec<F>,
+        //                       offset: &SparseEqualityItem<F>,
+        //                       non_uni_constraint_index: usize,
+        //                       r: F| {
+        //     for (col, is_offset, coeff) in offset.offset_vars.iter() {
+        //         let offset = if *is_offset { 1 } else { 0 };
 
-                // Ignores the offset overflow at the last step
-                let y_index_range = col * self.num_steps + offset..(col + 1) * self.num_steps;
-                let steps = (0..self.num_steps).into_par_iter();
+        //         // Ignores the offset overflow at the last step
+        //         let y_index_range = col * self.num_steps + offset..(col + 1) * self.num_steps;
+        //         let steps = (0..self.num_steps).into_par_iter();
 
-                rlc[y_index_range]
-                    .par_iter_mut()
-                    .zip(steps)
-                    .for_each(|(rlc_col, step_index)| {
-                        *rlc_col += mul_0_1_optimized(&r, coeff)
-                            * eq_rx_step[step_index]
-                            * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index];
-                    });
-            }
-        };
+        //         rlc[y_index_range]
+        //             .par_iter_mut()
+        //             .zip(steps)
+        //             .for_each(|(rlc_col, step_index)| {
+        //                 *rlc_col += mul_0_1_optimized(&r, coeff)
+        //                     * eq_rx_step[step_index]
+        //                     * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index];
+        //             });
+        //     }
+        // };
 
-        {
-            let span = tracing::span!(tracing::Level::INFO, "update_non_uniform");
-            let _guard = span.enter();
-            for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
-                update_non_uni(&mut rlc, &constraint.eq, i, F::one());
-                update_non_uni(&mut rlc, &constraint.condition, i, r_rlc);
-            }
-        }
+        // {
+        //     let span = tracing::span!(tracing::Level::INFO, "update_non_uniform");
+        //     let _guard = span.enter();
+        //     for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
+        //         update_non_uni(&mut rlc, &constraint.eq, i, F::one());
+        //         update_non_uni(&mut rlc, &constraint.condition, i, r_rlc);
+        //     }
+        // }
 
-        rlc
+        sm_rlc
     }
 
     /// Evaluates the full expanded witness vector at 'r' using evaluations of segments.

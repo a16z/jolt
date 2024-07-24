@@ -437,7 +437,7 @@ impl<F: JoltField> SegmentedPaddedWitness<F> {
     }
 
     #[tracing::instrument(skip_all, name = "SegmentedPaddedWitness::evaluate_all")]
-    pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
+    pub fn evaluate_all(&self, point: &[F]) -> Vec<F> {
         let chi = EqPolynomial::evals(&point);
         assert!(chi.len() >= self.segment_len);
 

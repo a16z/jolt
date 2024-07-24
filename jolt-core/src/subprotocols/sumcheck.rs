@@ -171,7 +171,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             compressed_polys.push(round_compressed_poly);
         }
 
-        let final_evals = polys.iter().map(|poly| poly[0]).collect();
+        let final_evals = polys.iter().map(|poly| {
+            assert_eq!(poly.len(), 1);
+            poly[0]
+        }).collect();
 
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
     }
@@ -446,6 +449,8 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             }
         }
 
+        assert_eq!(poly_A.len(), 1);
+        assert_eq!(poly_B.len(), 1);
         let evals = vec![poly_A[0], poly_B[0]];
         drop_in_background_thread(poly_B);
 

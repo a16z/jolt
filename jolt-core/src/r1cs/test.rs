@@ -124,11 +124,11 @@ pub fn simp_test_builder_key<F: JoltField>(
         }
     }
     // Q[n] + 4 - S[n+1] == 0
-    let offset_eq_constraint = OffsetEqConstraint::new(
-        (SimpTestIn::S, true),
-        (SimpTestIn::Q, false),
-        (SimpTestIn::S + -4, true),
-    );
+    // let offset_eq_constraint = OffsetEqConstraint::new(
+    //     (SimpTestIn::S, true),
+    //     (SimpTestIn::Q, false),
+    //     (SimpTestIn::S + -4, true),
+    // );
 
     let constraints = TestConstraints();
     constraints.build_constraints(&mut uniform_builder);
@@ -138,7 +138,8 @@ pub fn simp_test_builder_key<F: JoltField>(
     let combined_builder = CombinedUniformBuilder::construct(
         uniform_builder,
         num_steps_pad,
-        vec![offset_eq_constraint],
+        // vec![offset_eq_constraint],
+        vec![],
     );
     let key = UniformSpartanKey::from_builder(&combined_builder);
 

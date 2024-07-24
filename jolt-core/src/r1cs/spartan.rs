@@ -169,20 +169,45 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
+        let mut poly_z: Vec<F> = segmented_padded_witness.clone().segments.into_iter().map(|mut item| {
+                println!("pre segment len: {}", item.len());
+                item.resize(item.len().next_power_of_two(), F::zero());
+                item
+            }).flatten().collect();
+        poly_z.resize(poly_z.len().next_power_of_two(), F::zero());
+        poly_z.push(F::one());
+        poly_z.resize(poly_z.len().next_power_of_two(), F::zero());
+        println!("poly_z.len(): {}", poly_z.len());
+        let mut poly_z = DensePolynomial::new(poly_z);
+        println!("prover rx_ts.len(): {}", rx_ts.len());
+        for r in rx_ts.iter().rev() {
+            poly_z.bound_poly_var_bot(r);
+        }
+
+        assert_eq!(poly_z.len(), poly_ABC.len());
+
+        let comb_func = |items: &[F]| -> F {
+            assert_eq!(items.len(), 2);
+            items[0] * items[1]
+        };
+        let num_rounds = poly_z.len().log_2();
+        println!("prover num_rounds {num_rounds}");
+        let mut polys = vec![poly_ABC, poly_z];
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
-                &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
-                num_rounds_y,
-                &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                &segmented_padded_witness,
-                transcript,
-            );
-        drop_in_background_thread(poly_ABC);
+        SumcheckInstanceProof::prove_arbitrary(&claim_inner_joint, num_rounds, &mut polys, comb_func, 2, transcript);
+            // SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
+            //     &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
+            //     num_rounds_y,
+            //     &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
+            //     &segmented_padded_witness,
+            //     transcript,
+            // );
+        drop_in_background_thread(polys);
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
-        let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
-        let witness_evals = segmented_padded_witness.evaluate_all(r_col_step.to_owned());
+        // let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
+        let witness_evals = segmented_padded_witness.evaluate_all(&inner_sumcheck_r);
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
             segmented_padded_witness.into_dense_polys();
@@ -191,7 +216,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let opening_proof = C::batch_prove(
             generators,
             &witness_segment_polys_ref,
-            r_col_step,
+            &inner_sumcheck_r[..inner_sumcheck_r.len() - 1],
             &witness_evals,
             BatchType::Big,
             transcript,
@@ -224,7 +249,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
-        let num_rounds_y = key.num_cols_total().log_2();
+        let num_rounds_y = (key.num_vars_total() / key.num_steps).log_2() + 1;
 
         // outer sum-check
         let tau = (0..num_rounds_x)
@@ -237,7 +262,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
 
         // Outer sumcheck is bound from the top, reverse the fiat shamir randomness
-        let r_x: Vec<F> = r_x.into_iter().rev().collect();
+        let tau_r_x: Vec<F> = r_x.clone().into_iter().rev().collect();
+
+        let num_steps_bits = key.num_steps
+            .next_power_of_two()
+            .ilog2();
+        let (rx_con, rx_ts) =
+            r_x.split_at(r_x.len() - num_steps_bits as usize);
 
         // verify claim_outer_final
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
@@ -270,10 +301,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         // n_prefix = n_segments + 1
         let n_prefix = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
 
-        let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &inner_sumcheck_r);
-
         let r_y = inner_sumcheck_r.clone();
-        let r = [r_x, r_y].concat();
+        println!("inner_sumcheck_r.len(): {}", inner_sumcheck_r.len());
+        println!("rx_ts.len(): {}", rx_ts.len());
+        let z_r = [inner_sumcheck_r, rx_ts.to_vec()].concat();
+        let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &z_r);
+
+        let r = [r_x, r_y.clone()].concat();
         let (eval_a, eval_b, eval_c) = key.evaluate_r1cs_matrix_mles(&r);
 
         let left_expected = eval_a
@@ -285,7 +319,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        let r_y_point = &inner_sumcheck_r[n_prefix..];
+        let r_y_point = &r_y[n_prefix..];
         C::batch_verify(
             &self.opening_proof,
             generators,
