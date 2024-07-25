@@ -5,6 +5,7 @@ use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::special_polys::SegmentedPaddedWitness;
+use crate::utils::index_to_field_bitvector;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
@@ -158,6 +159,41 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let claim_inner_joint = claim_Az
             + r_inner_sumcheck_RLC * claim_Bz
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
+        println!("Prover claim_inner_joint: {claim_inner_joint:?}");
+        println!("claim_Az: {claim_Az:?}");
+        println!("claim_Bz: {claim_Bz:?}");
+        println!("claim_Cz: {claim_Cz:?}");
+
+
+        // TODO(sragss):
+        // - Variables for bit lens + magnitudes
+        // - Concat Z
+        // - Eval MLE
+        // - Sumcheck (arbitrary)
+        let height = constraint_builder.constraint_rows();
+        let num_constraints = constraint_builder.num_constraints();
+        let num_steps = constraint_builder.uniform_repeat();
+        let num_vars = constraint_builder.num_vars();
+        assert_eq!(height.next_power_of_two(), num_constraints.next_power_of_two() * num_steps.next_power_of_two());
+        let width = (num_vars.next_power_of_two() * num_steps.next_power_of_two()) * 2;
+        let num_constraints_bits = num_constraints.log_2();
+        let r_x_step = &outer_sumcheck_r[num_constraints_bits..];
+
+        let mut z: Vec<F> = segmented_padded_witness.clone().segments.into_iter().map(|mut segment| {
+            segment.resize(segment.len().next_power_of_two(), F::zero());
+            segment
+        }).flatten().collect();
+        z.resize(z.len().next_power_of_two(), F::zero());
+        z.push(F::one());
+        z.resize(z.len().next_power_of_two(), F::zero());
+
+        let mut poly_z = DensePolynomial::new(z);
+        println!("r_x_step {r_x_step:?}");
+        for r_s in r_x_step.iter().rev() {
+            poly_z.bound_poly_var_bot(r_s);
+        }
+        println!("poly_z, {poly_z:?}");
+        assert_eq!(poly_z.len(), num_vars.next_power_of_two() * 2);
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
         let num_steps_bits = constraint_builder
@@ -166,23 +202,58 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .ilog2();
         let (rx_con, rx_ts) =
             outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
-        let mut poly_ABC =
+        let poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
+        assert_eq!(poly_z.len(), poly_ABC.len());
 
+        // RLC_ABC(r_x_constraint, r_x_step, r_y_const, r_y_variable, r_x_step)
+        // Degrees of freedom: r_y_const, r_y_variable, so evaluate over the boolean hypercube
+        // TODO(sragss): Test more of the points on polyABC vs full evaluation.
+        // println!("Prover RLC_ABC(rx_con, rx_ts) -> rx_con = {rx_con:?}, rx_ts = {rx_ts:?}");
+        // println!("Prover polyABC[0,..,0]= {:?}", poly_ABC[0]);
+        // println!("Prover polyABC[1]= {:?}", poly_ABC[1]);
+        // println!("Prover polyABC[1,0,..,0]= {:?}", poly_ABC[poly_ABC.len() / 2]);
+        // println!("Prover polyABC[0,1,..,1]= {:?}", poly_ABC[(poly_ABC.len() / 2) - 1]);
+        // println!("Prover polyABC[1,..,1]= {:?}", poly_ABC[poly_ABC.len() - 1]);
+
+        // TODO(sragss): z could be wrong!!!! EVALUATE ALL OF Z
+
+        let num_rounds = (num_vars.next_power_of_two() * 2).log_2();
+        let mut polys = vec![poly_ABC, poly_z];
+        let comb_func = |stuff: &[F]| -> F {
+            assert_eq!(stuff.len(), 2);
+            stuff[0] * stuff[1]
+        };
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
-                &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
-                num_rounds_y,
-                &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                &segmented_padded_witness,
-                transcript,
-            );
-        drop_in_background_thread(poly_ABC);
+            SumcheckInstanceProof::prove_arbitrary(
+                &claim_inner_joint, 
+                num_rounds, 
+                &mut polys, 
+                comb_func, 
+                2, 
+                transcript);
+        println!("Prover inner_sumcheck_r: {inner_sumcheck_r:?}");
+        println!("Prover RLC(x,y'): {:?}", _claims_inner[0]);
+        println!("Prover Z(y'): {:?}", _claims_inner[1]);
+        println!("Prove claims combined: {:?}", _claims_inner[0] * _claims_inner[1]);
+        // TODO(sragss): Why is inner_sumcheck_r unused
+        
+
+        // let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+        //     SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
+        //         &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
+        //         num_rounds_y,
+        //         &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
+        //         &segmented_padded_witness,
+        //         transcript,
+        //     );
+        drop_in_background_thread(polys);
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
-        let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
-        let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
-        let witness_evals = segmented_padded_witness.evaluate_all(r_col_step.to_owned());
+        // let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
+        // let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
+        let r_z = r_x_step;
+        let witness_evals = segmented_padded_witness.evaluate_all(r_z.to_owned());
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
             segmented_padded_witness.into_dense_polys();
@@ -191,7 +262,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let opening_proof = C::batch_prove(
             generators,
             &witness_segment_polys_ref,
-            r_col_step,
+            r_z,
             &witness_evals,
             BatchType::Big,
             transcript,
@@ -261,26 +332,52 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r_inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
+        println!("Verifier claim_inner_joint: {claim_inner_joint:?}");
 
+        let num_rounds = (key.num_vars() * 2).next_power_of_two().log_2();
+        // TODO(sragss): claim_inner_final does not agree with the self calculation nor the prover claim
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
-            .verify(claim_inner_joint, num_rounds_y, 2, transcript)
+            .verify(claim_inner_joint, num_rounds, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
+        println!("Verifier inner_sumcheck_r {inner_sumcheck_r:?}");
 
         // n_prefix = n_segments + 1
         let n_prefix = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
 
-        let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &inner_sumcheck_r);
+        // TODO(sragss): Prepend outersumcheck r_step
+        let constraint_bits = key.uniform_r1cs.num_rows.next_power_of_two().log_2();
+        let outer_sumcheck_r_step = &r_x[constraint_bits..];
+        let y_prime = [inner_sumcheck_r.to_owned(), outer_sumcheck_r_step.to_owned()].concat();
+        let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &y_prime);
 
-        let r_y = inner_sumcheck_r.clone();
-        let r = [r_x, r_y].concat();
+        // let r_y = inner_sumcheck_r.clone();
+        println!("y_prime.len() {}", y_prime.len());
+        let var_and_const_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
+        let variable_zero= index_to_field_bitvector(1, var_and_const_bits);
+        let r_0: Vec<F> = [&r_x, &variable_zero, outer_sumcheck_r_step].concat();
+        let (a_0, b_0, c_0) = key.evaluate_r1cs_matrix_mles(&r_0);
+        let rlc = a_0
+            + r_inner_sumcheck_RLC * b_0
+            + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * c_0;
+        println!("Verifier rlc[0] = {rlc:?}");
+
+
+
+
+        let r = [r_x, y_prime.to_owned()].concat(); // TODO(sragss): This is questionable at best.
+        // TODO(sragss): This is now unhappy with what we're delivering
         let (eval_a, eval_b, eval_c) = key.evaluate_r1cs_matrix_mles(&r);
+        println!("Verifier RLC_ABC(r) -> r = {r:?}");
 
         let left_expected = eval_a
             + r_inner_sumcheck_RLC * eval_b
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * eval_c;
         let right_expected = eval_Z;
+        println!("Verifier RLC(x,y'): {left_expected:?}");
+        println!("Verifier Z(y'): {right_expected:?}");
         let claim_inner_final_expected = left_expected * right_expected;
+        assert_eq!(claim_inner_final, claim_inner_final_expected);
         if claim_inner_final != claim_inner_final_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }

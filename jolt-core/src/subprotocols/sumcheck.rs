@@ -6,7 +6,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{IndexablePoly, SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::mul_0_optimized;
+use crate::utils::{index_to_field_bitvector, mul_0_optimized};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
@@ -92,6 +92,20 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        #[cfg(test)]
+        {
+            let total_evals = 1 << num_rounds;
+            let mut sum = F::zero();
+            println!("z hyb {:?}", F::from_u64(2).unwrap() * polys[1][4]);
+            for i in 0..total_evals {
+                // let index = index_to_field_bitvector(i, num_rounds);
+                let params: Vec<F> = polys.iter().map(|poly| poly[i]).collect();
+                sum += comb_func(&params);
+                println!("sum += comb({params:?})                 sum {sum:?}");
+            }
+            assert_eq!(&sum, _claim, "Claim is wrong");
+        }
+
         for _round in 0..num_rounds {
             // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
             // for points {0, ..., |g(x)|}
@@ -171,7 +185,11 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             compressed_polys.push(round_compressed_poly);
         }
 
-        let final_evals = polys.iter().map(|poly| poly[0]).collect();
+        let final_evals = polys.iter().map(|poly| 
+            {
+                assert_eq!(poly.len(), 1);
+                poly[0]
+        }).collect();
 
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
     }
@@ -531,6 +549,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             }
 
             // check if G_k(0) + G_k(1) = e
+            println!("ROUND {i}");
             assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
             // append the prover's message to the transcript

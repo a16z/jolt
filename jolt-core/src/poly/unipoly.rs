@@ -127,10 +127,10 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {
-        let coeffs_except_linear_term = [&self.coeffs[..1], &self.coeffs[2..]].concat();
-        debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
+        // let coeffs_except_linear_term = [&self.coeffs[..1], &self.coeffs[2..]].concat();
+        // debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
         CompressedUniPoly {
-            coeffs_except_linear_term,
+            coeffs_except_linear_term: self.coeffs.clone(),
         }
     }
 
@@ -211,16 +211,16 @@ impl<F: JoltField> CompressedUniPoly<F> {
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {
-        let mut linear_term =
-            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
-        for i in 1..self.coeffs_except_linear_term.len() {
-            linear_term -= self.coeffs_except_linear_term[i];
-        }
+        // let mut linear_term =
+        //     *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
+        // for i in 1..self.coeffs_except_linear_term.len() {
+        //     linear_term -= self.coeffs_except_linear_term[i];
+        // }
 
-        let mut coeffs = vec![self.coeffs_except_linear_term[0], linear_term];
-        coeffs.extend(&self.coeffs_except_linear_term[1..]);
-        assert_eq!(self.coeffs_except_linear_term.len() + 1, coeffs.len());
-        UniPoly { coeffs }
+        // let mut coeffs = vec![self.coeffs_except_linear_term[0], linear_term];
+        // coeffs.extend(&self.coeffs_except_linear_term[1..]);
+        // assert_eq!(self.coeffs_except_linear_term.len() + 1, coeffs.len());
+        UniPoly { coeffs: self.coeffs_except_linear_term.clone() }
     }
 }
 

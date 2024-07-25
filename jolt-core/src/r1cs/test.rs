@@ -77,6 +77,8 @@ pub fn materialize_full_uniform<F: JoltField>(
 ) -> Vec<F> {
     let row_width = 2 * key.num_vars_total().next_power_of_two();
     let col_height = key.num_cons_total;
+    println!("row_width: {row_width}");
+    println!("col_height: {col_height}");
     let total_size = row_width * col_height;
     assert!(total_size.is_power_of_two());
     let mut materialized = vec![F::zero(); total_size];
@@ -109,6 +111,45 @@ pub fn materialize_all<F: JoltField>(key: &UniformSpartanKey<F>) -> (Vec<F>, Vec
         materialize_full_uniform(key, &key.uniform_r1cs.c),
     )
 }
+
+pub fn uniform_only_builder_key<F: JoltField>(
+) -> (CombinedUniformBuilder<F, SimpTestIn>, UniformSpartanKey<F>) {
+    let mut uniform_builder = R1CSBuilder::<F, SimpTestIn>::new();
+    // Q - R == 0
+    // R - S == 0
+    struct TestConstraints();
+    impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+        type Inputs = SimpTestIn;
+        fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+            builder.constrain_eq(SimpTestIn::Q, SimpTestIn::R);
+            builder.constrain_eq(SimpTestIn::R, SimpTestIn::S);
+        }
+    }
+
+    let constraints = TestConstraints();
+    constraints.build_constraints(&mut uniform_builder);
+
+    let _num_steps: usize = 3;
+    let num_steps_pad = 4;
+    let combined_builder = CombinedUniformBuilder::construct(
+        uniform_builder,
+        num_steps_pad,
+        vec![],
+    );
+    let key = UniformSpartanKey::from_builder(&combined_builder);
+
+    (combined_builder, key)
+}
+
+pub fn uniform_only_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
+    let (_, key) = uniform_only_builder_key();
+    let big_a = materialize_full_uniform(&key, &key.uniform_r1cs.a);
+    let big_b = materialize_full_uniform(&key, &key.uniform_r1cs.b);
+    let big_c = materialize_full_uniform(&key, &key.uniform_r1cs.c);
+
+    (big_a, big_b, big_c)
+}
+
 
 pub fn simp_test_builder_key<F: JoltField>(
 ) -> (CombinedUniformBuilder<F, SimpTestIn>, UniformSpartanKey<F>) {

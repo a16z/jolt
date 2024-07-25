@@ -672,6 +672,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
     /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
     pub(super) fn constraint_rows(&self) -> usize {
+        println!("uniform_repeat_constraint_rows: {}", self.uniform_repeat_constraint_rows());
+        println!("offset_eq_constraint_rows: {}", self.offset_eq_constraint_rows());
         self.offset_eq_constraint_rows() + self.uniform_repeat_constraint_rows()
     }
 
@@ -683,6 +685,18 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     pub fn materialize_uniform(&self) -> UniformR1CS<F> {
         self.uniform_builder.materialize()
     }
+
+    /// Number of variables in the uniform instance
+    pub fn num_vars(&self) -> usize {
+        I::COUNT + self.uniform_builder.num_aux()
+    }
+
+    /// Number of constrains without repeat
+    pub fn num_constraints(&self) -> usize {
+        self.offset_equality_constraints.len() + self.uniform_builder.constraints.len()
+    }
+
+
 
     /// Converts builder::OffsetEqConstraints into key::NonUniformR1CSConstraint
     pub fn materialize_offset_eq(&self) -> NonUniformR1CS<F> {
