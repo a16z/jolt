@@ -196,38 +196,21 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
 
         virtual_sequence
     }
+
+    fn sequence_output(x: u64, y: u64) -> u64 {
+        x / y
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     use super::*;
 
     #[test]
-    fn divu_virtual_sequence_32() {
-        let mut rng = test_rng();
-
-        let r_x = rng.next_u64() % 32;
-        let r_y = rng.next_u64() % 32;
-        let rd = rng.next_u64() % 32;
-
-        let x = rng.next_u32() as u64;
-        let y = if r_y == r_x { x } else { rng.next_u32() as u64 };
-        let result = x / y;
-
-        jolt_virtual_sequence_test!(
-            DIVUInstruction::<32>,
-            RV32IM::DIVU, 
-            x, 
-            y, 
-            r_x, 
-            r_y, 
-            rd, 
-            result
-        );
+    fn div_virtual_sequence_32() {
+        jolt_virtual_sequence_test!(DIVUInstruction::<32>, RV32IM::DIVU);
     }
 }

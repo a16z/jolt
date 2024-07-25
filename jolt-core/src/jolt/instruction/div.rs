@@ -193,12 +193,21 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
 
         virtual_sequence
     }
+
+    fn sequence_output(x: u64, y: u64) -> u64 {
+        let x = x as i32;
+        let y = y as i32;
+        let mut quotient = x / y;
+        let remainder = x % y;
+        if (remainder < 0 && y > 0) || (remainder > 0 && y < 0) {
+            quotient -= 1;
+        }
+        quotient as u32 as u64
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
@@ -206,28 +215,6 @@ mod test {
 
     #[test]
     fn div_virtual_sequence_32() {
-        let mut rng = test_rng();
-        let r_x = rng.next_u64() % 32;
-        let r_y = rng.next_u64() % 32;
-        let rd = rng.next_u64() % 32;
-        let x = rng.next_u32() as u64;
-        let y = if r_y == r_x { x } else { rng.next_u32() as u64 };
-        let mut quotient = x as i32 / y as i32;
-        let remainder = x as i32 % y as i32;
-        if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
-            quotient -= 1;
-        }
-        let result = quotient as u32 as u64;
-
-        jolt_virtual_sequence_test!(
-            DIVInstruction::<32>,
-            RV32IM::DIV, 
-            x, 
-            y, 
-            r_x, 
-            r_y, 
-            rd, 
-            result
-        );
+        jolt_virtual_sequence_test!(DIVInstruction::<32>, RV32IM::DIV);
     }
 }

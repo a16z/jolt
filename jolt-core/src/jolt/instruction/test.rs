@@ -28,41 +28,47 @@ macro_rules! jolt_instruction_test {
 #[macro_export]
 /// Tests the consistency and correctness of a virtual instruction sequence.
 /// In detail:
-/// 1. Sets registers given values for `x` and `y`.
+/// 1. Sets the registers to given values for `x` and `y`.
 /// 2. Constructs an `RVTraceRow` with the provided opcode and register values.
-/// 3. Generates the virtual instruction sequence using the specific instruction type.
-/// 4. Iterate over each row in the virtual sequence and validate the state changes
-/// 5. Verifies that the specific registers `r_x` and `r_y` have not been modified (not clobbered).
+/// 3. Generates the virtual instruction sequence using the specified instruction type.
+/// 4. Iterates over each row in the virtual sequence and validates the state changes.
+/// 5. Verifies that the registers `r_x` and `r_y` have not been modified (not clobbered).
 /// 6. Ensures that the result of the instruction sequence is correctly written to the `rd` register.
 /// 7. Checks that no unintended modifications have been made to other registers.
-#[macro_export]
 macro_rules! jolt_virtual_sequence_test {
-    ($instr_type:ty, $opcode:expr, $x:expr, $y:expr, $r_x:expr, $r_y:expr, $rd:expr, $result:expr) => {
+    ($instr_type:ty, $opcode:expr) => {
         use ark_std::test_rng;
         use rand_chacha::rand_core::RngCore;
         use crate::jolt::vm::rv32i_vm::RV32I;
         use common::constants::REGISTER_COUNT;
 
         let mut rng = test_rng();
+        let r_x = rng.next_u64() % 32;
+        let r_y = rng.next_u64() % 32;
+        let rd = rng.next_u64() % 32;
+        let x = rng.next_u32() as u64;
+        let y = if r_y == r_x { x } else { rng.next_u32() as u64 };
+        
+        let result = <$instr_type>::sequence_output(x, y);
 
         let mut registers = vec![0u64; REGISTER_COUNT as usize];
-        registers[$r_x as usize] = $x;
-        registers[$r_y as usize] = $y;
+        registers[r_x as usize] = x;
+        registers[r_y as usize] = y;
 
         let trace_row = RVTraceRow {
             instruction: ELFInstruction {
                 address: rng.next_u64(),
                 opcode: $opcode,
-                rs1: Some($r_x),
-                rs2: Some($r_y),
-                rd: Some($rd),
+                rs1: Some(r_x),
+                rs2: Some(r_y),
+                rd: Some(rd),
                 imm: None,
                 virtual_sequence_index: None,
             },
             register_state: RegisterState {
-                rs1_val: Some($x),
-                rs2_val: Some($y),
-                rd_post_val: Some($result as u64),
+                rs1_val: Some(x),
+                rs2_val: Some(y),
+                rd_post_val: Some(result),
             },
             memory_state: None,
             advice_value: None,
@@ -92,15 +98,15 @@ macro_rules! jolt_virtual_sequence_test {
         }
 
         for (index, val) in registers.iter().enumerate() {
-            if index as u64 == $r_x {
+            if index as u64 == r_x {
                 // Check that r_x hasn't been clobbered
-                assert_eq!(*val, $x);
-            } else if index as u64 == $r_y {
+                assert_eq!(*val, x);
+            } else if index as u64 == r_y {
                 // Check that r_y hasn't been clobbered
-                assert_eq!(*val, $y);
-            } else if index as u64 == $rd {
+                assert_eq!(*val, y);
+            } else if index as u64 == rd {
                 // Check that result was written to rd
-                assert_eq!(*val, $result as u64);
+                assert_eq!(*val, result as u64);
             } else if index < 32 {
                 // None of the other "real" registers were touched
                 assert_eq!(*val, 0, "Other 'real' registers should not be touched");

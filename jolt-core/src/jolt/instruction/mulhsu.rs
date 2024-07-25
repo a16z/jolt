@@ -107,12 +107,24 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
         });
         virtual_sequence
     }
+
+    fn sequence_output(x: u64, y: u64) -> u64 {
+        match WORD_SIZE {
+            32 => {
+                let result = ((x as i32 as i64) * (y as u32 as i64)) >> 32;
+                result as u32 as u64
+            }
+            64 => {
+                let result = ((x as i64 as i128) * (y as u64 as i128)) >> 64;
+                result as u64
+            }
+            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
@@ -120,25 +132,6 @@ mod test {
 
     #[test]
     fn mulhsu_virtual_sequence_32() {
-        let mut rng = test_rng();
-
-        let r_x = rng.next_u64() % 32;
-        let r_y = rng.next_u64() % 32;
-        let rd = rng.next_u64() % 32;
-
-        let x = rng.next_u32() as u64;
-        let y = if r_x == r_y { x } else { rng.next_u32() as u64 };
-        let result = ((i128::from(x as i32) * i128::from(y)) >> 32) as u32;
-
-        jolt_virtual_sequence_test!(
-            MULHSUInstruction::<32>,
-            RV32IM::MULHSU, 
-            x, 
-            y, 
-            r_x, 
-            r_y, 
-            rd, 
-            result
-        );
+        jolt_virtual_sequence_test!(MULHSUInstruction::<32>, RV32IM::MULHSU);
     }
 }

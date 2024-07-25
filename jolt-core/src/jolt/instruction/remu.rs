@@ -174,39 +174,25 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         virtual_sequence
     }
+
+    fn sequence_output(x: u64, y: u64) -> u64 {
+        match WORD_SIZE {
+            32 => (x as u32 % y as u32) as u64,
+            64 => x % y,
+            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     use super::*;
 
     #[test]
-    fn remu_virtual_sequence_32() {
-        let mut rng = test_rng();
-
-        let r_x = rng.next_u64() % 32;
-        let r_y = rng.next_u64() % 32;
-        let rd = rng.next_u64() % 32;
-
-        let x = rng.next_u32() as u64;
-        let y = if r_x == r_y { x } else { rng.next_u32() as u64 };
-        let quotient = x / y;
-        let result = x - quotient * y;
-
-        jolt_virtual_sequence_test!(
-            REMUInstruction::<32>,
-            RV32IM::REMU, 
-            x, 
-            y, 
-            r_x, 
-            r_y, 
-            rd, 
-            result
-        );
+    fn remu_virtual_sequence_32_new() {
+        jolt_virtual_sequence_test!(REMUInstruction::<32>, RV32IM::REMU);
     }
 }
