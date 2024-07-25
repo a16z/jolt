@@ -13,7 +13,7 @@ use crate::jolt::instruction::{
 pub struct DIVUInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD_SIZE> {
-    const SEQUENCE_LENGTH: usize = 8;
+    const SEQUENCE_LENGTH: usize = 9;
 
     fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
         assert_eq!(instruction.opcode, RV32IM::DIVU);
@@ -22,8 +22,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
         let r_y = instruction.rs2;
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
-        let v_r: Option<u64> = Some(virtual_register_index(1));
-        let v_qy = Some(virtual_register_index(2));
+        let v_q = Some(virtual_register_index(1));
+        let v_r: Option<u64> = Some(virtual_register_index(2));
+        let v_qy = Some(virtual_register_index(3));
 
         let mut virtual_sequence = Vec::with_capacity(Self::SEQUENCE_LENGTH);
         virtual_sequence.push(ELFInstruction {
@@ -31,7 +32,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             opcode: RV32IM::VIRTUAL_ADVICE,
             rs1: None,
             rs2: None,
-            rd: instruction.rd,
+            rd: v_q,
             imm: None,
             virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
@@ -47,7 +48,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
             opcode: RV32IM::MULU,
-            rs1: instruction.rd,
+            rs1: v_q,
             rs2: r_y,
             rd: v_qy,
             imm: None,
@@ -75,7 +76,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             address: instruction.address,
             opcode: RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
             rs1: r_y,
-            rs2: instruction.rd,
+            rs2: v_q,
             rd: None,
             imm: None,
             virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
@@ -95,6 +96,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             rs1: v_0,
             rs2: r_x,
             rd: None,
+            imm: None,
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
+        });
+        virtual_sequence.push(ELFInstruction {
+            address: instruction.address,
+            opcode: RV32IM::VIRTUAL_MOVE,
+            rs1: v_q,
+            rs2: None,
+            rd: instruction.rd,
             imm: None,
             virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
@@ -209,6 +219,17 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs1_val: Some(add_0),
                 rs2_val: Some(x),
                 rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
+
+        virtual_trace.push(RVTraceRow {
+            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            register_state: RegisterState {
+                rs1_val: Some(q),
+                rs2_val: None,
+                rd_post_val: Some(q),
             },
             memory_state: None,
             advice_value: None,

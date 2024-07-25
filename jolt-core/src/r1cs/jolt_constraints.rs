@@ -106,7 +106,7 @@ pub enum JoltIn {
     LookupOutput,
 
     // Should match rv_trace.to_circuit_flags()
-    OpFlags_IsRs1Rs2,
+    OpFlags_IsPC,
     OpFlags_IsImm,
     OpFlags_IsLoad,
     OpFlags_IsStore,
@@ -144,7 +144,8 @@ pub enum JoltIn {
     IF_Mul,
     IF_MulU,
     IF_MulHu,
-    IF_Virt_Adv,
+    IF_Virt_Advice,
+    IF_Virt_Move,
     IF_Virt_Assert_LTE,
     IF_Virt_Assert_VALID_SIGNED_REMAINDER,
     IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
@@ -157,7 +158,7 @@ pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
-pub const NEXT_PC: usize = 15;
+pub const NEXT_PC: usize = 16;
 
 pub struct UniformJoltConstraints {
     memory_start: u64,
@@ -172,7 +173,7 @@ impl UniformJoltConstraints {
 impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_VALID_DIV0);
+        let flags = input_range!(JoltIn::OpFlags_IsPC, JoltIn::IF_Virt_Assert_VALID_DIV0);
         for flag in flags {
             cs.constrain_binary(flag);
         }
@@ -182,7 +183,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
         let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RS1_Read);
+        let x = cs.allocate_if_else(JoltIn::OpFlags_IsPC, real_pc, JoltIn::RS1_Read);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
             JoltIn::Bytecode_Imm,
@@ -239,8 +240,14 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query, x + y);
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
+        let is_mul = JoltIn::IF_Mul + JoltIn::IF_MulU + JoltIn::IF_MulHu;
+        let product = cs.allocate_prod(x, y);
+        cs.constrain_eq_conditional(is_mul, packed_query, product);
+        cs.constrain_eq_conditional(JoltIn::IF_Movsign + JoltIn::IF_Virt_Move, packed_query, x);
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RS2_Read);
+
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
 
         // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
         let chunked_x = cs.allocate_pack_be(
@@ -347,7 +354,7 @@ mod tests {
 
         // rv_trace::to_circuit_flags
         // all zero for ADD
-        inputs[JoltIn::OpFlags_IsRs1Rs2 as usize][0] = Fr::zero(); // first_operand = rs1
+        inputs[JoltIn::OpFlags_IsPC as usize][0] = Fr::zero(); // first_operand = rs1
         inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
         let aux = combined_builder.compute_aux(&inputs);

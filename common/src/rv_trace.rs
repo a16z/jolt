@@ -114,6 +114,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 | RV32IM::SLTI
                 | RV32IM::SLTIU
                 | RV32IM::JALR
+                | RV32IM::VIRTUAL_MOVE
                 | RV32IM::VIRTUAL_MOVSIGN => [
                     rs1_read(),
                     MemoryOp::noop_read(),
@@ -339,7 +340,12 @@ impl ELFInstruction {
             | RV32IM::BLT
             | RV32IM::BGE
             | RV32IM::BLTU
-            | RV32IM::BGEU,
+            | RV32IM::BGEU
+            | RV32IM::VIRTUAL_ASSERT_EQ
+            | RV32IM::VIRTUAL_ASSERT_LTE
+            | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
 
         flags[9] = self.virtual_sequence_remaining.is_some();
@@ -449,6 +455,7 @@ pub enum RV32IM {
     UNIMPL,
     // Virtual instructions
     VIRTUAL_MOVSIGN,
+    VIRTUAL_MOVE,
     VIRTUAL_ADVICE,
     VIRTUAL_ASSERT_LTE,
     VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
@@ -551,16 +558,17 @@ impl RV32IM {
             RV32IM::REM    |
             RV32IM::REMU => RV32InstructionFormat::R,
 
-            RV32IM::ADDI  |
-            RV32IM::XORI  |
-            RV32IM::ORI   |
-            RV32IM::ANDI  |
-            RV32IM::SLLI  |
-            RV32IM::SRLI  |
-            RV32IM::SRAI  |
-            RV32IM::SLTI  |
-            RV32IM::FENCE |
-            RV32IM::SLTIU |
+            RV32IM::ADDI         |
+            RV32IM::XORI         |
+            RV32IM::ORI          |
+            RV32IM::ANDI         |
+            RV32IM::SLLI         |
+            RV32IM::SRLI         |
+            RV32IM::SRAI         |
+            RV32IM::SLTI         |
+            RV32IM::FENCE        |
+            RV32IM::SLTIU        |
+            RV32IM::VIRTUAL_MOVE |
             RV32IM::VIRTUAL_MOVSIGN=> RV32InstructionFormat::I,
 
             RV32IM::LB  |

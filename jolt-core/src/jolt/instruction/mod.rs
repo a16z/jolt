@@ -163,6 +163,7 @@ pub mod virtual_assert_lte;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_signed_remainder;
 pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod xor;
 
