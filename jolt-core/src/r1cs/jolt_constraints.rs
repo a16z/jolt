@@ -16,16 +16,32 @@ pub fn construct_jolt_constraints<F: JoltField>(
     let constraints = UniformJoltConstraints::new(memory_start);
     constraints.build_constraints(&mut uniform_builder);
 
-    let non_uniform_constraint = OffsetEqConstraint::new(
+    // If the next instruction's ELF address is not zero (i.e. it's
+    // not padding), then check the PC update.
+    let pc_constraint = OffsetEqConstraint::new(
         (JoltIn::Bytecode_ELFAddress, true),
-        (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), false),
+        (Variable::Auxiliary(NEXT_PC), false),
         (4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS, true),
+    );
+
+    // If the current instruction is virtual, check that the next instruction
+    // in the trace is the next instruction in bytecode. Virtual sequences
+    // do not involve jumps or branches, so this should always hold,
+    // EXCEPT if we encounter a virtual instruction followed by a padding
+    // instruction. But that should never happen because the execution
+    // trace should always end with some return handling, which shouldn't involve
+    // any virtual sequences.
+
+    let virtual_sequence_constraint = OffsetEqConstraint::new(
+        (JoltIn::OpFlags_IsVirtualInstruction, false),
+        (JoltIn::Bytecode_A, true),
+        (JoltIn::Bytecode_A + 1, false),
     );
 
     CombinedUniformBuilder::construct(
         uniform_builder,
         padded_trace_length,
-        vec![non_uniform_constraint],
+        vec![pc_constraint, virtual_sequence_constraint],
     )
 }
 
@@ -99,8 +115,9 @@ pub enum JoltIn {
     OpFlags_LookupOutToRd,
     OpFlags_SignImm,
     OpFlags_IsConcat,
-    OpFlags_IsVirtualSequence,
+    OpFlags_IsVirtualInstruction,
     OpFlags_IsAssert,
+    OpFlags_DoNotUpdatePC,
 
     // Instruction Flags
     // Should match JoltInstructionSet
@@ -140,7 +157,7 @@ pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
-pub const PC_BRANCH_AUX_INDEX: usize = 15;
+pub const NEXT_PC: usize = 15;
 
 pub struct UniformJoltConstraints {
     memory_start: u64,
@@ -266,20 +283,21 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
-        let branch_and_lookup_output =
-            cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
         let next_pc_jump = cs.allocate_if_else(
             JoltIn::OpFlags_IsJmp,
             JoltIn::LookupOutput + 4,
-            4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + 4,
+            4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + 4
+                - 4 * JoltIn::OpFlags_DoNotUpdatePC,
         );
 
-        let next_pc_jump_branch = cs.allocate_if_else(
-            branch_and_lookup_output,
+        let should_branch = cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
+        let next_pc = cs.allocate_if_else(
+            should_branch,
             4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
             next_pc_jump,
         );
-        assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
+
+        assert_static_aux_index!(next_pc, NEXT_PC);
     }
 }
 

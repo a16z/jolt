@@ -53,8 +53,11 @@ pub struct BytecodeRow {
     /// "Immediate" value for this instruction (0 if unused).
     imm: u64,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the instruction's index within the sequence.
-    virtual_sequence_index: Option<usize>,
+    /// Jolt paper), then this contains the number of virtual instructions after this
+    /// one in the sequence. I.e. if this is the last instruction in the sequence,
+    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    virtual_sequence_remaining: Option<usize>,
 }
 
 impl BytecodeRow {
@@ -66,7 +69,7 @@ impl BytecodeRow {
             rs1,
             rs2,
             imm,
-            virtual_sequence_index: None,
+            virtual_sequence_remaining: None,
         }
     }
 
@@ -78,7 +81,7 @@ impl BytecodeRow {
             rs1: 0,
             rs2: 0,
             imm: 0,
-            virtual_sequence_index: None,
+            virtual_sequence_remaining: None,
         }
     }
 
@@ -90,7 +93,7 @@ impl BytecodeRow {
             rs1: rng.next_u64() % REGISTER_COUNT,
             rs2: rng.next_u64() % REGISTER_COUNT,
             imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
-            virtual_sequence_index: None,
+            virtual_sequence_remaining: None,
         }
     }
 
@@ -133,7 +136,7 @@ impl BytecodeRow {
             rs1: instruction.rs1.unwrap_or(0),
             rs2: instruction.rs2.unwrap_or(0),
             imm: instruction.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
-            virtual_sequence_index: instruction.virtual_sequence_index,
+            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
         }
     }
 }
@@ -195,7 +198,7 @@ impl<F: JoltField> BytecodePreprocessing<F> {
                 virtual_address_map.insert(
                     (
                         instruction.address,
-                        instruction.virtual_sequence_index.unwrap_or(0)
+                        instruction.virtual_sequence_remaining.unwrap_or(0)
                     ),
                     virtual_address
                 ),
@@ -271,7 +274,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
                 .virtual_address_map
                 .get(&(
                     step.bytecode_row.address,
-                    step.bytecode_row.virtual_sequence_index.unwrap_or(0),
+                    step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
                 ))
                 .unwrap();
             a_read_write_usize[step_index] = *virtual_address;

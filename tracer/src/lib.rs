@@ -104,7 +104,7 @@ pub fn decode(elf: &[u8]) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
                     rs2: None,
                     rd: None,
                     imm: None,
-                    virtual_sequence_index: None,
+                    virtual_sequence_remaining: None,
                 });
             }
         }

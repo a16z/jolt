@@ -1847,7 +1847,7 @@ fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1860,7 +1860,7 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1873,7 +1873,7 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1886,7 +1886,7 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1899,7 +1899,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1913,7 +1913,7 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 

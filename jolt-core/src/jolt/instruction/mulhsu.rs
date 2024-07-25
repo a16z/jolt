@@ -11,6 +11,8 @@ use crate::jolt::instruction::{
 pub struct MULHSUInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WORD_SIZE> {
+    const SEQUENCE_LENGTH: usize = 4;
+
     fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
         assert_eq!(instruction.opcode, RV32IM::MULHSU);
         // MULHSU source registers
@@ -21,7 +23,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
         let v_1 = Some(virtual_register_index(1));
         let v_2 = Some(virtual_register_index(2));
 
-        let mut virtual_sequence = vec![];
+        let mut virtual_sequence = Vec::with_capacity(Self::SEQUENCE_LENGTH);
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
             opcode: RV32IM::VIRTUAL_MOVSIGN,
@@ -29,7 +31,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             rs2: None,
             rd: v_sx,
             imm: None,
-            virtual_sequence_index: Some(0),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -38,7 +40,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             rs2: r_y,
             rd: v_1,
             imm: None,
-            virtual_sequence_index: Some(1),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -47,7 +49,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             rs2: r_y,
             rd: v_2,
             imm: None,
-            virtual_sequence_index: Some(2),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -56,8 +58,10 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             rs2: v_2,
             rd: instruction.rd,
             imm: None,
-            virtual_sequence_index: Some(3),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
+
+        debug_assert_eq!(virtual_sequence.len(), Self::SEQUENCE_LENGTH);
         virtual_sequence
     }
 
@@ -152,7 +156,7 @@ mod test {
                 rs2: Some(r_y),
                 rd: Some(rd),
                 imm: None,
-                virtual_sequence_index: None,
+                virtual_sequence_remaining: None,
             },
             register_state: RegisterState {
                 rs1_val: Some(x),

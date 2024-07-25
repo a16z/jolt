@@ -907,12 +907,20 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             let uniform_constraint_index = constraint_index / self.uniform_repeat;
             if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
                 let step_index = constraint_index % self.uniform_repeat;
-                panic!(
-                    "Mismatch at global constraint {constraint_index} => {:?}\n\
-                    uniform constraint: {uniform_constraint_index}\n\
-                    step: {step_index}",
-                    self.uniform_builder.constraints[uniform_constraint_index]
-                );
+                if uniform_constraint_index >= self.uniform_builder.constraints.len() {
+                    panic!(
+                        "Mismatch at non-uniform constraint: {}\n\
+                        step: {step_index}",
+                        uniform_constraint_index - self.uniform_builder.constraints.len()
+                    )
+                } else {
+                    panic!(
+                        "Mismatch at global constraint {constraint_index} => {:?}\n\
+                        uniform constraint: {uniform_constraint_index}\n\
+                        step: {step_index}",
+                        self.uniform_builder.constraints[uniform_constraint_index]
+                    );
+                }
             }
         }
     }

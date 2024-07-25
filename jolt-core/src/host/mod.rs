@@ -201,6 +201,7 @@ impl Program {
                 }
             })
             .collect();
+
         let padded_trace_len = trace.len().next_power_of_two();
 
         let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
@@ -216,7 +217,6 @@ impl Program {
                     }
                 });
             });
-
         (io_device, trace, circuit_flag_trace)
     }
 

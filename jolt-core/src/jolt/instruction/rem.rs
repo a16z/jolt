@@ -12,6 +12,8 @@ use crate::jolt::instruction::{
 pub struct REMInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_SIZE> {
+    const SEQUENCE_LENGTH: usize = 6;
+
     fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
         assert_eq!(instruction.opcode, RV32IM::REM);
         // REM source registers
@@ -22,7 +24,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
         let v_q = Some(virtual_register_index(1));
         let v_qy = Some(virtual_register_index(2));
 
-        let mut virtual_sequence = vec![];
+        let mut virtual_sequence = Vec::with_capacity(Self::SEQUENCE_LENGTH);
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
             opcode: RV32IM::VIRTUAL_ADVICE,
@@ -30,7 +32,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             rs2: None,
             rd: v_q,
             imm: None,
-            virtual_sequence_index: Some(virtual_sequence.len()),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -39,7 +41,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             rs2: None,
             rd: instruction.rd,
             imm: None,
-            virtual_sequence_index: Some(virtual_sequence.len()),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -48,7 +50,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             rs2: r_y,
             rd: None,
             imm: None,
-            virtual_sequence_index: Some(virtual_sequence.len()),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -57,7 +59,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             rs2: r_y,
             rd: v_qy,
             imm: None,
-            virtual_sequence_index: Some(virtual_sequence.len()),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -66,7 +68,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             rs2: instruction.rd,
             rd: v_0,
             imm: None,
-            virtual_sequence_index: Some(virtual_sequence.len()),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
         virtual_sequence.push(ELFInstruction {
             address: instruction.address,
@@ -75,9 +77,10 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             rs2: r_x,
             rd: None,
             imm: None,
-            virtual_sequence_index: Some(virtual_sequence.len()),
+            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
         });
 
+        debug_assert_eq!(virtual_sequence.len(), Self::SEQUENCE_LENGTH);
         virtual_sequence
     }
 
@@ -225,7 +228,7 @@ mod test {
                 rs2: Some(r_y),
                 rd: Some(rd),
                 imm: None,
-                virtual_sequence_index: None,
+                virtual_sequence_remaining: None,
             },
             register_state: RegisterState {
                 rs1_val: Some(x),
