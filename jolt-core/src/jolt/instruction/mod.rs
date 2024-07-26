@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::marker::Sync;
 use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::RVTraceRow;
+use tracer::{RVTraceRow, RegisterState};
 
 use crate::field::JoltField;
 use crate::jolt::subtable::LassoSubtable;
@@ -127,7 +127,22 @@ impl From<Range<usize>> for SubtableIndices {
 
 pub trait VirtualInstructionSequence {
     const SEQUENCE_LENGTH: usize;
-    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction>;
+    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
+        let dummy_trace_row = RVTraceRow {
+            instruction,
+            register_state: RegisterState {
+                rs1_val: Some(0),
+                rs2_val: Some(0),
+                rd_post_val: Some(0),
+            },
+            memory_state: None,
+            advice_value: None,
+        };
+        Self::virtual_trace(dummy_trace_row)
+            .into_iter()
+            .map(|trace_row| trace_row.instruction)
+            .collect()
+    }
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow>;
 }
 

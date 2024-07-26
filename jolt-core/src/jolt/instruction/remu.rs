@@ -15,111 +15,44 @@ pub struct REMUInstruction<const WORD_SIZE: usize>;
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD_SIZE> {
     const SEQUENCE_LENGTH: usize = 8;
 
-    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
-        assert_eq!(instruction.opcode, RV32IM::REMU);
+    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
+        assert_eq!(trace_row.instruction.opcode, RV32IM::REMU);
         // REMU source registers
-        let r_x = instruction.rs1;
-        let r_y = instruction.rs2;
+        let r_x = trace_row.instruction.rs1;
+        let r_y = trace_row.instruction.rs2;
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
         let v_q = Some(virtual_register_index(1));
         let v_r = Some(virtual_register_index(2));
         let v_qy = Some(virtual_register_index(3));
-
-        let mut virtual_sequence = Vec::with_capacity(Self::SEQUENCE_LENGTH);
-
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::VIRTUAL_ADVICE,
-            rs1: None,
-            rs2: None,
-            rd: v_q,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::VIRTUAL_ADVICE,
-            rs1: None,
-            rs2: None,
-            rd: v_r,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::MULU,
-            rs1: v_q,
-            rs2: r_y,
-            rd: v_qy,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
-            rs1: v_r,
-            rs2: r_y,
-            rd: None,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::VIRTUAL_ASSERT_LTE,
-            rs1: v_qy,
-            rs2: r_x,
-            rd: None,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::ADD,
-            rs1: v_qy,
-            rs2: v_r,
-            rd: v_0,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::VIRTUAL_ASSERT_EQ,
-            rs1: v_0,
-            rs2: r_x,
-            rd: None,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-        virtual_sequence.push(ELFInstruction {
-            address: instruction.address,
-            opcode: RV32IM::VIRTUAL_MOVE,
-            rs1: v_r,
-            rs2: None,
-            rd: instruction.rd,
-            imm: None,
-            virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_sequence.len() - 1),
-        });
-
-        debug_assert_eq!(virtual_sequence.len(), Self::SEQUENCE_LENGTH);
-        virtual_sequence
-    }
-
-    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        assert_eq!(trace_row.instruction.opcode, RV32IM::REMU);
         // REMU operands
         let x = trace_row.register_state.rs1_val.unwrap();
         let y = trace_row.register_state.rs2_val.unwrap();
 
-        let virtual_instructions = Self::virtual_sequence(trace_row.instruction);
         let mut virtual_trace = vec![];
 
-        let quotient = x / y;
-        let remainder = x - quotient * y;
+        let quotient = if y == 0 {
+            match WORD_SIZE {
+                32 => u32::MAX as u64,
+                64 => u64::MAX,
+                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            }
+        } else {
+            x / y
+        };
+        let remainder = if y == 0 { x } else { x - quotient * y };
 
         let q = ADVICEInstruction::<WORD_SIZE>(quotient).lookup_entry();
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ADVICE,
+                rs1: None,
+                rs2: None,
+                rd: v_q,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
@@ -131,7 +64,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ADVICE,
+                rs1: None,
+                rs2: None,
+                rd: v_r,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
@@ -143,7 +84,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::MULU,
+                rs1: v_q,
+                rs2: r_y,
+                rd: v_qy,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: Some(q),
                 rs2_val: Some(y),
@@ -156,7 +105,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
         let is_valid = AssertValidUnsignedRemainderInstruction(r, y).lookup_entry();
         assert_eq!(is_valid, 1);
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
+                rs1: v_r,
+                rs2: r_y,
+                rd: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: Some(r),
                 rs2_val: Some(y),
@@ -168,7 +125,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         let _lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_LTE,
+                rs1: v_qy,
+                rs2: r_x,
+                rd: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
                 rs2_val: Some(x),
@@ -180,7 +145,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         let add_0: u64 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::ADD,
+                rs1: v_qy,
+                rs2: v_r,
+                rd: v_0,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
                 rs2_val: Some(r),
@@ -192,7 +165,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         let _assert_eq = BEQInstruction(add_0, x).lookup_entry();
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_EQ,
+                rs1: v_0,
+                rs2: r_x,
+                rd: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: Some(add_0),
                 rs2_val: Some(x),
@@ -203,7 +184,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
         });
 
         virtual_trace.push(RVTraceRow {
-            instruction: virtual_instructions[virtual_trace.len()].clone(),
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_MOVE,
+                rs1: v_r,
+                rs2: None,
+                rd: trace_row.instruction.rd,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
             register_state: RegisterState {
                 rs1_val: Some(r),
                 rs2_val: None,
