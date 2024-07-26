@@ -158,7 +158,7 @@ pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
-pub const NEXT_PC: usize = 16;
+pub const NEXT_PC: usize = 12;
 
 pub struct UniformJoltConstraints {
     memory_start: u64,
@@ -225,36 +225,47 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         );
 
         let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
+        let packed_load_store = R1CSBuilder::<F, JoltIn>::pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags_IsStore,
-            packed_load_store,
+            packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
 
-        let packed_query = cs.allocate_pack_be(
+        let packed_query = R1CSBuilder::<F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
             LOG_M,
         );
 
-        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query, x + y);
+        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
-        cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
+        cs.constrain_eq_conditional(
+            JoltIn::IF_Sub,
+            packed_query.clone(),
+            x - y + (0xffffffffi64 + 1),
+        );
         let is_mul = JoltIn::IF_Mul + JoltIn::IF_MulU + JoltIn::IF_MulHu;
         let product = cs.allocate_prod(x, y);
-        cs.constrain_eq_conditional(is_mul, packed_query, product);
-        cs.constrain_eq_conditional(JoltIn::IF_Movsign + JoltIn::IF_Virt_Move, packed_query, x);
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
+        cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
+        cs.constrain_eq_conditional(
+            JoltIn::IF_Movsign + JoltIn::IF_Virt_Move,
+            packed_query.clone(),
+            x,
+        );
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags_IsLoad,
+            packed_query.clone(),
+            packed_load_store,
+        );
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RS2_Read);
 
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
 
-        // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
-        let chunked_x = cs.allocate_pack_be(
+        let chunked_x = R1CSBuilder::<F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
             OPERAND_SIZE,
         );
-        let chunked_y = cs.allocate_pack_be(
+        let chunked_y = R1CSBuilder::<F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
