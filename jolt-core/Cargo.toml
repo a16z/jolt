@@ -33,6 +33,7 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
 ark-std = { version = "0.4.0" }
 binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field"}
 clap = { version = "4.3.10", features = ["derive"] }
+derivative = { version = "2" }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
@@ -76,6 +77,7 @@ tokio = { version = "1.38.0", optional = true }
 
 [dev-dependencies]
 ark-groth16 = { version = "0.4.0" }
+ark-test-curves = { version = "0.4.0", default-features = false, features = ["bls12_381_curve", "mnt6_753"] }
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 #sigma0-polymath = { git = "https://github.com/sigma0-xyz/polymath" }
