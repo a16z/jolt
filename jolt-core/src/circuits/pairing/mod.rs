@@ -11,11 +11,15 @@ use ark_std::fmt::Debug;
 pub trait PairingGadget<E: Pairing, ConstraintF: PrimeField> {
     /// A variable representing an element of `G1`.
     /// This is the R1CS equivalent of `E::G1Projective`.
-    type G1Var: CurveVar<E::G1, ConstraintF>;
+    type G1Var: CurveVar<E::G1, ConstraintF>
+        + AllocVar<E::G1, ConstraintF>
+        + AllocVar<E::G1Affine, ConstraintF>;
 
     /// A variable representing an element of `G2`.
     /// This is the R1CS equivalent of `E::G2Projective`.
-    type G2Var: CurveVar<E::G2, ConstraintF>;
+    type G2Var: CurveVar<E::G2, ConstraintF>
+        + AllocVar<E::G2, ConstraintF>
+        + AllocVar<E::G2Affine, ConstraintF>;
 
     /// A variable representing an element of `GT`.
     /// This is the R1CS equivalent of `E::GT`.

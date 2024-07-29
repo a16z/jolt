@@ -31,9 +31,7 @@ where
     /// The first coefficient of this field element.
     pub c1: BF,
     #[derivative(Debug = "ignore")]
-    _params: PhantomData<P>,
-    #[derivative(Debug = "ignore")]
-    _constraint_f: PhantomData<ConstraintF>,
+    _params: PhantomData<(P, ConstraintF)>,
 }
 
 /// This trait describes parameters that are used to implement arithmetic for
@@ -63,7 +61,6 @@ where
             c0,
             c1,
             _params: PhantomData,
-            _constraint_f: PhantomData,
         }
     }
 

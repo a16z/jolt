@@ -5,8 +5,8 @@ use crate::circuits::groups::curves::short_weierstrass::bls12::{
 };
 use ark_ec::bls12::{Bls12, Bls12Config, TwistType};
 use ark_ff::{BitIteratorBE, PrimeField};
-use ark_r1cs_std::fields::fp12::Fp12Var;
-// use crate::circuits::fields::fp12::Fp12Var;
+// use ark_r1cs_std::fields::fp12::Fp12Var;
+use crate::circuits::fields::fp12::Fp12Var;
 use ark_r1cs_std::fields::nonnative::NonNativeFieldVar;
 use ark_r1cs_std::prelude::FieldVar;
 use ark_relations::r1cs::SynthesisError;
@@ -28,7 +28,7 @@ where
     // Evaluate the line function at point p.
     #[tracing::instrument(target = "r1cs")]
     fn ell(
-        f: &mut Fp12Var<P::Fp12Config>,
+        f: &mut Fp12Var<P::Fp12Config, ConstraintF>,
         coeffs: &(Fp2V<P, ConstraintF>, Fp2V<P, ConstraintF>),
         p: &G1AffineVar<P, ConstraintF>,
     ) -> Result<(), SynthesisError> {
@@ -59,7 +59,9 @@ where
     }
 
     #[tracing::instrument(target = "r1cs")]
-    fn exp_by_x(f: &Fp12Var<P::Fp12Config>) -> Result<Fp12Var<P::Fp12Config>, SynthesisError> {
+    fn exp_by_x(
+        f: &Fp12Var<P::Fp12Config, ConstraintF>,
+    ) -> Result<Fp12Var<P::Fp12Config, ConstraintF>, SynthesisError> {
         let mut result = f.optimized_cyclotomic_exp(P::X)?;
         if P::X_IS_NEGATIVE {
             result = result.unitary_inverse()?;
@@ -73,7 +75,7 @@ impl<P: Bls12Config, ConstraintF: PrimeField> PairingGadget<Bls12<P>, Constraint
 {
     type G1Var = G1Var<P, ConstraintF>;
     type G2Var = G2Var<P, ConstraintF>;
-    type GTVar = Fp12Var<P::Fp12Config>;
+    type GTVar = Fp12Var<P::Fp12Config, ConstraintF>;
     type G1PreparedVar = G1PreparedVar<P, ConstraintF>;
     type G2PreparedVar = G2PreparedVar<P, ConstraintF>;
 
