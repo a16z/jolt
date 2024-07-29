@@ -117,31 +117,41 @@ mod tests {
             self,
             cs: ConstraintSystemRef<ConstraintF>,
         ) -> Result<(), SynthesisError> {
-            // TODO use PairingVar to generate constraints
+            dbg!(cs.num_constraints());
 
             let r_g1 = P::G1Var::new_witness(cs.clone(), || {
                 Ok(E::G1::generator() * self.r.ok_or(SynthesisError::AssignmentMissing)?)
             })?;
+            dbg!(cs.num_constraints());
+
+            let r_g1_prepared = P::prepare_g1(&r_g1)?;
+            dbg!(cs.num_constraints());
+
+            let minus_one_g1_prepared = P::G1PreparedVar::new_constant(
+                cs.clone(),
+                &E::G1Prepared::from(-E::G1::generator()),
+            )?;
+            dbg!(cs.num_constraints());
+
             let r_g2 = P::G2Var::new_witness(cs.clone(), || {
                 Ok(self.r_g2.ok_or(SynthesisError::AssignmentMissing)?)
             })?;
+            dbg!(cs.num_constraints());
 
-            let r_g1_prepared = P::prepare_g1(&r_g1)?;
             let r_g2_prepared = P::prepare_g2(&r_g2)?;
+            dbg!(cs.num_constraints());
 
             let one_g2_prepared = P::G2PreparedVar::new_constant(
                 cs.clone(),
                 &E::G2Prepared::from(E::G2::generator()),
             )?;
-            let minus_one_g1_prepared = P::G1PreparedVar::new_constant(
-                cs.clone(),
-                &E::G1Prepared::from(-E::G1::generator()),
-            )?;
+            dbg!(cs.num_constraints());
 
             let result = P::multi_pairing(
                 &[r_g1_prepared, minus_one_g1_prepared],
                 &[one_g2_prepared, r_g2_prepared],
             )?;
+            dbg!(cs.num_constraints());
 
             result.enforce_equal(&P::GTVar::one())
         }
