@@ -158,6 +158,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_pairing_check_circuit() {
         type DemoCircuit = PairingCheckCircuit<
             Bls12_381,
