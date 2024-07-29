@@ -144,6 +144,7 @@ pub trait VirtualInstructionSequence {
             .collect()
     }
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow>;
+    fn sequence_output(x: u64, y: u64) -> u64;
 }
 
 pub mod add;
