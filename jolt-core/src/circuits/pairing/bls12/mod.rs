@@ -1,26 +1,24 @@
-use super::PairingGadget;
+use crate::circuits::fields::fp12::Fp12Var;
 use crate::circuits::fields::fp2::Fp2Var;
 use crate::circuits::groups::curves::short_weierstrass::bls12::{
     G1AffineVar, G1PreparedVar, G1Var, G2PreparedVar, G2Var,
 };
 use ark_ec::bls12::{Bls12, Bls12Config, TwistType};
 use ark_ff::{BitIteratorBE, PrimeField};
-// use ark_r1cs_std::fields::fp12::Fp12Var;
-use crate::circuits::fields::fp12::Fp12Var;
 use ark_r1cs_std::fields::nonnative::NonNativeFieldVar;
 use ark_r1cs_std::prelude::FieldVar;
 use ark_relations::r1cs::SynthesisError;
 use ark_std::marker::PhantomData;
 
 /// Specifies the constraints for computing a pairing in a BLS12 bilinear group.
-pub struct PairingVar<P, ConstraintF>(PhantomData<(P, ConstraintF)>)
+pub struct PairingGadget<P, ConstraintF>(PhantomData<(P, ConstraintF)>)
 where
     P: Bls12Config,
     ConstraintF: PrimeField;
 
 type Fp2V<P, ConstraintF> = Fp2Var<<P as Bls12Config>::Fp2Config, ConstraintF>;
 
-impl<P, ConstraintF> PairingVar<P, ConstraintF>
+impl<P, ConstraintF> PairingGadget<P, ConstraintF>
 where
     P: Bls12Config,
     ConstraintF: PrimeField,
@@ -70,8 +68,8 @@ where
     }
 }
 
-impl<P: Bls12Config, ConstraintF: PrimeField> PairingGadget<Bls12<P>, ConstraintF>
-    for PairingVar<P, ConstraintF>
+impl<P: Bls12Config, ConstraintF: PrimeField> super::PairingGadget<Bls12<P>, ConstraintF>
+    for PairingGadget<P, ConstraintF>
 {
     type G1Var = G1Var<P, ConstraintF>;
     type G2Var = G2Var<P, ConstraintF>;

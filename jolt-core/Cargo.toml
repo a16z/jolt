@@ -103,6 +103,7 @@ default = [
     "rayon",
 ]
 host = ["dep:reqwest", "dep:tokio"]
+print-trace = [ "ark-std/print-trace" ]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0" 

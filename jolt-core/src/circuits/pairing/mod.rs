@@ -80,68 +80,116 @@ pub trait PairingGadget<E: Pairing, ConstraintF: PrimeField> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use ark_bls12_381::Bls12_381;
     use ark_bn254::Bn254;
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
     use ark_ec::pairing::Pairing;
     use ark_ec::Group;
-    use ark_ff::{Field, PrimeField};
+    use ark_ff::PrimeField;
     use ark_groth16::Groth16;
-    use ark_r1cs_std::pairing::bls12::PairingVar;
+    use ark_r1cs_std::prelude::*;
     use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
     use ark_std::marker::PhantomData;
     use ark_std::rand::Rng;
-    use ark_std::test_rng;
+    use ark_std::{end_timer, start_timer, test_rng};
     use rand_core::{RngCore, SeedableRng};
 
-    struct PairingCheckCircuit<E: Pairing, ConstraintF: PrimeField> {
-        _constraint_f: PhantomData<ConstraintF>,
+    struct PairingCheckCircuit<E, ConstraintF, P>
+    where
+        E: Pairing,
+        ConstraintF: PrimeField,
+        P: PairingGadget<E, ConstraintF>,
+    {
         r: Option<E::ScalarField>,
-        r_g2: Option<E::G2Prepared>,
+        r_g2: Option<E::G2Affine>,
+        _params: PhantomData<(ConstraintF, P)>,
     }
 
-    impl<E: Pairing, ConstraintF: PrimeField> ConstraintSynthesizer<ConstraintF>
-        for PairingCheckCircuit<E, ConstraintF>
+    impl<E, ConstraintF, P> ConstraintSynthesizer<ConstraintF>
+        for PairingCheckCircuit<E, ConstraintF, P>
+    where
+        E: Pairing,
+        ConstraintF: PrimeField,
+        P: PairingGadget<E, ConstraintF>,
     {
         fn generate_constraints(
             self,
             cs: ConstraintSystemRef<ConstraintF>,
         ) -> Result<(), SynthesisError> {
             // TODO use PairingVar to generate constraints
-            // let r_g1 = PairingVar::<E>::new_input(cs.clone(), || {
-            //     Ok(E::G1Projective::prime_subgroup_generator())
-            // })?;
-            Ok(())
+
+            let r_g1 = P::G1Var::new_witness(cs.clone(), || {
+                Ok(E::G1::generator() * self.r.ok_or(SynthesisError::AssignmentMissing)?)
+            })?;
+            let r_g2 = P::G2Var::new_witness(cs.clone(), || {
+                Ok(self.r_g2.ok_or(SynthesisError::AssignmentMissing)?)
+            })?;
+
+            let r_g1_prepared = P::prepare_g1(&r_g1)?;
+            let r_g2_prepared = P::prepare_g2(&r_g2)?;
+
+            let one_g2_prepared = P::G2PreparedVar::new_constant(
+                cs.clone(),
+                &E::G2Prepared::from(E::G2::generator()),
+            )?;
+            let minus_one_g1_prepared = P::G1PreparedVar::new_constant(
+                cs.clone(),
+                &E::G1Prepared::from(-E::G1::generator()),
+            )?;
+
+            let result = P::multi_pairing(
+                &[r_g1_prepared, minus_one_g1_prepared],
+                &[one_g2_prepared, r_g2_prepared],
+            )?;
+
+            result.enforce_equal(&P::GTVar::one())
         }
     }
 
     #[test]
     fn test_pairing_check_circuit() {
-        let c = PairingCheckCircuit::<Bls12_381, ark_bn254::Fr> {
-            _constraint_f: PhantomData,
+        type DemoCircuit = PairingCheckCircuit<
+            Bls12_381,
+            ark_bn254::Fr,
+            bls12::PairingGadget<ark_bls12_381::Config, ark_bn254::Fr>,
+        >;
+
+        let c = DemoCircuit {
             r: None,
             r_g2: None,
+            _params: PhantomData,
         };
 
         // This is not cryptographically safe, use
         // `OsRng` (for example) in production software.
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
+        let setup_timer = start_timer!(|| "Groth16::setup");
         let (pk, vk) = Groth16::<Bn254>::setup(c, &mut rng).unwrap();
+        end_timer!(setup_timer);
 
+        let process_vk_timer = start_timer!(|| "Groth16::process_vk");
         let pvk = Groth16::<Bn254>::process_vk(&vk).unwrap();
+        end_timer!(process_vk_timer);
 
         let r = rng.gen();
         let r_g2 = <Bls12_381 as Pairing>::G2::generator() * &r;
 
-        let c = PairingCheckCircuit::<Bls12_381, ark_bn254::Fr> {
-            _constraint_f: PhantomData,
+        let c = DemoCircuit {
             r: Some(r),
             r_g2: Some(r_g2.into()),
+            _params: PhantomData,
         };
 
+        let prove_timer = start_timer!(|| "Groth16::prove");
         let proof = Groth16::<Bn254>::prove(&pk, c, &mut rng).unwrap();
+        end_timer!(prove_timer);
 
-        assert!(Groth16::<Bn254>::verify_with_processed_vk(&pvk, &[], &proof).unwrap());
+        let verify_timer = start_timer!(|| "Groth16::verify");
+        let verify_result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &[], &proof);
+        end_timer!(verify_timer);
+
+        assert!(verify_result.unwrap());
     }
 }
