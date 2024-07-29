@@ -2,10 +2,34 @@
 pragma solidity >=0.8.0;
 
 import {MODULUS, Fr, FrLib} from "../reference/Fr.sol";
+import "forge-std/console.sol";
 
 /// Allows calculation of the R1CS step matrix
 library R1CSMatrix {
     using FrLib for Fr;
+
+    /// Evaluates the z mle for the outer sumcheck
+    /// @param r The r we are evaluating on
+    /// @param segmentEvals The segment evals from the proof, should be length 89
+    function eval_z_mle(Fr[] memory r, uint256[] memory segmentEvals) internal pure returns (Fr) {
+        require(segmentEvals.length == 89, "Segment Length must be 89");
+        // We calculate the evals based on a length 7 slice
+        Fr[] memory r_var_eqs = eq_poly_evals(r, 1, 7);
+        Fr sum = Fr.wrap(0);
+        for (uint256 i = 0; i < 89; i++) {
+            sum = sum + r_var_eqs[i] * FrLib.from(segmentEvals[i]);
+        }
+        // In the rust we do let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(F::one(), 0)]); let eval_const = const_poly.evaluate(r_rest);
+        // But because we presume self.num_vars_total().log_2() = 7 and the vec only has one element we just have to run compute chis on the bit vec of zero and r
+        // Which simplifies to this for loop:
+        Fr prod = Fr.wrap(1);
+        for (uint256 i = 0; i < r.length - 1; i++) {
+            // Every bit of the bit decomp of zero is zero and so we just have to do this on r rest
+            prod = prod * (Fr.wrap(1) - r[1 + i]);
+        }
+
+        return ((Fr.wrap(1) - r[0]) * sum + r[0] * prod);
+    }
 
     /// Evaluates our stepwise low memory representation of the r1cs using a constant fixed matrix of constraints.
     /// NOTE - Changing the R1CS in jolt's rust will break this function and new constant and offset calculations must
@@ -13,82 +37,111 @@ library R1CSMatrix {
     /// @param r Our typechecked field element array which is log the size of the jolt trace
     /// @param row_bits The log of the number of rows of our global r1cs
     /// @param col_bits The log of the number of cols of our global r1cs
-    /// @param total_cols The total number of columns in our r1cs used for our col bit vector.
-    function evaluate_r1cs_matrix_mles(Fr[] memory r, uint256 row_bits, uint256 col_bits, uint256 total_cols) internal pure returns(Fr, Fr, Fr) {
+    // @param total_cols The total number of columns in our r1cs used for our col bit vector.
+    function evaluate_r1cs_matrix_mles(Fr[] memory r, uint256 row_bits, uint256 col_bits, uint256)
+        internal
+        pure
+        returns (Fr, Fr, Fr)
+    {
         uint256 constraint_row_bits = 7;
         uint256 constraint_col_bits = 7;
         uint256 step_bits = row_bits - constraint_row_bits;
 
         // Do an eq pol eval on the parts of r which are not in the first 7 bits of the row and col sub vector
         // Todo - what is the plus one here?
-        Fr eq_rx_ry_step = eq_poly_evaluate(r, constraint_row_bits, row_bits-constraint_row_bits, r, row_bits + constraint_col_bits + 1, col_bits - constraint_col_bits);
+        Fr eq_rx_ry_step = eq_poly_evaluate(
+            r,
+            constraint_row_bits,
+            row_bits - constraint_row_bits,
+            r,
+            row_bits + constraint_col_bits + 1,
+            col_bits - constraint_col_bits
+        );
         Fr[] memory eq_poly_row = eq_poly_evals(r, 0, constraint_row_bits);
         // Creates a 256 field element allocation but doesn't need it?
         Fr[] memory eq_poly_col = eq_poly_evals(r, row_bits, constraint_col_bits + 1);
 
-        // Does the eval of the constraint row const via a bit vec 
+        // Does the eval of the constraint row const via a bit vec
         /// TODO this constant seems to always be zero
         Fr col_eq_constant = Fr.wrap(0);
         Fr eq_plus_one_eval = eq_plus_one(r, constraint_row_bits, r, row_bits + constraint_col_bits + 1, step_bits);
 
         Fr non_uni_constraint_index = Fr.wrap(0);
 
-        return(
-            A(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant, eq_plus_one_eval, non_uni_constraint_index),
-            B(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant, eq_plus_one_eval, non_uni_constraint_index),
+        return (
+            A(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant),
+            B(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant),
             C(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant)
         );
     }
 
     // The same as rust's EqPolynomial(eq).evaluate(r)
-    function eq_poly_evaluate(Fr[] memory eq, uint256 eq_start, uint256 eq_len, Fr[] memory r, uint256 r_start, uint256 r_len) internal pure returns(Fr) {
+    function eq_poly_evaluate(
+        Fr[] memory eq,
+        uint256 eq_start,
+        uint256 eq_len,
+        Fr[] memory r,
+        uint256 r_start,
+        uint256 r_len
+    ) internal pure returns (Fr) {
         assert(r_len == eq_len);
         Fr ret = Fr.wrap(1);
         for (uint256 i = 0; i < r_len; i++) {
-            ret = ret * (eq[eq_start + i]*r[r_start + i] + (Fr.wrap(1) - r[r_start + i])*(Fr.wrap(1) - eq[eq_start + i]));
+            ret = ret
+                * (eq[eq_start + i] * r[r_start + i] + (Fr.wrap(1) - r[r_start + i]) * (Fr.wrap(1) - eq[eq_start + i]));
         }
-        return(ret);
+        return (ret);
     }
 
-    // The same as rust's EqPolynomial(eq).evaluate(r)
-    // TODO - This is odd because in almost all cases it's zero?
-    function eval_poly_evaluate_bitvec(Fr[] memory eq, uint256 eq_start, uint256 eq_len, uint256 r_in_bits) internal pure returns(Fr) {
+    // The same as rust's EqPolynomial(eq).evaluate(r) but with r defined as the bits of an r_in_bits
+    function eval_poly_evaluate_bitvec(Fr[] memory eq, uint256 eq_start, uint256 eq_len, uint256 r_in_bits)
+        internal
+        pure
+        returns (Fr)
+    {
         Fr ret = Fr.wrap(1);
         uint256 extracted = r_in_bits;
         for (uint256 i = 0; i < eq_len; i++) {
             Fr bit = Fr.wrap(extracted & 1);
             extracted = extracted >> 1;
-            ret = ret * (eq[eq_start + i]*bit + (Fr.wrap(1) - bit)*(Fr.wrap(1) - eq[eq_start + i]));
+            ret = ret * (eq[eq_start + i] * bit + (Fr.wrap(1) - bit) * (Fr.wrap(1) - eq[eq_start + i]));
         }
-        return(ret);
+        return (ret);
     }
 
-
     // Transcribed version of this function from rust, which has not be evaluated for efficiency
-    function eq_poly_evals(Fr[] memory eq, uint256 start, uint256 eq_len) internal pure returns(Fr[] memory) {
-        uint256 ell = 2**eq_len;
+    function eq_poly_evals(Fr[] memory eq, uint256 start, uint256 eq_len) internal pure returns (Fr[] memory) {
+        uint256 ell = 2 ** eq_len;
         Fr[] memory evals = new Fr[](ell);
         for (uint256 i = 0; i < ell; i++) {
             evals[i] = Fr.wrap(1);
         }
-        uint256 size = 2;
-        for (uint256 j = 0; j < ell; j++) {
+        uint256 size = 1;
+        for (uint256 j = 0; j < eq_len; j++) {
             size *= 2;
-            for (uint256 i = size - 1; i > 0 ; i = i - 2) {
-                Fr scalar = evals[i/2];
+            for (uint256 i = size - 1;; i = i - 2) {
+                Fr scalar = evals[i / 2];
                 evals[i] = scalar * eq[start + j];
-                evals[i-1] = scalar - evals[i];
+                evals[i - 1] = scalar - evals[i];
+                if (i <= 1) {
+                    break;
+                }
             }
         }
         return evals;
     }
 
-    function eq_plus_one(Fr[] memory x, uint256 x_start, Fr[] memory y, uint256 y_start, uint256 length) internal pure returns(Fr) {
+    function eq_plus_one(Fr[] memory x, uint256 x_start, Fr[] memory y, uint256 y_start, uint256 length)
+        internal
+        pure
+        returns (Fr)
+    {
         // Firstly we evaluate the upper bit products
         Fr running_upper_product = Fr.wrap(1);
         Fr[] memory upper = new Fr[](length);
-        for (uint256 i = length - 1; ; i = i - 1) {
-            Fr new_prod = x[x_start + i] * y[y_start + i] * (Fr.wrap(1) - x[x_start + i])* (Fr.wrap(1) - y[y_start + i]);
+        for (uint256 i = length - 1;; i = i - 1) {
+            Fr new_prod =
+                x[x_start + i] * y[y_start + i] * (Fr.wrap(1) - x[x_start + i]) * (Fr.wrap(1) - y[y_start + i]);
             running_upper_product = running_upper_product * new_prod;
             upper[i] = running_upper_product;
             if (i == 0) {
@@ -101,8 +154,8 @@ library R1CSMatrix {
         Fr sum = Fr.wrap(0);
         for (uint256 i = 0; i < length; i++) {
             Fr new_prod = x[x_start + length - 1 - i] * (Fr.wrap(1) - y[y_start + length - 1 - i]);
-            running_lower_product = running_lower_product* new_prod;
-            Fr current_bit =  y[y_start + length - 1 - i] * (Fr.wrap(1) - x[x_start + length - 1 - i]);
+            running_lower_product = running_lower_product * new_prod;
+            Fr current_bit = y[y_start + length - 1 - i] * (Fr.wrap(1) - x[x_start + length - 1 - i]);
             sum = sum + running_lower_product * upper[i] * current_bit;
         }
 
@@ -114,14 +167,7 @@ library R1CSMatrix {
     /// @param col The relevant row values
     /// @param eq_rx_ry_step The const for the var steps
     /// @param col_eq_constant The const for the constant evals
-    function A(
-        Fr[] memory row,
-        Fr[] memory col,
-        Fr eq_rx_ry_step,
-        Fr col_eq_constant,
-        Fr eq_step_offset_1,
-        Fr row_constr_eq_non_uni
-    ) internal pure returns (Fr) {
+    function A(Fr[] memory row, Fr[] memory col, Fr eq_rx_ry_step, Fr col_eq_constant) internal pure returns (Fr) {
         Fr running = Fr.wrap(0);
         Fr rv = Fr.wrap(0);
         rv = rv + row[0] * col[34];
@@ -266,12 +312,6 @@ library R1CSMatrix {
         // then we do constant col
         Fr rc = Fr.wrap(0);
         running = running + rc * col_eq_constant;
-        Fr rnu = Fr.wrap(0);
-        rnu = rnu + col[87] * eq_rx_ry_step;
-        rnu = rnu
-            + Fr.wrap(0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593effffffd) * col[0] * eq_step_offset_1;
-        rnu = rnu + col_eq_constant * Fr.wrap(0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f59370000001);
-        running = running + rnu * row_constr_eq_non_uni;
         return (running);
     }
 
@@ -280,14 +320,7 @@ library R1CSMatrix {
     /// @param col The relevant row values
     /// @param eq_rx_ry_step The const for the var steps
     /// @param col_eq_constant The const for the constant evals
-    function B(
-        Fr[] memory row,
-        Fr[] memory col,
-        Fr eq_rx_ry_step,
-        Fr col_eq_constant,
-        Fr eq_step_offset_1,
-        Fr row_constr_eq_non_uni
-    ) internal pure returns (Fr) {
+    function B(Fr[] memory row, Fr[] memory col, Fr eq_rx_ry_step, Fr col_eq_constant) internal pure returns (Fr) {
         Fr running = Fr.wrap(0);
         Fr rv = Fr.wrap(0);
         rv = rv + Fr.wrap(0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000) * row[0] * col[34];
@@ -444,8 +477,6 @@ library R1CSMatrix {
         rc = rc + Fr.wrap(0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f59370000001) * row[72];
         rc = rc + Fr.wrap(0x0080000000) * row[73];
         running = running + rc * col_eq_constant;
-        Fr rnu = col[0] * eq_step_offset_1;
-        running = running + rnu * row_constr_eq_non_uni;
         return (running);
     }
 

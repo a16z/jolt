@@ -4,6 +4,8 @@ pragma solidity >=0.8.21;
 import {Transcript, FiatShamirTranscript} from "./FiatShamirTranscript.sol";
 import {MODULUS, Fr, FrLib} from "../reference/Fr.sol";
 
+import "forge-std/console.sol";
+
 struct SumcheckInstanceProof {
     uint256[][] compressedPolys;
 }
@@ -27,7 +29,7 @@ library SumcheckVerifier {
         Fr claim,
         uint256 num_rounds,
         uint256 degree
-    ) internal pure returns (Fr, Fr[] memory) {
+    ) internal view returns (Fr, Fr[] memory) {
         if (proof.compressedPolys.length != num_rounds || degree > 3) {
             revert SumcheckFailed();
         }
