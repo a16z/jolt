@@ -172,96 +172,37 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
 
         virtual_sequence
     }
+
+    fn sequence_output(x: u64, y: u64) -> u64 {
+        match WORD_SIZE {
+            32 => {
+                let mut remainder = (x as i32) % (y as i32);
+                if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
+                    remainder += y as i32;
+                }
+                remainder as u32 as u64
+            }
+            64 => {
+                let mut remainder = (x as i64) % (y as i64);
+                if (remainder < 0 && (y as i64) > 0) || (remainder > 0 && (y as i64) < 0) {
+                    remainder += y as i64;
+                }
+                remainder as u64
+            }
+            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use ark_std::test_rng;
-    use common::constants::REGISTER_COUNT;
-    use rand_chacha::rand_core::RngCore;
 
-    use crate::jolt::vm::rv32i_vm::RV32I;
+    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     use super::*;
 
     #[test]
-    // TODO(moodlezoup): Turn this into a macro, similar to the `jolt_instruction_test` macro
     fn rem_virtual_sequence_32() {
-        let mut rng = test_rng();
-
-        let r_x = rng.next_u64() % 32;
-        let r_y = rng.next_u64() % 32;
-        let rd = rng.next_u64() % 32;
-
-        let x = rng.next_u32() as u64;
-        let y = if r_x == r_y { x } else { rng.next_u32() as u64 };
-
-        let mut remainder = x as i32 % y as i32;
-        if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
-            remainder += y as i32;
-        }
-        let result = remainder as u32 as u64;
-
-        let rem_trace_row = RVTraceRow {
-            instruction: ELFInstruction {
-                address: rng.next_u64(),
-                opcode: RV32IM::REM,
-                rs1: Some(r_x),
-                rs2: Some(r_y),
-                rd: Some(rd),
-                imm: None,
-                virtual_sequence_index: None,
-            },
-            register_state: RegisterState {
-                rs1_val: Some(x),
-                rs2_val: Some(y),
-                rd_post_val: Some(result as u64),
-            },
-            memory_state: None,
-            advice_value: None,
-        };
-
-        let virtual_sequence = REMInstruction::<32>::virtual_sequence(rem_trace_row);
-        let mut registers = vec![0u64; REGISTER_COUNT as usize];
-        registers[r_x as usize] = x;
-        registers[r_y as usize] = y;
-
-        for row in virtual_sequence {
-            if let Some(rs1_val) = row.register_state.rs1_val {
-                assert_eq!(registers[row.instruction.rs1.unwrap() as usize], rs1_val);
-            }
-            if let Some(rs2_val) = row.register_state.rs2_val {
-                assert_eq!(registers[row.instruction.rs2.unwrap() as usize], rs2_val);
-            }
-
-            let lookup = RV32I::try_from(&row).unwrap();
-            let output = lookup.lookup_entry();
-            if let Some(rd) = row.instruction.rd {
-                registers[rd as usize] = output;
-                assert_eq!(
-                    registers[rd as usize],
-                    row.register_state.rd_post_val.unwrap()
-                );
-            } else {
-                // Virtual assert instruction
-                assert!(output == 1);
-            }
-        }
-
-        for (index, val) in registers.iter().enumerate() {
-            if index as u64 == r_x {
-                // Check that r_x hasn't been clobbered
-                assert_eq!(*val, x);
-            } else if index as u64 == r_y {
-                // Check that r_y hasn't been clobbered
-                assert_eq!(*val, y);
-            } else if index as u64 == rd {
-                // Check that result was written to rd
-                assert_eq!(*val, result as u64);
-            } else if index < 32 {
-                // None of the other "real" registers were touched
-                assert_eq!(*val, 0);
-            }
-        }
+        jolt_virtual_sequence_test!(REMInstruction::<32>, RV32IM::REM);
     }
 }
