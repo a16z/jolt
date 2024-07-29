@@ -62,24 +62,24 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
             left_claims: l
                 .left_claims
                 .iter()
-                .map(|c| fr_to_uint256(c))
+                .map(fr_to_uint256)
                 .collect::<Vec<_>>(),
             right_claims: l
                 .right_claims
                 .iter()
-                .map(|c| fr_to_uint256(c))
+                .map(fr_to_uint256)
                 .collect::<Vec<_>>(),
         })
         .collect::<Vec<_>>();
 
-    let encoded_proof = SolBatchedGrandProductProof::from(SolBatchedGrandProductProof { layers });
+    let encoded_proof = SolBatchedGrandProductProof { layers };
 
     let r_prover = r_prover
         .iter()
-        .map(|c| fr_to_uint256(c))
+        .map(fr_to_uint256)
         .collect::<Vec<_>>();
 
-    let claims = claims.iter().map(|c| fr_to_uint256(c)).collect::<Vec<_>>();
+    let claims = claims.iter().map(fr_to_uint256).collect::<Vec<_>>();
 
     let proof_plus_results = SolProductProofAndClaims {
         encoded_proof,

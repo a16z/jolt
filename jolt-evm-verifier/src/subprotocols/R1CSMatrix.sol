@@ -45,7 +45,7 @@ library R1CSMatrix {
     {
         uint256 constraint_row_bits = 7;
         uint256 constraint_col_bits = 7;
-        uint256 step_bits = row_bits - constraint_row_bits;
+        //uint256 step_bits = row_bits - constraint_row_bits;
 
         // Do an eq pol eval on the parts of r which are not in the first 7 bits of the row and col sub vector
         // Todo - what is the plus one here?
@@ -64,9 +64,9 @@ library R1CSMatrix {
         // Does the eval of the constraint row const via a bit vec
         /// TODO this constant seems to always be zero
         Fr col_eq_constant = Fr.wrap(0);
-        Fr eq_plus_one_eval = eq_plus_one(r, constraint_row_bits, r, row_bits + constraint_col_bits + 1, step_bits);
+        // Fr eq_plus_one_eval = eq_plus_one(r, constraint_row_bits, r, row_bits + constraint_col_bits + 1, step_bits);
 
-        Fr non_uni_constraint_index = Fr.wrap(0);
+        // Fr non_uni_constraint_index = Fr.wrap(0);
 
         return (
             A(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant),

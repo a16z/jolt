@@ -10,10 +10,9 @@ use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme
 use jolt_core::poly::commitment::hyperkzg::*;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::utils::transcript::ProofTranscript;
-use rand_chacha;
 use rand_core::SeedableRng;
 
-use jolt_core::utils::sol_types::{into_sol_hyperkzg, into_sol_vk, HyperKZGProofSol, VK};
+use jolt_core::utils::sol_types::{HyperKZGProofSol, VK};
 
 fn main() {
     // Testing 2^12 ie 4096 elements
@@ -72,8 +71,8 @@ fn main() {
     });
 
     // We must invert the vk point on g2
-    let vk_sol = into_sol_vk(vk);
-    let proof_sol = into_sol_hyperkzg(proof);
+    let vk_sol = (&vk).into();
+    let proof_sol = (&proof).into();
 
     let mut encoded_commitments = vec![];
     for point in commitments.iter() {

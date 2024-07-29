@@ -28,13 +28,16 @@ contract SpartanVerifier is HyperKZG {
     /// @param proof The spartan proof
     /// @param witness_segment_commitments A sequence of commitments to witness segments encoded as x,y
     /// @param transcript The running fiat shamir transcript
+    /// @param log_rows The log of the rows of our witness
+    /// @param log_cols The log of the col of our witness
+    // @param total_rows The total rows, to be used in the computation of the abc mle
     function verifySpartanR1CS(
         SpartanProof memory proof,
         uint256[] memory witness_segment_commitments,
         Transcript memory transcript,
         uint256 log_rows,
         uint256 log_cols,
-        uint256 total_cols
+        uint256 
     ) public view returns (bool) {
         // Load a random tau
         Fr[] memory tau = new Fr[](log_rows);

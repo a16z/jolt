@@ -42,7 +42,7 @@ fn main() {
     scalar_responses.push(transcript.challenge_scalar());
     vector_responses.push(transcript.challenge_vector(4));
 
-    let scalars = vec![Fr::random(&mut rng), Fr::random(&mut rng)];
+    let scalars = [Fr::random(&mut rng), Fr::random(&mut rng)];
     transcript.append_scalar(&scalars[0]);
     transcript.append_scalar(&scalars[1]);
     let mut serialized_0 = vec![];
@@ -135,7 +135,7 @@ fn main() {
     for bytes in byte_vectors.clone() {
         let mut encoded_bytes = Vec::<FixedBytes<32>>::new();
         for &byte32 in bytes.iter() {
-            encoded_bytes.push(FixedBytes::<32>::new(byte32.clone()));
+            encoded_bytes.push(FixedBytes::<32>::new(byte32));
         }
         encoded_bytes_vector.push(encoded_bytes)
     }
@@ -144,16 +144,14 @@ fn main() {
         &(byte_vectors[0]
             .clone()
             .into_iter()
-            .map(|x| x.into_iter())
-            .flatten()
+            .flat_map(|x| x.into_iter())
             .collect::<Vec<u8>>()),
     );
     transcript.append_bytes(
         &(byte_vectors[1]
             .clone()
             .into_iter()
-            .map(|x| x.into_iter())
-            .flatten()
+            .flat_map(|x| x.into_iter())
             .collect::<Vec<u8>>()),
     );
     scalar_responses.push(transcript.challenge_scalar());
@@ -164,7 +162,6 @@ fn main() {
         .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
         .collect();
     let encoded_vector_responses = vector_responses
-        .iter()
         .into_iter()
         .map(|x| {
             x.into_iter()

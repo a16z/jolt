@@ -29,7 +29,7 @@ library SumcheckVerifier {
         Fr claim,
         uint256 num_rounds,
         uint256 degree
-    ) internal view returns (Fr, Fr[] memory) {
+    ) internal pure returns (Fr, Fr[] memory) {
         if (proof.compressedPolys.length != num_rounds || degree > 3) {
             revert SumcheckFailed();
         }

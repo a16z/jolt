@@ -9,10 +9,9 @@ use ark_std::UniformRand;
 use jolt_core::poly::commitment::hyperkzg::*;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::utils::transcript::ProofTranscript;
-use rand_chacha;
 use rand_core::SeedableRng;
 
-use jolt_core::utils::sol_types::{into_sol_hyperkzg, into_sol_vk, HyperKZGProofSol, VK};
+use jolt_core::utils::sol_types::{HyperKZGProofSol, VK};
 
 fn main() {
     // Testing 2^12 ie 4096 elements
@@ -57,11 +56,11 @@ fn main() {
         uint256 claim;
     });
 
-    let vk_sol = into_sol_vk(vk);
-    let proof_sol = into_sol_hyperkzg(proof);
+    let vk_sol = (&vk).into();
+    let proof_sol = (&proof).into();
 
-    let x = U256::from_be_slice(&c.0.x.into_bigint().to_bytes_be().as_ref());
-    let y = U256::from_be_slice(&c.0.y.into_bigint().to_bytes_be().as_ref());
+    let x = U256::from_be_slice(c.0.x.into_bigint().to_bytes_be().as_ref());
+    let y = U256::from_be_slice(c.0.y.into_bigint().to_bytes_be().as_ref());
 
     let point_encoded = point
         .iter()

@@ -12,7 +12,7 @@ contract TestR1CSLib is TestBase {
     // Here we are not calling out directly to rust because these functions are sometimes internal
     // instead we load examples from the sha2 test chain and compare them. Integration tests are
     // implied by integration tests of the full spartan R1CS test.
-    function testEQPolyEvaluate() public view {
+    function testEQPolyEvaluate() public pure {
         // Define two test vectors
         uint256[] memory r_u = new uint256[](19);
         r_u[0] = 0x196aff7ae9bf57ac8253c1ec87373875a7108a267b2efd3b67b74053c0143200;
@@ -65,7 +65,7 @@ contract TestR1CSLib is TestBase {
         assertEq(res.unwrap(), 0x00bfae5e98717dcb1a3bcbc7c6d0fb4948856df8fd0a307e99f5596ea9f87a24);
     }
 
-    function testEqPolyEvals() public view {
+    function testEqPolyEvals() public pure {
         uint256[] memory input = new uint256[](7);
         input[0] = 0x222ab76b45f02f37862008ec6178634ca6c63c1bb416b6194fc4dc03efe73523;
         input[1] = 0x27c272f522aafa7bf22d7132e3b57684835ad16ad550bb14916c457478a7e8df;
@@ -80,14 +80,14 @@ contract TestR1CSLib is TestBase {
             fr_in := input
         }
         Fr[] memory res = R1CSMatrix.eq_poly_evals(fr_in, 0, 7);
-        (Fr[] memory r_x, Fr[] memory _none) = load();
+        (Fr[] memory r_x, ) = load();
 
         for (uint256 i = 0; i < 128; i++) {
             assertEq(res[i].unwrap(), r_x[i].unwrap());
         }
     }
 
-    function testZMLE() public view {
+    function testZMLE() public pure {
         Fr[] memory r_in = new Fr[](27);
         r_in[0] = Fr.wrap(0x20909cbd347ced3edbf95822bd20a6be344e15333b586a12bea1ea5aaf53465c);
         r_in[1] = Fr.wrap(0x1a412ccd4128e55b2211d6806789e95aab168d51d7fcc7dc4cc0934aa4edb20a);
