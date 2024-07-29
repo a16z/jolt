@@ -2,15 +2,15 @@ use ark_bn254::Bn254;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 
+use crate::field::JoltField;
+use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
+use crate::r1cs::spartan::UniformSpartanProof;
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use alloy_primitives::U256;
 use alloy_sol_types::sol;
 use ark_bn254::FrConfig;
 use ark_ff::Fp;
 use ark_ff::MontBackend;
-use crate::field::JoltField;
-use crate::poly::commitment::hyperkzg::{HyperKZGProof, HyperKZG, HyperKZGVerifierKey};
-use crate::r1cs::spartan::UniformSpartanProof;
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 
 sol!(struct HyperKZGProofSol {
     uint256[] com; // G1 points represented pairwise
@@ -52,7 +52,7 @@ impl Into<HyperKZGProofSol> for &HyperKZGProof<Bn254> {
         let ypos_scalar = self.v[0].clone();
         let yneg_scalar = self.v[1].clone();
         let y_scalar = self.v[2].clone();
-    
+
         // Horrible type conversion here, possibly theres an easier way
         let v_ypos = ypos_scalar
             .iter()
@@ -66,17 +66,17 @@ impl Into<HyperKZGProofSol> for &HyperKZGProof<Bn254> {
             .iter()
             .map(|i| U256::from_be_slice(i.into_bigint().to_bytes_be().as_slice()))
             .collect();
-    
+
         for point in self.com.iter() {
             com.push(U256::from_be_slice(&point.x.into_bigint().to_bytes_be()));
             com.push(U256::from_be_slice(&point.y.into_bigint().to_bytes_be()));
         }
-    
+
         for point in self.w.iter() {
             w.push(U256::from_be_slice(&point.x.into_bigint().to_bytes_be()));
             w.push(U256::from_be_slice(&point.y.into_bigint().to_bytes_be()));
         }
-    
+
         HyperKZGProofSol {
             com,
             w,
@@ -86,7 +86,6 @@ impl Into<HyperKZGProofSol> for &HyperKZGProof<Bn254> {
         }
     }
 }
-
 
 impl Into<VK> for &HyperKZGVerifierKey<Bn254> {
     fn into(self) -> VK {
@@ -106,7 +105,7 @@ impl Into<VK> for &HyperKZGVerifierKey<Bn254> {
             U256::from_be_slice(&g2_beta.y.c0.into_bigint().to_bytes_be()),
             U256::from_be_slice(&g2_beta.y.c1.into_bigint().to_bytes_be()),
         ];
-    
+
         VK {
             VK_g1_x: U256::from_be_slice(&g1.x.into_bigint().to_bytes_be()),
             VK_g1_y: U256::from_be_slice(&g1.y.into_bigint().to_bytes_be()),
@@ -119,7 +118,7 @@ impl Into<VK> for &HyperKZGVerifierKey<Bn254> {
 impl<F: JoltField> Into<SumcheckProof> for &SumcheckInstanceProof<F> {
     fn into(self) -> SumcheckProof {
         let mut compressed_polys = vec![];
-    
+
         for poly in self.compressed_polys.iter() {
             let new_poly: Vec<U256> = poly
                 .coeffs_except_linear_term
@@ -128,7 +127,7 @@ impl<F: JoltField> Into<SumcheckProof> for &SumcheckInstanceProof<F> {
                 .collect();
             compressed_polys.push(new_poly);
         }
-    
+
         SumcheckProof {
             compressedPolys: compressed_polys,
         }
@@ -142,15 +141,13 @@ pub fn into_uint256<F: JoltField>(from: F) -> U256 {
 }
 
 impl Into<SpartanProof> for &UniformSpartanProof<Fp<MontBackend<FrConfig, 4>, 4>, HyperKZG<Bn254>> {
-    fn into(
-       self
-    ) -> SpartanProof {
+    fn into(self) -> SpartanProof {
         let claimed_evals = self
             .claimed_witness_evals
             .iter()
             .map(|i| into_uint256(*i))
             .collect();
-    
+
         SpartanProof {
             outer: (&self.outer_sumcheck_proof).into(),
             outerClaimA: into_uint256(self.outer_sumcheck_claims.0),
