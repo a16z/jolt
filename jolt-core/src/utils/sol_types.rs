@@ -177,20 +177,12 @@ impl Into<SpartanProof> for &UniformSpartanProof<Fp<MontBackend<FrConfig, 4>, 4>
 
 impl<F: JoltField> Into<GKRLayer> for BatchedGrandProductLayerProof<F> {
     fn into(self) -> GKRLayer {
-        let left = self
-            .left_claims
-            .into_iter()
-            .map(into_uint256)
-            .collect();
-        let right = self
-            .right_claims
-            .into_iter()
-            .map(into_uint256)
-            .collect();
-        GKRLayer{
+        let left = self.left_claims.into_iter().map(into_uint256).collect();
+        let right = self.right_claims.into_iter().map(into_uint256).collect();
+        GKRLayer {
             sumcheck: (&self.proof).into(),
             leftClaims: left,
-            rightClaims: right
+            rightClaims: right,
         }
     }
 }
@@ -199,8 +191,6 @@ impl Into<GrandProductProof> for BatchedGrandProductProof<HyperKZG<Bn254>> {
     fn into(self) -> GrandProductProof {
         let layers: Vec<GKRLayer> = self.layers.into_iter().map(|i| i.into()).collect();
         assert!(self.quark_proof.is_none(), "Quarks are unsupported");
-        GrandProductProof {
-            layers
-        }
+        GrandProductProof { layers }
     }
 }
