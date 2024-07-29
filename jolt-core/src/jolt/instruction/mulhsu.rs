@@ -111,11 +111,11 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
     fn sequence_output(x: u64, y: u64) -> u64 {
         match WORD_SIZE {
             32 => {
-                let result = ((x as i32 as i64) * (y as u32 as i64)) >> 32;
+                let result = ((x as i32 as i64) * (y as i64)) >> 32;
                 result as u32 as u64
             }
             64 => {
-                let result = ((x as i64 as i128) * (y as u64 as i128)) >> 64;
+                let result = ((x as i64 as i128) * (y as i128)) >> 64;
                 result as u64
             }
             _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),

@@ -11,7 +11,6 @@ use crate::jolt::instruction::{
 pub struct DIVInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_SIZE> {
-
     fn virtual_sequence(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         assert_eq!(trace_row.instruction.opcode, RV32IM::DIV);
         // DIV operands

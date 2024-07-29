@@ -37,10 +37,10 @@ macro_rules! jolt_instruction_test {
 /// 7. Checks that no unintended modifications have been made to other registers.
 macro_rules! jolt_virtual_sequence_test {
     ($instr_type:ty, $opcode:expr) => {
-        use ark_std::test_rng;
-        use rand_chacha::rand_core::RngCore;
         use crate::jolt::vm::rv32i_vm::RV32I;
+        use ark_std::test_rng;
         use common::constants::REGISTER_COUNT;
+        use rand_chacha::rand_core::RngCore;
 
         let mut rng = test_rng();
         let r_x = rng.next_u64() % 32;
@@ -48,7 +48,6 @@ macro_rules! jolt_virtual_sequence_test {
         let rd = rng.next_u64() % 32;
         let x = rng.next_u32() as u64;
         let y = if r_y == r_x { x } else { rng.next_u32() as u64 };
-        
         let result = <$instr_type>::sequence_output(x, y);
 
         let mut registers = vec![0u64; REGISTER_COUNT as usize];
