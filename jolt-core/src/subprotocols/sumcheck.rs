@@ -538,21 +538,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar();
-
-            let bytes = |from: F| -> Vec<u8> {
-                let mut buf = vec![];
-                from.serialize_uncompressed(&mut buf).unwrap();
-                buf.into_iter().rev().collect()
-            };
-        
-
-            println!("sampled 0x{}", hex::encode(bytes(r_i)));
-
             r.push(r_i);
 
             // evaluate the claimed degree-ell polynomial at r_i
             e = poly.evaluate(&r_i);
-            println!("evaled 0x{}", hex::encode(bytes(e)));
         }
 
         Ok((e, r))
