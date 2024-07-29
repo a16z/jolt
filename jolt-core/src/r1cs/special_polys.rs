@@ -123,7 +123,7 @@ impl<F: JoltField> SparsePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot_par(&mut self, r: &F) {
         // TODO(sragss): better parallelism.
-        let (chunks, _range) = self.chunk_no_split_siblings(rayon::current_num_threads() * 8);
+        let (chunks, _range) = self.chunk_no_split_siblings(rayon::current_num_threads() * 2);
 
         // Calc chunk sizes post-binding for pre-allocation.
         let count_span = tracing::span!(tracing::Level::DEBUG, "counting");
@@ -134,10 +134,10 @@ impl<F: JoltField> SparsePolynomial<F> {
                 // Count each pair of siblings if at least one is present.
                 chunk
                     .iter()
-                    .enumerate()
-                    .filter(|(i, (_value, index))| {
+                    .zip(chunk.iter().skip(1).chain(std::iter::once(&(F::zero(), usize::MAX))))
+                    .filter(|((_value, index), (_next_value, next_index))| {
                         // Always count odd, only count even indices when the paired odd index is not present.
-                        !index.is_even() || i + 1 >= chunk.len() || index + 1 != chunk[i + 1].1
+                        !index.is_even() || *index + 1 != *next_index
                     })
                     .count()
             })
@@ -215,7 +215,6 @@ impl<F: JoltField> SparsePolynomial<F> {
         }
     }
 
-    #[cfg(test)]
     #[tracing::instrument(skip_all)]
     pub fn to_dense(self) -> DensePolynomial<F> {
         use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
@@ -294,20 +293,36 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
 
             if a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
                 let a_start = a_sparse_i;
-                // Scan over a until the corresponding dense index is out of range
-                while a_sparse_i < a.Z.len() && a.Z[a_sparse_i].1 < dense_range_end {
-                    a_sparse_i += 1;
+                // Use binary search to find the first index where the dense index is out of range
+                let mut left = a_sparse_i;
+                let mut right = a.Z.len();
+                while left < right {
+                    let mid = (left + right) / 2;
+                    if a.Z[mid].1 < dense_range_end {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
                 }
+                a_sparse_i = left;
 
                 a_chunks[chunk_index - 1] = &a.Z[a_start..a_sparse_i];
             }
 
             if c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
                 let c_start = c_sparse_i;
-                // Scan over c until the corresponding dense index is out of range
-                while c_sparse_i < c.Z.len() && c.Z[c_sparse_i].1 < dense_range_end {
-                    c_sparse_i += 1;
+                // Use binary search to find the first index where the dense index is out of range
+                let mut left = c_sparse_i;
+                let mut right = c.Z.len();
+                while left < right {
+                    let mid = (left + right) / 2;
+                    if c.Z[mid].1 < dense_range_end {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
                 }
+                c_sparse_i = left;
 
                 c_chunks[chunk_index - 1] = &c.Z[c_start..c_sparse_i];
             }

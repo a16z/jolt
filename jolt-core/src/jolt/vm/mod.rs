@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
+use crate::subprotocols::sumcheck::CurveSpartanSumcheckBackend;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -398,7 +399,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         drop_in_background_thread(jolt_polynomials);
 
-        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
+        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted::<_, CurveSpartanSumcheckBackend>(
             &preprocessing.generators,
             r1cs_builder,
             &spartan_key,

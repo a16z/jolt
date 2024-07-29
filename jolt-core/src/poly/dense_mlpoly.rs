@@ -213,6 +213,7 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
         let n = self.len() / 2;
         let mut new_z = unsafe_allocate_zero_vec(n);
