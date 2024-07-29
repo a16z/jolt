@@ -61,7 +61,7 @@ fn fr_to_uint256(c: &Fr) -> U256 {
 fn main() {
     let _: Vec<_> = env::args().collect();
 
-    //initial test taken from https://github.com/a16z/jolt/blob/main/jolt-core/src/subprotocols/grand_product.rs#L1522-L1545
+    //initial test taken from https://github.com/a16z/jolt/blob/d5147f8d27bb4961f3d648b872b45ff99af860c0/jolt-core/src/subprotocols/grand_product.rs
     const LAYER_SIZE: usize = 1 << 8;
     const BATCH_SIZE: usize = 4;
     let mut rng = test_rng();
