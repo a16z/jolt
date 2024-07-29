@@ -2,7 +2,7 @@
 pragma solidity >=0.8.0;
 
 import {Transcript, FiatShamirTranscript} from "./FiatShamirTranscript.sol";
-import {MODULUS, Fr, FrLib} from "../reference/Fr.sol";
+import {MODULUS, Fr, FrLib} from "./Fr.sol";
 import {SumcheckVerifier, SumcheckInstanceProof} from "./SumcheckVerifier.sol";
 import {HyperKZG, HyperKZGProof} from "./HyperKZG.sol";
 import {R1CSMatrix} from "./R1CSMatrix.sol";
@@ -37,7 +37,7 @@ contract SpartanVerifier is HyperKZG {
         Transcript memory transcript,
         uint256 log_rows,
         uint256 log_cols,
-        uint256 
+        uint256
     ) public view returns (bool) {
         // Load a random tau
         Fr[] memory tau = new Fr[](log_rows);

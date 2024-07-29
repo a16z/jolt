@@ -5,6 +5,8 @@ use ark_ff::PrimeField;
 use crate::field::JoltField;
 use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
 use crate::r1cs::spartan::UniformSpartanProof;
+use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
+use crate::subprotocols::grand_product::BatchedGrandProductProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use alloy_primitives::U256;
 use alloy_sol_types::sol;
@@ -42,6 +44,19 @@ sol!(
         SumcheckProof inner;
         uint256[] claimedEvals;
         HyperKZGProofSol openingProof;
+    }
+);
+
+sol!(
+    struct GKRLayer {
+        SumcheckProof sumcheck;
+        uint256[] leftClaims;
+        uint256[] rightClaims;
+    }
+);
+
+sol!(struct GrandProductProof {
+        GKRLayer[] layers;
     }
 );
 
@@ -156,6 +171,36 @@ impl Into<SpartanProof> for &UniformSpartanProof<Fp<MontBackend<FrConfig, 4>, 4>
             inner: (&self.inner_sumcheck_proof).into(),
             claimedEvals: claimed_evals,
             openingProof: (&self.opening_proof).into(),
+        }
+    }
+}
+
+impl<F: JoltField> Into<GKRLayer> for BatchedGrandProductLayerProof<F> {
+    fn into(self) -> GKRLayer {
+        let left = self
+            .left_claims
+            .into_iter()
+            .map(into_uint256)
+            .collect();
+        let right = self
+            .right_claims
+            .into_iter()
+            .map(into_uint256)
+            .collect();
+        GKRLayer{
+            sumcheck: (&self.proof).into(),
+            leftClaims: left,
+            rightClaims: right
+        }
+    }
+}
+
+impl Into<GrandProductProof> for BatchedGrandProductProof<HyperKZG<Bn254>> {
+    fn into(self) -> GrandProductProof {
+        let layers: Vec<GKRLayer> = self.layers.into_iter().map(|i| i.into()).collect();
+        assert!(self.quark_proof.is_none(), "Quarks are unsupported");
+        GrandProductProof {
+            layers
         }
     }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-import {MODULUS, Fr, FrLib} from "../reference/Fr.sol";
+import {MODULUS, Fr, FrLib} from "./Fr.sol";
 import "forge-std/console.sol";
 
 /// Allows calculation of the R1CS step matrix

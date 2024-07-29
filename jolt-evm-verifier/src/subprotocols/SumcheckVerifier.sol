@@ -2,7 +2,7 @@
 pragma solidity >=0.8.21;
 
 import {Transcript, FiatShamirTranscript} from "./FiatShamirTranscript.sol";
-import {MODULUS, Fr, FrLib} from "../reference/Fr.sol";
+import {MODULUS, Fr, FrLib} from "./Fr.sol";
 
 import "forge-std/console.sol";
 
@@ -11,6 +11,8 @@ struct SumcheckInstanceProof {
 }
 
 error SumcheckFailed();
+error InvalidLength();
+error BadDegree();
 
 library SumcheckVerifier {
     using FiatShamirTranscript for Transcript;
@@ -31,7 +33,7 @@ library SumcheckVerifier {
         uint256 degree
     ) internal pure returns (Fr, Fr[] memory) {
         if (proof.compressedPolys.length != num_rounds || degree > 3) {
-            revert SumcheckFailed();
+            revert InvalidLength();
         }
 
         Fr e = claim;
@@ -40,7 +42,7 @@ library SumcheckVerifier {
         for (uint256 i = 0; i < num_rounds; i++) {
             //verify degree bound
             if (proof.compressedPolys[i].length != degree) {
-                revert SumcheckFailed();
+                revert BadDegree();
             }
 
             // TODO - We can move this into the transcript lib

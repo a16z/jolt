@@ -1,7 +1,7 @@
 pragma solidity ^0.8.21;
 
 import {TestBase} from "./base/TestBase.sol";
-import {Fr, FrLib} from "../src/reference/Fr.sol";
+import {Fr, FrLib} from "../src/subprotocols/Fr.sol";
 import {Transcript, FiatShamirTranscript} from "../src/subprotocols/FiatShamirTranscript.sol";
 import {SpartanVerifier, SpartanProof} from "../src/subprotocols/SpartanVerifier.sol";
 

@@ -4,23 +4,19 @@ pragma solidity >=0.8.21;
 
 import {Vm} from "forge-std/Vm.sol";
 import {Test} from "forge-std/Test.sol";
-import {Jolt} from "../../src/reference/JoltTypes.sol";
-import {Fr} from "../../src/reference/Fr.sol";
+import {GrandProductProof} from "../../src/subprotocols/GrandProductVerifier.sol";
+import {Fr} from "../../src/subprotocols/Fr.sol";
 
 contract TestBase is Test {
     struct ProofAndData {
-        Jolt.BatchedGrandProductProof encoded_proof;
+        GrandProductProof encoded_proof;
         uint256[] claims;
         uint256[] r_prover;
     }
 
-    function getProofData()
-        internal
-        returns (Jolt.BatchedGrandProductProof memory, uint256[] memory, uint256[] memory)
-    {
+    function getGrandProductExample() internal returns (GrandProductProof memory, uint256[] memory, uint256[] memory) {
         string[] memory cmds = new string[](2);
-        cmds[0] = "sh";
-        cmds[1] = "script/run.sh";
+        cmds[0] = "./script/target/release/grand_product_example";
         bytes memory result = vm.ffi(cmds);
         (ProofAndData memory decodedProof) = abi.decode(result, (ProofAndData));
 

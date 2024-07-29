@@ -2,7 +2,7 @@ pragma solidity ^0.8.21;
 
 import {TestBase} from "./base/TestBase.sol";
 import {R1CSMatrix} from "../src/subprotocols/R1CSMatrix.sol";
-import {Fr, FrLib} from "../src/reference/Fr.sol";
+import {Fr, FrLib} from "../src/subprotocols/Fr.sol";
 
 import "forge-std/console.sol";
 
@@ -80,7 +80,7 @@ contract TestR1CSLib is TestBase {
             fr_in := input
         }
         Fr[] memory res = R1CSMatrix.eq_poly_evals(fr_in, 0, 7);
-        (Fr[] memory r_x, ) = load();
+        (Fr[] memory r_x,) = load();
 
         for (uint256 i = 0; i < 128; i++) {
             assertEq(res[i].unwrap(), r_x[i].unwrap());

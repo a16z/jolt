@@ -1,8 +1,9 @@
 use jolt_core::{
     field::JoltField,
-    poly::commitment::zeromorph::Zeromorph,
+    poly::commitment::hyperkzg::HyperKZG,
     subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct},
     utils::transcript::ProofTranscript,
+    utils::sol_types::GrandProductProof
 };
 use std::env;
 
@@ -17,62 +18,20 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
 
     let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
         Fr,
-        Zeromorph<Bn254>,
+        HyperKZG<Bn254>,
     >>::prove_grand_product(batched_circuit, &mut transcript, None);
     let claims =
-        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::claims(
+        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, HyperKZG<Bn254>>>::claims(
             batched_circuit,
         );
 
     //encoding the proof into abi
 
-    sol!(struct SolBatchedGrandProductLayerProof {
-        uint256[][] compressed_polys_coeffs_except_linear_term;
-        uint256[] left_claims;
-        uint256[] right_claims;
-    });
-
-    sol!(struct SolBatchedGrandProductProof {
-        SolBatchedGrandProductLayerProof[] layers;
-    });
-
     sol!(struct SolProductProofAndClaims{
-        SolBatchedGrandProductProof encoded_proof;
+        GrandProductProof encoded_proof;
         uint256[] claims;
         uint256[] r_prover;
     });
-
-    let layers: Vec<SolBatchedGrandProductLayerProof> = proof
-        .layers
-        .into_iter()
-        .map(|l| SolBatchedGrandProductLayerProof {
-            compressed_polys_coeffs_except_linear_term: l
-                .proof
-                .compressed_polys
-                .iter()
-                .map(|p| {
-                    p.coeffs_except_linear_term
-                        .clone()
-                        .into_iter()
-                        .map(|c| fr_to_uint256(&c))
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>(),
-
-            left_claims: l
-                .left_claims
-                .iter()
-                .map(fr_to_uint256)
-                .collect::<Vec<_>>(),
-            right_claims: l
-                .right_claims
-                .iter()
-                .map(fr_to_uint256)
-                .collect::<Vec<_>>(),
-        })
-        .collect::<Vec<_>>();
-
-    let encoded_proof = SolBatchedGrandProductProof { layers };
 
     let r_prover = r_prover
         .iter()
@@ -82,7 +41,7 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
     let claims = claims.iter().map(fr_to_uint256).collect::<Vec<_>>();
 
     let proof_plus_results = SolProductProofAndClaims {
-        encoded_proof,
+        encoded_proof: proof.into(),
         claims,
         r_prover,
     };
@@ -116,7 +75,7 @@ fn main() {
 
     let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
         Fr,
-        Zeromorph<Bn254>,
+        HyperKZG<Bn254>,
     >>::construct(leaves);
 
     get_proof_data(&mut batched_circuit);
