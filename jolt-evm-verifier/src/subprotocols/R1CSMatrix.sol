@@ -8,15 +8,20 @@ import "forge-std/console.sol";
 library R1CSMatrix {
     using FrLib for Fr;
 
+    // These constants being changed may break the logic in some areas as the assumption of their size or bit composition is built in
+    uint256 constant COL_BITS = 7;
+    uint256 constant ROW_BITS = 7;
+    uint256 constant SEGMENT_LENGTH = 89;
+
     /// Evaluates the z mle for the outer sumcheck
     /// @param r The r we are evaluating on
     /// @param segmentEvals The segment evals from the proof, should be length 89
     function eval_z_mle(Fr[] memory r, uint256[] memory segmentEvals) internal pure returns (Fr) {
-        require(segmentEvals.length == 89, "Segment Length must be 89");
+        require(segmentEvals.length == SEGMENT_LENGTH, "Incorrect segment length");
         // We calculate the evals based on a length 7 slice
-        Fr[] memory r_var_eqs = eq_poly_evals(r, 1, 7);
+        Fr[] memory r_var_eqs = eq_poly_evals(r, 1, ROW_BITS);
         Fr sum = Fr.wrap(0);
-        for (uint256 i = 0; i < 89; i++) {
+        for (uint256 i = 0; i < SEGMENT_LENGTH; i++) {
             sum = sum + r_var_eqs[i] * FrLib.from(segmentEvals[i]);
         }
         // In the rust we do let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(F::one(), 0)]); let eval_const = const_poly.evaluate(r_rest);
@@ -43,12 +48,11 @@ library R1CSMatrix {
         pure
         returns (Fr, Fr, Fr)
     {
-        uint256 constraint_row_bits = 7;
-        uint256 constraint_col_bits = 7;
+        uint256 constraint_row_bits = ROW_BITS;
+        uint256 constraint_col_bits = COL_BITS;
         //uint256 step_bits = row_bits - constraint_row_bits;
 
         // Do an eq pol eval on the parts of r which are not in the first 7 bits of the row and col sub vector
-        // Todo - what is the plus one here?
         Fr eq_rx_ry_step = eq_poly_evaluate(
             r,
             constraint_row_bits,
@@ -62,7 +66,6 @@ library R1CSMatrix {
         Fr[] memory eq_poly_col = eq_poly_evals(r, row_bits, constraint_col_bits + 1);
 
         // Does the eval of the constraint row const via a bit vec
-        /// TODO this constant seems to always be zero
         Fr col_eq_constant = Fr.wrap(0);
         // Fr eq_plus_one_eval = eq_plus_one(r, constraint_row_bits, r, row_bits + constraint_col_bits + 1, step_bits);
 

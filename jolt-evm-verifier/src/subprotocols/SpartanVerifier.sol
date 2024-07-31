@@ -109,8 +109,6 @@ contract SpartanVerifier is HyperKZG {
         require(claim_inner == expected_left * eval_Z, "SpartanError::InvalidInnerSumcheckClaim");
 
         // We never use this memory again so we are ok to corrupt it like this
-        // TODO - (aleph) is it ok to refer to this as 'memory-safe'? We hit stack depth without it, but this does corrupt the memory in
-        //                r_y which should never be used again?
         uint256[] memory opening_r;
         assembly ("memory-safe") {
             let len := mload(r_y)

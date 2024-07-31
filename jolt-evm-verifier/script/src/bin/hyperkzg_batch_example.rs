@@ -70,7 +70,6 @@ fn main() {
         uint256[] claims;
     });
 
-    // We must invert the vk point on g2
     let vk_sol = (&vk).into();
     let proof_sol = (&proof).into();
 
