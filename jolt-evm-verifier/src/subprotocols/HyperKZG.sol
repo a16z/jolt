@@ -3,7 +3,7 @@
 pragma solidity >=0.8.0;
 
 import {Transcript, FiatShamirTranscript} from "./FiatShamirTranscript.sol";
-import {MODULUS, Fr, FrLib} from "../reference/Fr.sol";
+import {MODULUS, Fr, FrLib} from "./Fr.sol";
 
 struct HyperKZGProof {
     uint256[] com; // G1 points represented pairwise

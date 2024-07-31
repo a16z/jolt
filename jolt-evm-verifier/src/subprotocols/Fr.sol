@@ -9,8 +9,6 @@ using {add as +} for Fr global;
 using {sub as -} for Fr global;
 using {mul as *} for Fr global;
 
-// Yuck using ^ for exp  - todo maybe make it manual
-using {exp as ^} for Fr global;
 using {notEqual as !=} for Fr global;
 using {equal as ==} for Fr global;
 
@@ -102,16 +100,6 @@ function sub(Fr a, Fr b) pure returns (Fr) {
     unchecked {
         return Fr.wrap(addmod(Fr.unwrap(a), MODULUS - Fr.unwrap(b), MODULUS));
     }
-}
-
-// TODO: double check this !
-function exp(Fr base, Fr exponent) pure returns (Fr) {
-    if (Fr.unwrap(exponent) == 0) return Fr.wrap(1);
-    // Implement exponent with a loop as we will overflow otherwise
-    for (uint256 i = 1; i < Fr.unwrap(exponent); i += i) {
-        base = base * base;
-    }
-    return base;
 }
 
 function notEqual(Fr a, Fr b) pure returns (bool) {
