@@ -62,11 +62,11 @@ pub enum SpartanError {
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
-    outer_sumcheck_proof: SumcheckInstanceProof<F>,
-    outer_sumcheck_claims: (F, F, F),
-    inner_sumcheck_proof: SumcheckInstanceProof<F>,
-    claimed_witness_evals: Vec<F>,
-    opening_proof: C::BatchedProof,
+    pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F>,
+    pub(crate) outer_sumcheck_claims: (F, F, F),
+    pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F>,
+    pub(crate) claimed_witness_evals: Vec<F>,
+    pub(crate) opening_proof: C::BatchedProof,
 }
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {

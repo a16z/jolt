@@ -69,6 +69,7 @@ toml_edit = "0.22.14"
 
 jolt-sdk = { path = "./jolt-sdk" }
 jolt-core = { path = "./jolt-core" }
+alloy-core = "0.7.6"
 common = { path = "./common" }
 
 [profile.test]

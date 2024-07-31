@@ -486,7 +486,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct SumcheckInstanceProof<F: JoltField> {
-    compressed_polys: Vec<CompressedUniPoly<F>>,
+    pub compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
 impl<F: JoltField> SumcheckInstanceProof<F> {
@@ -533,7 +533,6 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar();
-
             r.push(r_i);
 
             // evaluate the claimed degree-ell polynomial at r_i using the hint
