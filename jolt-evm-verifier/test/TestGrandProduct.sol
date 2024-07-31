@@ -9,7 +9,7 @@ import {Fr} from "../src/subprotocols/Fr.sol";
 
 import "forge-std/console.sol";
 
-contract TestBaseJolt is TestBase {
+contract TestGrandProduct is TestBase {
     function testValidGrandProductProof() public {
         // Inits the transcript with the same string label as the rust code
         Transcript memory transcript = FiatShamirTranscript.new_transcript("test_transcript", 4);
