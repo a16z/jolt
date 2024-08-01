@@ -16,7 +16,7 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
-    msm::VariableBaseMSM,
+    msm::{VariableBaseMSM, Icicle},
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     utils::{
         errors::ProofVerifyError,
@@ -94,6 +94,7 @@ fn kzg_open_no_rem<P: Pairing>(
 ) -> P::G1Affine
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let h = compute_witness_polynomial::<P>(f, u);
     UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(h)).unwrap()
@@ -123,6 +124,7 @@ fn scalar_vector_muladd<P: Pairing>(
     s: P::ScalarField,
 ) where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     assert!(a.len() >= v.len());
     for i in 0..v.len() {
@@ -136,6 +138,7 @@ fn kzg_compute_batch_polynomial<P: Pairing>(
 ) -> Vec<P::ScalarField>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let k = f.len(); // Number of polynomials we're batching
 
@@ -156,6 +159,7 @@ fn kzg_open_batch<P: Pairing>(
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let k = f.len();
     let t = u.len();
@@ -202,6 +206,7 @@ fn kzg_verify_batch<P: Pairing>(
 ) -> bool
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let k = C.len();
     let t = u.len();
@@ -281,6 +286,7 @@ pub struct HyperKZG<P: Pairing> {
 impl<P: Pairing> HyperKZG<P>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"HyperKZG"
@@ -507,6 +513,7 @@ where
 impl<P: Pairing> CommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
     type Setup = (HyperKZGProverKey<P>, HyperKZGVerifierKey<P>);

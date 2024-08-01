@@ -4,7 +4,7 @@
 use std::{iter, marker::PhantomData};
 
 use crate::field;
-use crate::msm::VariableBaseMSM;
+use crate::msm::{VariableBaseMSM, Icicle};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -223,6 +223,7 @@ pub struct Zeromorph<P: Pairing> {
 impl<P: Pairing> Zeromorph<P>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"Zeromorph"
@@ -471,6 +472,7 @@ where
 impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
     type Setup = (ZeromorphProverKey<P>, ZeromorphVerifierKey<P>);

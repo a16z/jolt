@@ -141,10 +141,12 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
         .unwrap();
     // Note: in a batched setting this could be removed to a separate method
     stream.destroy().unwrap();
+    /*
     println!("icicle device x: {:x?}", msm_result..);
     println!("icicle device y: {:x?}", );
     println!("icicle device z: {:x?}", );
-    V::proj_to_ark_affine(&msm_result).into()
+    */
+    V::proj_to_ark_affine(&msm_host_result[0]).into()
 }
 
 #[cfg(test)]

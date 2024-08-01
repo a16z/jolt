@@ -216,7 +216,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> HyraxCommitment<G> {
 
 impl<G: CurveGroup + Icicle> AppendToTranscript for HyraxCommitment<G> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"poly_commitment_begin");
+        transcript.append_message(b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
             transcript.append_point(&self.row_commitments[i]);
         }
