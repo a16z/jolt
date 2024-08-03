@@ -40,6 +40,8 @@ pub struct DelayedMSMDef {
     pub scalar_offset: usize,
 }
 
+// TODO move delayed pairing and msm defs to `LoadedSNARKVerifierKey`: the layout is known ahead of time.
+
 pub struct LoadedSNARKProof<E, S>
 where
     E: Pairing,
@@ -74,6 +76,7 @@ where
             .map(|msm_def| {
                 let g1_offset = msm_def.g1_offset;
                 let msm_length = msm_def.length;
+                assert!(msm_length > 1);
                 let g1s = Self::g1_elements(public_input, g1_offset, msm_length);
                 let scalars = [
                     &public_input[msm_def.scalar_offset..msm_def.scalar_offset + msm_length - 1],
@@ -101,7 +104,28 @@ where
         pvk: &S::ProcessedVerifyingKey,
         public_input: &[E::ScalarField],
         proof: &LoadedSNARKProof<E, S>,
-    ) -> Result<Vec<(Vec<E::G1>, Vec<E::G2>)>, S::Error>;
+    ) -> Result<Vec<(Vec<E::G1>, Vec<E::G2>)>, S::Error> {
+        let g1_vectors = proof
+            .delayed_pairings
+            .iter()
+            .map(|pairing_def| {
+                let l_g1 = Self::g1_elements(public_input, pairing_def.l_g1_offset, 1)[0];
+                let r_g1 = Self::g1_elements(public_input, pairing_def.r_g1_offset, 1)[0];
+
+                vec![l_g1.into_group(), -r_g1.into_group()]
+            })
+            .collect::<Vec<_>>();
+        Ok(g1_vectors
+            .into_iter()
+            .zip(Self::g2_elements(pvk, public_input, proof))
+            .collect())
+    }
+
+    fn g2_elements(
+        pvk: &<S as SNARK<<E as Pairing>::ScalarField>>::ProcessedVerifyingKey,
+        public_input: &[<E as Pairing>::ScalarField],
+        proof: &LoadedSNARKProof<E, S>,
+    ) -> Vec<Vec<E::G2>>;
 
     fn verify(
         pvk: &S::ProcessedVerifyingKey,
