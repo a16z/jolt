@@ -75,7 +75,7 @@ mod tests {
             let d_to_k = [FpVar::one(), d, d_square];
             dbg!(cs.num_constraints());
 
-            let r_g1 = (0..3)
+            let r_g1 = (1..3)
                 .map(|k| {
                     w_g1[k]
                         .clone()
@@ -83,7 +83,7 @@ mod tests {
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .iter()
-                .fold(G1Var::zero(), |acc, x| acc + x);
+                .fold(w_g1[0].clone(), |acc, x| acc + x);
             dbg!(cs.num_constraints());
 
             let r_g1_opt = r_g1.value().ok();
