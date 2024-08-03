@@ -1,12 +1,22 @@
 use ark_crypto_primitives::snark::SNARK;
-use ark_ec::pairing::Pairing;
-use ark_ec::{AffineRepr, VariableBaseMSM};
+use ark_ec::{
+    pairing::Pairing,
+    short_weierstrass::{Affine, SWCurveConfig},
+    AffineRepr, CurveConfig, VariableBaseMSM,
+};
 use ark_ff::PrimeField;
+use ark_r1cs_std::{
+    fields::nonnative::params::{get_params, OptimizationType},
+    fields::nonnative::AllocatedNonNativeFieldVar,
+};
 use ark_relations::r1cs::ConstraintSynthesizer;
 use ark_serialize::CanonicalSerialize;
-use ark_std::rand::{CryptoRng, RngCore};
-use ark_std::{One, Zero};
-use std::ops::Neg;
+use ark_std::{
+    iterable::Iterable,
+    ops::Neg,
+    rand::{CryptoRng, RngCore},
+    One, Zero,
+};
 
 pub mod fields;
 pub mod groups;
@@ -40,23 +50,22 @@ pub struct DelayedMSMDef {
     pub scalar_offset: usize,
 }
 
-// TODO move delayed pairing and msm defs to `LoadedSNARKVerifierKey`: the layout is known ahead of time.
-
-pub struct LoadedSNARKProof<E, S>
+pub struct LoadedSNARKVerifyingKey<E, S>
 where
     E: Pairing,
     S: SNARK<E::ScalarField>,
 {
-    pub snark_proof: S::Proof,
+    pub snark_pvk: S::ProcessedVerifyingKey,
     /// Delayed pairing G1 elements in the public input.
     pub delayed_pairings: Vec<DelayedPairingDef>,
     /// Delayed MSM G1 and scalar blocks in the public input.
     pub delayed_msms: Vec<DelayedMSMDef>,
 }
 
-pub trait LoadedSNARK<E, S, C>
+pub trait LoadedSNARK<E, P, S>
 where
-    E: Pairing,
+    E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
+    P: SWCurveConfig<BaseField: PrimeField>,
     S: SNARK<E::ScalarField>,
 {
     type Circuit: ConstraintSynthesizer<E::ScalarField>;
@@ -65,7 +74,7 @@ where
         circuit_pk: &S::ProvingKey,
         circuit: Self::Circuit,
         rng: &mut R,
-    ) -> Result<LoadedSNARKProof<E, S>, S::Error>;
+    ) -> Result<S::Proof, S::Error>;
 
     fn msm_inputs(
         msm_defs: &[DelayedMSMDef],
@@ -89,55 +98,55 @@ where
     }
 
     fn g1_elements(
-        public_input: &[<E as Pairing>::ScalarField],
+        public_input: &[E::ScalarField],
         g1_offset: usize,
         length: usize,
-    ) -> Vec<<E as Pairing>::G1Affine> {
+    ) -> Vec<E::G1Affine> {
         let g1_element_size = g1_affine_size_in_scalar_field_elements::<E>();
         public_input[g1_offset..g1_offset + length * g1_element_size]
             .chunks(g1_element_size)
-            .map(|chunk| g1_affine_from_scalar_field::<E>(chunk))
+            .map(|chunk| g1_affine_from_scalar_field::<E, P>(chunk))
             .collect()
     }
 
     fn pairing_inputs(
-        pvk: &S::ProcessedVerifyingKey,
+        vk: &LoadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
-        proof: &LoadedSNARKProof<E, S>,
+        proof: &S::Proof,
     ) -> Result<Vec<(Vec<E::G1>, Vec<E::G2>)>, S::Error> {
-        let g1_vectors = proof
+        let g1_vectors = vk
             .delayed_pairings
             .iter()
             .map(|pairing_def| {
                 let l_g1 = Self::g1_elements(public_input, pairing_def.l_g1_offset, 1)[0];
                 let r_g1 = Self::g1_elements(public_input, pairing_def.r_g1_offset, 1)[0];
 
-                vec![l_g1.into_group(), -r_g1.into_group()]
+                vec![l_g1.into(), (-r_g1).into()]
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<Vec<E::G1>>>();
         Ok(g1_vectors
             .into_iter()
-            .zip(Self::g2_elements(pvk, public_input, proof))
+            .zip(Self::g2_elements(vk, public_input, proof))
             .collect())
     }
 
     fn g2_elements(
-        pvk: &<S as SNARK<<E as Pairing>::ScalarField>>::ProcessedVerifyingKey,
+        vk: &LoadedSNARKVerifyingKey<E, S>,
         public_input: &[<E as Pairing>::ScalarField],
-        proof: &LoadedSNARKProof<E, S>,
+        proof: &S::Proof,
     ) -> Vec<Vec<E::G2>>;
 
     fn verify(
-        pvk: &S::ProcessedVerifyingKey,
+        vk: &LoadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
-        proof: &LoadedSNARKProof<E, S>,
+        proof: &S::Proof,
     ) -> Result<bool, S::Error> {
-        let r = S::verify_with_processed_vk(pvk, public_input, &proof.snark_proof)?;
+        let r = S::verify_with_processed_vk(&vk.snark_pvk, public_input, proof)?;
         if !r {
             return Ok(false);
         }
 
-        let msms = Self::msm_inputs(&proof.delayed_msms, public_input)?;
+        let msms = Self::msm_inputs(&vk.delayed_msms, public_input)?;
         for (g1s, scalars) in msms {
             assert_eq!(g1s.len(), scalars.len());
             let r = E::G1::msm_unchecked(&g1s, &scalars);
@@ -146,7 +155,7 @@ where
             }
         }
 
-        let pairings = Self::pairing_inputs(pvk, public_input, &proof)?;
+        let pairings = Self::pairing_inputs(vk, public_input, &proof)?;
         for (g1s, g2s) in pairings {
             assert_eq!(g1s.len(), g2s.len());
             let r = E::multi_pairing(&g1s, &g2s);
@@ -160,9 +169,29 @@ where
 }
 
 fn g1_affine_size_in_scalar_field_elements<E: Pairing>() -> usize {
-    todo!()
+    let params = get_params(
+        E::BaseField::MODULUS_BIT_SIZE as usize,
+        E::ScalarField::MODULUS_BIT_SIZE as usize,
+        OptimizationType::Weight,
+    );
+    params.num_limbs * 2 + 1
 }
 
-fn g1_affine_from_scalar_field<E: Pairing>(_s: &[E::ScalarField]) -> E::G1Affine {
-    todo!()
+fn g1_affine_from_scalar_field<E, P>(s: &[E::ScalarField]) -> E::G1Affine
+where
+    E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
+    P: SWCurveConfig<BaseField: PrimeField>,
+{
+    let base_field_size_in_limbs = (s.len() - 1) / 2;
+    let x = AllocatedNonNativeFieldVar::<E::BaseField, E::ScalarField>::limbs_to_value(
+        s[..base_field_size_in_limbs].to_vec(),
+        OptimizationType::Weight,
+    );
+    let y = AllocatedNonNativeFieldVar::<E::BaseField, E::ScalarField>::limbs_to_value(
+        s[base_field_size_in_limbs..s.len() - 1].to_vec(),
+        OptimizationType::Weight,
+    );
+    let infinity = !s[s.len() - 1].is_zero();
+
+    Affine { x, y, infinity }
 }
