@@ -51,7 +51,7 @@ pub struct DelayedMSMDef {
     pub scalar_offset: usize,
 }
 
-pub struct LoadedSNARKVerifyingKey<E, S>
+pub struct OffloadedSNARKVerifyingKey<E, S>
 where
     E: Pairing,
     S: SNARK<E::ScalarField>,
@@ -64,7 +64,7 @@ where
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum LoadedSNARKError<E, S>
+pub enum OffloadedSNARKError<E, S>
 where
     E: Pairing,
     S: SNARK<E::ScalarField>,
@@ -77,7 +77,7 @@ where
     SerializationError(#[from] SerializationError),
 }
 
-pub trait LoadedSNARK<E, P, S>
+pub trait OffloadedSNARK<E, P, S>
 where
     E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
     P: SWCurveConfig<BaseField: PrimeField>,
@@ -89,7 +89,7 @@ where
         circuit_pk: &S::ProvingKey,
         circuit: Self::Circuit,
         rng: &mut R,
-    ) -> Result<S::Proof, LoadedSNARKError<E, S>>;
+    ) -> Result<S::Proof, OffloadedSNARKError<E, S>>;
 
     fn msm_inputs(
         msm_defs: &[DelayedMSMDef],
@@ -133,7 +133,7 @@ where
     }
 
     fn pairing_inputs(
-        vk: &LoadedSNARKVerifyingKey<E, S>,
+        vk: &OffloadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
         proof: &S::Proof,
     ) -> Result<Vec<(Vec<E::G1>, Vec<E::G2>)>, SerializationError> {
@@ -154,18 +154,18 @@ where
     }
 
     fn g2_elements(
-        vk: &LoadedSNARKVerifyingKey<E, S>,
+        vk: &OffloadedSNARKVerifyingKey<E, S>,
         public_input: &[<E as Pairing>::ScalarField],
         proof: &S::Proof,
     ) -> Result<Vec<Vec<E::G2>>, SerializationError>;
 
     fn verify(
-        vk: &LoadedSNARKVerifyingKey<E, S>,
+        vk: &OffloadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
         proof: &S::Proof,
-    ) -> Result<bool, LoadedSNARKError<E, S>> {
+    ) -> Result<bool, OffloadedSNARKError<E, S>> {
         let r = S::verify_with_processed_vk(&vk.snark_pvk, public_input, proof)
-            .map_err(|e| LoadedSNARKError::SNARKError(e))?;
+            .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
         if !r {
             return Ok(false);
         }
