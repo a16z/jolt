@@ -7,13 +7,14 @@ mod tests {
     use super::*;
     use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
+    use crate::circuits::{OffloadedSNARK, OffloadedSNARKError, OffloadedSNARKVerifyingKey};
     use ark_bls12_381::Bls12_381;
     use ark_bn254::{Bn254, Fq, Fr};
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
     use ark_crypto_primitives::sponge::Absorb;
     use ark_ec::bn::G1Projective;
     use ark_ec::pairing::Pairing;
-    use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+    use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
     use ark_ec::{CurveGroup, Group};
     use ark_ff::{PrimeField, ToConstraintField};
     use ark_groth16::Groth16;
@@ -23,13 +24,14 @@ mod tests {
     use ark_r1cs_std::ToConstraintFieldGadget;
     use ark_relations::ns;
     use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
-    use ark_serialize::CanonicalSerialize;
+    use ark_serialize::{CanonicalSerialize, SerializationError};
     use ark_std::marker::PhantomData;
     use ark_std::rand::Rng;
+    use ark_std::rc::Rc;
+    use ark_std::sync::RwLock;
     use ark_std::{end_timer, start_timer, test_rng, UniformRand};
     use itertools::Itertools;
-    use rand_core::{RngCore, SeedableRng};
-    use std::sync::{Arc, RwLock};
+    use rand_core::{CryptoRng, RngCore, SeedableRng};
 
     struct DelayedPairingCircuit<E, G1Var>
     where
@@ -43,7 +45,8 @@ mod tests {
         d: Option<E::ScalarField>,
 
         // public inputs
-        r_g1: Arc<RwLock<Option<E::G1>>>,
+        r_g1: Rc<RwLock<Option<E::G1>>>,
+        g1s: Rc<RwLock<Option<Vec<E::G1>>>>,
     }
 
     impl<E, G1Var> ConstraintSynthesizer<E::ScalarField> for DelayedPairingCircuit<E, G1Var>
@@ -105,15 +108,60 @@ mod tests {
         }
     }
 
+    struct DelayedPairingCircuitSNARK<E, P, S, G1Var>
+    where
+        E: Pairing,
+        P: SWCurveConfig<BaseField: PrimeField>,
+        S: SNARK<E::ScalarField>,
+        G1Var: CurveVar<E::G1, E::ScalarField>,
+    {
+        _params: PhantomData<(E, P, S, G1Var)>,
+    }
+
+    impl<E, P, S, G1Var> OffloadedSNARK<E, P, S> for DelayedPairingCircuitSNARK<E, P, S, G1Var>
+    where
+        E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
+        P: SWCurveConfig<BaseField: PrimeField>,
+        S: SNARK<E::ScalarField>,
+        G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    {
+        type Circuit = DelayedPairingCircuit<E, G1Var>;
+
+        fn prove<R: RngCore + CryptoRng>(
+            circuit_pk: &S::ProvingKey,
+            circuit: Self::Circuit,
+            rng: &mut R,
+        ) -> Result<S::Proof, OffloadedSNARKError<E, S>> {
+            // TODO place the G1 elements into the public input
+
+            let proof = S::prove(circuit_pk, circuit, rng)
+                .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+
+            Ok(proof)
+        }
+
+        fn g2_elements(
+            vk: &OffloadedSNARKVerifyingKey<E, S>,
+            public_input: &[<E as Pairing>::ScalarField],
+            proof: &S::Proof,
+        ) -> Result<Vec<Vec<E::G2>>, SerializationError> {
+            // TODO get the G2 elements from the verifying key
+            Ok(vec![])
+        }
+    }
+
     #[test]
     fn test_delayed_pairing_circuit() {
         type DemoCircuit = DelayedPairingCircuit<Bn254, G1Var>;
+
+        type DemoCircuitSNARK = DelayedPairingCircuitSNARK<Bn254, Bn254, Groth16<Bn254>, G1Var>;
 
         let circuit = DemoCircuit {
             _params: PhantomData,
             w_g1: [None; 3],
             d: None,
-            r_g1: Arc::new(RwLock::new(None)),
+            r_g1: Rc::new(RwLock::new(None)),
+            g1s: Rc::new(Default::default()),
         };
 
         // This is not cryptographically safe, use
@@ -128,12 +176,14 @@ mod tests {
         let pvk = Groth16::<Bn254>::process_vk(&vk).unwrap();
         end_timer!(process_vk_timer);
 
-        let r_g1_lock = Arc::new(RwLock::new(None));
+        let r_g1_lock = Rc::new(RwLock::new(None));
+        let g1s = Rc::new(RwLock::new(None));
         let c_init_values = DemoCircuit {
             _params: PhantomData,
             w_g1: [Some(rng.gen()); 3],
             d: Some(rng.gen()),
             r_g1: r_g1_lock.clone(),
+            g1s: g1s.clone(),
         };
 
         let prove_timer = start_timer!(|| "Groth16::prove");
