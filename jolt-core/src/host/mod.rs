@@ -32,9 +32,9 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use self::toolchain::{install_toolchain, install_no_std_toolchain};
 use self::analyze::ProgramSummary;
+#[cfg(not(target_arch = "wasm32"))]
+use self::toolchain::{install_no_std_toolchain, install_toolchain};
 
 pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
