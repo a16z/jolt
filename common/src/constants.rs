@@ -6,8 +6,7 @@ pub const BYTES_PER_INSTRUCTION: usize = 4;
 pub const REG_OPS_PER_INSTRUCTION: usize = 3;
 pub const RAM_OPS_PER_INSTRUCTION: usize = 4;
 pub const MEMORY_OPS_PER_INSTRUCTION: usize = REG_OPS_PER_INSTRUCTION + RAM_OPS_PER_INSTRUCTION;
-
-pub const WORD_BYTES: usize = 4; // denotes the number of bytes in a word
+pub const BYTES_PER_WORD: usize = 4; // denotes the number of bytes in a word
 pub const RAM_WORD_OPS_PER_INSTRUCTION: usize = 1;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;

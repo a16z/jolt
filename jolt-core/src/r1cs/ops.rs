@@ -80,19 +80,6 @@ impl<I: ConstraintInput> LC<I> {
         LC(vec![a.into(), b.into()])
     }
 
-    /// LC(a) + LC(b) + LC(c) -> LC(a + b + c)
-    pub fn sum3(a: impl Into<Term<I>>, b: impl Into<Term<I>>, c: impl Into<Term<I>>) -> Self {
-        LC(vec![a.into(), b.into(), c.into()])
-    }
-
-    pub fn sum_any(terms: Vec<impl Into<Term<I>>>) -> Self {
-        let mut terms_vec: Vec<Term<I>> = Vec::new();
-        for term in terms {
-            terms_vec.push(term.into());
-        }
-        LC(terms_vec)
-    }
-
     /// LC(a) - LC(b) -> LC(a - b)
     pub fn sub2(a: impl Into<LC<I>>, b: impl Into<LC<I>>) -> Self {
         let a: LC<I> = a.into();
@@ -448,6 +435,15 @@ macro_rules! impl_r1cs_input_lc_conversions {
 
             fn mul(self, rhs: i64) -> Self::Output {
                 $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), rhs)
+            }
+        }
+        impl<T: Into<$crate::r1cs::ops::LC<$ConcreteInput>>> std::ops::Sub<T> for $ConcreteInput {
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
+
+            fn sub(self, rhs: T) -> Self::Output {
+                let lhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = self.into();
+                let rhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = rhs.into();
+                lhs_lc - rhs_lc
             }
         }
 
