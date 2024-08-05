@@ -12,9 +12,11 @@ use ark_r1cs_std::{
 use ark_relations::r1cs::ConstraintSynthesizer;
 use ark_serialize::{CanonicalSerialize, SerializationError, Valid};
 use ark_std::{
+    cell::OnceCell,
     iterable::Iterable,
     ops::Neg,
     rand::{CryptoRng, RngCore},
+    rc::Rc,
     result::Result,
     One, Zero,
 };
@@ -29,11 +31,11 @@ pub mod poly;
 /// The verifier needs to use appropriate G2 elements from the verification key or the proof
 /// (depending on the protocol).
 pub struct DelayedPairingDef {
-    /// Left pairing G1 element offset in the public input.
-    pub l_g1_offset: usize,
-    /// Right pairing G1 element offset in the public input. This element is, by convention, always used
-    /// in the multi-pairing computation with coefficient `-1`.
-    pub r_g1_offset: usize,
+    /// Offsets of the G1 elements in the public input. The G1 elements are stored as sequences of scalar field elements
+    /// encoding the compressed coordinates of the G1 points (which would natively be numbers in the base field).
+    /// The offsets are in the number of scalar field elements in the public input before the G1 elements block.
+    /// The last element, by convention, is always used in the multi-pairing computation with coefficient `-1`.
+    pub g1_offsets: Vec<usize>,
 }
 
 /// Describes a block of G1 elements `Gᵢ` and scalars in `sᵢ` the public input, such that `∑ᵢ sᵢ·Gᵢ == 0`.
@@ -63,6 +65,16 @@ where
     pub delayed_msms: Vec<DelayedMSMDef>,
 }
 
+#[derive(Debug)]
+pub struct OffloadedData<E: Pairing> {
+    pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
+    pub pairings: Vec<Vec<E::G1>>,
+}
+
+pub trait PublicInputRef<D> {
+    fn public_input_ref(&self) -> Rc<OnceCell<D>>;
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum OffloadedSNARKError<E, S>
 where
@@ -77,19 +89,21 @@ where
     SerializationError(#[from] SerializationError),
 }
 
-pub trait OffloadedSNARK<E, P, S>
+pub trait OffloadedSNARK<E, P, S, D>
 where
     E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
     P: SWCurveConfig<BaseField: PrimeField>,
     S: SNARK<E::ScalarField>,
 {
-    type Circuit: ConstraintSynthesizer<E::ScalarField>;
+    type Circuit: ConstraintSynthesizer<E::ScalarField> + PublicInputRef<OffloadedData<E>>;
 
     fn prove<R: RngCore + CryptoRng>(
         circuit_pk: &S::ProvingKey,
         circuit: Self::Circuit,
         rng: &mut R,
-    ) -> Result<S::Proof, OffloadedSNARKError<E, S>>;
+    ) -> Result<S::Proof, OffloadedSNARKError<E, S>> {
+        S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))
+    }
 
     fn msm_inputs(
         msm_defs: &[DelayedMSMDef],
@@ -141,10 +155,21 @@ where
             .delayed_pairings
             .iter()
             .map(|pairing_def| {
-                let l_g1 = Self::g1_elements(public_input, pairing_def.l_g1_offset, 1)?[0];
-                let r_g1 = Self::g1_elements(public_input, pairing_def.r_g1_offset, 1)?[0];
-
-                Ok(vec![l_g1.into(), (-r_g1).into()])
+                let last_index = pairing_def.g1_offsets.len() - 1;
+                let g1s = pairing_def
+                    .g1_offsets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &offset)| {
+                        let g1 = Self::g1_elements(public_input, offset, 1)?[0];
+                        if i == last_index {
+                            Ok((-g1).into())
+                        } else {
+                            Ok(g1.into())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                g1s
             })
             .collect::<Result<Vec<Vec<E::G1>>, SerializationError>>();
         Ok(g1_vectors?

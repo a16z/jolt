@@ -7,7 +7,10 @@ mod tests {
     use super::*;
     use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
-    use crate::circuits::{OffloadedSNARK, OffloadedSNARKError, OffloadedSNARKVerifyingKey};
+    use crate::circuits::{
+        OffloadedData, OffloadedSNARK, OffloadedSNARKError, OffloadedSNARKVerifyingKey,
+        PublicInputRef,
+    };
     use ark_bls12_381::Bls12_381;
     use ark_bn254::{Bn254, Fq, Fr};
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
@@ -15,7 +18,7 @@ mod tests {
     use ark_ec::bn::G1Projective;
     use ark_ec::pairing::Pairing;
     use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
-    use ark_ec::{CurveGroup, Group};
+    use ark_ec::{CurveGroup, Group, VariableBaseMSM};
     use ark_ff::{PrimeField, ToConstraintField};
     use ark_groth16::Groth16;
     use ark_r1cs_std::fields::fp::FpVar;
@@ -25,11 +28,13 @@ mod tests {
     use ark_relations::ns;
     use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
     use ark_serialize::{CanonicalSerialize, SerializationError};
+    use ark_std::cell::OnceCell;
     use ark_std::marker::PhantomData;
+    use ark_std::ops::Deref;
     use ark_std::rand::Rng;
     use ark_std::rc::Rc;
     use ark_std::sync::RwLock;
-    use ark_std::{end_timer, start_timer, test_rng, UniformRand};
+    use ark_std::{end_timer, start_timer, test_rng, One, UniformRand};
     use itertools::Itertools;
     use rand_core::{CryptoRng, RngCore, SeedableRng};
 
@@ -45,8 +50,7 @@ mod tests {
         d: Option<E::ScalarField>,
 
         // public inputs
-        r_g1: Rc<RwLock<Option<E::G1>>>,
-        g1s: Rc<RwLock<Option<Vec<E::G1>>>>,
+        offloaded_data: Rc<OnceCell<OffloadedData<E>>>,
     }
 
     impl<E, G1Var> ConstraintSynthesizer<E::ScalarField> for DelayedPairingCircuit<E, G1Var>
@@ -75,50 +79,101 @@ mod tests {
             dbg!(cs.num_constraints());
 
             let d_square = d.square()?;
-            let d_to_k = [FpVar::one(), d, d_square];
+            let d_k = [FpVar::one(), d, d_square];
             dbg!(cs.num_constraints());
 
-            let r_g1 = (1..3)
-                .map(|k| {
-                    w_g1[k]
-                        .clone()
-                        .scalar_mul_le(d_to_k[k].to_bits_le()?.iter())
-                })
-                .collect::<Result<Vec<_>, _>>()?
+            // `None` in setup mode, `Some<Vec<E::G1>>` in proving mode.
+            let msm_g1_values = w_g1
                 .iter()
-                .fold(w_g1[0].clone(), |acc, x| acc + x);
+                .map(|g1| g1.value().ok().map(|g1| g1.into_affine()))
+                .collect::<Option<Vec<_>>>();
+
+            let d_k_values = d_k
+                .iter()
+                .map(|d| d.value().ok())
+                .collect::<Option<Vec<_>>>();
+
+            let (full_msm_value, r_g1_value) = msm_g1_values
+                .clone()
+                .zip(d_k_values)
+                .map(|(g1s, d_k)| {
+                    let r_g1 = E::G1::msm_unchecked(&g1s, &d_k);
+                    let minus_one = -E::ScalarField::one();
+                    (
+                        (
+                            [g1s, vec![r_g1.into()]].concat(),
+                            [d_k, vec![minus_one]].concat(),
+                        ),
+                        r_g1,
+                    )
+                })
+                .unzip();
+
+            let r_g1_var = G1Var::new_witness(ns!(cs, "r_g1"), || {
+                r_g1_value.ok_or(SynthesisError::AssignmentMissing)
+            })?;
+
+            if let Some(msm_value) = full_msm_value {
+                self.offloaded_data
+                    .set(OffloadedData {
+                        msms: vec![msm_value],
+                        pairings: vec![],
+                    })
+                    .unwrap();
+            };
+
+            // write d_k to public_input
+            for x in d_k {
+                let d_k_input = FpVar::new_input(ns!(cs, "d_k"), || x.value())?;
+                d_k_input.enforce_equal(&x)?;
+            }
             dbg!(cs.num_constraints());
 
-            let r_g1_opt = r_g1.value().ok();
+            // write w_g1 to public_input
+            for g1 in w_g1 {
+                let f_vec = g1.to_constraint_field()?;
 
-            let mut r_value_opt = self.r_g1.write().unwrap();
-            *r_value_opt = r_g1_opt.clone();
-            drop(r_value_opt);
-
-            let cf_vec = r_g1.to_constraint_field()?;
-
-            for cf in cf_vec.iter() {
-                let cf_input = FpVar::new_input(ns!(cs, "r_g1_input"), || cf.value())?;
-                cf_input.enforce_equal(&cf)?;
+                for f in f_vec.iter() {
+                    let f_input = FpVar::new_input(ns!(cs, "w_g1"), || f.value())?;
+                    f_input.enforce_equal(f)?;
+                }
             }
 
+            // write r_g1 to public_input
+            {
+                let f_vec = r_g1_var.to_constraint_field()?;
+
+                for f in f_vec.iter() {
+                    let f_input = FpVar::new_input(ns!(cs, "r_g1"), || f.value())?;
+                    f_input.enforce_equal(f)?;
+                }
+            }
             dbg!(cs.num_constraints());
 
             Ok(())
         }
     }
 
-    struct DelayedPairingCircuitSNARK<E, P, S, G1Var>
+    impl<E, G1Var> PublicInputRef<OffloadedData<E>> for DelayedPairingCircuit<E, G1Var>
     where
         E: Pairing,
-        P: SWCurveConfig<BaseField: PrimeField>,
+        G1Var: CurveVar<E::G1, E::ScalarField>,
+    {
+        fn public_input_ref(&self) -> Rc<OnceCell<OffloadedData<E>>> {
+            self.offloaded_data.clone()
+        }
+    }
+
+    struct DelayedPairingCircuitSNARK<E, S, G1Var>
+    where
+        E: Pairing,
         S: SNARK<E::ScalarField>,
         G1Var: CurveVar<E::G1, E::ScalarField>,
     {
-        _params: PhantomData<(E, P, S, G1Var)>,
+        _params: PhantomData<(E, S, G1Var)>,
     }
 
-    impl<E, P, S, G1Var> OffloadedSNARK<E, P, S> for DelayedPairingCircuitSNARK<E, P, S, G1Var>
+    impl<E, P, S, G1Var, D> OffloadedSNARK<E, P, S, D> for DelayedPairingCircuitSNARK<E, S, G1Var>
     where
         E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
         P: SWCurveConfig<BaseField: PrimeField>,
@@ -126,19 +181,6 @@ mod tests {
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
         type Circuit = DelayedPairingCircuit<E, G1Var>;
-
-        fn prove<R: RngCore + CryptoRng>(
-            circuit_pk: &S::ProvingKey,
-            circuit: Self::Circuit,
-            rng: &mut R,
-        ) -> Result<S::Proof, OffloadedSNARKError<E, S>> {
-            // TODO place the G1 elements into the public input
-
-            let proof = S::prove(circuit_pk, circuit, rng)
-                .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
-
-            Ok(proof)
-        }
 
         fn g2_elements(
             vk: &OffloadedSNARKVerifyingKey<E, S>,
@@ -154,14 +196,13 @@ mod tests {
     fn test_delayed_pairing_circuit() {
         type DemoCircuit = DelayedPairingCircuit<Bn254, G1Var>;
 
-        type DemoCircuitSNARK = DelayedPairingCircuitSNARK<Bn254, Bn254, Groth16<Bn254>, G1Var>;
+        type DemoCircuitSNARK = DelayedPairingCircuitSNARK<Bn254, Groth16<Bn254>, G1Var>;
 
         let circuit = DemoCircuit {
             _params: PhantomData,
             w_g1: [None; 3],
             d: None,
-            r_g1: Rc::new(RwLock::new(None)),
-            g1s: Rc::new(Default::default()),
+            offloaded_data: Default::default(),
         };
 
         // This is not cryptographically safe, use
@@ -176,24 +217,21 @@ mod tests {
         let pvk = Groth16::<Bn254>::process_vk(&vk).unwrap();
         end_timer!(process_vk_timer);
 
-        let r_g1_lock = Rc::new(RwLock::new(None));
-        let g1s = Rc::new(RwLock::new(None));
         let c_init_values = DemoCircuit {
             _params: PhantomData,
             w_g1: [Some(rng.gen()); 3],
             d: Some(rng.gen()),
-            r_g1: r_g1_lock.clone(),
-            g1s: g1s.clone(),
+            offloaded_data: Default::default(),
         };
+        let data_ref = c_init_values.public_input_ref();
 
         let prove_timer = start_timer!(|| "Groth16::prove");
         let proof = Groth16::<Bn254>::prove(&pk, c_init_values, &mut rng).unwrap();
         end_timer!(prove_timer);
 
-        let r_g1_opt_read = r_g1_lock.read().unwrap();
-        let r_g1 = dbg!(*r_g1_opt_read).unwrap();
+        let pi_data = dbg!(data_ref.get()).unwrap();
 
-        let public_input = get_public_input(&r_g1);
+        let public_input = build_public_input(pi_data);
 
         let verify_timer = start_timer!(|| "Groth16::verify");
         let verify_result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &public_input, &proof);
@@ -202,12 +240,24 @@ mod tests {
         assert!(verify_result.unwrap());
     }
 
-    fn get_public_input(g1: &ark_bn254::G1Projective) -> Vec<ark_bn254::Fr> {
-        G1Var::constant(g1.clone())
-            .to_constraint_field()
-            .unwrap()
+    fn build_public_input(data: &OffloadedData<Bn254>) -> Vec<ark_bn254::Fr> {
+        let scalars = &data.msms[0].1;
+
+        let scalar_vec = scalars[..scalars.len() - 1].to_vec(); // remove the last element (always `-1`)
+
+        let msm_g1_vec = data.msms[0]
+            .0
             .iter()
-            .map(|x| x.value().unwrap())
-            .collect::<Vec<_>>()
+            .map(|&g1| {
+                G1Var::constant(g1.into())
+                    .to_constraint_field()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.value().unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .concat();
+
+        [scalar_vec, msm_g1_vec].concat()
     }
 }
