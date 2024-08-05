@@ -32,9 +32,9 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
-use self::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
 use self::toolchain::install_toolchain;
+use self::{analyze::ProgramSummary, toolchain::install_no_std_toolchain};
 
 pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,6 +102,9 @@ impl Program {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
+            #[cfg(not(target_arch = "wasm32"))]
+            install_no_std_toolchain().unwrap();
+
             self.save_linker();
 
             let rust_flags = [
@@ -113,11 +116,17 @@ impl Program {
                 "panic=abort",
             ];
 
-            let toolchain = "riscv32i-jolt-zkvm-elf";
-            let mut envs = vec![
-                ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
-                ("RUSTUP_TOOLCHAIN", toolchain.to_string()),
-            ];
+            let toolchain = if self.std {
+                "riscv32i-jolt-zkvm-elf"
+            } else {
+                "riscv32i-unknown-none-elf"
+            };
+
+            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
+
+            if self.std {
+                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
+            }
 
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
