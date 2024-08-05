@@ -902,7 +902,7 @@ impl Cpu {
 						((halfword >> 1) & 0x3c0) | // nzuimm{9:6] <= [10:7]
 						((halfword >> 4) & 0x4) | // nzuimm[2] <= [6]
 						((halfword >> 2) & 0x8); // nzuimm[3] <= [5]
-                               // nzuimm == 0 is reserved instruction
+                         // nzuimm == 0 is reserved instruction
                     if nzuimm != 0 {
                         return (nzuimm << 20) | (2 << 15) | ((rd + 8) << 7) | 0x13;
                     }
