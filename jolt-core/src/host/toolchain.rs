@@ -33,6 +33,7 @@ pub fn install_toolchain() -> Result<()> {
     link_toolchain()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
         .args(["target", "add", "riscv32i-unknown-none-elf"])

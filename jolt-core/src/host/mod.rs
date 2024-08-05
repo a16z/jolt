@@ -33,8 +33,8 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use self::toolchain::install_toolchain;
-use self::{analyze::ProgramSummary, toolchain::install_no_std_toolchain};
+use self::toolchain::{install_toolchain, install_no_std_toolchain};
+use self::analyze::ProgramSummary;
 
 pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
