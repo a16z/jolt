@@ -34,6 +34,15 @@ pub fn install_toolchain() -> Result<()> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub fn install_no_std_toolchain() -> Result<()> {
+    std::process::Command::new("rustup")
+        .args(["target", "add", "riscv32i-unknown-none-elf"])
+        .output()?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn retry_times<F, T, E>(times: usize, base_ms: u64, f: F) -> Result<T>
 where
     F: Fn() -> E,
