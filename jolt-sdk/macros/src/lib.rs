@@ -101,13 +101,13 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_fn_name() -> (
-                impl Fn(#(#input_types),*) -> #prove_output_ty,
-                impl Fn(jolt::RV32IHyraxProof) -> bool
+                impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send,
+                impl Fn(jolt::RV32IHyraxProof) -> bool + Sync + Send
             ) {
                 #imports
                 let (program, preprocessing) = #preprocess_fn_name();
-                let program = std::rc::Rc::new(program);
-                let preprocessing = std::rc::Rc::new(preprocessing);
+                let program = std::sync::Arc::new(program);
+                let preprocessing = std::sync::Arc::new(preprocessing);
 
                 let program_cp = program.clone();
                 let preprocessing_cp = preprocessing.clone();
