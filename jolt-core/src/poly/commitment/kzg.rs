@@ -10,9 +10,6 @@ use rand_core::{CryptoRng, RngCore};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
 #[derive(Clone, Debug)]
 pub struct SRS<P: Pairing> {
     pub g1_powers: Vec<P::G1Affine>,
