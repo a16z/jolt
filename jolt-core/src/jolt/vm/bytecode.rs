@@ -222,7 +222,7 @@ impl<F: JoltField> BytecodePreprocessing<F> {
         let mut rs2 = vec![];
         let mut imm = vec![];
 
-        for instruction in bytecode.clone() {
+        for instruction in bytecode {
             address.push(F::from_u64(instruction.address as u64).unwrap());
             bitflags.push(F::from_u64(instruction.bitflags).unwrap());
             rd.push(F::from_u64(instruction.rd).unwrap());
