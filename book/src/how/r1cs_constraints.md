@@ -2,49 +2,72 @@
 
 Jolt usees R1CS constraints to enforce certain rules of the RISC-V fetch-decode-execute loop 
 and to ensure 
-consistency between the proofs for the different modules of Jolt ([instruction lookups](./instruction_lookups.md), [read-write memory](./read_write_memory.md), and [bytecode](./bytecode.md)). 
+consistency between the proofs for the different modules of Jolt ([instruction lookups](./instruction_lookups.md), [read-write memory](./read_write_memory.md), and [bytecode](./bytecode.md)). Jolt uses a modified instance of [Spartan](https://eprint.iacr.org/2019/550) to prove R1CS using the sumcheck protocol.
 
-## Uniformity
+## Simple sketch of Spartan
+**First sumcheck**
 
-Jolt's R1CS is uniform, which means
-that the constraint matrices for an entire program are just repeated copies of the constraint 
-matrices for a single CPU step. 
-Each step is conceptually simple and involves around 60 constraints and 80 variables. 
+$F(q) = \sum_{x \ in \{0,1\}^{log_2(height)}}{\widetilde{eq}(q,x) \cdot [ \widetilde{Az}(x) \cdot \widetilde{Bz}(x) - \widetilde{Cz}(x)]}$  
 
-## Input Variables and constraints
+Outputs a claimed evaluation of 
 
-The inputs required for the constraint system for a single CPU step are: 
+$\widetilde{Az}(r_x), \widetilde{Bz}(r_x), \widetilde{Cz}(r_x)$  
 
-#### Pertaining to bytecode
-* Program counters (PCs): this is the only state passed between CPU steps. 
-* Bytecode read address: the address in the program code read at this step. 
-* The preprocessed ("5-tuple") representation of the instruction: (`bitflags`, `rs1`, `rs2`, `rd`, `imm`). 
+**Second sumcheck**
 
-#### Pertaining to read-write memory
-* The (starting) RAM address read by the instruction: if the instruction is not a load/store, this is 0.
-* The bytes written to or read from memory.
+Now the verifier needs to evaluate $\widetilde{Az}(r_x), \widetilde{Bz}(r_x), \widetilde{Cz}(r_x)$. The verifier only has a representation of $A, B,C, Z$, but does not have the matrix vector products $Az, Bz, Cz$. So we'll use sumcheck again.
 
-####  Pertaining to instruction lookups
-* The chunks of the instruction's operands `x` and `y`. 
-* The chunks of the lookup query. These are typically some combination of the operand chunks (e.g. the i-th chunk of the lookup query is often the concatenation of `x_i` and `y_i`).
-* The lookup output. 
+$Az(r_x) = \sum_y A(r_x, y) * z(y)$
 
-### Circuit and instruction flags: 
-* There are nine circuit flags used to guide the constraints and are dependent only on the opcode of the instruction. These are thus stored as part of the preprocessed bytecode in Jolt. 
-    1. `operand_x_flag`: 0 if the first operand is the value in `rs1` or the `PC`. 
-    2. `operand_y_flag`: 0 if the second operand is the value in `rs2` or the `imm`. 
-    3. `is_load_instr`
-    4. `is_store_instr`
-    5. `is_jump_instr`
-    6. `is_branch_instr`
-    7. `if_update_rd_with_lookup_output`: 1 if the lookup output is to be stored in `rd` at the end of the step. 
-    8. `sign_imm_flag`: used in load/store and branch instructions where the instruction is added as constraints. 
-    9. `is_concat`: indicates whether the instruction performs a concat-type lookup. 
-* Instruction flags: these are the unary bits used to indicate instruction is executed at a given step. There are as many per step as the number of unique instruction lookup tables in Jolt, which is 19. 
+$Bz(r_x) = \sum_y B(r_x, y) * z(y)$
 
-#### Constraint system 
+$Cz(r_x) = \sum_y C(r_x, y) * z(y)$
 
-The constraints for a CPU step are detailed in the `get_jolt_matrices()` function in [`constraints.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/constraints.rs). 
+We could run a sumcheck for each of these but it's more efficient from both a prover and verifier perspective to combine into a single sumcheck by pulling a random variable $r_c$ from the Fiat-Shamir transcript and combining the linear terms.
+
+$ABCz(r_x) = \widetilde{Az}(r_x) + r_c * \widetilde{Bz}(r_x)  + r_c^2 * \widetilde{Cz}(r_x) = \sum_y{[ A(r_x, y) + r_c * B(r_x, y) + r_c^2 * C(r_x, y] ) * \widetilde{Z}(y)}$
+
+Outputs a claimed evaluation of $A(r_x, r_y), B(r_x, r_y), C(r_x, r_y), Z(r_y)$, specifically in the form $A(r_x,r_y) + r_c * B(r_x, r_y) + r_c^2 * C(r_x, r_y)$.
+
+The verifier does have a representation of these is able to evaluate without assistance.
+
+## Uniform Spartan
+Jolt's Spartan instance is highly patterned. We run the same R1CS for each cycle of the RISC-V program. We can leverage this property to increase prover and verifier efficiency.
+
+Think of a simple constraint system with the following inputs: $Q, R, S$. Each of these inputs is repeated $nc = num\_cycles$ times. 
+
+The witness vector, $Z$ now looks like $[Q_0, ... Q_{nc}, R_0, ... R_{nc}, S_{0}, ... S_{nc}, 1]$. The one in the final slot allows constants in the constraints.
+
+> [!NOTE]
+> Syntax: For bitvector $x=x_0, x_1, ... x_n$, $x_0$ represents the most-significant bit, and $x_n$ represents the least significant bit. By default sumchecks will bind from the "top", where they bind the MSB first. For some sumchecks, notably sparse ones we'll bind from the "bottom" for algorithmic efficiency reasons. 
+
+We want a property where we can easily index the Z's $cycle$ and $variable$ separately. To do so we'll pad the number of cycles to a power of two and the number of variables to a power of two.
+
+Concretely for $nc=3$ the $Z$ vector looks like $[Q_0, Q_1, Q_2, 0, R_0, R_1, R_2, 0, S_0, S_1, S_2, 0, 0, 0, 0, 0, 1]$.
+
+Now we can index by $cycle$ and $variable$ independently.
+- $Z[v_0, v_1, v_2, c_0, c_1]$ 
+- $v_0, v_1, v_2$ index the variable
+- $c_0, c_1$ index the cycle
+- $Z[0, 0, 1, c_0, c_1]$ allows you to index into all of R's values using $c_0, c_1$
+- $Z[v_0, v_1, v_2, 1, 0]$ allows you to index $Q_2, R_2, S_2$ using $v_0, v_1, v_2$ 
+
+Note that Z is also padded to a power of two, so the full Z vector is $[Q_0, Q_1, Q_2, 0, R_0, R_1, R_2, 0, S_0, S_1, S_2, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]$ 
+
+$v_0$ indexes constant vs non-constant columns.
+
+The $A, B, C$ matrices follow a similar pattern where the constraints are repeated $nc$ times and the variables are repeated $nc$ times. For example, given a 2 constraint system over the variables $Q, R, S$.
+![Big A](../imgs/big_A_r1cs.png)
+
+Notice that the matrix follows a sparse-diagonal pattern. We can use this to define $A_{small}$.
+
+![Small A](../imgs/small_A_r1cs.png)
+
+
+`TODO: We leverage this to make the prover and verifier computations more efficient.`
+
+## Cross-Cycle Uniform Spartan
+`TODO: We also have a small number of non-uniform constraints that reference a cycle directly adjacent to the current cycle. We can use similar tricks to maintain the general uniformity.`
 
 ### Reusing commitments 
 
@@ -58,14 +81,3 @@ For Jolt to be sound, it must be ensured that the same inputs are fed to all rel
 We do this by re-using the commitments themselves. 
 This can be seen in the `format_commitments()` function in the `r1cs/snark` module. 
 Spartan is adapted to take pre-committed witness variables. 
-
-## Exploiting uniformity 
-
-The uniformity of the constraint system allows us to heavily optimize both the prover and verifier. 
-The main changes involved in making this happen are: 
-- Spartan is modified to only take in the constraint matrices a single step, and the total number of steps. Using this, the prover and verifier can efficiently calculate the multilinear extensions of the full R1CS matrices. 
-- The commitment format of the witness values is changed to reflect uniformity. All versions of a variable corresponding to each time step is committed together. This affects nearly all variables committed to in Jolt. 
-- The inputs and witnesses are provided to the constraint system as segments. 
-- Additional constraints are used to enforce consistency of the state transferred between CPU steps. 
-
-These changes and their impact on the code are visible in [`spartan.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/spartan.rs).
