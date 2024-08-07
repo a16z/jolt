@@ -19,7 +19,7 @@ use std::rc::Rc;
 /// The verifier needs to use appropriate G2 elements from the verification key or the proof
 /// (depending on the protocol).
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DelayedPairingDef {
+pub struct OffloadedPairingDef {
     /// Offsets of the G1 elements in the public input. The G1 elements are stored as sequences of scalar field elements
     /// encoding the compressed coordinates of the G1 points (which would natively be numbers in the base field).
     /// The offsets are in the number of scalar field elements in the public input before the G1 elements block.
@@ -34,7 +34,7 @@ where
     S: SNARK<E::ScalarField>,
 {
     pub snark_pvk: S::ProcessedVerifyingKey,
-    pub delayed_pairings: Vec<DelayedPairingDef>,
+    pub delayed_pairings: Vec<OffloadedPairingDef>,
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -56,11 +56,11 @@ pub struct OffloadedData<E: Pairing> {
     pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
 }
 
-pub trait PublicInputRef<E>
+pub trait OffloadedDataRef<E>
 where
     E: Pairing,
 {
-    fn public_input_ref(&self) -> Rc<OnceCell<OffloadedData<E>>>;
+    fn offloaded_data_ref(&self) -> Rc<OnceCell<OffloadedData<E>>>;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -83,7 +83,7 @@ where
     S: SNARK<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    type Circuit: ConstraintSynthesizer<E::ScalarField> + PublicInputRef<E>;
+    type Circuit: ConstraintSynthesizer<E::ScalarField> + OffloadedDataRef<E>;
 
     fn setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore + CryptoRng>(
         circuit: C,
@@ -114,12 +114,13 @@ where
         circuit: Self::Circuit,
         rng: &mut R,
     ) -> Result<OffloadedSNARKProof<E, S>, OffloadedSNARKError<S::Error>> {
-        let public_input_ref = circuit.public_input_ref();
+        // Get the "pointer" to the offloaded data. `S::prove` will populate it.
+        let offloaded_data_ref = circuit.offloaded_data_ref();
         let proof =
             S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
         Ok(OffloadedSNARKProof {
             snark_proof: proof,
-            offloaded_data: public_input_ref.get().unwrap().clone(),
+            offloaded_data: offloaded_data_ref.get().unwrap().clone(),
         })
     }
 
@@ -267,22 +268,29 @@ where
     E: Pairing,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    let scalars = &data.msms[0].1;
-
-    let scalar_vec = scalars[..scalars.len() - 1].to_vec(); // remove the last element (always `-1`)
-
-    let msm_g1_vec = data.msms[0]
-        .0
+    let appended_data = data
+        .msms
         .iter()
-        .map(|&g1| {
-            G1Var::constant(g1.into())
-                .to_constraint_field()
-                .unwrap()
+        .map(|msm| {
+            let scalars = &msm.1;
+            let scalar_vec = scalars[..scalars.len() - 1].to_vec(); // remove the last element (always `-1`)
+
+            let msm_g1_vec = msm
+                .0
                 .iter()
-                .map(|x| x.value().unwrap())
-                .collect::<Vec<_>>()
+                .map(|&g1| {
+                    G1Var::constant(g1.into())
+                        .to_constraint_field()
+                        .unwrap()
+                        .iter()
+                        .map(|x| x.value().unwrap())
+                        .collect::<Vec<_>>()
+                })
+                .concat();
+
+            [scalar_vec, msm_g1_vec].concat()
         })
         .concat();
 
-    [public_input.to_vec(), scalar_vec, msm_g1_vec].concat()
+    [public_input.to_vec(), appended_data].concat()
 }

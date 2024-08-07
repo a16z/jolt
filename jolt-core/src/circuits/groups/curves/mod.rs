@@ -8,8 +8,8 @@ mod tests {
     use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
     use crate::snark::{
-        OffloadedData, OffloadedSNARK, OffloadedSNARKError, OffloadedSNARKVerifyingKey,
-        PublicInputRef,
+        OffloadedData, OffloadedDataRef, OffloadedSNARK, OffloadedSNARKError,
+        OffloadedSNARKVerifyingKey,
     };
     use ark_bls12_381::Bls12_381;
     use ark_bn254::{Bn254, Fq, Fr};
@@ -153,12 +153,12 @@ mod tests {
         }
     }
 
-    impl<E, G1Var> PublicInputRef<E> for DelayedOpsCircuit<E, G1Var>
+    impl<E, G1Var> OffloadedDataRef<E> for DelayedOpsCircuit<E, G1Var>
     where
         E: Pairing,
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
-        fn public_input_ref(&self) -> Rc<OnceCell<OffloadedData<E>>> {
+        fn offloaded_data_ref(&self) -> Rc<OnceCell<OffloadedData<E>>> {
             self.offloaded_data.clone()
         }
     }
