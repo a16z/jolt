@@ -4,11 +4,14 @@ use ark_std::cmp::Ordering;
 use ark_std::vec::Vec;
 use rayon::prelude::*;
 
-impl<G: CurveGroup> VariableBaseMSM for G {}
+pub(crate) mod icicle;
+pub use icicle::*;
+
+impl<G: CurveGroup + Icicle> VariableBaseMSM for G {}
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
-pub trait VariableBaseMSM: ScalarMul {
+pub trait VariableBaseMSM: ScalarMul + Icicle {
     fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
         (bases.len() == scalars.len())
             .then(|| {
@@ -37,14 +40,22 @@ pub trait VariableBaseMSM: ScalarMul {
                         }
                     }
                     _ => {
-                        let scalars = scalars
-                            .par_iter()
-                            .map(|s| s.into_bigint())
-                            .collect::<Vec<_>>();
-                        if Self::NEGATION_IS_CHEAP {
-                            msm_bigint_wnaf(bases, &scalars, max_num_bits as usize)
-                        } else {
-                            msm_bigint(bases, &scalars, max_num_bits as usize)
+                        #[cfg(feature = "icicle")]
+                        {
+                            icicle_msm::<Self>(bases, scalars)
+                        }
+
+                        #[cfg(not(feature = "icicle"))]
+                        {
+                            let scalars = scalars
+                                .par_iter()
+                                .map(|s| s.into_bigint())
+                                .collect::<Vec<_>>();
+                            if Self::NEGATION_IS_CHEAP {
+                                msm_bigint_wnaf(bases, &scalars, max_num_bits as usize)
+                            } else {
+                                msm_bigint(bases, &scalars, max_num_bits as usize)
+                            }
                         }
                     }
                 }
@@ -66,6 +77,7 @@ fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarFiel
 
 // Compute msm using windowed non-adjacent form
 #[tracing::instrument(skip_all, name = "msm_bigint_wnaf")]
+#[cfg(not(feature = "icicle"))]
 fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -126,6 +138,7 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 }
 
 /// Optimized implementation of multi-scalar multiplication.
+#[cfg(not(feature = "icicle"))]
 fn msm_bigint<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -220,6 +233,7 @@ fn msm_bigint<V: VariableBaseMSM>(
 }
 
 // From: https://github.com/arkworks-rs/gemini/blob/main/src/kzg/msm/variable_base.rs#L20
+#[cfg(not(feature = "icicle"))]
 fn make_digits_bigint(
     a: &impl BigInteger,
     w: usize,
