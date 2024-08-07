@@ -5,12 +5,14 @@ use ark_ec::{
     AffineRepr, CurveConfig, VariableBaseMSM,
 };
 use ark_ff::PrimeField;
+use ark_r1cs_std::prelude::*;
 use ark_r1cs_std::{
     fields::nonnative::params::{get_params, OptimizationType},
     fields::nonnative::AllocatedNonNativeFieldVar,
+    ToConstraintFieldGadget,
 };
 use ark_relations::r1cs::ConstraintSynthesizer;
-use ark_serialize::{CanonicalSerialize, SerializationError, Valid};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use ark_std::{
     cell::OnceCell,
     iterable::Iterable,
@@ -20,6 +22,7 @@ use ark_std::{
     result::Result,
     One, Zero,
 };
+use itertools::Itertools;
 
 pub mod fields;
 pub mod groups;
@@ -30,6 +33,7 @@ pub mod poly;
 /// The verifier is responsible for ensuring that the sum of the pairings is zero.
 /// The verifier needs to use appropriate G2 elements from the verification key or the proof
 /// (depending on the protocol).
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DelayedPairingDef {
     /// Offsets of the G1 elements in the public input. The G1 elements are stored as sequences of scalar field elements
     /// encoding the compressed coordinates of the G1 points (which would natively be numbers in the base field).
@@ -40,6 +44,7 @@ pub struct DelayedPairingDef {
 
 /// Describes a block of G1 elements `Gᵢ` and scalars in `sᵢ` the public input, such that `∑ᵢ sᵢ·Gᵢ == 0`.
 /// It's the verifiers responsibility to ensure that the sum is zero.
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DelayedMSMDef {
     /// Length is the number of G1 elements in the MSM.
     pub length: usize,
@@ -53,81 +58,137 @@ pub struct DelayedMSMDef {
     pub scalar_offset: usize,
 }
 
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct OffloadedSNARKVerifyingKey<E, S>
 where
     E: Pairing,
     S: SNARK<E::ScalarField>,
 {
     pub snark_pvk: S::ProcessedVerifyingKey,
-    /// Delayed pairing G1 elements in the public input.
     pub delayed_pairings: Vec<DelayedPairingDef>,
-    /// Delayed MSM G1 and scalar blocks in the public input.
-    pub delayed_msms: Vec<DelayedMSMDef>,
 }
 
-#[derive(Debug)]
-pub struct OffloadedData<E: Pairing> {
-    pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
-    pub pairings: Vec<Vec<E::G1>>,
-}
-
-pub trait PublicInputRef<D> {
-    fn public_input_ref(&self) -> Rc<OnceCell<D>>;
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum OffloadedSNARKError<E, S>
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct OffloadedSNARKProof<E, S>
 where
     E: Pairing,
     S: SNARK<E::ScalarField>,
 {
-    /// Wraps `S::Error`.
+    pub snark_proof: S::Proof,
+    pub offloaded_data: OffloadedData<E>,
+}
+
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct OffloadedData<E: Pairing> {
+    pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
+}
+
+pub trait PublicInputRef<E>
+where
+    E: Pairing,
+{
+    fn public_input_ref(&self) -> Rc<OnceCell<OffloadedData<E>>>;
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum OffloadedSNARKError<Err>
+where
+    Err: 'static + ark_std::error::Error,
+{
+    /// Wraps `Err`.
     #[error(transparent)]
-    SNARKError(S::Error),
+    SNARKError(Err),
     /// Wraps `SerializationError`.
     #[error(transparent)]
     SerializationError(#[from] SerializationError),
 }
 
-pub trait OffloadedSNARK<E, P, S, D>
+pub trait OffloadedSNARK<E, P, S, G1Var>
 where
     E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
     P: SWCurveConfig<BaseField: PrimeField>,
     S: SNARK<E::ScalarField>,
+    G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    type Circuit: ConstraintSynthesizer<E::ScalarField> + PublicInputRef<OffloadedData<E>>;
+    type Circuit: ConstraintSynthesizer<E::ScalarField> + PublicInputRef<E>;
+
+    fn setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore + CryptoRng>(
+        circuit: C,
+        rng: &mut R,
+    ) -> Result<(S::ProvingKey, OffloadedSNARKVerifyingKey<E, S>), OffloadedSNARKError<S::Error>>
+    {
+        Self::circuit_specific_setup(circuit, rng)
+    }
+
+    fn circuit_specific_setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore + CryptoRng>(
+        circuit: C,
+        rng: &mut R,
+    ) -> Result<(S::ProvingKey, OffloadedSNARKVerifyingKey<E, S>), OffloadedSNARKError<S::Error>>
+    {
+        let (pk, snark_vk) = S::circuit_specific_setup(circuit, rng)
+            .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        let snark_pvk = S::process_vk(&snark_vk).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        let vk = Self::offloaded_setup(snark_pvk)?;
+        Ok((pk, vk))
+    }
+
+    fn offloaded_setup(
+        snark_vk: S::ProcessedVerifyingKey,
+    ) -> Result<OffloadedSNARKVerifyingKey<E, S>, OffloadedSNARKError<S::Error>>;
 
     fn prove<R: RngCore + CryptoRng>(
         circuit_pk: &S::ProvingKey,
         circuit: Self::Circuit,
         rng: &mut R,
-    ) -> Result<S::Proof, OffloadedSNARKError<E, S>> {
-        S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))
+    ) -> Result<OffloadedSNARKProof<E, S>, OffloadedSNARKError<S::Error>> {
+        let public_input_ref = circuit.public_input_ref();
+        let proof =
+            S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        Ok(OffloadedSNARKProof {
+            snark_proof: proof,
+            offloaded_data: public_input_ref.get().unwrap().clone(),
+        })
     }
 
-    fn msm_inputs(
-        msm_defs: &[DelayedMSMDef],
+    fn verify(
+        vk: &OffloadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
-    ) -> Result<Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SerializationError> {
-        msm_defs
-            .iter()
-            .map(|msm_def| {
-                let g1_offset = msm_def.g1_offset;
-                let msm_length = msm_def.length;
-                assert!(msm_length > 1); // TODO make it a verifier key validity error
-                let g1s = Self::g1_elements(public_input, g1_offset, msm_length)?;
+        proof: &OffloadedSNARKProof<E, S>,
+    ) -> Result<bool, OffloadedSNARKError<S::Error>> {
+        Self::verify_with_processed_vk(vk, public_input, proof)
+    }
 
-                if public_input.len() < msm_def.scalar_offset + msm_length - 1 {
-                    return Err(SerializationError::InvalidData);
-                };
-                let scalars = [
-                    &public_input[msm_def.scalar_offset..msm_def.scalar_offset + msm_length - 1],
-                    &[-E::ScalarField::one()],
-                ]
-                .concat();
-                Ok((g1s, scalars))
-            })
-            .collect()
+    fn verify_with_processed_vk(
+        vk: &OffloadedSNARKVerifyingKey<E, S>,
+        public_input: &[E::ScalarField],
+        proof: &OffloadedSNARKProof<E, S>,
+    ) -> Result<bool, OffloadedSNARKError<S::Error>> {
+        let public_input = build_public_input::<E, G1Var>(public_input, &proof.offloaded_data);
+
+        let r = S::verify_with_processed_vk(&vk.snark_pvk, &public_input, &proof.snark_proof)
+            .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        if !r {
+            return Ok(false);
+        }
+
+        for (g1s, scalars) in &proof.offloaded_data.msms {
+            assert_eq!(g1s.len(), scalars.len());
+            let r = E::G1::msm_unchecked(&g1s, &scalars);
+            if !r.is_zero() {
+                return Ok(false);
+            }
+        }
+
+        let pairings = Self::pairing_inputs(vk, &public_input, &proof.snark_proof)?;
+        for (g1s, g2s) in pairings {
+            assert_eq!(g1s.len(), g2s.len());
+            let r = E::multi_pairing(&g1s, &g2s);
+            if !r.is_zero() {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 
     fn g1_elements(
@@ -180,41 +241,9 @@ where
 
     fn g2_elements(
         vk: &OffloadedSNARKVerifyingKey<E, S>,
-        public_input: &[<E as Pairing>::ScalarField],
-        proof: &S::Proof,
-    ) -> Result<Vec<Vec<E::G2>>, SerializationError>;
-
-    fn verify(
-        vk: &OffloadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
         proof: &S::Proof,
-    ) -> Result<bool, OffloadedSNARKError<E, S>> {
-        let r = S::verify_with_processed_vk(&vk.snark_pvk, public_input, proof)
-            .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
-        if !r {
-            return Ok(false);
-        }
-
-        let msms = Self::msm_inputs(&vk.delayed_msms, public_input)?;
-        for (g1s, scalars) in msms {
-            assert_eq!(g1s.len(), scalars.len());
-            let r = E::G1::msm_unchecked(&g1s, &scalars);
-            if !r.is_zero() {
-                return Ok(false);
-            }
-        }
-
-        let pairings = Self::pairing_inputs(vk, public_input, &proof)?;
-        for (g1s, g2s) in pairings {
-            assert_eq!(g1s.len(), g2s.len());
-            let r = E::multi_pairing(&g1s, &g2s);
-            if !r.is_zero() {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
+    ) -> Result<Vec<Vec<E::G2>>, SerializationError>;
 }
 
 fn g1_affine_size_in_scalar_field_elements<E: Pairing>() -> usize {
@@ -255,4 +284,32 @@ where
     };
     affine.check()?;
     Ok(affine)
+}
+
+fn build_public_input<E, G1Var>(
+    public_input: &[E::ScalarField],
+    data: &OffloadedData<E>,
+) -> Vec<E::ScalarField>
+where
+    E: Pairing,
+    G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+{
+    let scalars = &data.msms[0].1;
+
+    let scalar_vec = scalars[..scalars.len() - 1].to_vec(); // remove the last element (always `-1`)
+
+    let msm_g1_vec = data.msms[0]
+        .0
+        .iter()
+        .map(|&g1| {
+            G1Var::constant(g1.into())
+                .to_constraint_field()
+                .unwrap()
+                .iter()
+                .map(|x| x.value().unwrap())
+                .collect::<Vec<_>>()
+        })
+        .concat();
+
+    [public_input.to_vec(), scalar_vec, msm_g1_vec].concat()
 }
