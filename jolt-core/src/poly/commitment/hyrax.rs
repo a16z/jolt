@@ -15,7 +15,7 @@ use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-use crate::msm::{VariableBaseMSM, icicle::Icicle};
+use crate::msm::{icicle::Icicle, VariableBaseMSM};
 
 #[derive(Clone)]
 pub struct HyraxScheme<G: CurveGroup + Icicle> {

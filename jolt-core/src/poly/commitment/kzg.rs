@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::msm::{VariableBaseMSM, Icicle};
+use crate::msm::{Icicle, VariableBaseMSM};
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;

@@ -77,6 +77,7 @@ fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarFiel
 
 // Compute msm using windowed non-adjacent form
 #[tracing::instrument(skip_all, name = "msm_bigint_wnaf")]
+#[cfg(not(feature = "icicle"))]
 fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -137,6 +138,7 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 }
 
 /// Optimized implementation of multi-scalar multiplication.
+#[cfg(not(feature = "icicle"))]
 fn msm_bigint<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -231,6 +233,7 @@ fn msm_bigint<V: VariableBaseMSM>(
 }
 
 // From: https://github.com/arkworks-rs/gemini/blob/main/src/kzg/msm/variable_base.rs#L20
+#[cfg(not(feature = "icicle"))]
 fn make_digits_bigint(
     a: &impl BigInteger,
     w: usize,

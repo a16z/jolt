@@ -16,7 +16,7 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
-    msm::{VariableBaseMSM, Icicle},
+    msm::{Icicle, VariableBaseMSM},
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     utils::{
         errors::ProofVerifyError,
