@@ -7,9 +7,9 @@ mod tests {
     use super::*;
     use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
-    use crate::circuits::{
-        DelayedMSMDef, OffloadedData, OffloadedSNARK, OffloadedSNARKError,
-        OffloadedSNARKVerifyingKey, PublicInputRef,
+    use crate::snark::{
+        OffloadedData, OffloadedSNARK, OffloadedSNARKError, OffloadedSNARKVerifyingKey,
+        PublicInputRef,
     };
     use ark_bls12_381::Bls12_381;
     use ark_bn254::{Bn254, Fq, Fr};

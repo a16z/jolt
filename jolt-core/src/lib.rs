@@ -23,5 +23,6 @@ pub mod lasso;
 pub mod msm;
 pub mod poly;
 pub mod r1cs;
+pub mod snark;
 pub mod subprotocols;
 pub mod utils;
