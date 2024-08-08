@@ -7,8 +7,9 @@ mod tests {
     use super::*;
     use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
+    use crate::circuits::offloaded::OffloadedMSMGadget;
     use crate::snark::{
-        OffloadedData, OffloadedDataRef, OffloadedSNARK, OffloadedSNARKError,
+        OffloadedData, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
         OffloadedSNARKVerifyingKey,
     };
     use ark_bls12_381::Bls12_381;
@@ -29,6 +30,7 @@ mod tests {
     use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
     use ark_serialize::{CanonicalSerialize, SerializationError};
     use ark_std::cell::OnceCell;
+    use ark_std::cell::{Cell, RefCell};
     use ark_std::marker::PhantomData;
     use ark_std::ops::Deref;
     use ark_std::rand::Rng;
@@ -49,8 +51,14 @@ mod tests {
         w_g1: [Option<E::G1>; 3],
         d: Option<E::ScalarField>,
 
-        // public inputs
-        offloaded_data: Rc<OnceCell<OffloadedData<E>>>,
+        // deferred fns to write offloaded data to public_input
+        deferred_fns: RefCell<
+            Vec<
+                Box<
+                    dyn FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError>,
+                >,
+            >,
+        >,
     }
 
     impl<E, G1Var> ConstraintSynthesizer<E::ScalarField> for DelayedOpsCircuit<E, G1Var>
@@ -82,84 +90,32 @@ mod tests {
             let d_k = [FpVar::one(), d, d_square];
             dbg!(cs.num_constraints());
 
-            // `None` in setup mode, `Some<Vec<E::G1>>` in proving mode.
-            let msm_g1_values = w_g1
-                .iter()
-                .map(|g1| g1.value().ok().map(|g1| g1.into_affine()))
-                .collect::<Option<Vec<_>>>();
-
-            let d_k_values = d_k
-                .iter()
-                .map(|d| d.value().ok())
-                .collect::<Option<Vec<_>>>();
-
-            let (full_msm_value, r_g1_value) = msm_g1_values
-                .clone()
-                .zip(d_k_values)
-                .map(|(g1s, d_k)| {
-                    let r_g1 = E::G1::msm_unchecked(&g1s, &d_k);
-                    let minus_one = -E::ScalarField::one();
-                    (
-                        (
-                            [g1s, vec![r_g1.into()]].concat(),
-                            [d_k, vec![minus_one]].concat(),
-                        ),
-                        r_g1,
-                    )
-                })
-                .unzip();
-
-            let r_g1_var = G1Var::new_witness(ns!(cs, "r_g1"), || {
-                r_g1_value.ok_or(SynthesisError::AssignmentMissing)
-            })?;
-
-            if let Some(msm_value) = full_msm_value {
-                self.offloaded_data
-                    .set(OffloadedData {
-                        msms: vec![msm_value],
-                    })
-                    .unwrap();
-            };
-
-            // write d_k to public_input
-            for x in d_k {
-                let d_k_input = FpVar::new_input(ns!(cs, "d_k"), || x.value())?;
-                d_k_input.enforce_equal(&x)?;
-            }
-            dbg!(cs.num_constraints());
-
-            // write w_g1 to public_input
-            for g1 in w_g1 {
-                let f_vec = g1.to_constraint_field()?;
-
-                for f in f_vec.iter() {
-                    let f_input = FpVar::new_input(ns!(cs, "w_g1"), || f.value())?;
-                    f_input.enforce_equal(f)?;
-                }
-            }
-
-            // write r_g1 to public_input
-            {
-                let f_vec = r_g1_var.to_constraint_field()?;
-
-                for f in f_vec.iter() {
-                    let f_input = FpVar::new_input(ns!(cs, "r_g1"), || f.value())?;
-                    f_input.enforce_equal(f)?;
-                }
-            }
-            dbg!(cs.num_constraints());
+            let _ = OffloadedMSMGadget::msm(
+                &self,
+                ns!(cs, "msm").cs(),
+                w_g1.as_slice(),
+                d_k.as_slice(),
+            )?;
 
             Ok(())
         }
     }
 
-    impl<E, G1Var> OffloadedDataRef<E> for DelayedOpsCircuit<E, G1Var>
+    impl<E, G1Var> OffloadedDataCircuit<E> for DelayedOpsCircuit<E, G1Var>
     where
         E: Pairing,
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
-        fn offloaded_data_ref(&self) -> Rc<OnceCell<OffloadedData<E>>> {
-            self.offloaded_data.clone()
+        fn deferred_fns_ref(
+            &self,
+        ) -> &RefCell<
+            Vec<
+                Box<
+                    dyn FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError>,
+                >,
+            >,
+        > {
+            &self.deferred_fns
         }
     }
 
@@ -210,7 +166,7 @@ mod tests {
             _params: PhantomData,
             w_g1: [None; 3],
             d: None,
-            offloaded_data: Default::default(),
+            deferred_fns: Default::default(),
         };
 
         // This is not cryptographically safe, use
@@ -230,7 +186,7 @@ mod tests {
             _params: PhantomData,
             w_g1: [Some(rng.gen()); 3],
             d: Some(rng.gen()),
-            offloaded_data: Default::default(),
+            deferred_fns: Default::default(),
         };
 
         let prove_timer = start_timer!(|| "Groth16::prove");

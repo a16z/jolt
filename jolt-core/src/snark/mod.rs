@@ -7,12 +7,11 @@ use ark_r1cs_std::fields::nonnative::params::{get_params, OptimizationType};
 use ark_r1cs_std::fields::nonnative::AllocatedNonNativeFieldVar;
 use ark_r1cs_std::groups::CurveVar;
 use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
-use ark_relations::r1cs::ConstraintSynthesizer;
+use ark_relations::r1cs::{ConstraintSynthesizer, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
+use ark_std::cell::RefCell;
 use itertools::Itertools;
 use rand_core::{CryptoRng, RngCore};
-use std::cell::OnceCell;
-use std::rc::Rc;
 
 /// Describes G1 elements to be used in a multi-pairing.
 /// The verifier is responsible for ensuring that the sum of the pairings is zero.
@@ -56,11 +55,32 @@ pub struct OffloadedData<E: Pairing> {
     pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
 }
 
-pub trait OffloadedDataRef<E>
+pub trait OffloadedDataCircuit<E>
 where
     E: Pairing,
 {
-    fn offloaded_data_ref(&self) -> Rc<OnceCell<OffloadedData<E>>>;
+    fn deferred_fns_ref(
+        &self,
+    ) -> &RefCell<
+        Vec<Box<dyn FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError>>>,
+    >;
+
+    fn defer_msm(
+        &self,
+        f: impl FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError> + 'static,
+    ) {
+        self.deferred_fns_ref().borrow_mut().push(Box::new(f));
+    }
+
+    fn run_deferred(&self) -> Result<OffloadedData<E>, SynthesisError> {
+        let deferred_fns = self.deferred_fns_ref().take();
+        let msms = deferred_fns
+            .into_iter()
+            .map(|f| f())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(OffloadedData { msms })
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -74,6 +94,8 @@ where
     /// Wraps `SerializationError`.
     #[error(transparent)]
     SerializationError(#[from] SerializationError),
+    #[error(transparent)]
+    SynthesisError(#[from] SynthesisError),
 }
 
 pub trait OffloadedSNARK<E, P, S, G1Var>
@@ -83,7 +105,7 @@ where
     S: SNARK<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    type Circuit: ConstraintSynthesizer<E::ScalarField> + OffloadedDataRef<E>;
+    type Circuit: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>;
 
     fn setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore + CryptoRng>(
         circuit: C,
@@ -115,12 +137,13 @@ where
         rng: &mut R,
     ) -> Result<OffloadedSNARKProof<E, S>, OffloadedSNARKError<S::Error>> {
         // Get the "pointer" to the offloaded data. `S::prove` will populate it.
-        let offloaded_data_ref = circuit.offloaded_data_ref();
+        let offloaded_data = circuit.run_deferred()?;
+
         let proof =
             S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
         Ok(OffloadedSNARKProof {
             snark_proof: proof,
-            offloaded_data: offloaded_data_ref.get().unwrap().clone(),
+            offloaded_data,
         })
     }
 
