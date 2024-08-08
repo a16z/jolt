@@ -20,15 +20,20 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs"]
 
 [dependencies]
+ark-bls12-381 = "0.4.0"
 ark-bn254 = "0.4.0"
+ark-crypto-primitives = { version = "0.4.0", default-features = false, features = ["snark", "sponge", "r1cs"] }
 ark-ec = { version = "0.4.2", default-features = false }
 ark-ff = { version = "0.4.2", default-features = false }
+ark-r1cs-std = { version = "0.4.0" }
+ark-relations = { version = "0.4.0", default-features = false }
 ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 ark-std = { version = "0.4.0" }
 binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field"}
 clap = { version = "4.3.10", features = ["derive"] }
+derivative = { version = "2" }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
@@ -75,8 +80,11 @@ alloy-sol-macro = "0.7.6"
 alloy-sol-types = "0.7.6"
 
 [dev-dependencies]
+ark-groth16 = { version = "0.4.0" }
+ark-test-curves = { version = "0.4.0", default-features = false, features = ["bls12_381_curve", "mnt6_753"] }
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
+#sigma0-polymath = { git = "https://github.com/sigma0-xyz/polymath" }
 
 [build-dependencies]
 common = { path = "../common" }
@@ -99,6 +107,7 @@ default = [
     "rayon",
 ]
 host = ["dep:reqwest", "dep:tokio"]
+print-trace = [ "ark-std/print-trace" ]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0" 
