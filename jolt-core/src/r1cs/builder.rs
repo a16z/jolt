@@ -1,5 +1,5 @@
 use crate::{
-    field::{JoltField, OptimizedMul},
+    field::JoltField,
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{
         math::Math,
@@ -329,6 +329,25 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         self.allocate_aux(symbolic_inputs, compute)
     }
 
+    pub fn pack_le(unpacked: Vec<Variable<I>>, operand_bits: usize) -> LC<I> {
+        let packed: Vec<Term<I>> = unpacked
+            .into_iter()
+            .enumerate()
+            .map(|(idx, unpacked)| Term(unpacked, 1 << (idx * operand_bits)))
+            .collect();
+        packed.into()
+    }
+
+    pub fn pack_be(unpacked: Vec<Variable<I>>, operand_bits: usize) -> LC<I> {
+        let packed: Vec<Term<I>> = unpacked
+            .into_iter()
+            .rev()
+            .enumerate()
+            .map(|(idx, unpacked)| Term(unpacked, 1 << (idx * operand_bits)))
+            .collect();
+        packed.into()
+    }
+
     pub fn constrain_pack_le(
         &mut self,
         unpacked: Vec<Variable<I>>,
@@ -343,33 +362,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             .map(|(idx, unpacked)| Term(unpacked, 1 << (idx * operand_bits)))
             .collect();
         self.constrain_eq(packed, result);
-    }
-
-    #[must_use]
-    pub fn allocate_pack_le(
-        &mut self,
-        unpacked: Vec<Variable<I>>,
-        operand_bits: usize,
-    ) -> Variable<I> {
-        let packed = self.aux_pack_le(&unpacked, operand_bits);
-
-        self.constrain_pack_le(unpacked, packed, operand_bits);
-        packed
-    }
-
-    fn aux_pack_le(&mut self, to_pack: &[Variable<I>], operand_bits: usize) -> Variable<I> {
-        let pack = move |values: &[F]| -> F {
-            values
-                .iter()
-                .enumerate()
-                .fold(F::zero(), |acc, (idx, &value)| {
-                    acc + value.mul_01_optimized(F::from_u64(1 << (idx * operand_bits)).unwrap())
-                })
-        };
-
-        let symbolic_inputs = to_pack.iter().cloned().map(|sym| sym.into()).collect();
-        let compute = Box::new(pack);
-        self.allocate_aux(symbolic_inputs, compute)
     }
 
     pub fn constrain_pack_be(
@@ -388,34 +380,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             .map(|(idx, unpacked)| Term(unpacked, 1 << (idx * operand_bits)))
             .collect();
         self.constrain_eq(packed, result);
-    }
-
-    #[must_use]
-    pub fn allocate_pack_be(
-        &mut self,
-        unpacked: Vec<Variable<I>>,
-        operand_bits: usize,
-    ) -> Variable<I> {
-        let packed = self.aux_pack_be(&unpacked, operand_bits);
-
-        self.constrain_pack_be(unpacked, packed, operand_bits);
-        packed
-    }
-
-    fn aux_pack_be(&mut self, to_pack: &[Variable<I>], operand_bits: usize) -> Variable<I> {
-        let pack = move |values: &[F]| -> F {
-            values
-                .iter()
-                .rev()
-                .enumerate()
-                .fold(F::zero(), |acc, (idx, &value)| {
-                    acc + value.mul_01_optimized(F::from_u64(1 << (idx * operand_bits)).unwrap())
-                })
-        };
-
-        let symbolic_inputs = to_pack.iter().cloned().map(|sym| sym.into()).collect();
-        let compute = Box::new(pack);
-        self.allocate_aux(symbolic_inputs, compute)
     }
 
     /// Constrain x * y == z
@@ -907,12 +871,20 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             let uniform_constraint_index = constraint_index / self.uniform_repeat;
             if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
                 let step_index = constraint_index % self.uniform_repeat;
-                panic!(
-                    "Mismatch at global constraint {constraint_index} => {:?}\n\
-                    uniform constraint: {uniform_constraint_index}\n\
-                    step: {step_index}",
-                    self.uniform_builder.constraints[uniform_constraint_index]
-                );
+                if uniform_constraint_index >= self.uniform_builder.constraints.len() {
+                    panic!(
+                        "Mismatch at non-uniform constraint: {}\n\
+                        step: {step_index}",
+                        uniform_constraint_index - self.uniform_builder.constraints.len()
+                    )
+                } else {
+                    panic!(
+                        "Mismatch at global constraint {constraint_index} => {:?}\n\
+                        uniform constraint: {uniform_constraint_index}\n\
+                        step: {step_index}",
+                        self.uniform_builder.constraints[uniform_constraint_index]
+                    );
+                }
             }
         }
     }
@@ -1132,48 +1104,6 @@ mod tests {
         z[TestInputs::OpFlags3 as usize] = 1;
         z[TestInputs::BytecodeA as usize] = 13;
 
-        assert!(constraint.is_sat(&z));
-    }
-
-    #[test]
-    fn alloc_packing_le_builder() {
-        let mut builder = R1CSBuilder::<Fr, TestInputs>::new();
-
-        // pack_le(OpFlags0, OpFlags1, OpFlags2, OpFlags3) == Aux(0)
-        struct TestConstraints();
-        impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
-            type Inputs = TestInputs;
-            fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
-                let unpacked: Vec<Variable<TestInputs>> = vec![
-                    TestInputs::OpFlags0.into(),
-                    TestInputs::OpFlags1.into(),
-                    TestInputs::OpFlags2.into(),
-                    TestInputs::OpFlags3.into(),
-                ];
-                let _result = builder.allocate_pack_le(unpacked, 1);
-            }
-        }
-
-        let concrete_constraints = TestConstraints();
-        concrete_constraints.build_constraints(&mut builder);
-        assert_eq!(builder.constraints.len(), 1);
-        let constraint = &builder.constraints[0];
-
-        // 1101 == 13
-        let mut z = vec![0i64; TestInputs::COUNT + 1];
-        // (little endian)
-        z[TestInputs::OpFlags0 as usize] = 1;
-        z[TestInputs::OpFlags1 as usize] = 0;
-        z[TestInputs::OpFlags2 as usize] = 1;
-        z[TestInputs::OpFlags3 as usize] = 1;
-
-        assert_eq!(builder.aux_computations.len(), 1);
-        let computed_aux = aux_compute_single(
-            &builder.aux_computations[0],
-            &[Fr::one(), Fr::zero(), Fr::one(), Fr::one()],
-        );
-        assert_eq!(computed_aux, Fr::from(13));
-        z[builder.witness_index(Variable::Auxiliary(0))] = 13;
         assert!(constraint.is_sat(&z));
     }
 

@@ -12,7 +12,7 @@ use reqwest::Client;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 
-const TOOLCHAIN_TAG: &str = include_str!("../../../.jolt.rust.toolchain-tag");
+const TOOLCHAIN_TAG: &str = include_str!("../../../guest-toolchain-tag");
 const DOWNLOAD_RETRIES: usize = 5;
 const DELAY_BASE_MS: u64 = 500;
 
@@ -36,7 +36,7 @@ pub fn install_toolchain() -> Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32i-unknown-none-elf"])
+        .args(["target", "add", "riscv32im-unknown-none-elf"])
         .output()?;
 
     Ok(())
@@ -80,7 +80,7 @@ fn link_toolchain() -> Result<()> {
         .args([
             "toolchain",
             "link",
-            "riscv32i-jolt-zkvm-elf",
+            "riscv32im-jolt-zkvm-elf",
             link_path.to_str().unwrap(),
         ])
         .output()?;
@@ -138,7 +138,10 @@ async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
 
         Ok(())
     } else {
-        Err(eyre!("failed to download toolchain"))
+        Err(match response.error_for_status() {
+            Ok(_) => eyre!("failed to download toolchain"),
+            Err(err) => eyre!("failed to download toolchain: {}", err),
+        })
     }
 }
 

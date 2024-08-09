@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
+use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyrax::HyraxScheme;
@@ -119,6 +120,7 @@ instruction_set!(
   MULU: MULUInstruction<WORD_SIZE>,
   MULHU: MULHUInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
+  VIRTUAL_MOVE: MOVEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction,
@@ -319,6 +321,33 @@ mod tests {
     //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
     //     fib_e2e::<Field, MockCommitScheme<Field>>();
     // }
+
+    #[test]
+    fn muldiv_e2e_hyrax() {
+        let mut program = host::Program::new("muldiv-guest");
+        program.set_input(&123u32);
+        program.set_input(&234u32);
+        program.set_input(&345u32);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
+                io_device,
+                trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
+
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
 
     #[test]
     fn sha3_e2e_hyrax() {

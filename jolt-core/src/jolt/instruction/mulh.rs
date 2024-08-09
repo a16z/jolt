@@ -10,11 +10,10 @@ use crate::jolt::instruction::{
 pub struct MULHInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD_SIZE> {
-    fn virtual_sequence(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
+    const SEQUENCE_LENGTH: usize = 7;
+
+    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         assert_eq!(trace_row.instruction.opcode, RV32IM::MULH);
-        // MULH operands
-        let x = trace_row.register_state.rs1_val.unwrap();
-        let y = trace_row.register_state.rs2_val.unwrap();
         // MULH source registers
         let r_x = trace_row.instruction.rs1;
         let r_y = trace_row.instruction.rs2;
@@ -25,11 +24,14 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         let v_1 = Some(virtual_register_index(3));
         let v_2 = Some(virtual_register_index(4));
         let v_3 = Some(virtual_register_index(5));
+        // MULH operands
+        let x = trace_row.register_state.rs1_val.unwrap();
+        let y = trace_row.register_state.rs2_val.unwrap();
 
-        let mut virtual_sequence = vec![];
+        let mut virtual_trace = vec![];
 
         let s_x = MOVSIGNInstruction::<WORD_SIZE>(x).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_MOVSIGN,
@@ -37,7 +39,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: None,
                 rd: v_sx,
                 imm: None,
-                virtual_sequence_index: Some(0),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(x),
@@ -49,7 +51,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         });
 
         let s_y = MOVSIGNInstruction::<WORD_SIZE>(y).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_MOVSIGN,
@@ -57,7 +59,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: None,
                 rd: v_sy,
                 imm: None,
-                virtual_sequence_index: Some(1),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(y),
@@ -69,7 +71,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         });
 
         let xy_high_bits = MULHUInstruction::<WORD_SIZE>(x, y).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULHU,
@@ -77,7 +79,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: r_y,
                 rd: v_0,
                 imm: None,
-                virtual_sequence_index: Some(2),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(x),
@@ -89,7 +91,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         });
 
         let sx_y_low_bits = MULUInstruction::<WORD_SIZE>(s_x, y).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULU,
@@ -97,7 +99,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: r_y,
                 rd: v_1,
                 imm: None,
-                virtual_sequence_index: Some(3),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(s_x),
@@ -109,7 +111,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         });
 
         let sy_x_low_bits = MULUInstruction::<WORD_SIZE>(s_y, x).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULU,
@@ -117,7 +119,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: r_x,
                 rd: v_2,
                 imm: None,
-                virtual_sequence_index: Some(4),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(s_y),
@@ -129,7 +131,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         });
 
         let partial_sum = ADDInstruction::<WORD_SIZE>(xy_high_bits, sx_y_low_bits).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::ADD,
@@ -137,7 +139,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: v_1,
                 rd: v_3,
                 imm: None,
-                virtual_sequence_index: Some(5),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(xy_high_bits),
@@ -149,7 +151,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         });
 
         let result = ADDInstruction::<WORD_SIZE>(partial_sum, sy_x_low_bits).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::ADD,
@@ -157,7 +159,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: v_2,
                 rd: trace_row.instruction.rd,
                 imm: None,
-                virtual_sequence_index: Some(6),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(partial_sum),
@@ -167,7 +169,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             memory_state: None,
             advice_value: None,
         });
-        virtual_sequence
+        virtual_trace
     }
 
     fn sequence_output(x: u64, y: u64) -> u64 {
@@ -187,10 +189,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
 
 #[cfg(test)]
 mod test {
-
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
-
     use super::*;
+    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn mulh_virtual_sequence_32() {

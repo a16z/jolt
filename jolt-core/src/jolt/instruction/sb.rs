@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
+use crate::jolt::subtable::identity::IdentitySubtable;
 use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_operand_usize;
 
@@ -17,7 +18,6 @@ impl JoltInstruction for SBInstruction {
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
         assert!(M >= 1 << 8);
-        assert!(vals.len() == 1);
         vals[0]
     }
 
@@ -32,12 +32,20 @@ impl JoltInstruction for SBInstruction {
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         // This assertion ensures that we only need one TruncateOverflowSubtable
         assert!(M >= 1 << 8);
-        vec![(
-            // Truncate all but the lowest eight bits of the last chunk,
-            // which contains the lower 8 bits of the rs2 value.
-            Box::new(TruncateOverflowSubtable::<F, 8>::new()),
-            SubtableIndices::from(C - 1),
-        )]
+        vec![
+            (
+                // Truncate all but the lowest eight bits of the last chunk,
+                // which contains the lower 8 bits of the rs2 value.
+                Box::new(TruncateOverflowSubtable::<F, 8>::new()),
+                SubtableIndices::from(C - 1),
+            ),
+            (
+                // Not used for lookup, but this implicitly range-checks
+                // the remaining query chunks
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(0..C - 1),
+            ),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
