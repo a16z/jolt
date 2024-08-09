@@ -9,7 +9,7 @@ use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::groups::CurveVar;
 use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
 use ark_relations::ns;
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use std::marker::PhantomData;
 
 pub struct OffloadedMSMGadget<E, ConstraintF, FVar, G1Var, Circuit>
@@ -33,10 +33,13 @@ where
 {
     pub fn msm(
         circuit: &Circuit,
-        cs: ConstraintSystemRef<ConstraintF>,
+        cs: impl Into<Namespace<ConstraintF>>,
         g1s: &[G1Var],
         scalars: &[FVar],
     ) -> Result<G1Var, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+
         let g1_values = g1s
             .iter()
             .map(|g1| g1.value().ok().map(|g1| g1.into_affine()))
@@ -70,6 +73,8 @@ where
             let g1s = g1s.to_vec();
             let scalars = scalars.to_vec();
             let msm_g1_var = msm_g1_var.clone();
+            let ns = ns!(cs, "deferred_msm");
+            let cs = ns.cs();
 
             circuit.defer_msm(move || {
                 // write scalars to public_input
@@ -100,9 +105,10 @@ where
                 }
                 dbg!(cs.num_constraints());
 
-                full_msm_value.ok_or(SynthesisError::AssignmentMissing)
+                Ok(full_msm_value)
             })
         };
+        dbg!(cs.num_constraints());
 
         Ok(msm_g1_var)
     }

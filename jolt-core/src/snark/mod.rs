@@ -1,15 +1,20 @@
 use ark_crypto_primitives::snark::SNARK;
-use ark_ec::pairing::Pairing;
-use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
-use ark_ec::{AffineRepr, VariableBaseMSM};
+use ark_ec::{
+    pairing::Pairing,
+    short_weierstrass::{Affine, SWCurveConfig},
+    AffineRepr, VariableBaseMSM,
+};
 use ark_ff::{PrimeField, Zero};
-use ark_r1cs_std::fields::nonnative::params::{get_params, OptimizationType};
-use ark_r1cs_std::fields::nonnative::AllocatedNonNativeFieldVar;
-use ark_r1cs_std::groups::CurveVar;
-use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
-use ark_relations::r1cs::{ConstraintSynthesizer, SynthesisError};
+use ark_r1cs_std::{
+    fields::nonnative::params::{get_params, OptimizationType},
+    fields::nonnative::AllocatedNonNativeFieldVar,
+    groups::CurveVar,
+    R1CSVar, ToConstraintFieldGadget,
+};
+use ark_relations::r1cs;
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
-use ark_std::cell::RefCell;
+use ark_std::{cell::OnceCell, cell::RefCell, marker::PhantomData, rc::Rc};
 use itertools::Itertools;
 use rand_core::{CryptoRng, RngCore};
 
@@ -55,31 +60,34 @@ pub struct OffloadedData<E: Pairing> {
     pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
 }
 
+pub type DeferredFn<E: Pairing> =
+    dyn FnOnce() -> Result<Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SynthesisError>;
+
+pub type DeferredFnsRef<E: Pairing> = Rc<
+    RefCell<
+        Vec<
+            Box<
+                dyn FnOnce() -> Result<
+                    Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
+                    SynthesisError,
+                >,
+            >,
+        >,
+    >,
+>;
+
 pub trait OffloadedDataCircuit<E>
 where
     E: Pairing,
 {
-    fn deferred_fns_ref(
-        &self,
-    ) -> &RefCell<
-        Vec<Box<dyn FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError>>>,
-    >;
+    fn deferred_fns_ref(&self) -> &DeferredFnsRef<E>;
 
     fn defer_msm(
         &self,
-        f: impl FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError> + 'static,
+        f: impl FnOnce() -> Result<Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SynthesisError>
+            + 'static,
     ) {
         self.deferred_fns_ref().borrow_mut().push(Box::new(f));
-    }
-
-    fn run_deferred(&self) -> Result<OffloadedData<E>, SynthesisError> {
-        let deferred_fns = self.deferred_fns_ref().take();
-        let msms = deferred_fns
-            .into_iter()
-            .map(|f| f())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(OffloadedData { msms })
     }
 }
 
@@ -98,6 +106,53 @@ where
     SynthesisError(#[from] SynthesisError),
 }
 
+struct WrappedCircuit<E, P, C>
+where
+    E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
+    P: SWCurveConfig<BaseField: PrimeField>,
+    C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>,
+{
+    _params: PhantomData<(E, P)>,
+    circuit: C,
+    offloaded_data_ref: Rc<OnceCell<OffloadedData<E>>>,
+}
+
+fn run_deferred<E: Pairing>(
+    deferred_fns: Vec<
+        Box<
+            dyn FnOnce() -> Result<Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SynthesisError>,
+        >,
+    >,
+) -> Result<Option<OffloadedData<E>>, SynthesisError> {
+    let msms = deferred_fns
+        .into_iter()
+        .map(|f| f())
+        .collect::<Result<Option<Vec<_>>, _>>()?;
+
+    Ok(msms.map(|msms| OffloadedData { msms }))
+}
+
+impl<E, P, C> ConstraintSynthesizer<E::ScalarField> for WrappedCircuit<E, P, C>
+where
+    E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
+    P: SWCurveConfig<BaseField: PrimeField>,
+    C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>,
+{
+    fn generate_constraints(self, cs: ConstraintSystemRef<E::ScalarField>) -> r1cs::Result<()> {
+        let deferred_fns_ref = self.circuit.deferred_fns_ref().clone();
+
+        let offloaded_data_ref = self.offloaded_data_ref.clone();
+
+        self.circuit.generate_constraints(cs)?;
+
+        if let Some(offloaded_data) = run_deferred::<E>(deferred_fns_ref.take())? {
+            offloaded_data_ref.set(offloaded_data).unwrap();
+        };
+
+        Ok(())
+    }
+}
+
 pub trait OffloadedSNARK<E, P, S, G1Var>
 where
     E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
@@ -107,11 +162,16 @@ where
 {
     type Circuit: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>;
 
-    fn setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore + CryptoRng>(
-        circuit: C,
+    fn setup<R: RngCore + CryptoRng>(
+        circuit: Self::Circuit,
         rng: &mut R,
     ) -> Result<(S::ProvingKey, OffloadedSNARKVerifyingKey<E, S>), OffloadedSNARKError<S::Error>>
     {
+        let circuit = WrappedCircuit {
+            _params: PhantomData,
+            circuit,
+            offloaded_data_ref: Default::default(),
+        };
         Self::circuit_specific_setup(circuit, rng)
     }
 
@@ -122,8 +182,11 @@ where
     {
         let (pk, snark_vk) = S::circuit_specific_setup(circuit, rng)
             .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+
         let snark_pvk = S::process_vk(&snark_vk).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+
         let vk = Self::offloaded_setup(snark_pvk)?;
+
         Ok((pk, vk))
     }
 
@@ -136,14 +199,20 @@ where
         circuit: Self::Circuit,
         rng: &mut R,
     ) -> Result<OffloadedSNARKProof<E, S>, OffloadedSNARKError<S::Error>> {
-        // Get the "pointer" to the offloaded data. `S::prove` will populate it.
-        let offloaded_data = circuit.run_deferred()?;
+        let circuit = WrappedCircuit {
+            _params: PhantomData,
+            circuit,
+            offloaded_data_ref: Default::default(),
+        };
+
+        let offloaded_data_ref = circuit.offloaded_data_ref.clone();
 
         let proof =
             S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+
         Ok(OffloadedSNARKProof {
             snark_proof: proof,
-            offloaded_data,
+            offloaded_data: offloaded_data_ref.get().unwrap().clone(),
         })
     }
 

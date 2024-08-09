@@ -9,7 +9,7 @@ mod tests {
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
     use crate::circuits::offloaded::OffloadedMSMGadget;
     use crate::snark::{
-        OffloadedData, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
+        DeferredFnsRef, OffloadedData, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
         OffloadedSNARKVerifyingKey,
     };
     use ark_bls12_381::Bls12_381;
@@ -52,13 +52,7 @@ mod tests {
         d: Option<E::ScalarField>,
 
         // deferred fns to write offloaded data to public_input
-        deferred_fns: RefCell<
-            Vec<
-                Box<
-                    dyn FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError>,
-                >,
-            >,
-        >,
+        deferred_fns_ref: DeferredFnsRef<E>,
     }
 
     impl<E, G1Var> ConstraintSynthesizer<E::ScalarField> for DelayedOpsCircuit<E, G1Var>
@@ -90,12 +84,9 @@ mod tests {
             let d_k = [FpVar::one(), d, d_square];
             dbg!(cs.num_constraints());
 
-            let _ = OffloadedMSMGadget::msm(
-                &self,
-                ns!(cs, "msm").cs(),
-                w_g1.as_slice(),
-                d_k.as_slice(),
-            )?;
+            let _ =
+                OffloadedMSMGadget::msm(&self, ns!(cs, "msm"), w_g1.as_slice(), d_k.as_slice())?;
+            dbg!(cs.num_constraints());
 
             Ok(())
         }
@@ -106,16 +97,8 @@ mod tests {
         E: Pairing,
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
-        fn deferred_fns_ref(
-            &self,
-        ) -> &RefCell<
-            Vec<
-                Box<
-                    dyn FnOnce() -> Result<(Vec<E::G1Affine>, Vec<E::ScalarField>), SynthesisError>,
-                >,
-            >,
-        > {
-            &self.deferred_fns
+        fn deferred_fns_ref(&self) -> &DeferredFnsRef<E> {
+            &self.deferred_fns_ref
         }
     }
 
@@ -166,7 +149,7 @@ mod tests {
             _params: PhantomData,
             w_g1: [None; 3],
             d: None,
-            deferred_fns: Default::default(),
+            deferred_fns_ref: Default::default(),
         };
 
         // This is not cryptographically safe, use
@@ -186,7 +169,7 @@ mod tests {
             _params: PhantomData,
             w_g1: [Some(rng.gen()); 3],
             d: Some(rng.gen()),
-            deferred_fns: Default::default(),
+            deferred_fns_ref: Default::default(),
         };
 
         let prove_timer = start_timer!(|| "Groth16::prove");
