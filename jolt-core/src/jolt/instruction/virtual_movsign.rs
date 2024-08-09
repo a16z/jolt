@@ -1,3 +1,4 @@
+use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -7,18 +8,17 @@ use crate::{
     field::JoltField,
     jolt::{
         instruction::SubtableIndices,
-        subtable::{sign_extend::SignExtendSubtable, LassoSubtable},
+        subtable::{identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable},
     },
-    utils::instruction_utils::chunk_operand_usize,
+    utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct MOVSIGNInstruction<const WORD_SIZE: usize>(pub u64);
 
 // Constants for 32-bit and 64-bit word sizes
-const NEGATIVE_32: u64 = 0xFFFF_FFFF;
-const NEGATIVE_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
-const POSITIVE: u64 = 0;
+const ALL_ONES_32: u64 = 0xFFFF_FFFF;
+const ALL_ONES_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 const SIGN_BIT_32: u64 = 0x8000_0000;
 const SIGN_BIT_64: u64 = 0x8000_0000_0000_0000;
 
@@ -27,13 +27,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
         (self.0, 0)
     }
 
-    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, _: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
+        // TODO(moodlezoup): make this work with different M
+        assert!(M == 1 << 16);
         let val = vals[0];
-        let mut result = F::zero();
-        for i in 0..WORD_SIZE / 16 {
-            result += F::from_u64(1 << (16 * i)).unwrap() * val;
-        }
-        result
+        let repeat = WORD_SIZE / 16;
+        concatenate_lookups(&vec![val; repeat], repeat, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -42,33 +41,43 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
 
     fn subtables<F: JoltField>(
         &self,
-        _: usize,
-        _: usize,
+        C: usize,
+        M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        vec![(
-            Box::new(SignExtendSubtable::<F, 16>::new()),
-            SubtableIndices::from(0),
-        )]
+        assert!(M == 1 << 16);
+        let msb_chunk_index = C - (WORD_SIZE / 16);
+        vec![
+            (
+                Box::new(SignExtendSubtable::<F, 16>::new()),
+                SubtableIndices::from(msb_chunk_index),
+            ),
+            (
+                // Not used for lookup, but this implicitly range-checks
+                // the remaining query chunks
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(0..C),
+            ),
+        ]
     }
 
-    fn to_indices(&self, _: usize, log_M: usize) -> Vec<usize> {
-        chunk_operand_usize(self.0, WORD_SIZE / 16, log_M)
+    fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+        chunk_operand_usize(self.0, C, log_M)
     }
 
     fn lookup_entry(&self) -> u64 {
         match WORD_SIZE {
             32 => {
                 if self.0 & SIGN_BIT_32 != 0 {
-                    NEGATIVE_32
+                    ALL_ONES_32
                 } else {
-                    POSITIVE
+                    0
                 }
             }
             64 => {
                 if self.0 & SIGN_BIT_64 != 0 {
-                    NEGATIVE_64
+                    ALL_ONES_64
                 } else {
-                    POSITIVE
+                    0
                 }
             }
             _ => panic!("only implemented for u32 / u64"),

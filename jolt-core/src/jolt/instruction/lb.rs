@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
+use crate::jolt::subtable::identity::IdentitySubtable;
 use crate::jolt::subtable::{
     sign_extend::SignExtendSubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
@@ -19,7 +20,6 @@ impl JoltInstruction for LBInstruction {
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         assert!(M >= 1 << 8);
-        assert!(vals.len() == 2);
 
         let byte = vals[0];
         let sign_extension = vals[1];
@@ -54,6 +54,12 @@ impl JoltInstruction for LBInstruction {
                 // which contains the lower 8 bits of the loaded value.
                 Box::new(SignExtendSubtable::<F, 8>::new()),
                 SubtableIndices::from(C - 1),
+            ),
+            (
+                // Not used for lookup, but this implicitly range-checks
+                // the remaining query chunks
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(0..C - 1),
             ),
         ]
     }

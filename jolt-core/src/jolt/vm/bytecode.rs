@@ -2,6 +2,8 @@ use ark_ff::Zero;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::collections::HashSet;
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::field::JoltField;
@@ -50,6 +52,12 @@ pub struct BytecodeRow {
     rs2: u64,
     /// "Immediate" value for this instruction (0 if unused).
     imm: u64,
+    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// Jolt paper), then this contains the number of virtual instructions after this
+    /// one in the sequence. I.e. if this is the last instruction in the sequence,
+    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    virtual_sequence_remaining: Option<usize>,
 }
 
 impl BytecodeRow {
@@ -61,6 +69,7 @@ impl BytecodeRow {
             rs1,
             rs2,
             imm,
+            virtual_sequence_remaining: None,
         }
     }
 
@@ -72,6 +81,7 @@ impl BytecodeRow {
             rs1: 0,
             rs2: 0,
             imm: 0,
+            virtual_sequence_remaining: None,
         }
     }
 
@@ -83,6 +93,7 @@ impl BytecodeRow {
             rs1: rng.next_u64() % REGISTER_COUNT,
             rs2: rng.next_u64() % REGISTER_COUNT,
             imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
+            virtual_sequence_remaining: None,
         }
     }
 
@@ -125,6 +136,7 @@ impl BytecodeRow {
             rs1: instruction.rs1.unwrap_or(0),
             rs2: instruction.rs2.unwrap_or(0),
             imm: instruction.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
+            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
         }
     }
 }
@@ -167,7 +179,8 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
-    virtual_address_map: HashMap<usize, usize>,
+    /// Key: (ELF address, virtual sequence index or 0)
+    virtual_address_map: HashMap<(usize, usize), usize>,
 }
 
 impl<F: JoltField> BytecodePreprocessing<F> {
@@ -182,7 +195,13 @@ impl<F: JoltField> BytecodePreprocessing<F> {
             instruction.address =
                 1 + (instruction.address - RAM_START_ADDRESS as usize) / BYTES_PER_INSTRUCTION;
             assert_eq!(
-                virtual_address_map.insert(instruction.address, virtual_address),
+                virtual_address_map.insert(
+                    (
+                        instruction.address,
+                        instruction.virtual_sequence_remaining.unwrap_or(0)
+                    ),
+                    virtual_address
+                ),
                 None
             );
             virtual_address += 1;
@@ -190,7 +209,7 @@ impl<F: JoltField> BytecodePreprocessing<F> {
 
         // Bytecode: Prepend a single no-op instruction
         bytecode.insert(0, BytecodeRow::no_op(0));
-        assert_eq!(virtual_address_map.insert(0, 0), None);
+        assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
         // Bytecode: Pad to nearest power of 2
         let code_size = bytecode.len().next_power_of_two();
@@ -253,7 +272,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
 
             let virtual_address = preprocessing
                 .virtual_address_map
-                .get(&step.bytecode_row.address)
+                .get(&(
+                    step.bytecode_row.address,
+                    step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                ))
                 .unwrap();
             a_read_write_usize[step_index] = *virtual_address;
             let counter = final_cts[*virtual_address];
@@ -287,8 +309,82 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
             DensePolynomial::new(rs2),
             DensePolynomial::new(imm),
         ];
-        let t_read = DensePolynomial::from_usize(&read_cts);
-        let t_final = DensePolynomial::from_usize(&final_cts);
+        let t_read: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts);
+        let t_final: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts);
+
+        #[cfg(test)]
+        let mut init_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut final_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+
+        #[cfg(test)]
+        for (a, t) in t_final.Z.iter().enumerate() {
+            init_tuples.insert((
+                a as u64,
+                [
+                    preprocessing.v_init_final[0][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[1][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[2][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[3][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[4][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[5][a].to_u64().unwrap(),
+                ],
+                0,
+            ));
+            final_tuples.insert((
+                a as u64,
+                [
+                    preprocessing.v_init_final[0][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[1][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[2][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[3][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[4][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[5][a].to_u64().unwrap(),
+                ],
+                t.to_u64().unwrap(),
+            ));
+        }
+
+        #[cfg(test)]
+        let mut read_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut write_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+
+        #[cfg(test)]
+        for (i, a) in a_read_write_usize.iter().enumerate() {
+            read_tuples.insert((
+                *a as u64,
+                [
+                    v_read_write[0][i].to_u64().unwrap(),
+                    v_read_write[1][i].to_u64().unwrap(),
+                    v_read_write[2][i].to_u64().unwrap(),
+                    v_read_write[3][i].to_u64().unwrap(),
+                    v_read_write[4][i].to_u64().unwrap(),
+                    v_read_write[5][i].to_u64().unwrap(),
+                ],
+                t_read[i].to_u64().unwrap(),
+            ));
+            write_tuples.insert((
+                *a as u64,
+                [
+                    v_read_write[0][i].to_u64().unwrap(),
+                    v_read_write[1][i].to_u64().unwrap(),
+                    v_read_write[2][i].to_u64().unwrap(),
+                    v_read_write[3][i].to_u64().unwrap(),
+                    v_read_write[4][i].to_u64().unwrap(),
+                    v_read_write[5][i].to_u64().unwrap(),
+                ],
+                t_read[i].to_u64().unwrap() + 1,
+            ));
+        }
+
+        #[cfg(test)]
+        {
+            let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
+            let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
+            let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
+            assert_eq!(set_difference.len(), 0);
+        }
 
         Self {
             _group: PhantomData,

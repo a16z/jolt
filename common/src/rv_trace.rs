@@ -114,6 +114,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 | RV32IM::SLTI
                 | RV32IM::SLTIU
                 | RV32IM::JALR
+                | RV32IM::VIRTUAL_MOVE
                 | RV32IM::VIRTUAL_MOVSIGN => [
                     rs1_read(),
                     MemoryOp::noop_read(),
@@ -222,11 +223,14 @@ pub struct ELFInstruction {
     pub rd: Option<u64>,
     pub imm: Option<u32>,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the instruction's index within the sequence.
-    pub virtual_sequence_index: Option<usize>,
+    /// Jolt paper), then this contains the number of virtual instructions after this
+    /// one in the sequence. I.e. if this is the last instruction in the sequence,
+    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    pub virtual_sequence_remaining: Option<usize>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 11;
+pub const NUM_CIRCUIT_FLAGS: usize = 12;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -241,8 +245,9 @@ impl ELFInstruction {
         // 6: Instruction writes lookup output to rd
         // 7: Sign-bit of imm
         // 8: Is concat
-        // 9: Increment virtual PC
+        // 9: Virtual instruction
         // 10: Assert instruction
+        // 11: Don't update PC
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -287,7 +292,7 @@ impl ELFInstruction {
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
-        // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
+        // loads, stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
         flags[6] = !matches!(
             self.opcode,
             RV32IM::SB
@@ -301,7 +306,12 @@ impl ELFInstruction {
             | RV32IM::BGEU
             | RV32IM::JAL
             | RV32IM::JALR
-            | RV32IM::LUI,
+            | RV32IM::LUI
+            | RV32IM::VIRTUAL_ASSERT_EQ
+            | RV32IM::VIRTUAL_ASSERT_LTE
+            | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
+            | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
         );
 
         let mask = 1u32 << 31;
@@ -330,23 +340,16 @@ impl ELFInstruction {
             | RV32IM::BLT
             | RV32IM::BGE
             | RV32IM::BLTU
-            | RV32IM::BGEU,
+            | RV32IM::BGEU
+            | RV32IM::VIRTUAL_ASSERT_EQ
+            | RV32IM::VIRTUAL_ASSERT_LTE
+            | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
 
-        // TODO(moodlezoup): Use these flags in R1CS constraints
-        flags[9] = match self.virtual_sequence_index {
-            // For virtual sequences, we set
-            //     virtual PC := ProgARW     (the bytecode `a` value)
-            // if it's the first instruction in the sequence.
-            // Otherwise, we increment the virtual PC:
-            //     virtual PC += 1
-            // This prevents a malicious prover from reordering or omitting
-            // instructions from the virtual sequence.
-            Some(i) => i > 0,
-            // For "real" instructions, we always set
-            //     virtual PC := ProgARW     (the bytecode `a` value)
-            None => false
-        };
+        flags[9] = self.virtual_sequence_remaining.is_some();
+
         flags[10] = matches!(self.opcode,
             RV32IM::VIRTUAL_ASSERT_EQ                        |
             RV32IM::VIRTUAL_ASSERT_LTE                       |
@@ -354,6 +357,14 @@ impl ELFInstruction {
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
+
+        // All instructions in virtual sequence are mapped from the same
+        // ELF address. Thus if an instruction is virtual (and not the last one
+        // in its sequence), then we should *not* update the PC.
+        flags[11] = match self.virtual_sequence_remaining {
+            Some(i) => i != 0,
+            None => false
+        };
 
         flags
     }
@@ -444,6 +455,7 @@ pub enum RV32IM {
     UNIMPL,
     // Virtual instructions
     VIRTUAL_MOVSIGN,
+    VIRTUAL_MOVE,
     VIRTUAL_ADVICE,
     VIRTUAL_ASSERT_LTE,
     VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
@@ -546,16 +558,17 @@ impl RV32IM {
             RV32IM::REM    |
             RV32IM::REMU => RV32InstructionFormat::R,
 
-            RV32IM::ADDI  |
-            RV32IM::XORI  |
-            RV32IM::ORI   |
-            RV32IM::ANDI  |
-            RV32IM::SLLI  |
-            RV32IM::SRLI  |
-            RV32IM::SRAI  |
-            RV32IM::SLTI  |
-            RV32IM::FENCE |
-            RV32IM::SLTIU |
+            RV32IM::ADDI         |
+            RV32IM::XORI         |
+            RV32IM::ORI          |
+            RV32IM::ANDI         |
+            RV32IM::SLLI         |
+            RV32IM::SRLI         |
+            RV32IM::SRAI         |
+            RV32IM::SLTI         |
+            RV32IM::FENCE        |
+            RV32IM::SLTIU        |
+            RV32IM::VIRTUAL_MOVE |
             RV32IM::VIRTUAL_MOVSIGN=> RV32InstructionFormat::I,
 
             RV32IM::LB  |

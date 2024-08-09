@@ -44,6 +44,9 @@ pub trait JoltField:
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
+    fn to_u64(&self) -> Option<u64> {
+        unimplemented!("conversion to u64 not implemented");
+    }
 }
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {

@@ -1,0 +1,9 @@
+[package]
+name = "muldiv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+guest = { package = "muldiv-guest", path = "./guest" }
+

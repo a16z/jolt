@@ -16,16 +16,32 @@ pub fn construct_jolt_constraints<F: JoltField>(
     let constraints = UniformJoltConstraints::new(memory_start);
     constraints.build_constraints(&mut uniform_builder);
 
-    let non_uniform_constraint = OffsetEqConstraint::new(
-        (JoltIn::PcIn, true),
-        (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), false),
-        (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
+    // If the next instruction's ELF address is not zero (i.e. it's
+    // not padding), then check the PC update.
+    let pc_constraint = OffsetEqConstraint::new(
+        (JoltIn::Bytecode_ELFAddress, true),
+        (Variable::Auxiliary(NEXT_PC), false),
+        (4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS, true),
+    );
+
+    // If the current instruction is virtual, check that the next instruction
+    // in the trace is the next instruction in bytecode. Virtual sequences
+    // do not involve jumps or branches, so this should always hold,
+    // EXCEPT if we encounter a virtual instruction followed by a padding
+    // instruction. But that should never happen because the execution
+    // trace should always end with some return handling, which shouldn't involve
+    // any virtual sequences.
+
+    let virtual_sequence_constraint = OffsetEqConstraint::new(
+        (JoltIn::OpFlags_IsVirtualInstruction, false),
+        (JoltIn::Bytecode_A, true),
+        (JoltIn::Bytecode_A + 1, false),
     );
 
     CombinedUniformBuilder::construct(
         uniform_builder,
         padded_trace_length,
-        vec![non_uniform_constraint],
+        vec![pc_constraint, virtual_sequence_constraint],
     )
 }
 
@@ -90,7 +106,7 @@ pub enum JoltIn {
     LookupOutput,
 
     // Should match rv_trace.to_circuit_flags()
-    OpFlags_IsRs1Rs2,
+    OpFlags_IsPC,
     OpFlags_IsImm,
     OpFlags_IsLoad,
     OpFlags_IsStore,
@@ -99,8 +115,9 @@ pub enum JoltIn {
     OpFlags_LookupOutToRd,
     OpFlags_SignImm,
     OpFlags_IsConcat,
-    OpFlags_IsVirtualSequence,
-    OpFlags_IsVirtual,
+    OpFlags_IsVirtualInstruction,
+    OpFlags_IsAssert,
+    OpFlags_DoNotUpdatePC,
 
     // Instruction Flags
     // Should match JoltInstructionSet
@@ -127,7 +144,8 @@ pub enum JoltIn {
     IF_Mul,
     IF_MulU,
     IF_MulHu,
-    IF_Virt_Adv,
+    IF_Virt_Advice,
+    IF_Virt_Move,
     IF_Virt_Assert_LTE,
     IF_Virt_Assert_VALID_SIGNED_REMAINDER,
     IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
@@ -140,7 +158,7 @@ pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
-pub const PC_BRANCH_AUX_INDEX: usize = 15;
+pub const NEXT_PC: usize = 12;
 
 pub struct UniformJoltConstraints {
     memory_start: u64,
@@ -155,7 +173,7 @@ impl UniformJoltConstraints {
 impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_VALID_DIV0);
+        let flags = input_range!(JoltIn::OpFlags_IsPC, JoltIn::IF_Virt_Assert_VALID_DIV0);
         for flag in flags {
             cs.constrain_binary(flag);
         }
@@ -164,8 +182,8 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
-        let real_pc = 4i64 * JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RS1_Read);
+        let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let x = cs.allocate_if_else(JoltIn::OpFlags_IsPC, real_pc, JoltIn::RS1_Read);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
             JoltIn::Bytecode_Imm,
@@ -207,30 +225,47 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         );
 
         let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
+        let packed_load_store = R1CSBuilder::<F, JoltIn>::pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags_IsStore,
-            packed_load_store,
+            packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
 
-        let packed_query = cs.allocate_pack_be(
+        let packed_query = R1CSBuilder::<F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
             LOG_M,
         );
 
-        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query, x + y);
+        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
-        cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
+        cs.constrain_eq_conditional(
+            JoltIn::IF_Sub,
+            packed_query.clone(),
+            x - y + (0xffffffffi64 + 1),
+        );
+        let is_mul = JoltIn::IF_Mul + JoltIn::IF_MulU + JoltIn::IF_MulHu;
+        let product = cs.allocate_prod(x, y);
+        cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
+        cs.constrain_eq_conditional(
+            JoltIn::IF_Movsign + JoltIn::IF_Virt_Move,
+            packed_query.clone(),
+            x,
+        );
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags_IsLoad,
+            packed_query.clone(),
+            packed_load_store,
+        );
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RS2_Read);
 
-        // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
-        let chunked_x = cs.allocate_pack_be(
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
+
+        let chunked_x = R1CSBuilder::<F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
             OPERAND_SIZE,
         );
-        let chunked_y = cs.allocate_pack_be(
+        let chunked_y = R1CSBuilder::<F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
@@ -262,24 +297,25 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
             JoltIn::LookupOutput,
         );
         let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
-        let lhs = JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let lhs = JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
-        let branch_and_lookup_output =
-            cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
         let next_pc_jump = cs.allocate_if_else(
             JoltIn::OpFlags_IsJmp,
             JoltIn::LookupOutput + 4,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + 4,
+            4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + 4
+                - 4 * JoltIn::OpFlags_DoNotUpdatePC,
         );
 
-        let next_pc_jump_branch = cs.allocate_if_else(
-            branch_and_lookup_output,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed,
+        let should_branch = cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
+        let next_pc = cs.allocate_if_else(
+            should_branch,
+            4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
             next_pc_jump,
         );
-        assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
+
+        assert_static_aux_index!(next_pc, NEXT_PC);
     }
 }
 
@@ -329,7 +365,7 @@ mod tests {
 
         // rv_trace::to_circuit_flags
         // all zero for ADD
-        inputs[JoltIn::OpFlags_IsRs1Rs2 as usize][0] = Fr::zero(); // first_operand = rs1
+        inputs[JoltIn::OpFlags_IsPC as usize][0] = Fr::zero(); // first_operand = rs1
         inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
         let aux = combined_builder.compute_aux(&inputs);

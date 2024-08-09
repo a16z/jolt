@@ -20,7 +20,6 @@ impl JoltInstruction for LHInstruction {
     fn combine_lookups<F: JoltField>(&self, vals: &[F], _C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        assert!(vals.len() == 2);
 
         let half = vals[0];
         let sign_extension = vals[1];
@@ -50,6 +49,12 @@ impl JoltInstruction for LHInstruction {
                 // Which will be in the second-to-last chunk.
                 Box::new(SignExtendSubtable::<F, 16>::new()),
                 SubtableIndices::from(C - 1),
+            ),
+            (
+                // Not used for lookup, but this implicitly range-checks
+                // the remaining query chunks
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(0..C - 1),
             ),
         ]
     }

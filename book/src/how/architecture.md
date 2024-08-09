@@ -1,10 +1,10 @@
-# Jolt
+# Architecture overview
 
 This section gives an overview of the core components of Jolt.
 
 ## Jolt's four components
 
-A VM does two things: 
+A VM does two things:
 
 - Repeatedly execute the fetch-decode-execute logic of its instruction set architecture.
 - Perform reads and writes to Random Access Memory (RAM).
@@ -25,13 +25,13 @@ To handle reads/writes to RAM (and registers) Jolt uses a memory checking argume
 
 ### R1CS constraints
 
-To handle the "fetch" part of the fetch-decode-execute loop, there is a minimal R1CS instance (about 60 constraints per cycle of the RISC-V VM). These constraints handle program counter (PC) updates and serves as the "glue" enforcing consistency between polynomials used in the components below. Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80). This is implemented in [jolt-core/src/r1cs](../../../jolt-core/src/r1cs/). 
+To handle the "fetch" part of the fetch-decode-execute loop, there is a minimal R1CS instance (about 60 constraints per cycle of the RISC-V VM). These constraints handle program counter (PC) updates and serves as the "glue" enforcing consistency between polynomials used in the components below. Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80). This is implemented in [jolt-core/src/r1cs](../../../jolt-core/src/r1cs/).
 
 *For more details: [R1CS constraints](./r1cs_constraints.md)*
 
 ### Instruction lookups
 
-To handle the "execute" part of the fetch-decode-execute loop, Jolt invokes the Lasso lookup argument. The lookup argument maps every instruction (including its operands) to its output. This is implemented in [instruction_lookups.rs](https://github.com/a16z/jolt/blob/main/jolt-core/src/jolt/vm/instruction_lookups.rs). 
+To handle the "execute" part of the fetch-decode-execute loop, Jolt invokes the Lasso lookup argument. The lookup argument maps every instruction (including its operands) to its output. This is implemented in [instruction_lookups.rs](https://github.com/a16z/jolt/blob/main/jolt-core/src/jolt/vm/instruction_lookups.rs).
 
 *For more details: [Instruction lookups](./instruction_lookups.md)*
 

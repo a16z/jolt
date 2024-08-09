@@ -62,7 +62,7 @@ macro_rules! jolt_virtual_sequence_test {
                 rs2: Some(r_y),
                 rd: Some(rd),
                 imm: None,
-                virtual_sequence_index: None,
+                virtual_sequence_remaining: None,
             },
             register_state: RegisterState {
                 rs1_val: Some(x),
@@ -73,7 +73,7 @@ macro_rules! jolt_virtual_sequence_test {
             advice_value: None,
         };
 
-        let virtual_sequence = <$instr_type>::virtual_sequence(trace_row);
+        let virtual_sequence = <$instr_type>::virtual_trace(trace_row);
 
         for row in virtual_sequence {
             if let Some(rs1_val) = row.register_state.rs1_val {
