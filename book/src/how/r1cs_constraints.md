@@ -44,7 +44,7 @@ The inputs required for the constraint system for a single CPU step are:
 
 #### Constraint system 
 
-The constraints for a CPU step are detailed in the `get_jolt_matrices()` function in [`constraints.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/constraints.rs). 
+The constraints for a CPU step are detailed in the `get_jolt_matrices()` function in [`constraints.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/jolt_constraints.rs). 
 
 ### Reusing commitments 
 
