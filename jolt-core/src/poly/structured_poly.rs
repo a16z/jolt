@@ -27,7 +27,7 @@ pub trait StructuredOpeningProof<F, C, Polynomials>:
 where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
-    Polynomials: StructuredCommitment<C> + ?Sized,
+    Polynomials: StructuredCommitment<C>,
 {
     type Preprocessing = NoPreprocessing;
     type Proof: Sync + CanonicalSerialize + CanonicalDeserialize;
