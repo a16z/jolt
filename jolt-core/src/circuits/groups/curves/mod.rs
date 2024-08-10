@@ -1,5 +1,3 @@
-use crate::circuits::pairing::PairingGadget;
-
 pub mod short_weierstrass;
 
 #[cfg(test)]
@@ -12,7 +10,6 @@ mod tests {
         DeferredFnsRef, OffloadedData, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
         OffloadedSNARKVerifyingKey,
     };
-    use ark_bls12_381::Bls12_381;
     use ark_bn254::{Bn254, Fq, Fr};
     use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
     use ark_crypto_primitives::sponge::Absorb;

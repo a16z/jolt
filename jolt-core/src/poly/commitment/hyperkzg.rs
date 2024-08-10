@@ -58,7 +58,7 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
     pub kzg_vk: KZGVerifierKey<P>,
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {

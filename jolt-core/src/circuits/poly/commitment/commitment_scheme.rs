@@ -7,25 +7,22 @@ use ark_relations::r1cs::SynthesisError;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
-pub trait CommitmentVerifierGadget<
-    F: PrimeField,
+pub trait CommitmentVerifierGadget<ConstraintF, C>
+where
     ConstraintF: PrimeField,
-    C: CommitmentScheme<Field = F>,
->
+    C: CommitmentScheme<Field = ConstraintF>,
 {
     type VerifyingKeyVar: AllocVar<C::Setup, ConstraintF> + Clone;
     type ProofVar: AllocVar<C::Proof, ConstraintF> + Clone;
     type CommitmentVar: AllocVar<C::Commitment, ConstraintF> + Clone;
-
-    // type Field: FieldVar<F, ConstraintF>; // TODO replace FpVar<F> with Field: FieldVar<F, ConstraintF>
-    type TranscriptGadget: SpongeWithGadget<F> + Clone; // TODO requires F: PrimeField, we want to generalize to JoltField
+    type TranscriptGadget: SpongeWithGadget<ConstraintF> + Clone;
 
     fn verify(
         proof: &Self::ProofVar,
         vk: &Self::VerifyingKeyVar,
         transcript: &mut Self::TranscriptGadget,
-        opening_point: &[FpVar<F>],
-        opening: &FpVar<F>,
+        opening_point: &[FpVar<ConstraintF>],
+        opening: &FpVar<ConstraintF>,
         commitment: &Self::CommitmentVar,
     ) -> Result<Boolean<ConstraintF>, SynthesisError>;
 }
