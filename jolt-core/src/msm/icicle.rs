@@ -56,6 +56,7 @@ pub trait Icicle: ScalarMul {
     fn from_ark_affine(point: &Self::MulBase) -> Affine<Self::C>;
 }
 
+#[tracing::instrument(skip_all, name = "icicle_msm")]
 pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     bases: &[V::MulBase],
     scalars: &[V::ScalarField],
