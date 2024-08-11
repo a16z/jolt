@@ -167,7 +167,7 @@ mod tests {
         E: Pairing,
     {
         pub(crate) fn public_inputs(&self) -> Vec<E::ScalarField> {
-            Boolean::<E::ScalarField>::TRUE
+            Boolean::<E::ScalarField>::constant(self.expected_result.unwrap()) // panics if None
                 .to_constraint_field()
                 .unwrap()
                 .iter()
