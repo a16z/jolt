@@ -210,7 +210,8 @@ mod tests {
                     self.pcs_proof.ok_or(SynthesisError::AssignmentMissing)
                 })?;
 
-            let mut transcript_var = MockSpongeVar::new(ns!(cs, "transcript").cs(), &());
+            let mut transcript_var =
+                MockSpongeVar::new(ns!(cs, "transcript").cs(), &(b"TestEval".as_slice()));
 
             let r =
                 HyperKZGVerifierGadget::<E, E::ScalarField, MockSponge<E::ScalarField>>::verify(
