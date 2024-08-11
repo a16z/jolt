@@ -7,20 +7,20 @@ use ark_relations::r1cs::SynthesisError;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
-pub trait CommitmentVerifierGadget<ConstraintF, C>
+pub trait CommitmentVerifierGadget<ConstraintF, C, S>
 where
     ConstraintF: PrimeField,
     C: CommitmentScheme<Field = ConstraintF>,
+    S: SpongeWithGadget<ConstraintF>,
 {
     type VerifyingKeyVar: AllocVar<C::Setup, ConstraintF> + Clone;
     type ProofVar: AllocVar<C::Proof, ConstraintF> + Clone;
     type CommitmentVar: AllocVar<C::Commitment, ConstraintF> + Clone;
-    type TranscriptGadget: SpongeWithGadget<ConstraintF> + Clone;
 
     fn verify(
         proof: &Self::ProofVar,
         vk: &Self::VerifyingKeyVar,
-        transcript: &mut Self::TranscriptGadget,
+        transcript: &mut S::Var,
         opening_point: &[FpVar<ConstraintF>],
         opening: &FpVar<ConstraintF>,
         commitment: &Self::CommitmentVar,
