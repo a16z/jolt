@@ -156,7 +156,7 @@ mod tests {
     {
         pcs_pk_vk: Option<(HyperKZGProverKey<E>, HyperKZGVerifierKey<E>)>,
         commitment: Option<HyperKZGCommitment<E>>,
-        point: Option<Vec<E::ScalarField>>,
+        point: Vec<Option<E::ScalarField>>,
         eval: Option<E::ScalarField>,
         pcs_proof: Option<HyperKZGProof<E>>,
         expected_result: Option<bool>,
@@ -194,12 +194,13 @@ mod tests {
                 || self.commitment.ok_or(SynthesisError::AssignmentMissing),
             )?;
 
-            let point_var = Vec::<FpVar<E::ScalarField>>::new_witness(ns!(cs, "point"), || {
-                if cs.is_in_setup_mode() {
-                    return Ok(vec![]); // dummy value // TODO is there a better way?
-                }
-                self.point.ok_or(SynthesisError::AssignmentMissing)
-            })?;
+            let point_var = self
+                .point
+                .iter()
+                .map(|&x| {
+                    FpVar::new_witness(ns!(cs, ""), || x.ok_or(SynthesisError::AssignmentMissing))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
             let eval_var = FpVar::<E::ScalarField>::new_witness(ns!(cs, "eval"), || {
                 self.eval.ok_or(SynthesisError::AssignmentMissing)
@@ -254,7 +255,7 @@ mod tests {
             let circuit = HyperKZGVerifierCircuit::<Bn254> {
                 pcs_pk_vk: None,
                 commitment: None,
-                point: None,
+                point: vec![None, None],
                 eval: None,
                 pcs_proof: None,
                 expected_result: None,
@@ -278,7 +279,7 @@ mod tests {
                 let verifier_circuit = HyperKZGVerifierCircuit::<Bn254> {
                     pcs_pk_vk: Some((pcs_pk.clone(), pcs_vk.clone())),
                     commitment: Some(C.clone()),
-                    point: Some(point.clone()),
+                    point: point.into_iter().map(|x| Some(x)).collect(),
                     eval: Some(eval),
                     pcs_proof: Some(hkzg_proof),
                     expected_result: Some(true),
