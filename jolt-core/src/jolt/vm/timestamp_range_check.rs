@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
@@ -266,10 +267,27 @@ where
     type ReadWriteOpenings = RangeCheckOpenings<F, C>;
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
 
+    fn init_final_openings(
+        _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
+        _polynomials: &RangeCheckPolynomials<F, C>,
+        _opening_point: &[F],
+    ) {
+        unimplemented!("");
+    }
+
+    fn read_write_openings(
+        _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
+        _polynomials: &RangeCheckPolynomials<F, C>,
+        _opening_point: &[F],
+    ) {
+        unimplemented!("");
+    }
+
     fn prove_memory_checking(
         _generators: &C::Setup,
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, C>,
+        _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
         _transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<
         F,
@@ -614,10 +632,11 @@ where
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
-    pub fn prove(
+    pub fn prove<'a>(
         generators: &C::Setup,
-        range_check_polys: &RangeCheckPolynomials<F, C>,
-        t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+        range_check_polys: &'a RangeCheckPolynomials<F, C>,
+        t_read_polynomials: &'a [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
@@ -647,6 +666,10 @@ where
             BatchType::Big,
             transcript,
         );
+
+        for (poly, claim) in polys.into_iter().zip(openings.iter()) {
+            opening_accumulator.append(poly, r_grand_product.clone(), *claim);
+        }
 
         let mut openings = openings.into_iter();
         let read_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION] =

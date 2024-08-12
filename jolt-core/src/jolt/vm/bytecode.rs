@@ -1,4 +1,5 @@
 use ark_ff::Zero;
+use itertools::izip;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::opening_proof::{PolynomialOpening, PolynomialOpeningAccumulator};
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -499,6 +501,41 @@ where
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]
     type MemoryTuple = [F; 8];
 
+    fn read_write_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a BytecodePolynomials<F, C>,
+        opening_point: &[F],
+    ) {
+        let polys: Vec<_> = [&polynomials.a_read_write]
+            .into_iter()
+            .chain(polynomials.v_read_write.iter())
+            .chain([&polynomials.t_read])
+            .collect();
+
+        let chis = EqPolynomial::evals(opening_point);
+
+        let claims: Vec<_> = polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+
+        for (poly, claim) in izip!(polys, claims) {
+            opening_accumulator.append(poly, opening_point.to_vec(), claim);
+        }
+    }
+
+    fn init_final_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a BytecodePolynomials<F, C>,
+        opening_point: &[F],
+    ) {
+        opening_accumulator.append(
+            &polynomials.t_final,
+            opening_point.to_vec(),
+            polynomials.t_final.evaluate(opening_point),
+        );
+    }
+
     fn fingerprint(inputs: &Self::MemoryTuple, gamma: &F, tau: &F) -> F {
         let mut result = F::zero();
         let mut gamma_term = F::one();
@@ -852,7 +889,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
+    use crate::{
+        jolt::vm::rv32i_vm::RV32I,
+        poly::{commitment::hyrax::HyraxScheme, opening_proof::PolynomialOpeningAccumulator},
+    };
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
@@ -957,10 +997,12 @@ mod tests {
 
         let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
         let commitments = polys.commit(&generators);
+        let mut opening_accumulator = PolynomialOpeningAccumulator::new();
         let proof = BytecodeProof::prove_memory_checking(
             &generators,
             &preprocessing,
             &polys,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
@@ -1024,10 +1066,12 @@ mod tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
+        let mut opening_accumulator = PolynomialOpeningAccumulator::new();
         let proof = BytecodeProof::prove_memory_checking(
             &generators,
             &preprocessing,
             &polys,
+            &mut opening_accumulator,
             &mut transcript,
         );
 

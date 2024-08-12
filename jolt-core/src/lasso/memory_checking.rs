@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::poly::opening_proof::{PolynomialOpening, PolynomialOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
@@ -71,28 +72,28 @@ where
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
-pub trait MemoryCheckingProver<F, C, Polynomials>
+pub trait MemoryCheckingProver<F, PCS, Polynomials>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
-    Polynomials: StructuredCommitment<C>,
+    PCS: CommitmentScheme<Field = F>,
+    Polynomials: StructuredCommitment<PCS>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+    type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<
         F,
-        C,
+        PCS,
         Polynomials,
         Preprocessing = NoPreprocessing,
     >;
     type InitFinalOpenings: StructuredOpeningProof<
         F,
-        C,
+        PCS,
         Polynomials,
         Preprocessing = Self::Preprocessing,
     >;
@@ -101,12 +102,13 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
-    fn prove_memory_checking(
-        generators: &C::Setup,
+    fn prove_memory_checking<'a>(
+        pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
-        polynomials: &Polynomials,
+        polynomials: &'a Polynomials,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, C, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>
+    ) -> MemoryCheckingProof<F, PCS, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>
     {
         let (
             read_write_grand_product,
@@ -114,11 +116,16 @@ where
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, polynomials, transcript, generators);
+        ) = Self::prove_grand_products(preprocessing, polynomials, transcript, pcs_setup);
+
+        Self::read_write_openings(opening_accumulator, polynomials, &r_read_write);
+        Self::init_final_openings(opening_accumulator, polynomials, &r_init_final);
+
+        // Replaces below
 
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
-            generators,
+            pcs_setup,
             polynomials,
             &r_read_write,
             &read_write_openings,
@@ -126,7 +133,7 @@ where
         );
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
-            generators,
+            pcs_setup,
             polynomials,
             &r_init_final,
             &init_final_openings,
@@ -151,10 +158,10 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
-        pcs_setup: &C::Setup,
+        pcs_setup: &PCS::Setup,
     ) -> (
-        BatchedGrandProductProof<C>,
-        BatchedGrandProductProof<C>,
+        BatchedGrandProductProof<PCS>,
+        BatchedGrandProductProof<PCS>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
@@ -194,13 +201,25 @@ where
         )
     }
 
+    fn read_write_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a Polynomials,
+        opening_point: &[F],
+    );
+
+    fn init_final_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a Polynomials,
+        opening_point: &[F],
+    );
+
     /// Constructs a batched grand product circuit for the read and write multisets associated
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
-        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
         let claims = batched_circuit.claims();
@@ -213,7 +232,7 @@ where
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
-        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
         let claims = batched_circuit.claims();
@@ -299,8 +318,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     );
 
     /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.

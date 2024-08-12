@@ -178,7 +178,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace<F: JoltField>(mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>, Vec<F>) {
+    pub fn trace(mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build();
         let elf = self.elf.unwrap();
         let (raw_trace, io_device) =
@@ -207,26 +207,12 @@ impl Program {
                     instruction_lookup,
                     bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
                     memory_ops: (&row).into(),
+                    circuit_flags: row.instruction.to_circuit_flags(),
                 }
             })
             .collect();
 
-        let padded_trace_len = trace.len().next_power_of_two();
-
-        let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
-        circuit_flag_trace
-            .par_chunks_mut(padded_trace_len)
-            .enumerate()
-            .for_each(|(flag_index, chunk)| {
-                chunk.iter_mut().zip(trace.iter()).for_each(|(flag, row)| {
-                    let packed_circuit_flags = row.bytecode_row.bitflags >> RV32I::COUNT;
-                    // Check if the flag is set in the packed representation
-                    if (packed_circuit_flags >> (NUM_CIRCUIT_FLAGS - flag_index - 1)) & 1 != 0 {
-                        *flag = F::one();
-                    }
-                });
-            });
-        (io_device, trace, circuit_flag_trace)
+        (io_device, trace)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary {
@@ -236,11 +222,7 @@ impl Program {
             tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
-        let (io_device, processed_trace, circuit_flags) = self.trace();
-        let circuit_flags: Vec<bool> = circuit_flags
-            .into_iter()
-            .map(|flag: F| flag.is_one())
-            .collect();
+        let (io_device, processed_trace) = self.trace();
 
         ProgramSummary {
             raw_trace,
@@ -248,7 +230,6 @@ impl Program {
             memory_init,
             io_device,
             processed_trace,
-            circuit_flags,
         }
     }
 

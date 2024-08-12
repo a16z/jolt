@@ -157,7 +157,7 @@ where
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
     program.set_input(&[5u8; 32]);
-    program.set_input(&1024u32);
+    program.set_input(&1000u32);
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();

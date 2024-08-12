@@ -1,5 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use itertools::izip;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -1252,6 +1254,59 @@ where
     // (a, v, t)
     type MemoryTuple = (F, F, F);
 
+    fn read_write_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a JoltPolynomials<F, C>,
+        opening_point: &[F],
+    ) {
+        let polys: Vec<_> = [
+            &polynomials.bytecode.v_read_write[2], // rd
+            &polynomials.bytecode.v_read_write[3], // rs1
+            &polynomials.bytecode.v_read_write[4], // rs2
+            &polynomials.read_write_memory.a_ram,
+        ]
+        .into_iter()
+        .chain(polynomials.read_write_memory.v_read.iter())
+        .chain([&polynomials.read_write_memory.v_write_rd].into_iter())
+        .chain(polynomials.read_write_memory.v_write_ram.iter())
+        .chain(polynomials.read_write_memory.t_read.iter())
+        .chain(polynomials.read_write_memory.t_write_ram.iter())
+        .collect();
+
+        let chis = EqPolynomial::evals(opening_point);
+        let claims: Vec<_> = polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+
+        for (poly, claim) in izip!(polys, claims) {
+            opening_accumulator.append(poly, opening_point.to_vec(), claim);
+        }
+    }
+
+    fn init_final_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a JoltPolynomials<F, C>,
+        opening_point: &[F],
+    ) {
+        let chis = EqPolynomial::evals(opening_point);
+        let (v_final_claim, t_final_claim) = rayon::join(
+            || polynomials.read_write_memory.v_final.evaluate_at_chi(&chis),
+            || polynomials.read_write_memory.t_final.evaluate_at_chi(&chis),
+        );
+
+        opening_accumulator.append(
+            &polynomials.read_write_memory.v_final,
+            opening_point.to_vec(),
+            v_final_claim,
+        );
+        opening_accumulator.append(
+            &polynomials.read_write_memory.t_final,
+            opening_point.to_vec(),
+            t_final_claim,
+        );
+    }
+
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
         t * gamma.square() + v * *gamma + a - *tau
@@ -1501,10 +1556,11 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
-    fn prove_outputs(
+    fn prove_outputs<'a>(
         generators: &C::Setup,
-        polynomials: &ReadWriteMemory<F, C>,
+        polynomials: &'a ReadWriteMemory<F, C>,
         program_io: &JoltDevice,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let num_rounds = polynomials.memory_size.log_2();
@@ -1567,6 +1623,12 @@ where
                 3,
                 transcript,
             );
+
+        opening_accumulator.append(
+            &polynomials.v_final,
+            r_sumcheck.to_vec(),
+            sumcheck_openings[2],
+        );
 
         let sumcheck_opening_proof =
             C::prove(generators, &polynomials.v_final, &r_sumcheck, transcript);
@@ -1687,17 +1749,19 @@ where
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]
-    pub fn prove(
+    pub fn prove<'a>(
         generators: &C::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        polynomials: &JoltPolynomials<F, C>,
+        polynomials: &'a JoltPolynomials<F, C>,
         program_io: &JoltDevice,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
             preprocessing,
             polynomials,
+            opening_accumulator,
             transcript,
         );
 
@@ -1705,6 +1769,7 @@ where
             generators,
             &polynomials.read_write_memory,
             program_io,
+            opening_accumulator,
             transcript,
         );
 
@@ -1712,6 +1777,7 @@ where
             generators,
             &polynomials.timestamp_range_check,
             &polynomials.read_write_memory.t_read,
+            opening_accumulator,
             transcript,
         );
 

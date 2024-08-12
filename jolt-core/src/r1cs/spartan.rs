@@ -3,6 +3,7 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::special_polys::SegmentedPaddedWitness;
 use crate::utils::math::Math;
@@ -89,6 +90,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         constraint_builder: CombinedUniformBuilder<F, I>,
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         assert_eq!(witness_segments.len(), key.uniform_r1cs.num_vars);
@@ -188,6 +190,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             segmented_padded_witness.into_dense_polys();
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
             witness_segment_polys.iter().collect();
+
+        println!("# witness segments = {}", witness_segment_polys.len());
+
         let opening_proof = C::batch_prove(
             generators,
             &witness_segment_polys_ref,

@@ -1,6 +1,7 @@
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{interleave, Itertools};
+use itertools::{interleave, izip, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -433,6 +434,47 @@ where
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
+    fn read_write_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a InstructionPolynomials<F, CS>,
+        opening_point: &[F],
+    ) {
+        let polys: Vec<_> = polynomials
+            .dim
+            .iter()
+            .chain(polynomials.read_cts.iter())
+            .chain(polynomials.E_polys.iter())
+            .chain(polynomials.instruction_flag_polys.iter())
+            .collect();
+
+        let chis = EqPolynomial::evals(opening_point);
+
+        let claims: Vec<_> = polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+
+        for (poly, claim) in izip!(polys, claims) {
+            opening_accumulator.append(poly, opening_point.to_vec(), claim);
+        }
+    }
+
+    fn init_final_openings<'a>(
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        polynomials: &'a InstructionPolynomials<F, CS>,
+        opening_point: &[F],
+    ) {
+        let chis = EqPolynomial::evals(opening_point);
+        let polys: Vec<_> = polynomials.final_cts.iter().collect();
+        let claims: Vec<_> = polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+        for (poly, claim) in izip!(polys, claims) {
+            opening_accumulator.append(poly, opening_point.to_vec(), claim);
+        }
+    }
+
     fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
         let (a, v, t, flag) = *inputs;
         match flag {
@@ -796,11 +838,11 @@ impl<F: JoltField> InstructionLookupsPreprocessing<F> {
     }
 }
 
-impl<F, CS, InstructionSet, Subtables, const C: usize, const M: usize>
-    InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
+impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize>
+    InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
@@ -808,12 +850,13 @@ where
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
-    pub fn prove(
-        generators: &CS::Setup,
-        polynomials: &InstructionPolynomials<F, CS>,
+    pub fn prove<'a>(
+        generators: &PCS::Setup,
+        polynomials: &'a InstructionPolynomials<F, PCS>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
-    ) -> InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables> {
+    ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
         transcript.append_protocol_name(Self::protocol_name());
 
         let trace_length = polynomials.dim[0].len();
@@ -842,6 +885,25 @@ where
             flag_openings: flag_evals,
             lookup_outputs_opening: outputs_eval,
         };
+
+        let primary_sumcheck_polys = polynomials
+            .E_polys
+            .iter()
+            .chain(polynomials.instruction_flag_polys.iter())
+            .chain([&polynomials.lookup_outputs].into_iter())
+            .collect::<Vec<_>>();
+        let primary_sumcheck_openings: Vec<F> = [
+            sumcheck_openings.E_poly_openings.as_slice(),
+            sumcheck_openings.flag_openings.as_slice(),
+        ]
+        .concat();
+        for (poly, claim) in primary_sumcheck_polys
+            .iter()
+            .zip(primary_sumcheck_openings.iter())
+        {
+            opening_accumulator.append(poly, r_primary_sumcheck.clone(), *claim);
+        }
+
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             generators,
             polynomials,
@@ -857,8 +919,13 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking =
-            Self::prove_memory_checking(generators, preprocessing, polynomials, transcript);
+        let memory_checking = Self::prove_memory_checking(
+            generators,
+            preprocessing,
+            polynomials,
+            opening_accumulator,
+            transcript,
+        );
 
         InstructionLookupsProof {
             _instructions: PhantomData,
@@ -869,9 +936,9 @@ where
 
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        generators: &CS::Setup,
-        proof: InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>,
-        commitment: &InstructionCommitment<CS>,
+        generators: &PCS::Setup,
+        proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
+        commitment: &InstructionCommitment<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
@@ -923,7 +990,7 @@ where
     pub fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<JoltTraceStep<InstructionSet>>,
-    ) -> InstructionPolynomials<F, CS> {
+    ) -> InstructionPolynomials<F, PCS> {
         let m: usize = ops.len().next_power_of_two();
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);

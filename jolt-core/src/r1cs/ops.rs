@@ -139,6 +139,7 @@ impl<I: ConstraintInput> LC<I> {
                     .enumerate()
                     .map(|(term_index, term)| match term.0 {
                         Variable::Input(_) | Variable::Auxiliary(_) => {
+                            // TODO: index inputs by something else?
                             terms[term_index].mul_01_optimized(inputs[term_index][batch_index])
                         }
                         Variable::Constant => terms[term_index],

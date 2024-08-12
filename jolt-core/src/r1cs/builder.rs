@@ -525,6 +525,7 @@ fn batch_inputs<'a, I: ConstraintInput, F: JoltField>(
     inputs: &'a [Vec<F>],
     aux: &'a [Vec<F>],
 ) -> Vec<&'a [F]> {
+    // TODO: Use bevy_reflect(?) to index into inputs and aux?
     let mut batch: Vec<&'a [F]> = Vec::with_capacity(lc.terms().len());
     lc.terms().iter().for_each(|term| match term.0 {
         Variable::Input(input) => batch.push(&inputs[input.into()]),

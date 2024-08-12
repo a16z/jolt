@@ -62,8 +62,6 @@ pub fn construct_jolt_constraints<F: JoltField>(
 )]
 #[repr(usize)]
 pub enum JoltIn {
-    PcIn,
-
     Bytecode_A, // Virtual address
     // Bytecode_V
     Bytecode_ELFAddress,
@@ -88,36 +86,10 @@ pub enum JoltIn {
     RAM_Write_Byte2,
     RAM_Write_Byte3,
 
-    ChunksX_0,
-    ChunksX_1,
-    ChunksX_2,
-    ChunksX_3,
-
-    ChunksY_0,
-    ChunksY_1,
-    ChunksY_2,
-    ChunksY_3,
-
     ChunksQ_0,
     ChunksQ_1,
     ChunksQ_2,
     ChunksQ_3,
-
-    LookupOutput,
-
-    // Should match rv_trace.to_circuit_flags()
-    OpFlags_IsPC,
-    OpFlags_IsImm,
-    OpFlags_IsLoad,
-    OpFlags_IsStore,
-    OpFlags_IsJmp,
-    OpFlags_IsBranch,
-    OpFlags_LookupOutToRd,
-    OpFlags_SignImm,
-    OpFlags_IsConcat,
-    OpFlags_IsVirtualInstruction,
-    OpFlags_IsAssert,
-    OpFlags_DoNotUpdatePC,
 
     // Instruction Flags
     // Should match JoltInstructionSet
@@ -150,6 +122,32 @@ pub enum JoltIn {
     IF_Virt_Assert_VALID_SIGNED_REMAINDER,
     IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
     IF_Virt_Assert_VALID_DIV0,
+
+    LookupOutput,
+
+    ChunksX_0,
+    ChunksX_1,
+    ChunksX_2,
+    ChunksX_3,
+
+    ChunksY_0,
+    ChunksY_1,
+    ChunksY_2,
+    ChunksY_3,
+
+    // Should match rv_trace.to_circuit_flags()
+    OpFlags_IsPC,
+    OpFlags_IsImm,
+    OpFlags_IsLoad,
+    OpFlags_IsStore,
+    OpFlags_IsJmp,
+    OpFlags_IsBranch,
+    OpFlags_LookupOutToRd,
+    OpFlags_SignImm,
+    OpFlags_IsConcat,
+    OpFlags_IsVirtualInstruction,
+    OpFlags_IsAssert,
+    OpFlags_DoNotUpdatePC,
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
 impl ConstraintInput for JoltIn {}
@@ -177,8 +175,6 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         for flag in flags {
             cs.constrain_binary(flag);
         }
-
-        cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_A);
 
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
@@ -350,7 +346,6 @@ mod tests {
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction
-        inputs[JoltIn::PcIn as usize][0] = Fr::from(10);
         inputs[JoltIn::Bytecode_A as usize][0] = Fr::from(10);
         inputs[JoltIn::Bytecode_Bitflags as usize][0] = Fr::from(0);
         inputs[JoltIn::Bytecode_RS1 as usize][0] = Fr::from(2);

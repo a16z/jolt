@@ -4,9 +4,12 @@
     clippy::too_many_arguments
 )]
 
+use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::vm::JoltTraceStep;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::jolt_constraints::JoltIn;
-use crate::utils::transcript::AppendToTranscript;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
     utils::transcript::ProofTranscript,
@@ -16,184 +19,73 @@ use super::key::UniformSpartanKey;
 use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
+use crate::r1cs::builder::CombinedUniformBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::log2;
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use rayon::prelude::*;
-
 use strum::EnumCount;
 
-#[derive(Clone, Debug, Default)]
-pub struct R1CSInputs<'a, F: JoltField> {
-    padded_trace_len: usize,
-    pub pc: Vec<F>,
-    pub bytecode_a: Vec<F>,
-    bytecode_v: Vec<F>,
-    memreg_a_rw: &'a [F],
-    memreg_v_reads: Vec<&'a F>,
-    memreg_v_writes: Vec<&'a F>,
-    pub chunks_x: Vec<F>,
-    pub chunks_y: Vec<F>,
-    pub chunks_query: Vec<F>,
-    lookup_outputs: Vec<F>,
-    pub circuit_flags_bits: Vec<F>,
-    instruction_flags_bits: Vec<F>,
+pub struct R1CSPolynomials<F: JoltField> {
+    pub chunks_x: Vec<DensePolynomial<F>>,
+    pub chunks_y: Vec<DensePolynomial<F>>,
+    pub circuit_flags: [DensePolynomial<F>; NUM_CIRCUIT_FLAGS],
+    pub aux: Vec<DensePolynomial<F>>,
 }
 
-impl<'a, F: JoltField> R1CSInputs<'a, F> {
-    #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
-    pub fn new(
-        padded_trace_len: usize,
-        pc: Vec<F>,
-        bytecode_a: Vec<F>,
-        bytecode_v: Vec<F>,
-        memreg_a_rw: &'a [F],
-        memreg_v_reads: Vec<&'a F>,
-        memreg_v_writes: Vec<&'a F>,
-        chunks_x: Vec<F>,
-        chunks_y: Vec<F>,
-        chunks_query: Vec<F>,
-        lookup_outputs: Vec<F>,
-        circuit_flags_bits: Vec<F>,
-        instruction_flags_bits: Vec<F>,
+impl<F: JoltField> R1CSPolynomials<F> {
+    pub fn new<const C: usize, const M: usize, InstructionSet: JoltInstructionSet>(
+        trace: &[JoltTraceStep<InstructionSet>],
+        builder: CombinedUniformBuilder<F, JoltIn>,
     ) -> Self {
-        assert!(pc.len() % padded_trace_len == 0);
-        assert!(bytecode_a.len() % padded_trace_len == 0);
-        assert!(bytecode_v.len() % padded_trace_len == 0);
-        assert!(memreg_a_rw.len() % padded_trace_len == 0);
-        assert!(memreg_v_reads.len() % padded_trace_len == 0);
-        assert!(memreg_v_writes.len() % padded_trace_len == 0);
-        assert!(chunks_x.len() % padded_trace_len == 0);
-        assert!(chunks_y.len() % padded_trace_len == 0);
-        assert!(chunks_query.len() % padded_trace_len == 0);
-        assert!(lookup_outputs.len() % padded_trace_len == 0);
-        assert!(circuit_flags_bits.len() % padded_trace_len == 0);
-        assert!(instruction_flags_bits.len() % padded_trace_len == 0);
+        let log_M = log2(M) as usize;
+
+        let mut chunks_x = vec![unsafe_allocate_zero_vec(trace.len()); C];
+        let mut chunks_y = vec![unsafe_allocate_zero_vec(trace.len()); C];
+        let mut circuit_flags = vec![unsafe_allocate_zero_vec(trace.len()); NUM_CIRCUIT_FLAGS];
+
+        // TODO(moodlezoup): Can be parallelized
+        for (step_index, step) in trace.iter().enumerate() {
+            if let Some(instr) = &step.instruction_lookup {
+                let (x, y) = instr.operand_chunks(C, log_M);
+                for i in 0..C {
+                    chunks_x[i][step_index] = F::from_u64(x[i]).unwrap();
+                    chunks_y[i][step_index] = F::from_u64(y[i]).unwrap();
+                }
+            }
+
+            for j in 0..NUM_CIRCUIT_FLAGS {
+                if step.circuit_flags[j] {
+                    circuit_flags[j][step_index] = F::one();
+                }
+            }
+        }
+
+        let aux = builder.compute_aux(todo!("polynomials"));
+        // #[cfg(test)]
+        // {
+        //     let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(todo!("polynomials"), &aux);
+        //     builder.assert_valid(&az, &bz, &cz);
+        // }
 
         Self {
-            padded_trace_len,
-            pc,
-            bytecode_a,
-            bytecode_v,
-            memreg_a_rw,
-            memreg_v_reads,
-            memreg_v_writes,
-            chunks_x,
-            chunks_y,
-            chunks_query,
-            lookup_outputs,
-            circuit_flags_bits,
-            instruction_flags_bits,
+            chunks_x: chunks_x
+                .into_iter()
+                .map(|vals| DensePolynomial::new(vals))
+                .collect(),
+            chunks_y: chunks_y
+                .into_iter()
+                .map(|vals| DensePolynomial::new(vals))
+                .collect(),
+            circuit_flags: circuit_flags
+                .into_iter()
+                .map(|vals| DensePolynomial::new(vals))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            aux: todo!(),
         }
-    }
-
-    #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_trace_len_chunks")]
-    pub fn clone_to_trace_len_chunks(&self) -> Vec<Vec<F>> {
-        let mut chunks: Vec<Vec<F>> = Vec::new();
-
-        let pc_chunks = self
-            .pc
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(pc_chunks);
-
-        let bytecode_a_chunks = self
-            .bytecode_a
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(bytecode_a_chunks);
-
-        let bytecode_v_chunks = self
-            .bytecode_v
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(bytecode_v_chunks);
-
-        let memreg_a_rw_chunks = self
-            .memreg_a_rw
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(memreg_a_rw_chunks);
-
-        let memreg_v_reads_chunks = self
-            .memreg_v_reads
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
-        chunks.par_extend(memreg_v_reads_chunks);
-
-        let memreg_v_writes_chunks = self
-            .memreg_v_writes
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
-        chunks.par_extend(memreg_v_writes_chunks);
-
-        let chunks_x_chunks = self
-            .chunks_x
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(chunks_x_chunks);
-
-        let chunks_y_chunks = self
-            .chunks_y
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(chunks_y_chunks);
-
-        let chunks_query_chunks = self
-            .chunks_query
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(chunks_query_chunks);
-
-        let lookup_outputs_chunks = self
-            .lookup_outputs
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(lookup_outputs_chunks);
-
-        let circuit_flags_bits_chunks = self
-            .circuit_flags_bits
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(circuit_flags_bits_chunks);
-
-        let instruction_flags_bits_chunks = self
-            .instruction_flags_bits
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(instruction_flags_bits_chunks);
-
-        assert_eq!(chunks.len(), JoltIn::COUNT);
-
-        chunks
-    }
-}
-
-/// Commitments unique to R1CS.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment<C: CommitmentScheme> {
-    pub io: Vec<C::Commitment>,
-    pub aux: Vec<C::Commitment>,
-    /// Operand chunks { x, y }
-    pub chunks: Vec<C::Commitment>,
-    pub circuit_flags: Vec<C::Commitment>,
-}
-
-impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"R1CSCommitment_begin");
-        for commitment in &self.io {
-            commitment.append_to_transcript(transcript);
-        }
-        for commitment in &self.aux {
-            commitment.append_to_transcript(transcript);
-        }
-        for commitment in &self.chunks {
-            commitment.append_to_transcript(transcript);
-        }
-        for commitment in &self.circuit_flags {
-            commitment.append_to_transcript(transcript);
-        }
-        transcript.append_message(b"R1CSCommitment_end");
     }
 }
 
@@ -237,7 +129,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
                 ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
 
         let mut combined_commitments: Vec<&C::Commitment> = Vec::new();
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
 
         combined_commitments.push(&bytecode_trace_commitments[0]); // "virtual" address
         combined_commitments.push(&bytecode_trace_commitments[2]); // "real" address
@@ -249,10 +140,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
 
         combined_commitments.extend(memory_trace_commitments.iter());
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks.iter());
-
         combined_commitments.extend(instruction_lookup_indices_commitments.iter());
-
+        combined_commitments.extend(instruction_flag_commitments.iter());
         combined_commitments.push(
             jolt_commitments
                 .instruction_lookups
@@ -261,11 +150,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
                 .unwrap(),
         );
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().circuit_flags.iter());
-
-        combined_commitments.extend(instruction_flag_commitments.iter());
-
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().aux.iter());
+        combined_commitments.extend(r1cs_commitments.iter());
 
         combined_commitments
     }

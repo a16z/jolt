@@ -318,7 +318,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_quadratic")]
     // A fork of `prove_quad` with the 0th round unrolled from the rest of the
-    // for loop. This allows us to pass in `W` and `X` as references instead of
+    // for loop. This allows us to pass in `W` by reference instead of
     // passing them in as a single `MultilinearPolynomial`, which would require
     // an expensive concatenation. We defer the actual instantation of a
     // `MultilinearPolynomial` to the end of the 0th round.

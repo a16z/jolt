@@ -1,12 +1,14 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
+use crate::poly::opening_proof::{PolynomialOpening, PolynomialOpeningAccumulator};
 use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
+use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
@@ -25,7 +27,7 @@ use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
-use crate::r1cs::inputs::{R1CSCommitment, R1CSInputs, R1CSProof};
+use crate::r1cs::inputs::{R1CSCommitment, R1CSPolynomials, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -66,6 +68,7 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
+    pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
@@ -82,6 +85,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
                 MemoryOp::noop_read(),  // RAM byte 3
                 MemoryOp::noop_read(),  // RAM byte 4
             ],
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
     }
 
@@ -117,6 +121,7 @@ where
     pub read_write_memory: ReadWriteMemory<F, PCS>,
     pub timestamp_range_check: RangeCheckPolynomials<F, PCS>,
     pub instruction_lookups: InstructionPolynomials<F, PCS>,
+    pub r1cs: R1CSPolynomials<F>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -125,7 +130,7 @@ pub struct JoltCommitments<PCS: CommitmentScheme> {
     pub read_write_memory: MemoryCommitment<PCS>,
     pub timestamp_range_check: RangeCheckCommitment<PCS>,
     pub instruction_lookups: InstructionCommitment<PCS>,
-    pub r1cs: Option<R1CSCommitment<PCS>>,
+    pub r1cs: Vec<PCS::Commitment>,
 }
 
 impl<PCS: CommitmentScheme> JoltCommitments<PCS> {
@@ -134,7 +139,9 @@ impl<PCS: CommitmentScheme> JoltCommitments<PCS> {
         self.read_write_memory.append_to_transcript(transcript);
         self.timestamp_range_check.append_to_transcript(transcript);
         self.instruction_lookups.append_to_transcript(transcript);
-        self.r1cs.as_ref().unwrap().append_to_transcript(transcript);
+        for commitment in &self.r1cs {
+            commitment.append_to_transcript(transcript);
+        }
     }
 }
 
@@ -192,12 +199,23 @@ where
             .chain(self.instruction_lookups.instruction_flag_polys.iter())
             .chain([&self.instruction_lookups.lookup_outputs].into_iter())
             .collect();
+        let num_instruction_polys = instruction_trace_polys.len();
+
+        let r1cs_trace_polys: Vec<&DensePolynomial<F>> = self
+            .r1cs
+            .chunks_x
+            .iter()
+            .chain(self.r1cs.chunks_y.iter())
+            .chain(self.r1cs.circuit_flags.iter())
+            .chain(self.r1cs.aux.iter())
+            .collect();
 
         let all_trace_polys = bytecode_trace_polys
             .into_iter()
             .chain(memory_trace_polys.into_iter())
             .chain(range_check_polys.into_iter())
             .chain(instruction_trace_polys.into_iter())
+            .chain(r1cs_trace_polys.into_iter())
             .collect::<Vec<_>>();
         let mut trace_comitments =
             PCS::batch_commit_polys_ref(&all_trace_polys, generators, BatchType::Big);
@@ -211,7 +229,10 @@ where
         let range_check_commitment = trace_comitments
             .drain(..num_range_check_polys)
             .collect::<Vec<_>>();
-        let instruction_trace_commitment = trace_comitments;
+        let instruction_trace_commitment = trace_comitments
+            .drain(..num_instruction_polys)
+            .collect::<Vec<_>>();
+        let r1cs_trace_commitment = trace_comitments;
 
         let bytecode_t_final_commitment = PCS::commit(&self.bytecode.t_final, generators);
         let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
@@ -241,7 +262,7 @@ where
                 trace_commitment: instruction_trace_commitment,
                 final_commitment: instruction_final_commitment,
             },
-            r1cs: None,
+            r1cs: r1cs_trace_commitment,
         }
     }
 }
@@ -360,21 +381,19 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             || RangeCheckPolynomials::<F, PCS>::new(read_timestamps),
         );
 
+        let r1cs_builder = construct_jolt_constraints(
+            padded_trace_length,
+            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
+        );
+        let r1cs_polynomials = R1CSPolynomials::new(&trace, r1cs_builder);
+
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
             timestamp_range_check: range_check_polys,
             instruction_lookups: instruction_polynomials,
+            r1cs: r1cs_polynomials,
         };
-
-        let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
-            padded_trace_length,
-            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
-            &trace,
-            &jolt_polynomials,
-            circuit_flags,
-            &preprocessing.generators,
-        );
 
         let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
 
@@ -385,13 +404,16 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        jolt_commitments.r1cs = Some(r1cs_commitments);
         jolt_commitments.append_to_transcript(&mut transcript);
+
+        let mut opening_accumulator: PolynomialOpeningAccumulator<'_, F> =
+            PolynomialOpeningAccumulator::new();
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.generators,
             &preprocessing.bytecode,
             &jolt_polynomials.bytecode,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
@@ -399,6 +421,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.generators,
             &jolt_polynomials.instruction_lookups,
             &preprocessing.instruction_lookups,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
@@ -407,23 +430,29 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.read_write_memory,
             &jolt_polynomials,
             &program_io,
+            &mut opening_accumulator,
             &mut transcript,
         );
-
-        drop_in_background_thread(jolt_polynomials);
 
         let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
             &preprocessing.generators,
             r1cs_builder,
             &spartan_key,
-            witness_segments,
+            &jolt_polynomials,
+            &mut opening_accumulator,
             &mut transcript,
         )
         .expect("r1cs proof failed");
+
         let r1cs_proof = R1CSProof {
             key: spartan_key,
             proof: spartan_proof,
         };
+
+        println!("{} openings accumulated", opening_accumulator.len());
+        opening_accumulator.reduce::<PCS>(&preprocessing.generators, &mut transcript);
+
+        drop_in_background_thread(jolt_polynomials);
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -536,159 +565,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         proof
             .verify(generators, commitments, C, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
-    }
-
-    #[tracing::instrument(skip_all, name = "Jolt::r1cs_setup")]
-    fn r1cs_setup(
-        padded_trace_length: usize,
-        memory_start: u64,
-        instructions: &[JoltTraceStep<Self::InstructionSet>],
-        polynomials: &JoltPolynomials<F, PCS>,
-        circuit_flags: Vec<F>,
-        generators: &PCS::Setup,
-    ) -> (
-        Vec<Vec<F>>,
-        R1CSCommitment<PCS>,
-        CombinedUniformBuilder<F, JoltIn>,
-    ) {
-        let inputs = Self::r1cs_construct_inputs(
-            padded_trace_length,
-            instructions,
-            polynomials,
-            circuit_flags,
-        );
-        let mut inputs_flat: Vec<Vec<F>> = inputs.clone_to_trace_len_chunks();
-
-        let builder = construct_jolt_constraints(padded_trace_length, memory_start);
-        let aux = builder.compute_aux(&inputs_flat);
-
-        assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
-        let span = tracing::span!(tracing::Level::INFO, "commit_chunks_flags");
-        let _guard = span.enter();
-        let chunk_batch_slices: Vec<&[F]> = [&inputs.chunks_x, &inputs.chunks_y]
-            .iter()
-            .flat_map(|batchee| batchee.chunks(padded_trace_length))
-            .collect();
-        let chunks_comms = PCS::batch_commit(&chunk_batch_slices, generators, BatchType::Big);
-
-        let circuit_flags_comms = PCS::batch_commit(
-            &inputs
-                .circuit_flags_bits
-                .chunks(padded_trace_length)
-                .collect::<Vec<&[F]>>(),
-            generators,
-            BatchType::Big,
-        );
-        drop(_guard);
-
-        let io_comms = PCS::batch_commit(&[inputs.pc.as_ref()], generators, BatchType::Big);
-        let aux_comms = PCS::batch_commit(
-            &aux.iter().map(AsRef::as_ref).collect::<Vec<&[F]>>(),
-            generators,
-            BatchType::Big,
-        );
-
-        let r1cs_commitments = R1CSCommitment::<PCS> {
-            io: io_comms,
-            aux: aux_comms,
-            chunks: chunks_comms,
-            circuit_flags: circuit_flags_comms,
-        };
-
-        #[cfg(test)]
-        {
-            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
-            builder.assert_valid(&az, &bz, &cz);
-        }
-
-        inputs_flat.extend(aux);
-
-        (inputs_flat, r1cs_commitments, builder)
-    }
-
-    // Assemble the R1CS inputs from across other Jolt structs.
-    #[tracing::instrument(skip_all, name = "Jolt::r1cs_construct_inputs")]
-    fn r1cs_construct_inputs<'a>(
-        padded_trace_length: usize,
-        instructions: &'a [JoltTraceStep<Self::InstructionSet>],
-        polynomials: &'a JoltPolynomials<F, PCS>,
-        circuit_flags: Vec<F>,
-    ) -> R1CSInputs<'a, F> {
-        let log_M = log2(M) as usize;
-
-        // Derive chunks_x and chunks_y
-        let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
-        let _guard = span.enter();
-
-        let num_chunks = padded_trace_length * C;
-        let mut chunks_x: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
-        let mut chunks_y: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
-
-        for (instruction_index, op) in instructions.iter().enumerate() {
-            if let Some(instr) = &op.instruction_lookup {
-                let (chunks_x_op, chunks_y_op) = instr.operand_chunks(C, log_M);
-                for (chunk_index, (x, y)) in chunks_x_op
-                    .into_iter()
-                    .zip(chunks_y_op.into_iter())
-                    .enumerate()
-                {
-                    let flat_chunk_index = instruction_index + chunk_index * padded_trace_length;
-                    chunks_x[flat_chunk_index] = F::from_u64(x).unwrap();
-                    chunks_y[flat_chunk_index] = F::from_u64(y).unwrap();
-                }
-            } else {
-                for chunk_index in 0..C {
-                    let flat_chunk_index = instruction_index + chunk_index * padded_trace_length;
-                    chunks_x[flat_chunk_index] = F::zero();
-                    chunks_y[flat_chunk_index] = F::zero();
-                }
-            }
-        }
-
-        drop(_guard);
-        drop(span);
-
-        let span = tracing::span!(tracing::Level::INFO, "flatten_instruction_flags");
-        let _enter = span.enter();
-        let instruction_flags: Vec<F> =
-            DensePolynomial::flatten(&polynomials.instruction_lookups.instruction_flag_polys);
-        drop(_enter);
-        drop(span);
-
-        let (bytecode_a, bytecode_v) = polynomials.bytecode.get_polys_r1cs();
-        let (memreg_a_rw, memreg_v_reads, memreg_v_writes) =
-            polynomials.read_write_memory.get_polys_r1cs();
-
-        let span = tracing::span!(tracing::Level::INFO, "chunks_query");
-        let _guard = span.enter();
-        let mut chunks_query: Vec<F> =
-            Vec::with_capacity(C * polynomials.instruction_lookups.dim[0].len());
-        for i in 0..C {
-            chunks_query.par_extend(
-                polynomials.instruction_lookups.dim[i]
-                    .evals_ref()
-                    .par_iter(),
-            );
-        }
-        drop(_guard);
-
-        let inputs: R1CSInputs<F> = R1CSInputs::new(
-            padded_trace_length,
-            bytecode_a.clone(),
-            bytecode_a,
-            bytecode_v,
-            memreg_a_rw,
-            memreg_v_reads,
-            memreg_v_writes,
-            chunks_x,
-            chunks_y,
-            chunks_query,
-            polynomials.instruction_lookups.lookup_outputs.evals(),
-            circuit_flags,
-            instruction_flags,
-        );
-
-        inputs
     }
 
     fn fiat_shamir_preamble(
