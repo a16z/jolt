@@ -176,9 +176,44 @@ pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>
 
 use eyre::Result;
 use std::fs::File;
+use std::io::Cursor;
 use std::path::PathBuf;
 
 pub type PCS = HyraxScheme<G1Projective>;
+pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
+    /// Gets the byte size of the serialized data
+    fn size(&self) -> Result<usize> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer.len())
+    }
+
+    /// Saves the data to a file
+    fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
+        let file = File::create(path.into())?;
+        self.serialize_compressed(file)?;
+        Ok(())
+    }
+
+    /// Reads data from a file
+    fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
+        let file = File::open(path.into())?;
+        Ok(Self::deserialize_compressed(file)?)
+    }
+
+    /// Serializes the data to a byte vector
+    fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Deserializes data from a byte vector
+    fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
+        let cursor = Cursor::new(bytes);
+        Ok(Self::deserialize_compressed(cursor)?)
+    }
+}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RV32IHyraxProof {
@@ -186,40 +221,7 @@ pub struct RV32IHyraxProof {
     pub commitments: JoltCommitments<PCS>,
 }
 
-impl RV32IHyraxProof {
-    /// Gets the byte size of the full proof
-    pub fn size(&self) -> Result<usize> {
-        let mut buffer = Vec::new();
-        self.serialize_compressed(&mut buffer)?;
-        Ok(buffer.len())
-    }
-
-    /// Saves the proof to a file
-    pub fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
-        let file = File::create(path.into())?;
-        self.serialize_compressed(file)?;
-        Ok(())
-    }
-
-    /// Reads a proof from a file
-    pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        let file = File::open(path.into())?;
-        Ok(RV32IHyraxProof::deserialize_compressed(file)?)
-    }
-
-    /// Serializes the proof to a byte vector
-    pub fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
-        self.serialize_compressed(&mut buffer)?;
-        Ok(buffer)
-    }
-
-    /// Deserializes a proof from a byte vector
-    pub fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
-        let cursor = std::io::Cursor::new(bytes);
-        Ok(RV32IHyraxProof::deserialize_compressed(cursor)?)
-    }
-}
+impl Serializable for RV32IHyraxProof {}
 
 // ==================== TEST ====================
 
