@@ -7,7 +7,7 @@ pub struct ProofTranscript {
     // Ethereum compatible 256 bit running state
     state: [u8; 32],
     // We append an ordinal to each invoke of the hash
-    n_rounds: u32,
+    pub n_rounds: u32,
 }
 
 impl ProofTranscript {

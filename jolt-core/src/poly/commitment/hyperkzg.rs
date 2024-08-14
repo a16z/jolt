@@ -59,7 +59,7 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
 }
 
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyperKZGCommitment<P: Pairing>(P::G1Affine);
+pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
@@ -69,9 +69,19 @@ impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct HyperKZGProof<P: Pairing> {
-    com: Vec<P::G1Affine>,
-    w: Vec<P::G1Affine>,
-    v: Vec<Vec<P::ScalarField>>,
+    pub com: Vec<P::G1Affine>,
+    pub w: Vec<P::G1Affine>,
+    pub v: Vec<Vec<P::ScalarField>>,
+}
+
+impl<P: Pairing> HyperKZGProof<P> {
+    pub fn empty(size: usize) -> Self {
+        Self {
+            com: vec![P::G1Affine::zero(); size - 1],
+            w: vec![P::G1Affine::zero(); 3],
+            v: vec![vec![P::ScalarField::zero(); size]; 3],
+        }
+    }
 }
 
 // On input f(x) and u compute the witness polynomial used to prove

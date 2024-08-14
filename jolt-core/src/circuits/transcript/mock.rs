@@ -1,3 +1,4 @@
+use crate::circuits::transcript::IS_SLICE;
 use crate::field::JoltField;
 use crate::utils::transcript::ProofTranscript;
 use ark_crypto_primitives::sponge::constraints::{
@@ -10,6 +11,7 @@ use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::prelude::*;
 use ark_r1cs_std::R1CSVar;
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_std::any::Any;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
@@ -57,9 +59,8 @@ pub struct MockSpongeVar<ConstraintF>
 where
     ConstraintF: PrimeField,
 {
-    _params: PhantomData<ConstraintF>,
     cs: ConstraintSystemRef<ConstraintF>,
-    transcript: ProofTranscript,
+    pub transcript: ProofTranscript,
 }
 
 impl<ConstraintF> CryptographicSpongeVar<ConstraintF, MockSponge<ConstraintF>>
@@ -71,7 +72,6 @@ where
 
     fn new(cs: ConstraintSystemRef<ConstraintF>, params: &Self::Parameters) -> Self {
         Self {
-            _params: PhantomData,
             cs,
             transcript: ProofTranscript::new(params),
         }
@@ -82,12 +82,22 @@ where
     }
 
     fn absorb(&mut self, input: &impl AbsorbGadget<ConstraintF>) -> Result<(), SynthesisError> {
-        let fs = input
-            .to_sponge_field_elements()?
+        let bytes = input.to_sponge_bytes()?;
+        let is_slice = IS_SLICE.take();
+        let fs = bytes
             .iter()
-            .map(|f| f.value())
+            .map(|f| match self.cs.is_in_setup_mode() {
+                true => Ok(0u8),
+                false => f.value(),
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        self.transcript.append_scalars(&fs);
+        if is_slice {
+            self.transcript.append_message(b"begin_append_vector");
+        }
+        self.transcript.append_bytes(&fs);
+        if is_slice {
+            self.transcript.append_message(b"end_append_vector");
+        }
         Ok(())
     }
 
@@ -109,6 +119,7 @@ where
         &mut self,
         num_elements: usize,
     ) -> Result<Vec<FpVar<ConstraintF>>, SynthesisError> {
+        dbg!(&self.transcript.n_rounds);
         self.transcript
             .challenge_vector::<ConstraintF>(num_elements)
             .iter()
