@@ -12,28 +12,42 @@ use ark_relations::ns;
 use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use std::marker::PhantomData;
 
-pub struct OffloadedMSMGadget<ConstraintF, FVar, G, GVar, Circuit>
+pub struct OffloadedMSMGadget<FVar, G, GVar, Circuit>
 where
     Circuit: OffloadedDataCircuit<G>,
-    ConstraintF: PrimeField,
-    FVar: FieldVar<ConstraintF, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
-    G: CurveGroup<ScalarField = ConstraintF>,
-    GVar: CurveVar<G, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
+    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    G: CurveGroup,
+    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
 {
-    _params: PhantomData<(ConstraintF, FVar, G, GVar, Circuit)>,
+    _params: PhantomData<(FVar, G, GVar)>,
+    circuit: Circuit,
 }
 
-impl<ConstraintF, FVar, G, GVar, Circuit> OffloadedMSMGadget<ConstraintF, FVar, G, GVar, Circuit>
+impl<FVar, G, GVar, Circuit> OffloadedMSMGadget<FVar, G, GVar, Circuit>
 where
     Circuit: OffloadedDataCircuit<G>,
-    ConstraintF: PrimeField,
-    FVar: FieldVar<ConstraintF, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
-    G: CurveGroup<ScalarField = ConstraintF>,
-    GVar: CurveVar<G, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
+    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    G: CurveGroup,
+    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
 {
-    pub fn msm(
-        circuit: &Circuit,
-        cs: impl Into<Namespace<ConstraintF>>,
+    pub fn new(circuit: Circuit) -> Self {
+        Self {
+            _params: PhantomData,
+            circuit,
+        }
+    }
+}
+
+impl<FVar, G, GVar, Circuit> MSMGadget<FVar, G, GVar> for OffloadedMSMGadget<FVar, G, GVar, Circuit>
+where
+    Circuit: OffloadedDataCircuit<G>,
+    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    G: CurveGroup,
+    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+{
+    fn msm(
+        &self,
+        cs: impl Into<Namespace<G::ScalarField>>,
         g1s: &[GVar],
         scalars: &[FVar],
     ) -> Result<GVar, SynthesisError> {
@@ -54,7 +68,7 @@ where
             .zip(scalar_values)
             .map(|(g1s, scalars)| {
                 let r_g1 = G::msm_unchecked(&g1s, &scalars);
-                let minus_one = -ConstraintF::one();
+                let minus_one = -G::ScalarField::one();
                 (
                     (
                         [g1s, vec![r_g1.into()]].concat(),
@@ -76,7 +90,7 @@ where
             let ns = ns!(cs, "deferred_msm");
             let cs = ns.cs();
 
-            circuit.defer_msm(move || {
+            self.circuit.defer_msm(move || {
                 // write scalars to public_input
                 for x in scalars {
                     let scalar_input = FVar::new_input(ns!(cs, "scalar"), || x.value())?;
@@ -112,4 +126,18 @@ where
 
         Ok(msm_g1_var)
     }
+}
+
+pub trait MSMGadget<FVar, G, GVar>
+where
+    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    G: CurveGroup,
+    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+{
+    fn msm(
+        &self,
+        cs: impl Into<Namespace<G::ScalarField>>,
+        g1s: &[GVar],
+        scalars: &[FVar],
+    ) -> Result<GVar, SynthesisError>;
 }

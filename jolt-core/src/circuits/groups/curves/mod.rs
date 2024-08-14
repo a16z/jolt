@@ -5,7 +5,7 @@ mod tests {
     use super::*;
     use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
     use crate::circuits::groups::curves::short_weierstrass::{AffineVar, ProjectiveVar};
-    use crate::circuits::offloaded::OffloadedMSMGadget;
+    use crate::circuits::offloaded::{MSMGadget, OffloadedMSMGadget};
     use crate::snark::{
         DeferredFnsRef, OffloadedData, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
         OffloadedSNARKVerifyingKey,
@@ -81,8 +81,11 @@ mod tests {
             let d_k = [FpVar::one(), d, d_square];
             dbg!(cs.num_constraints());
 
-            let _ =
-                OffloadedMSMGadget::msm(&self, ns!(cs, "msm"), w_g1.as_slice(), d_k.as_slice())?;
+            let _ = OffloadedMSMGadget::new(self).msm(
+                ns!(cs, "msm"),
+                w_g1.as_slice(),
+                d_k.as_slice(),
+            )?;
             dbg!(cs.num_constraints());
 
             Ok(())
