@@ -49,7 +49,7 @@ mod tests {
         d: Option<E::ScalarField>,
 
         // deferred fns to write offloaded data to public_input
-        deferred_fns_ref: DeferredFnsRef<E>,
+        deferred_fns_ref: DeferredFnsRef<E::G1>,
     }
 
     impl<E, G1Var> ConstraintSynthesizer<E::ScalarField> for DelayedOpsCircuit<E, G1Var>
@@ -89,12 +89,12 @@ mod tests {
         }
     }
 
-    impl<E, G1Var> OffloadedDataCircuit<E> for DelayedOpsCircuit<E, G1Var>
+    impl<E, G1Var> OffloadedDataCircuit<E::G1> for DelayedOpsCircuit<E, G1Var>
     where
         E: Pairing,
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
-        fn deferred_fns_ref(&self) -> &DeferredFnsRef<E> {
+        fn deferred_fns_ref(&self) -> &DeferredFnsRef<E::G1> {
             &self.deferred_fns_ref
         }
     }

@@ -2,7 +2,7 @@ use ark_crypto_primitives::snark::SNARK;
 use ark_ec::{
     pairing::Pairing,
     short_weierstrass::{Affine, SWCurveConfig},
-    AffineRepr, VariableBaseMSM,
+    AffineRepr, CurveGroup, VariableBaseMSM,
 };
 use ark_ff::{PrimeField, Zero};
 use ark_r1cs_std::{
@@ -48,43 +48,32 @@ where
     S: SNARK<E::ScalarField>,
 {
     pub snark_proof: S::Proof,
-    pub offloaded_data: OffloadedData<E>,
+    pub offloaded_data: OffloadedData<E::G1>,
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct OffloadedData<E: Pairing> {
+pub struct OffloadedData<G: CurveGroup> {
     /// Blocks of G1 elements `Gᵢ` and scalars in `sᵢ` the public input, such that `∑ᵢ sᵢ·Gᵢ == 0`.
     /// It's the verifiers responsibility to ensure that the sum is zero.
     /// The scalar at index `length-1` is, by convention, always `-1`, so
     /// we save one public input element per MSM.
-    pub msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
+    pub msms: Vec<(Vec<G::Affine>, Vec<G::ScalarField>)>,
 }
 
-pub type DeferredFn<E: Pairing> =
-    dyn FnOnce() -> Result<Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SynthesisError>;
+pub type DeferredFn<G: CurveGroup> =
+    dyn FnOnce() -> Result<Option<(Vec<G::Affine>, Vec<G::ScalarField>)>, SynthesisError>;
 
-pub type DeferredFnsRef<E: Pairing> = Rc<
-    RefCell<
-        Vec<
-            Box<
-                dyn FnOnce() -> Result<
-                    Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
-                    SynthesisError,
-                >,
-            >,
-        >,
-    >,
->;
+pub type DeferredFnsRef<G: CurveGroup> = Rc<RefCell<Vec<Box<DeferredFn<G>>>>>;
 
-pub trait OffloadedDataCircuit<E>
+pub trait OffloadedDataCircuit<G>
 where
-    E: Pairing,
+    G: CurveGroup,
 {
-    fn deferred_fns_ref(&self) -> &DeferredFnsRef<E>;
+    fn deferred_fns_ref(&self) -> &DeferredFnsRef<G>;
 
     fn defer_msm(
         &self,
-        f: impl FnOnce() -> Result<Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SynthesisError>
+        f: impl FnOnce() -> Result<Option<(Vec<G::Affine>, Vec<G::ScalarField>)>, SynthesisError>
             + 'static,
     ) {
         self.deferred_fns_ref().borrow_mut().push(Box::new(f));
@@ -106,15 +95,13 @@ where
     SynthesisError(#[from] SynthesisError),
 }
 
-struct WrappedCircuit<E, P, C>
+struct WrappedCircuit<E, C>
 where
-    E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
-    P: SWCurveConfig<BaseField: PrimeField>,
-    C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>,
+    E: Pairing,
+    C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E::G1>,
 {
-    _params: PhantomData<(E, P)>,
     circuit: C,
-    offloaded_data_ref: Rc<OnceCell<OffloadedData<E>>>,
+    offloaded_data_ref: Rc<OnceCell<OffloadedData<E::G1>>>,
 }
 
 fn run_deferred<E: Pairing>(
@@ -123,7 +110,7 @@ fn run_deferred<E: Pairing>(
             dyn FnOnce() -> Result<Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>, SynthesisError>,
         >,
     >,
-) -> Result<Option<OffloadedData<E>>, SynthesisError> {
+) -> Result<Option<OffloadedData<E::G1>>, SynthesisError> {
     let msms = deferred_fns
         .into_iter()
         .map(|f| f())
@@ -132,11 +119,10 @@ fn run_deferred<E: Pairing>(
     Ok(msms.map(|msms| OffloadedData { msms }))
 }
 
-impl<E, P, C> ConstraintSynthesizer<E::ScalarField> for WrappedCircuit<E, P, C>
+impl<E, C> ConstraintSynthesizer<E::ScalarField> for WrappedCircuit<E, C>
 where
-    E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
-    P: SWCurveConfig<BaseField: PrimeField>,
-    C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>,
+    E: Pairing,
+    C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E::G1>,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<E::ScalarField>) -> r1cs::Result<()> {
         let deferred_fns_ref = self.circuit.deferred_fns_ref().clone();
@@ -160,15 +146,14 @@ where
     S: SNARK<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    type Circuit: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>;
+    type Circuit: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E::G1>;
 
     fn setup<R: RngCore + CryptoRng>(
         circuit: Self::Circuit,
         rng: &mut R,
     ) -> Result<(S::ProvingKey, OffloadedSNARKVerifyingKey<E, S>), OffloadedSNARKError<S::Error>>
     {
-        let circuit = WrappedCircuit {
-            _params: PhantomData,
+        let circuit: WrappedCircuit<E, Self::Circuit> = WrappedCircuit {
             circuit,
             offloaded_data_ref: Default::default(),
         };
@@ -199,8 +184,7 @@ where
         circuit: Self::Circuit,
         rng: &mut R,
     ) -> Result<OffloadedSNARKProof<E, S>, OffloadedSNARKError<S::Error>> {
-        let circuit = WrappedCircuit {
-            _params: PhantomData,
+        let circuit: WrappedCircuit<E, Self::Circuit> = WrappedCircuit {
             circuit,
             offloaded_data_ref: Default::default(),
         };
@@ -354,7 +338,7 @@ where
 
 fn build_public_input<E, G1Var>(
     public_input: &[E::ScalarField],
-    data: &OffloadedData<E>,
+    data: &OffloadedData<E::G1>,
 ) -> Vec<E::ScalarField>
 where
     E: Pairing,

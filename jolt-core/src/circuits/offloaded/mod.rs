@@ -12,31 +12,31 @@ use ark_relations::ns;
 use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use std::marker::PhantomData;
 
-pub struct OffloadedMSMGadget<E, ConstraintF, FVar, G1Var, Circuit>
+pub struct OffloadedMSMGadget<ConstraintF, FVar, G, GVar, Circuit>
 where
-    E: Pairing<ScalarField = ConstraintF>,
-    Circuit: OffloadedDataCircuit<E>,
+    Circuit: OffloadedDataCircuit<G>,
     ConstraintF: PrimeField,
     FVar: FieldVar<ConstraintF, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
-    G1Var: CurveVar<E::G1, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
+    G: CurveGroup<ScalarField = ConstraintF>,
+    GVar: CurveVar<G, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
 {
-    _params: PhantomData<(E, ConstraintF, FVar, G1Var, Circuit)>,
+    _params: PhantomData<(ConstraintF, FVar, G, GVar, Circuit)>,
 }
 
-impl<E, ConstraintF, FVar, G1Var, Circuit> OffloadedMSMGadget<E, ConstraintF, FVar, G1Var, Circuit>
+impl<ConstraintF, FVar, G, GVar, Circuit> OffloadedMSMGadget<ConstraintF, FVar, G, GVar, Circuit>
 where
-    E: Pairing<ScalarField = ConstraintF>,
-    Circuit: OffloadedDataCircuit<E>,
+    Circuit: OffloadedDataCircuit<G>,
     ConstraintF: PrimeField,
     FVar: FieldVar<ConstraintF, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
-    G1Var: CurveVar<E::G1, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
+    G: CurveGroup<ScalarField = ConstraintF>,
+    GVar: CurveVar<G, ConstraintF> + ToConstraintFieldGadget<ConstraintF>,
 {
     pub fn msm(
         circuit: &Circuit,
         cs: impl Into<Namespace<ConstraintF>>,
-        g1s: &[G1Var],
+        g1s: &[GVar],
         scalars: &[FVar],
-    ) -> Result<G1Var, SynthesisError> {
+    ) -> Result<GVar, SynthesisError> {
         let ns = cs.into();
         let cs = ns.cs();
 
@@ -53,7 +53,7 @@ where
         let (full_msm_value, msm_g1_value) = g1_values
             .zip(scalar_values)
             .map(|(g1s, scalars)| {
-                let r_g1 = E::G1::msm_unchecked(&g1s, &scalars);
+                let r_g1 = G::msm_unchecked(&g1s, &scalars);
                 let minus_one = -ConstraintF::one();
                 (
                     (
@@ -65,7 +65,7 @@ where
             })
             .unzip();
 
-        let msm_g1_var = G1Var::new_witness(ns!(cs, "msm_g1"), || {
+        let msm_g1_var = GVar::new_witness(ns!(cs, "msm_g1"), || {
             msm_g1_value.ok_or(SynthesisError::AssignmentMissing)
         })?;
 

@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::hyperkzg::{
     HyperKZG, HyperKZGCommitment, HyperKZGProof, HyperKZGProverKey, HyperKZGVerifierKey,
 };
+use crate::snark::OffloadedDataCircuit;
 use ark_crypto_primitives::sponge::constraints::{
     AbsorbGadget, CryptographicSpongeVar, SpongeWithGadget,
 };
@@ -264,6 +265,7 @@ mod tests {
         HyperKZG, HyperKZGProverKey, HyperKZGSRS, HyperKZGVerifierKey,
     };
     use crate::poly::dense_mlpoly::DensePolynomial;
+    use crate::snark::{DeferredFnsRef, OffloadedDataCircuit};
     use crate::utils::errors::ProofVerifyError;
     use crate::utils::transcript::ProofTranscript;
     use ark_bn254::Bn254;
@@ -277,19 +279,29 @@ mod tests {
     use ark_std::Zero;
     use rand_core::{CryptoRng, RngCore, SeedableRng};
 
-    #[derive(Debug)]
     struct HyperKZGVerifierCircuit<E, G1Var>
     where
         E: Pairing,
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
         _params: PhantomData<G1Var>,
+        deferred_fns_ref: DeferredFnsRef<E::G1>,
         pcs_pk_vk: Option<(HyperKZGProverKey<E>, HyperKZGVerifierKey<E>)>,
         commitment: Option<HyperKZGCommitment<E>>,
         point: Vec<Option<E::ScalarField>>,
         eval: Option<E::ScalarField>,
         pcs_proof: HyperKZGProof<E>,
         expected_result: Option<bool>,
+    }
+
+    impl<E, G1Var> OffloadedDataCircuit<E::G1> for HyperKZGVerifierCircuit<E, G1Var>
+    where
+        E: Pairing,
+        G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    {
+        fn deferred_fns_ref(&self) -> &DeferredFnsRef<E::G1> {
+            &self.deferred_fns_ref
+        }
     }
 
     impl<E, G1Var> HyperKZGVerifierCircuit<E, G1Var>
@@ -386,6 +398,7 @@ mod tests {
         let (cpk, cvk) = {
             let circuit = HyperKZGVerifierCircuit::<Bn254, G1Var> {
                 _params: PhantomData,
+                deferred_fns_ref: Default::default(),
                 pcs_pk_vk: None,
                 commitment: None,
                 point: vec![None; size],
@@ -414,6 +427,7 @@ mod tests {
                 // witness)
                 let verifier_circuit = HyperKZGVerifierCircuit::<Bn254, G1Var> {
                     _params: PhantomData,
+                    deferred_fns_ref: Default::default(),
                     pcs_pk_vk: Some((pcs_pk.clone(), pcs_vk.clone())),
                     commitment: Some(C.clone()),
                     point: point.into_iter().map(|x| Some(x)).collect(),
