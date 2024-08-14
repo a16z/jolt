@@ -20,6 +20,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace,
 use ark_std::borrow::Borrow;
 use ark_std::iterable::Iterable;
 use ark_std::marker::PhantomData;
+use ark_std::One;
 
 #[derive(Clone)]
 pub struct HyperKZGProofVar<E, G1Var>
@@ -152,10 +153,11 @@ where
     ) -> Result<Boolean<ConstraintF>, SynthesisError> {
         let ell = opening_point.len();
 
+        let HyperKZGProofVar { com, w, v } = proof;
+        let HyperKZGCommitmentVar { c } = commitment;
+
         transcript.absorb(
-            &proof
-                .com
-                .iter()
+            &com.iter()
                 .map(|com| ImplAbsorb::wrap(com))
                 .collect::<Vec<_>>(),
         )?;
@@ -168,10 +170,12 @@ where
 
         let u = vec![r.clone(), r.negate()?, r.clone() * &r];
 
-        let com = [vec![commitment.c.clone()], proof.com.clone()].concat();
+        let com = [vec![c.clone()], com.clone()].concat();
 
-        let v = &proof.v;
         if v.len() != 3 {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        if w.len() != 3 {
             return Err(SynthesisError::Unsatisfiable);
         }
         if ell != v[0].len() || ell != v[1].len() || ell != v[2].len() {
@@ -190,11 +194,65 @@ where
             )?;
         }
 
+        // kzg_verify_batch
+
+        transcript.absorb(&v.iter().flatten().cloned().collect::<Vec<_>>())?;
+        let q_powers = q_powers::<E, S>(transcript, ell)?;
+
+        transcript.absorb(
+            &proof
+                .w
+                .iter()
+                .map(|g| ImplAbsorb::wrap(g))
+                .collect::<Vec<_>>(),
+        )?;
+        let d = transcript
+            .squeeze_field_elements(1)?
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let q_power_multiplier = one + &d + &d.square()?;
+
+        let b_u_i = v
+            .iter()
+            .map(|v_i| {
+                let mut b_u_i = v_i[0].clone();
+                for i in 1..ell {
+                    b_u_i += &q_powers[i] * &v_i[i];
+                }
+                b_u_i
+            })
+            .collect::<Vec<_>>();
+
         dbg!();
 
         // TODO implement
         Ok(Boolean::TRUE)
     }
+}
+
+fn q_powers<E: Pairing, S: SpongeWithGadget<E::ScalarField>>(
+    transcript: &mut S::Var,
+    ell: usize,
+) -> Result<Vec<FpVar<E::ScalarField>>, SynthesisError> {
+    let q = transcript
+        .squeeze_field_elements(1)?
+        .into_iter()
+        .next()
+        .unwrap();
+
+    let q_powers = [vec![FpVar::Constant(E::ScalarField::one()), q.clone()], {
+        let mut q_power = q.clone();
+        (1..ell)
+            .map(|i| {
+                q_power *= &q;
+                q_power.clone()
+            })
+            .collect()
+    }]
+    .concat();
+    Ok(q_powers)
 }
 
 #[cfg(test)]
@@ -300,6 +358,8 @@ mod tests {
                     .ok_or(SynthesisError::AssignmentMissing)
             })?;
             r.enforce_equal(&r_input)?;
+
+            dbg!(cs.num_constraints());
 
             Ok(())
         }
