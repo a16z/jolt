@@ -17,6 +17,7 @@ where
     type CommitmentVar: AllocVar<CS::Commitment, ConstraintF> + Clone;
 
     fn verify(
+        &self,
         proof: &Self::ProofVar,
         vk: &Self::VerifyingKeyVar,
         transcript: &mut S::Var,

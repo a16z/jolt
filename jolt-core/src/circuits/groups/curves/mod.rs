@@ -81,7 +81,7 @@ mod tests {
             let d_k = [FpVar::one(), d, d_square];
             dbg!(cs.num_constraints());
 
-            let _ = OffloadedMSMGadget::new(self).msm(
+            let _ = OffloadedMSMGadget::new(&self).msm(
                 ns!(cs, "msm"),
                 w_g1.as_slice(),
                 d_k.as_slice(),

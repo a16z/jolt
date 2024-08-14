@@ -1,3 +1,4 @@
+use crate::circuits::offloaded::OffloadedMSMGadget;
 use crate::circuits::poly::commitment::commitment_scheme::CommitmentVerifierGadget;
 use crate::circuits::transcript::ImplAbsorb;
 use crate::field::JoltField;
@@ -123,35 +124,53 @@ where
     }
 }
 
-pub struct HyperKZGVerifierGadget<E, S, G1Var>
+pub struct HyperKZGVerifierGadget<'a, E, S, G1Var, Circuit>
 where
     E: Pairing<ScalarField: PrimeField + JoltField>,
     S: SpongeWithGadget<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    Circuit: OffloadedDataCircuit<E::G1>,
 {
     _params: PhantomData<(E, S, G1Var)>,
+    circuit: &'a Circuit,
 }
 
-impl<ConstraintF, E, S, G1Var> CommitmentVerifierGadget<ConstraintF, HyperKZG<E>, S>
-    for HyperKZGVerifierGadget<E, S, G1Var>
+impl<'a, E, S, G1Var, Circuit> HyperKZGVerifierGadget<'a, E, S, G1Var, Circuit>
 where
-    E: Pairing<ScalarField = ConstraintF>,
-    ConstraintF: PrimeField + JoltField,
-    S: SpongeWithGadget<ConstraintF>,
+    E: Pairing<ScalarField: PrimeField + JoltField>,
+    S: SpongeWithGadget<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    Circuit: OffloadedDataCircuit<E::G1>,
 {
-    type VerifyingKeyVar = HyperKZGVerifierKeyVar<E, ConstraintF>;
+    pub fn new(circuit: &'a Circuit) -> Self {
+        Self {
+            _params: PhantomData,
+            circuit,
+        }
+    }
+}
+
+impl<'a, E, S, G1Var, Circuit> CommitmentVerifierGadget<E::ScalarField, HyperKZG<E>, S>
+    for HyperKZGVerifierGadget<'a, E, S, G1Var, Circuit>
+where
+    E: Pairing<ScalarField: JoltField>,
+    S: SpongeWithGadget<E::ScalarField>,
+    G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    Circuit: OffloadedDataCircuit<E::G1>,
+{
+    type VerifyingKeyVar = HyperKZGVerifierKeyVar<E, E::ScalarField>;
     type ProofVar = HyperKZGProofVar<E, G1Var>;
     type CommitmentVar = HyperKZGCommitmentVar<G1Var>;
 
     fn verify(
+        &self,
         proof: &Self::ProofVar,
         vk: &Self::VerifyingKeyVar,
         transcript: &mut S::Var,
-        opening_point: &[FpVar<ConstraintF>],
-        opening: &FpVar<ConstraintF>,
+        opening_point: &[FpVar<E::ScalarField>],
+        opening: &FpVar<E::ScalarField>,
         commitment: &Self::CommitmentVar,
-    ) -> Result<Boolean<ConstraintF>, SynthesisError> {
+    ) -> Result<Boolean<E::ScalarField>, SynthesisError> {
         let ell = opening_point.len();
 
         let HyperKZGProofVar { com, w, v } = proof;
@@ -225,6 +244,9 @@ where
                 b_u_i
             })
             .collect::<Vec<_>>();
+
+        let msm_gadget =
+            OffloadedMSMGadget::<FpVar<E::ScalarField>, E::G1, G1Var, Circuit>::new(self.circuit);
 
         dbg!();
 
@@ -330,12 +352,16 @@ mod tests {
         ) -> Result<(), SynthesisError> {
             let vk_var =
                 HyperKZGVerifierKeyVar::<E, E::ScalarField>::new_witness(ns!(cs, "vk"), || {
-                    self.pcs_pk_vk.ok_or(SynthesisError::AssignmentMissing)
+                    self.pcs_pk_vk
+                        .clone()
+                        .ok_or(SynthesisError::AssignmentMissing)
                 })?;
 
             let commitment_var =
                 HyperKZGCommitmentVar::<G1Var>::new_witness(ns!(cs, "commitment"), || {
-                    self.commitment.ok_or(SynthesisError::AssignmentMissing)
+                    self.commitment
+                        .clone()
+                        .ok_or(SynthesisError::AssignmentMissing)
                 })?;
 
             let point_var = self
@@ -350,13 +376,21 @@ mod tests {
                 self.eval.ok_or(SynthesisError::AssignmentMissing)
             })?;
 
-            let proof_var =
-                HyperKZGProofVar::<E, G1Var>::new_witness(ns!(cs, "proof"), || Ok(self.pcs_proof))?;
+            let proof_var = HyperKZGProofVar::<E, G1Var>::new_witness(ns!(cs, "proof"), || {
+                Ok(self.pcs_proof.clone())
+            })?;
 
             let mut transcript_var =
                 MockSpongeVar::new(ns!(cs, "transcript").cs(), &(b"TestEval".as_slice()));
 
-            let r = HyperKZGVerifierGadget::<E, MockSponge<E::ScalarField>, G1Var>::verify(
+            let h_kzg = HyperKZGVerifierGadget::<
+                E,
+                MockSponge<E::ScalarField>,
+                G1Var,
+                HyperKZGVerifierCircuit<E, G1Var>,
+            >::new(&self);
+
+            let r = h_kzg.verify(
                 &proof_var,
                 &vk_var,
                 &mut transcript_var,

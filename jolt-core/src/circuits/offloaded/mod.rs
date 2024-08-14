@@ -12,7 +12,7 @@ use ark_relations::ns;
 use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use std::marker::PhantomData;
 
-pub struct OffloadedMSMGadget<FVar, G, GVar, Circuit>
+pub struct OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
 where
     Circuit: OffloadedDataCircuit<G>,
     FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
@@ -20,17 +20,17 @@ where
     GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
 {
     _params: PhantomData<(FVar, G, GVar)>,
-    circuit: Circuit,
+    circuit: &'a Circuit,
 }
 
-impl<FVar, G, GVar, Circuit> OffloadedMSMGadget<FVar, G, GVar, Circuit>
+impl<'a, FVar, G, GVar, Circuit> OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
 where
     Circuit: OffloadedDataCircuit<G>,
     FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
     G: CurveGroup,
     GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
 {
-    pub fn new(circuit: Circuit) -> Self {
+    pub fn new(circuit: &'a Circuit) -> Self {
         Self {
             _params: PhantomData,
             circuit,
@@ -38,7 +38,8 @@ where
     }
 }
 
-impl<FVar, G, GVar, Circuit> MSMGadget<FVar, G, GVar> for OffloadedMSMGadget<FVar, G, GVar, Circuit>
+impl<'a, FVar, G, GVar, Circuit> MSMGadget<FVar, G, GVar>
+    for OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
 where
     Circuit: OffloadedDataCircuit<G>,
     FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
