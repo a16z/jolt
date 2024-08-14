@@ -287,7 +287,10 @@ mod tests {
         HyperKZG, HyperKZGProverKey, HyperKZGSRS, HyperKZGVerifierKey,
     };
     use crate::poly::dense_mlpoly::DensePolynomial;
-    use crate::snark::{DeferredFnsRef, OffloadedDataCircuit};
+    use crate::snark::{
+        DeferredFnsRef, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
+        OffloadedSNARKVerifyingKey,
+    };
     use crate::utils::errors::ProofVerifyError;
     use crate::utils::transcript::ProofTranscript;
     use ark_bn254::Bn254;
@@ -295,8 +298,10 @@ mod tests {
     use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
     use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
     use ark_crypto_primitives::sponge::poseidon::{PoseidonConfig, PoseidonDefaultConfigField};
+    use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
     use ark_r1cs_std::ToConstraintFieldGadget;
     use ark_relations::ns;
+    use ark_serialize::SerializationError;
     use ark_std::rand::Rng;
     use ark_std::Zero;
     use rand_core::{CryptoRng, RngCore, SeedableRng};
@@ -411,9 +416,46 @@ mod tests {
         }
     }
 
+    struct HyperKZGVerifier<E, S, G1Var>
+    where
+        E: Pairing,
+        S: SNARK<E::ScalarField>,
+        G1Var: CurveVar<E::G1, E::ScalarField>,
+    {
+        _params: PhantomData<(E, S, G1Var)>,
+    }
+
+    impl<E, P, S, G1Var> OffloadedSNARK<E, P, S, G1Var> for HyperKZGVerifier<E, S, G1Var>
+    where
+        E: Pairing<G1Affine = Affine<P>, BaseField = P::BaseField, ScalarField = P::ScalarField>,
+        P: SWCurveConfig<BaseField: PrimeField, ScalarField: JoltField>,
+        S: SNARK<E::ScalarField>,
+        G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    {
+        type Circuit = HyperKZGVerifierCircuit<E, G1Var>;
+
+        fn offloaded_setup(
+            snark_vk: S::ProcessedVerifyingKey,
+        ) -> Result<OffloadedSNARKVerifyingKey<E, S>, OffloadedSNARKError<S::Error>> {
+            Ok(OffloadedSNARKVerifyingKey {
+                snark_pvk: snark_vk,
+                delayed_pairings: vec![],
+            })
+        }
+
+        fn g2_elements(
+            vk: &OffloadedSNARKVerifyingKey<E, S>,
+            public_input: &[E::ScalarField],
+            proof: &S::Proof,
+        ) -> Result<Vec<Vec<E::G2>>, SerializationError> {
+            Ok(vec![])
+        }
+    }
+
     #[test]
     fn test_hyperkzg_eval() {
         type Groth16 = ark_groth16::Groth16<Bn254>;
+        type VerifierSNARK = HyperKZGVerifier<Bn254, Groth16, G1Var>;
 
         // Test with poly(X1, X2) = 1 + X1 + X2 + X1*X2
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
@@ -441,9 +483,8 @@ mod tests {
                 expected_result: None,
             };
 
-            Groth16::setup(circuit, &mut rng).unwrap()
+            VerifierSNARK::setup(circuit, &mut rng).unwrap()
         };
-        let pvk = Groth16::process_vk(&cvk).unwrap();
 
         let C = HyperKZG::commit(&pcs_pk, &poly).unwrap();
 
@@ -477,10 +518,10 @@ mod tests {
                 println!("Verifying in-circuit...");
 
                 // Create a groth16 proof with our parameters.
-                let proof = Groth16::prove(&cpk, verifier_circuit, &mut rng)
+                let proof = VerifierSNARK::prove(&cpk, verifier_circuit, &mut rng)
                     .map_err(|e| ProofVerifyError::InternalError)?;
 
-                let result = Groth16::verify_with_processed_vk(&pvk, &instance, &proof);
+                let result = VerifierSNARK::verify_with_processed_vk(&cvk, &instance, &proof);
                 match result {
                     Ok(true) => Ok(()),
                     Ok(false) => Err(ProofVerifyError::InternalError),
