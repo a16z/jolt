@@ -108,6 +108,7 @@ where
                         f_input.enforce_equal(f)?;
                     }
                 }
+                dbg!(cs.num_constraints());
 
                 // write msm_g1 to public_input
                 {
@@ -119,6 +120,7 @@ where
                     }
                 }
                 dbg!(cs.num_constraints());
+                dbg!(cs.num_instance_variables());
 
                 Ok(full_msm_value)
             })

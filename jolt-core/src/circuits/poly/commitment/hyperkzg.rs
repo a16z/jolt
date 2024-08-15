@@ -1,4 +1,4 @@
-use crate::circuits::offloaded::OffloadedMSMGadget;
+use crate::circuits::offloaded::{MSMGadget, OffloadedMSMGadget};
 use crate::circuits::poly::commitment::commitment_scheme::CommitmentVerifierGadget;
 use crate::circuits::transcript::ImplAbsorb;
 use crate::field::JoltField;
@@ -28,7 +28,6 @@ use ark_std::One;
 pub struct HyperKZGProofVar<E, G1Var>
 where
     E: Pairing,
-    G1Var: CurveVar<E::G1, E::ScalarField>,
 {
     pub com: Vec<G1Var>,
     pub w: Vec<G1Var>,
@@ -97,29 +96,26 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct HyperKZGVerifierKeyVar<E, ConstraintF>
-where
-    E: Pairing,
-    ConstraintF: PrimeField,
-{
-    _params: PhantomData<(E, ConstraintF)>,
-    // TODO fill in
+pub struct HyperKZGVerifierKeyVar<G1Var> {
+    pub g1: G1Var,
+    // pub g2: G2Var,
+    // pub beta_g2: G2Var,
 }
 
-impl<E, ConstraintF> AllocVar<(HyperKZGProverKey<E>, HyperKZGVerifierKey<E>), ConstraintF>
-    for HyperKZGVerifierKeyVar<E, ConstraintF>
+impl<E, G1Var> AllocVar<(HyperKZGProverKey<E>, HyperKZGVerifierKey<E>), E::ScalarField>
+    for HyperKZGVerifierKeyVar<G1Var>
 where
     E: Pairing,
-    ConstraintF: PrimeField,
+    G1Var: CurveVar<E::G1, E::ScalarField>,
 {
     fn new_variable<T: Borrow<(HyperKZGProverKey<E>, HyperKZGVerifierKey<E>)>>(
-        cs: impl Into<Namespace<ConstraintF>>,
+        cs: impl Into<Namespace<E::ScalarField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
         // TODO implement
         Ok(Self {
-            _params: PhantomData,
+            g1: G1Var::new_variable(cs, || Ok(f()?.borrow().1.kzg_vk.g1), mode)?,
         })
     }
 }
@@ -150,15 +146,16 @@ where
     }
 }
 
-impl<'a, E, S, G1Var, Circuit> CommitmentVerifierGadget<E::ScalarField, HyperKZG<E>, S>
+impl<'a, E, S, F, G1Var, Circuit> CommitmentVerifierGadget<E::ScalarField, HyperKZG<E>, S>
     for HyperKZGVerifierGadget<'a, E, S, G1Var, Circuit>
 where
-    E: Pairing<ScalarField: JoltField>,
-    S: SpongeWithGadget<E::ScalarField>,
-    G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    F: PrimeField + JoltField,
+    E: Pairing<ScalarField = F>,
+    S: SpongeWithGadget<F>,
+    G1Var: CurveVar<E::G1, F> + ToConstraintFieldGadget<F>,
     Circuit: OffloadedDataCircuit<E::G1>,
 {
-    type VerifyingKeyVar = HyperKZGVerifierKeyVar<E, E::ScalarField>;
+    type VerifyingKeyVar = HyperKZGVerifierKeyVar<G1Var>;
     type ProofVar = HyperKZGProofVar<E, G1Var>;
     type CommitmentVar = HyperKZGCommitmentVar<G1Var>;
 
@@ -167,14 +164,16 @@ where
         proof: &Self::ProofVar,
         vk: &Self::VerifyingKeyVar,
         transcript: &mut S::Var,
-        opening_point: &[FpVar<E::ScalarField>],
-        opening: &FpVar<E::ScalarField>,
+        opening_point: &[FpVar<F>],
+        opening: &FpVar<F>,
         commitment: &Self::CommitmentVar,
-    ) -> Result<Boolean<E::ScalarField>, SynthesisError> {
+    ) -> Result<Boolean<F>, SynthesisError> {
         let ell = opening_point.len();
+        assert!(ell >= 2);
 
         let HyperKZGProofVar { com, w, v } = proof;
         let HyperKZGCommitmentVar { c } = commitment;
+        let HyperKZGVerifierKeyVar { g1 } = vk;
 
         transcript.absorb(
             &com.iter()
@@ -198,15 +197,15 @@ where
         if w.len() != 3 {
             return Err(SynthesisError::Unsatisfiable);
         }
-        if ell != v[0].len() || ell != v[1].len() || ell != v[2].len() {
+        if ell != v[0].len() || ell != v[1].len() || ell != v[2].len() || ell != com.len() {
             return Err(SynthesisError::Unsatisfiable);
         }
 
         let x = opening_point;
         let y = [v[2].clone(), vec![opening.clone()]].concat();
 
-        let one = FpVar::Constant(E::ScalarField::one());
-        let two = FpVar::Constant(E::ScalarField::from(2u128));
+        let one = FpVar::one();
+        let two = FpVar::Constant(F::from(2u128));
         for i in 0..ell {
             (&two * &r * &y[i + 1]).enforce_equal(
                 &(&r * (&one - &x[ell - i - 1]) * (&v[0][i] + &v[1][i])
@@ -232,9 +231,14 @@ where
             .next()
             .unwrap();
 
-        let q_power_multiplier = one + &d + &d.square()?;
+        let d_square = d.square()?;
+        let q_power_multiplier = one + &d + &d_square;
+        let q_powers_multiplied = q_powers
+            .iter()
+            .map(|q_i| q_i * &q_power_multiplier)
+            .collect::<Vec<_>>();
 
-        let b_u_i = v
+        let b_u = v
             .iter()
             .map(|v_i| {
                 let mut b_u_i = v_i[0].clone();
@@ -245,9 +249,29 @@ where
             })
             .collect::<Vec<_>>();
 
-        let msm_gadget =
-            OffloadedMSMGadget::<FpVar<E::ScalarField>, E::G1, G1Var, Circuit>::new(self.circuit);
+        let msm_gadget = OffloadedMSMGadget::<FpVar<F>, E::G1, G1Var, Circuit>::new(self.circuit);
 
+        let g1s = &[com.as_slice(), w.as_slice(), &[g1.clone()]].concat();
+        let scalars = &[
+            q_powers_multiplied.as_slice(),
+            &[
+                u[0].clone(),
+                &u[1] * &d,
+                &u[2] * &d_square,
+                (&b_u[0] + &d * &b_u[1] + &d_square * &b_u[2]).negate()?,
+            ],
+        ]
+        .concat();
+        debug_assert_eq!(g1s.len(), scalars.len());
+
+        let l_g1 = msm_gadget.msm(ns!(transcript.cs(), "l_g1"), g1s, scalars)?;
+        dbg!();
+
+        let g1s = w.as_slice();
+        let scalars = &[FpVar::one(), d, d_square];
+        debug_assert_eq!(g1s.len(), scalars.len());
+
+        let r_g1 = msm_gadget.msm(ns!(transcript.cs(), "r_g1"), g1s, scalars)?;
         dbg!();
 
         // TODO implement
@@ -267,7 +291,7 @@ fn q_powers<E: Pairing, S: SpongeWithGadget<E::ScalarField>>(
 
     let q_powers = [vec![FpVar::Constant(E::ScalarField::one()), q.clone()], {
         let mut q_power = q.clone();
-        (1..ell)
+        (2..ell)
             .map(|i| {
                 q_power *= &q;
                 q_power.clone()
@@ -355,12 +379,11 @@ mod tests {
             self,
             cs: ConstraintSystemRef<E::ScalarField>,
         ) -> Result<(), SynthesisError> {
-            let vk_var =
-                HyperKZGVerifierKeyVar::<E, E::ScalarField>::new_witness(ns!(cs, "vk"), || {
-                    self.pcs_pk_vk
-                        .clone()
-                        .ok_or(SynthesisError::AssignmentMissing)
-                })?;
+            let vk_var = HyperKZGVerifierKeyVar::<G1Var>::new_witness(ns!(cs, "vk"), || {
+                self.pcs_pk_vk
+                    .clone()
+                    .ok_or(SynthesisError::AssignmentMissing)
+            })?;
 
             let commitment_var =
                 HyperKZGCommitmentVar::<G1Var>::new_witness(ns!(cs, "commitment"), || {

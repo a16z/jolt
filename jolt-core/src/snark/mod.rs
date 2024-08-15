@@ -114,7 +114,10 @@ fn run_deferred<E: Pairing>(
     let msms = deferred_fns
         .into_iter()
         .map(|f| f())
-        .collect::<Result<Option<Vec<_>>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // can't collect into `Option<Vec<_>>` above: it short-circuits on the first None
+    let msms = msms.into_iter().collect::<Option<Vec<_>>>();
 
     Ok(msms.map(|msms| OffloadedData { msms }))
 }
