@@ -19,12 +19,12 @@ impl<F: JoltField> EqSubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for EqSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // Materialize table entries in order where (x | y) ranges 0..M
+        // Below is the optimized loop for the condition:
+        // table[x | y] = (x == y)
         let mut entries: Vec<F> = vec![F::zero(); M];
         let bits_per_operand = (log2(M) / 2) as usize;
 
-        // Materialize table entries in order where (x | y) ranges 0..M
-        // Below is the optimized loop for the condition:
-        // table[x | y] = x == y
         for idx in 0..(1 << bits_per_operand) {
             let concat_idx = idx | (idx << bits_per_operand);
             entries[concat_idx] = F::one();

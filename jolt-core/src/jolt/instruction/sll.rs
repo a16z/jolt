@@ -32,6 +32,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         C: usize,
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
+        // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
+        // which only happens at runtime).
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
             Box::new(SllSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SllSubtable::<F, 1, WORD_SIZE>::new()),

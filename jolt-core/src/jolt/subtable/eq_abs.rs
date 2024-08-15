@@ -19,13 +19,13 @@ impl<F: JoltField> EqAbsSubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for EqAbsSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        let mut entries: Vec<F> = vec![F::zero(); M];
-        let bits_per_operand = (log2(M) / 2) as usize;
-
         // Materialize table entries in order where (x | y) ranges 0..M
         // Below is the optimized loop for the condition:
         // lower_bits_mask = 0b01111...11
         // table[x | y] == (x & lower_bits_mask) == (y & lower_bits_mask)
+        let mut entries: Vec<F> = vec![F::zero(); M];
+        let bits_per_operand = (log2(M) / 2) as usize;
+
         for idx in 0..(1 << (bits_per_operand)) {
             // we set the bit in the table where x == y
             // e.g. 01010011 | 01010011 = 1
@@ -41,7 +41,7 @@ impl<F: JoltField> LassoSubtable<F> for EqAbsSubtable<F> {
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // \prod_i x_i * y_i + (1 - x_i) * (1 - y_i)
+        // \prod_i x_i * y_i + (1 - x_i) * (1 - y_i) for i > 0
         debug_assert!(point.len() % 2 == 0);
         let b = point.len() / 2;
         let (x, y) = point.split_at(b);

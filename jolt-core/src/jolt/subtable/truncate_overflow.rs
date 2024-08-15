@@ -8,7 +8,7 @@ use super::LassoSubtable;
 
 /// Example usage in ADD:
 /// Input z is of 65 bits, which is split into 20-bit chunks.
-/// This subtable is used to remove the overflow bit from the 4th chunk.
+/// This subtable is used to remove the overflow bits (bits 60 to 64) from the 4th chunk.
 #[derive(Default)]
 pub struct TruncateOverflowSubtable<F: JoltField, const WORD_SIZE: usize> {
     _field: PhantomData<F>,
@@ -26,6 +26,8 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
     for TruncateOverflowSubtable<F, WORD_SIZE>
 {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x] = x & (0b00..011..1), where the number of 0s is `cutoff`.
+        // Truncates overflow bits beyond nearest multiple of `log2(M)`
         let cutoff = WORD_SIZE % log2(M) as usize;
 
         let mut entries: Vec<F> = Vec::with_capacity(M);
@@ -38,6 +40,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
+        // \sum_{i = 0}^{cutoff - 1} 2^i * x_{b - i - 1}
         let log_M = point.len();
         let cutoff = WORD_SIZE % log_M;
 

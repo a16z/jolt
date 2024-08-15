@@ -21,6 +21,9 @@ impl<F: JoltField, const WORD_SIZE: usize> SraSignSubtable<F, WORD_SIZE> {
 
 impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<F, WORD_SIZE> {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x | y] = (x_sign == 0) ? 0 : 0b11..100..0,
+        // where x_sign = (x >> ((WORD_SIZE - 1) & (log2(M) / 2))) & 1,
+        // `0b11..100..0` has `WORD_SIZE` bits and `y % WORD_SIZE` ones
         let mut entries: Vec<F> = Vec::with_capacity(M);
 
         let operand_chunk_width: usize = (log2(M) / 2) as usize;
@@ -31,19 +34,24 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
         for idx in 0..M {
             let (x, y) = split_bits(idx, operand_chunk_width);
 
-            let x_sign = F::from_u64(((x >> sign_bit_index) & 1) as u64).unwrap();
+            let x_sign = (x >> sign_bit_index) & 1;
 
-            let row = (0..(y % WORD_SIZE) as u32).fold(F::zero(), |acc, i: u32| {
-                acc + F::from_u64(1_u64 << (WORD_SIZE as u32 - 1 - i)).unwrap() * x_sign
-            });
-
-            entries.push(row);
+            if x_sign == 0 {
+                entries.push(F::zero());
+            } else {
+                let row =
+                    (0..(y % WORD_SIZE)).fold(0 as u64, |acc, i| acc + (1 << (WORD_SIZE - 1 - i)));
+                entries.push(F::from_u64(row).unwrap());
+            }
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // first half is chunk X_i
+        // \sum_{k = 0}^{WORD_SIZE - 1} eq(y, bin(k)) * x_sign * \prod_{i = 0}^{k-1} 2^{WORD_SIZE - 1 - k},
+        // where x_sign = x_{b - 1 - (WORD_SIZE - 1) % b}
+
+        // first half is chunk X_last
         // and second half is always chunk Y_0
         debug_assert!(point.len() % 2 == 0);
 
@@ -59,12 +67,14 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
 
         // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
         for k in 0..std::cmp::min(WORD_SIZE, 1 << b) {
+            // bit-decompose k
             let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
                 .map(|bit| if *bit { F::one() } else { F::zero() })
                 .collect::<Vec<F>>(); // big-endian
 
+            // Compute eq(y, bin(k))
             let mut eq_term = F::one();
             // again, min with b is included when subtables of bit-length less than 6 are used
             for i in 0..std::cmp::min(log_WORD_SIZE, b) {

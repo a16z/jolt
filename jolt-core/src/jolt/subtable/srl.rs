@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use ark_std::log2;
+use std::cmp::min;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
@@ -25,6 +26,8 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
     for SrlSubtable<F, CHUNK_INDEX, WORD_SIZE>
 {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x | y] = (x << suffix_length) >> (y % WORD_SIZE)
+        // where `suffix_length = operand_chunk_width * CHUNK_INDEX`
         let mut entries: Vec<F> = Vec::with_capacity(M);
 
         let operand_chunk_width: usize = (log2(M) / 2) as usize;
@@ -33,20 +36,23 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
         for idx in 0..M {
             let (x, y) = split_bits(idx, operand_chunk_width);
 
-            let row = x
+            let row = (x as u64)
                 .checked_shl(suffix_length as u32)
                 .unwrap_or(0)
                 .checked_shr((y % WORD_SIZE) as u32)
                 .unwrap_or(0);
 
-            entries.push(F::from_u64(row as u64).unwrap());
+            entries.push(F::from_u64(row).unwrap());
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // first half is chunk X_i
-        // and second half is always chunk Y_0
+        // \sum_{k = 0}^{2^b - 1} eq(y, bin(k)) * (\sum_{j = m}^{chunk_length - 1} 2^{b * CHUNK_INDEX + j - k} * x_{b - j - 1}),
+        // where m = max(0, min(b, k - b * CHUNK_INDEX))
+        // and chunk_length = min(b, WORD_SIZE - b * CHUNK_INDEX)
+
+        // We assume the first half is chunk(X_i) and the second half is always chunk(Y_0)
         debug_assert!(point.len() % 2 == 0);
 
         let log_WORD_SIZE = log2(WORD_SIZE) as usize;
@@ -57,32 +63,30 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
         let mut result = F::zero();
 
         // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
-        for k in 0..std::cmp::min(WORD_SIZE, 1 << b) {
+        for k in 0..min(WORD_SIZE, 1 << b) {
+            // bit-decompose k
             let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
                 .map(|bit| if *bit { F::one() } else { F::zero() })
                 .collect::<Vec<F>>(); // big-endian
 
+            // Compute eq(y, bin(k))
             let mut eq_term = F::one();
             // again, min with b is included when subtables of bit-length less than 6 are used
-            for i in 0..std::cmp::min(log_WORD_SIZE, b) {
+            for i in 0..min(log_WORD_SIZE, b) {
                 eq_term *= k_bits[log_WORD_SIZE - 1 - i] * y[b - 1 - i]
                     + (F::one() - k_bits[log_WORD_SIZE - 1 - i]) * (F::one() - y[b - 1 - i]);
             }
 
             let m = if k > b * CHUNK_INDEX {
-                std::cmp::min(b, k - b * CHUNK_INDEX)
+                min(b, k - b * CHUNK_INDEX)
             } else {
                 0
             };
 
             // the most significant chunk might be shorter
-            let chunk_length = if (b * (CHUNK_INDEX + 1)) > WORD_SIZE {
-                b - ((b * (CHUNK_INDEX + 1)) - WORD_SIZE)
-            } else {
-                b
-            };
+            let chunk_length = min(b, WORD_SIZE - b * CHUNK_INDEX);
 
             let shift_x_by_k = (m..chunk_length)
                 .map(|j| F::from_u64(1_u64 << (b * CHUNK_INDEX + j - k)).unwrap() * x[b - 1 - j])
