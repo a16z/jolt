@@ -97,7 +97,6 @@ where
                     let scalar_input = FVar::new_input(ns!(cs, "scalar"), || x.value())?;
                     scalar_input.enforce_equal(&x)?;
                 }
-                dbg!(cs.num_constraints());
 
                 // write g1s to public_input
                 for g1 in g1s {
@@ -108,7 +107,6 @@ where
                         f_input.enforce_equal(f)?;
                     }
                 }
-                dbg!(cs.num_constraints());
 
                 // write msm_g1 to public_input
                 {

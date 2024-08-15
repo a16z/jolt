@@ -262,10 +262,8 @@ where
             ],
         ]
         .concat();
-        debug_assert_eq!(g1s.len(), scalars.len());
 
         let l_g1 = msm_gadget.msm(ns!(transcript.cs(), "l_g1"), g1s, scalars)?;
-        dbg!();
 
         let g1s = w.as_slice();
         let scalars = &[FpVar::one(), d, d_square];
