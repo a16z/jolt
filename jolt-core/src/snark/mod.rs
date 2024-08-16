@@ -39,6 +39,7 @@ where
 {
     pub snark_pvk: S::ProcessedVerifyingKey,
     pub delayed_pairings: Vec<OffloadedPairingDef>,
+    pub g2_elements: Vec<Vec<E::G2Affine>>,
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -65,7 +66,7 @@ pub type DeferredFn<G: CurveGroup> =
 
 pub type DeferredFnsRef<G: CurveGroup> = Rc<RefCell<Vec<Box<DeferredFn<G>>>>>;
 
-pub trait OffloadedDataCircuit<G>
+pub trait OffloadedDataCircuit<G>: Clone
 where
     G: CurveGroup,
 {
@@ -163,22 +164,24 @@ where
         Self::circuit_specific_setup(circuit, rng)
     }
 
-    fn circuit_specific_setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore + CryptoRng>(
-        circuit: C,
+    fn circuit_specific_setup<R: RngCore + CryptoRng>(
+        circuit: WrappedCircuit<E, Self::Circuit>,
         rng: &mut R,
     ) -> Result<(S::ProvingKey, OffloadedSNARKVerifyingKey<E, S>), OffloadedSNARKError<S::Error>>
     {
+        let offloaded_circuit = circuit.circuit.clone();
         let (pk, snark_vk) = S::circuit_specific_setup(circuit, rng)
             .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
 
         let snark_pvk = S::process_vk(&snark_vk).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
 
-        let vk = Self::offloaded_setup(snark_pvk)?;
+        let vk = Self::offloaded_setup(offloaded_circuit, snark_pvk)?;
 
         Ok((pk, vk))
     }
 
     fn offloaded_setup(
+        circuit: Self::Circuit,
         snark_vk: S::ProcessedVerifyingKey,
     ) -> Result<OffloadedSNARKVerifyingKey<E, S>, OffloadedSNARKError<S::Error>>;
 
@@ -288,7 +291,7 @@ where
             .collect::<Result<Vec<Vec<E::G1>>, SerializationError>>();
         Ok(g1_vectors?
             .into_iter()
-            .zip(Self::g2_elements(vk, public_input, proof)?)
+            .zip(Self::g2_elements(vk, public_input, proof))
             .collect())
     }
 
@@ -296,7 +299,12 @@ where
         vk: &OffloadedSNARKVerifyingKey<E, S>,
         public_input: &[E::ScalarField],
         proof: &S::Proof,
-    ) -> Result<Vec<Vec<E::G2>>, SerializationError>;
+    ) -> Vec<Vec<E::G2>> {
+        vk.g2_elements
+            .iter()
+            .map(|g2s| g2s.iter().map(|g2| g2.into_group()).collect::<Vec<_>>())
+            .collect::<Vec<Vec<E::G2>>>()
+    }
 }
 
 fn g1_affine_size_in_scalar_field_elements<E: Pairing>() -> usize {

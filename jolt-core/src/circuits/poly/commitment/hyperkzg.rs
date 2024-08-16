@@ -308,6 +308,7 @@ mod tests {
     use crate::poly::commitment::hyperkzg::{
         HyperKZG, HyperKZGProverKey, HyperKZGSRS, HyperKZGVerifierKey,
     };
+    use crate::poly::commitment::kzg::KZGVerifierKey;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::snark::{
         DeferredFnsRef, OffloadedDataCircuit, OffloadedSNARK, OffloadedSNARKError,
@@ -328,6 +329,7 @@ mod tests {
     use ark_std::Zero;
     use rand_core::{CryptoRng, RngCore, SeedableRng};
 
+    #[derive(Clone)]
     struct HyperKZGVerifierCircuit<E, G1Var>
     where
         E: Pairing,
@@ -335,7 +337,7 @@ mod tests {
     {
         _params: PhantomData<G1Var>,
         deferred_fns_ref: DeferredFnsRef<E::G1>,
-        pcs_pk_vk: Option<(HyperKZGProverKey<E>, HyperKZGVerifierKey<E>)>,
+        pcs_pk_vk: (HyperKZGProverKey<E>, HyperKZGVerifierKey<E>),
         commitment: Option<HyperKZGCommitment<E>>,
         point: Vec<Option<E::ScalarField>>,
         eval: Option<E::ScalarField>,
@@ -378,9 +380,7 @@ mod tests {
             cs: ConstraintSystemRef<E::ScalarField>,
         ) -> Result<(), SynthesisError> {
             let vk_var = HyperKZGVerifierKeyVar::<G1Var>::new_witness(ns!(cs, "vk"), || {
-                self.pcs_pk_vk
-                    .clone()
-                    .ok_or(SynthesisError::AssignmentMissing)
+                Ok(self.pcs_pk_vk.clone())
             })?;
 
             let commitment_var =
@@ -456,20 +456,16 @@ mod tests {
         type Circuit = HyperKZGVerifierCircuit<E, G1Var>;
 
         fn offloaded_setup(
+            circuit: Self::Circuit,
             snark_vk: S::ProcessedVerifyingKey,
         ) -> Result<OffloadedSNARKVerifyingKey<E, S>, OffloadedSNARKError<S::Error>> {
+            let KZGVerifierKey { g1, g2, beta_g2 } = circuit.pcs_pk_vk.1.kzg_vk;
+
             Ok(OffloadedSNARKVerifyingKey {
                 snark_pvk: snark_vk,
                 delayed_pairings: vec![],
+                g2_elements: vec![vec![g2, beta_g2]],
             })
-        }
-
-        fn g2_elements(
-            vk: &OffloadedSNARKVerifyingKey<E, S>,
-            public_input: &[E::ScalarField],
-            proof: &S::Proof,
-        ) -> Result<Vec<Vec<E::G2>>, SerializationError> {
-            Ok(vec![])
         }
     }
 
@@ -496,7 +492,7 @@ mod tests {
             let circuit = HyperKZGVerifierCircuit::<Bn254, G1Var> {
                 _params: PhantomData,
                 deferred_fns_ref: Default::default(),
-                pcs_pk_vk: None,
+                pcs_pk_vk: (pcs_pk.clone(), pcs_vk.clone()),
                 commitment: None,
                 point: vec![None; size],
                 eval: None,
@@ -524,7 +520,7 @@ mod tests {
                 let verifier_circuit = HyperKZGVerifierCircuit::<Bn254, G1Var> {
                     _params: PhantomData,
                     deferred_fns_ref: Default::default(),
-                    pcs_pk_vk: Some((pcs_pk.clone(), pcs_vk.clone())),
+                    pcs_pk_vk: (pcs_pk.clone(), pcs_vk.clone()),
                     commitment: Some(C.clone()),
                     point: point.into_iter().map(|x| Some(x)).collect(),
                     eval: Some(eval),

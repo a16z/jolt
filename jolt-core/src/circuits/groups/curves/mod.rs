@@ -37,6 +37,7 @@ mod tests {
     use itertools::Itertools;
     use rand_core::{CryptoRng, RngCore, SeedableRng};
 
+    #[derive(Clone)]
     struct DelayedOpsCircuit<E, G1Var>
     where
         E: Pairing,
@@ -121,21 +122,14 @@ mod tests {
         type Circuit = DelayedOpsCircuit<E, G1Var>;
 
         fn offloaded_setup(
+            circuit: Self::Circuit,
             snark_vk: S::ProcessedVerifyingKey,
         ) -> Result<OffloadedSNARKVerifyingKey<E, S>, OffloadedSNARKError<S::Error>> {
             Ok(OffloadedSNARKVerifyingKey {
                 snark_pvk: snark_vk,
                 delayed_pairings: vec![], // TODO none yet
+                g2_elements: vec![],
             })
-        }
-
-        fn g2_elements(
-            vk: &OffloadedSNARKVerifyingKey<E, S>,
-            public_input: &[E::ScalarField],
-            proof: &S::Proof,
-        ) -> Result<Vec<Vec<E::G2>>, SerializationError> {
-            // TODO get the G2 elements from the verifying key
-            Ok(vec![])
         }
     }
 
