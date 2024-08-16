@@ -96,12 +96,12 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         {
             let total_evals = 1 << num_rounds;
             let mut sum = F::zero();
-            println!("z hyb {:?}", F::from_u64(2).unwrap() * polys[1][4]);
+            // println!("z hyb {:?}", F::from_u64(2).unwrap() * polys[1][4]);
             for i in 0..total_evals {
                 // let index = index_to_field_bitvector(i, num_rounds);
                 let params: Vec<F> = polys.iter().map(|poly| poly[i]).collect();
                 sum += comb_func(&params);
-                println!("sum += comb({params:?})                 sum {sum:?}");
+                // println!("sum += comb({params:?})                 sum {sum:?}");
             }
             assert_eq!(&sum, _claim, "Claim is wrong");
         }

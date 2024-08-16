@@ -202,9 +202,9 @@ impl<F: JoltField> UniformSpartanKey<F> {
                     evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
                 }
 
-                println!("Constants");
+                // println!("Constants");
                 for (row, val) in constraints.consts.iter() {
-                    println!("eq_rx_constr[constraint_row] = {:?}, constraint_row = {:?} val = {val:?}", eq_rx_constr[*row], row);
+                    // println!("eq_rx_constr[constraint_row] = {:?}, constraint_row = {:?} val = {val:?}", eq_rx_constr[*row], row);
                     evals[constant_column] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
                 }
 
@@ -225,7 +225,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // TODO(sragss): Test ignoring the RLC, trying each independently.
         // sm_a_r // correct (0)
-        println!("b[const] = {:?} [{constant_column}]", sm_b_r[4]);
+        // println!("b[const] = {:?} [{constant_column}]", sm_b_r[4]);
         // sm_b_r // seems like constant column is wrong
         // sm_c_r // correct (0)
 
@@ -302,13 +302,19 @@ impl<F: JoltField> UniformSpartanKey<F> {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2());
 
+
+        let var_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
+        let var_and_const_bits = var_bits + 1;
+        let eq_consts = EqPolynomial::new(r[..var_and_const_bits].to_vec());
+        let eq_const = eq_consts.evaluate(&index_to_field_bitvector(1 << (var_and_const_bits - 1), var_and_const_bits));
+
         // Z can be computed in two halves, [Variables, (constant) 1, 0 , ...] indexed by the first bit.
         let r_const = r[0];
         let r_rest = &r[1..];
         assert_eq!(r_rest.len(), self.num_vars_total().log_2());
 
         // Don't need the last log2(num_steps) bits, they've been evaluated already.
-        let var_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
+        // let var_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
         let r_var = &r_rest[..var_bits];
 
         let r_var_eq = EqPolynomial::evals(r_var);
@@ -318,7 +324,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(F::one(), 0)]);
         let eval_const = const_poly.evaluate(r_rest);
 
-        (F::one() - r_const) * eval_variables + r_const * eval_const
+        let z = (F::one() - r_const) * eval_variables + r_const * eval_const;
+        z * (F::one() - eq_const) + eq_const
     }
 
     /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
@@ -337,8 +344,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let (r_row_constr, r_row_step) = r_row.split_at(constraint_rows_bits);
         let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1);
         assert_eq!(r_row_step.len(), r_col_step.len());
-        println!("r_constraint: {r_row_constr:?}");
-        println!("r_col_var: {r_col_var:?}");
+        // println!("r_constraint: {r_row_constr:?}");
+        // println!("r_col_var: {r_col_var:?}");
 
         // let eq_rx_ry_step = EqPolynomial::new(r_row_step.to_vec()).evaluate(r_col_step);
         let eq_rx_constr = EqPolynomial::evals(r_row_constr);
@@ -348,26 +355,26 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // The way to think this through is that the prover sides RLC evaluation leaves { y_const || y_var } bits free, this one binds those bits.
         let constant_column = index_to_field_bitvector(self.num_cols_total() / 2 / self.num_steps, uniform_cols_bits + 1);
         let col_eq_constant = EqPolynomial::new(r_col_var.to_vec()).evaluate(&constant_column);
-        println!("col_eq_constant: {col_eq_constant:?}");
+        // println!("col_eq_constant: {col_eq_constant:?}");
 
         let compute_uniform_matrix_mle = |constraints: &SparseConstraints<F>| -> F {
             let mut full_mle_evaluation: F = constraints
                 .vars
                 .iter()
                 .map(|(row, col, coeff)| {
-                    println!("eq_ry_var[col] =  {:?} col = {:?}", eq_ry_var[*col], col);
+                    // println!("eq_ry_var[col] =  {:?} col = {:?}", eq_ry_var[*col], col);
                     *coeff * eq_rx_constr[*row] * eq_ry_var[*col]
                 })
                 .sum::<F>();
                 // * eq_rx_ry_step;
-            println!("full_mle_evaluation pre-constants: {full_mle_evaluation:?}");
+            // println!("full_mle_evaluation pre-constants: {full_mle_evaluation:?}");
 
             full_mle_evaluation += constraints
                 .consts
                 .iter()
                 .map(|(constraint_row, constant_coeff)| {
-                    println!("constant_coeff: {constant_coeff:?}");
-                    println!("eq_rx_constr[constraint_row] = {:?}, constraint_row = {:?}", eq_rx_constr[*constraint_row], constraint_row);
+                    // println!("constant_coeff: {constant_coeff:?}");
+                    // println!("eq_rx_constr[constraint_row] = {:?}, constraint_row = {:?}", eq_rx_constr[*constraint_row], constraint_row);
                     *constant_coeff * eq_rx_constr[*constraint_row]
                 })
                 .sum::<F>()
