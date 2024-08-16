@@ -91,6 +91,32 @@ pub enum JoltIn {
     ChunksQ_2,
     ChunksQ_3,
 
+    LookupOutput,
+
+    ChunksX_0,
+    ChunksX_1,
+    ChunksX_2,
+    ChunksX_3,
+
+    ChunksY_0,
+    ChunksY_1,
+    ChunksY_2,
+    ChunksY_3,
+
+    // Should match rv_trace.to_circuit_flags()
+    OpFlags_IsPC,
+    OpFlags_IsImm,
+    OpFlags_IsLoad,
+    OpFlags_IsStore,
+    OpFlags_IsJmp,
+    OpFlags_IsBranch,
+    OpFlags_LookupOutToRd,
+    OpFlags_SignImm,
+    OpFlags_IsConcat,
+    OpFlags_IsVirtualInstruction,
+    OpFlags_IsAssert,
+    OpFlags_DoNotUpdatePC,
+
     // Instruction Flags
     // Should match JoltInstructionSet
     IF_Add,
@@ -122,32 +148,6 @@ pub enum JoltIn {
     IF_Virt_Assert_VALID_SIGNED_REMAINDER,
     IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
     IF_Virt_Assert_VALID_DIV0,
-
-    LookupOutput,
-
-    ChunksX_0,
-    ChunksX_1,
-    ChunksX_2,
-    ChunksX_3,
-
-    ChunksY_0,
-    ChunksY_1,
-    ChunksY_2,
-    ChunksY_3,
-
-    // Should match rv_trace.to_circuit_flags()
-    OpFlags_IsPC,
-    OpFlags_IsImm,
-    OpFlags_IsLoad,
-    OpFlags_IsStore,
-    OpFlags_IsJmp,
-    OpFlags_IsBranch,
-    OpFlags_LookupOutToRd,
-    OpFlags_SignImm,
-    OpFlags_IsConcat,
-    OpFlags_IsVirtualInstruction,
-    OpFlags_IsAssert,
-    OpFlags_DoNotUpdatePC,
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
 impl ConstraintInput for JoltIn {}

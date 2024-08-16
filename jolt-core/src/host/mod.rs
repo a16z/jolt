@@ -16,9 +16,8 @@ use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS},
+    rv_trace::JoltDevice,
 };
-use strum::EnumCount;
 pub use tracer::ELFInstruction;
 
 use crate::{
@@ -31,7 +30,6 @@ use crate::{
         },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
-    utils::thread::unsafe_allocate_zero_vec,
 };
 
 use self::analyze::ProgramSummary;

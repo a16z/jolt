@@ -1,15 +1,13 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::poly::opening_proof::{PolynomialOpening, PolynomialOpeningAccumulator};
-use crate::r1cs::builder::CombinedUniformBuilder;
-use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::r1cs::jolt_constraints::construct_jolt_constraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::log2;
+use bevy_reflect::prelude::*;
 use common::constants::RAM_START_ADDRESS;
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
@@ -17,7 +15,7 @@ use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
-        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction, JoltInstruction,
+        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
         VirtualInstructionSequence,
     },
     subtable::JoltSubtableSet,
@@ -27,9 +25,9 @@ use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
-use crate::r1cs::inputs::{R1CSCommitment, R1CSPolynomials, R1CSProof};
+use crate::r1cs::inputs::{R1CSPolynomials, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -112,6 +110,7 @@ where
     pub r1cs: R1CSProof<F, PCS>,
 }
 
+#[derive(Reflect)]
 pub struct JoltPolynomials<F, PCS>
 where
     F: JoltField,
@@ -124,7 +123,7 @@ where
     pub r1cs: R1CSPolynomials<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Reflect)]
 pub struct JoltCommitments<PCS: CommitmentScheme> {
     pub bytecode: BytecodeCommitment<PCS>,
     pub read_write_memory: MemoryCommitment<PCS>,
@@ -342,7 +341,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
-        circuit_flags: Vec<F>,
         preprocessing: JoltPreprocessing<F, PCS>,
     ) -> (
         JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
@@ -450,7 +448,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         };
 
         println!("{} openings accumulated", opening_accumulator.len());
-        opening_accumulator.reduce::<PCS>(&preprocessing.generators, &mut transcript);
+        opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
 
         drop_in_background_thread(jolt_polynomials);
 

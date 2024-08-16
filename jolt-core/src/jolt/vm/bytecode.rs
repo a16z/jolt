@@ -11,7 +11,7 @@ use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::opening_proof::{PolynomialOpening, PolynomialOpeningAccumulator};
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -896,7 +896,10 @@ mod tests {
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
-    use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
+    use common::{
+        constants::MEMORY_OPS_PER_INSTRUCTION,
+        rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
+    };
     use std::collections::HashSet;
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
@@ -910,6 +913,7 @@ mod tests {
             instruction_lookup: None,
             memory_ops: [MemoryOp::noop_read(); MEMORY_OPS_PER_INSTRUCTION],
             bytecode_row,
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
     }
 

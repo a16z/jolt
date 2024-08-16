@@ -345,6 +345,7 @@ mod test {
                 builder,
                 &key,
                 witness_segments,
+                todo!("opening accumulator"),
                 &mut prover_transcript,
             )
             .unwrap();

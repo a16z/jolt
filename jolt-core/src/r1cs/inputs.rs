@@ -24,7 +24,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
-use rayon::prelude::*;
 use strum::EnumCount;
 
 pub struct R1CSPolynomials<F: JoltField> {
@@ -89,6 +88,19 @@ impl<F: JoltField> R1CSPolynomials<F> {
     }
 }
 
+pub struct R1CSAuxVariables<F: JoltField> {
+    x: DensePolynomial<F>,
+    y: DensePolynomial<F>,
+    imm_signed: DensePolynomial<F>,
+    x_times_y: DensePolynomial<F>,
+    relevant_chunk_y: [DensePolynomial<F>; 4],
+    rd_nonzero_and_lookup_to_rd: DensePolynomial<F>,
+    rd_nonzero_and_jmp: DensePolynomial<F>,
+    next_pc_jump: DensePolynomial<F>,
+    should_branch: DensePolynomial<F>,
+    next_pc: DensePolynomial<F>,
+}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     pub key: UniformSpartanKey<F>,
@@ -141,7 +153,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         combined_commitments.extend(memory_trace_commitments.iter());
 
         combined_commitments.extend(instruction_lookup_indices_commitments.iter());
-        combined_commitments.extend(instruction_flag_commitments.iter());
         combined_commitments.push(
             jolt_commitments
                 .instruction_lookups
@@ -151,6 +162,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         );
 
         combined_commitments.extend(r1cs_commitments.iter());
+        combined_commitments.extend(instruction_flag_commitments.iter());
 
         combined_commitments
     }

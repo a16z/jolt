@@ -27,7 +27,7 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 ark-std = { version = "0.4.0" }
-binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field"}
+binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
 clap = { version = "4.3.10", features = ["derive"] }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
@@ -73,6 +73,7 @@ alloy-primitives = "0.7.6"
 alloy-rs = "0.2.1"
 alloy-sol-macro = "0.7.6"
 alloy-sol-types = "0.7.6"
+bevy_reflect = "0.14.1"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -101,7 +102,7 @@ default = [
 host = ["dep:reqwest", "dep:tokio"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-memory-stats = "1.0.0" 
+memory-stats = "1.0.0"
 tokio = { version = "1.38.0", optional = true, features = ["rt-multi-thread"] }
 
 

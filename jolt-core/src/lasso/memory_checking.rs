@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::poly::opening_proof::{PolynomialOpening, PolynomialOpeningAccumulator};
+use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;

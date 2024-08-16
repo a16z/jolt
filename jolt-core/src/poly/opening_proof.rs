@@ -57,8 +57,8 @@ impl<'a, F: JoltField> PolynomialOpeningAccumulator<'a, F> {
         self.openings.par_extend(iter);
     }
 
-    #[tracing::instrument(skip_all, name = "PolynomialOpeningAccumulator::reduce")]
-    pub fn reduce<PCS: CommitmentScheme<Field = F>>(
+    #[tracing::instrument(skip_all, name = "PolynomialOpeningAccumulator::reduce_and_prove")]
+    pub fn reduce_and_prove<PCS: CommitmentScheme<Field = F>>(
         &self,
         pcs_setup: &PCS::Setup,
         transcript: &mut ProofTranscript,
