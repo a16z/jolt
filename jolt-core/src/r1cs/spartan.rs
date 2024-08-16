@@ -383,28 +383,30 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let claim_inner_final_expected = left_expected * right_expected;
 
         // TODO(sragss): Arasu's bruteforce test
-        // let mut out = F::zero();
-        // let eq_rx_constr = EqPolynomial::evals(&r_x[..constraint_bits].to_vec());
-        // for (row, col, val) in &key.uniform_r1cs.a.vars { 
-        //     out += *val * eq_rx_constr[*row] * key.evaluate_z_mle(&self.claimed_witness_evals, &[index_to_field_bitvector(*col, n_prefix), outer_sumcheck_r_step.to_owned()].concat());
-        // }
-        // for (row, col, val) in &key.uniform_r1cs.b.vars { 
-        //     out += r_inner_sumcheck_RLC * *val * eq_rx_constr[*row] * key.evaluate_z_mle(&self.claimed_witness_evals, &[index_to_field_bitvector(*col, n_prefix), outer_sumcheck_r_step.to_owned()].concat());
-        // }
-        // for (row, col, val) in &key.uniform_r1cs.c.vars { 
-        //     out += r_inner_sumcheck_RLC * r_inner_sumcheck_RLC *val * eq_rx_constr[*row] * key.evaluate_z_mle(&self.claimed_witness_evals, &[index_to_field_bitvector(*col, n_prefix), outer_sumcheck_r_step.to_owned()].concat());
-        // }
-        // for (row, val) in &key.uniform_r1cs.a.consts {
-        //     out += *val * eq_rx_constr[*row];
-        // }
-        // for (row, val) in &key.uniform_r1cs.b.consts {
-        //     out += r_inner_sumcheck_RLC * *val * eq_rx_constr[*row];
-        // }
-        // for (row, val) in &key.uniform_r1cs.c.consts {
-        //     out += r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * val * eq_rx_constr[*row];
-        // }
+        let mut out = F::zero();
+        let (rx_constr, rx_step) = r_x.split_at(constraint_bits);
+        let eq_rx_constr = EqPolynomial::evals(&rx_constr.to_vec());
+        let eq_rx_step_zero = EqPolynomial::new(rx_step.to_vec()).evaluate(&index_to_field_bitvector(0, key.num_steps.log_2()));
+        for (row, col, val) in &key.uniform_r1cs.a.vars { 
+            out += *val * eq_rx_constr[*row] * key.evaluate_z_mle(&self.claimed_witness_evals, &[index_to_field_bitvector(*col, n_prefix), outer_sumcheck_r_step.to_owned()].concat());
+        }
+        for (row, col, val) in &key.uniform_r1cs.b.vars { 
+            out += r_inner_sumcheck_RLC * *val * eq_rx_constr[*row] * key.evaluate_z_mle(&self.claimed_witness_evals, &[index_to_field_bitvector(*col, n_prefix), outer_sumcheck_r_step.to_owned()].concat());
+        }
+        for (row, col, val) in &key.uniform_r1cs.c.vars { 
+            out += r_inner_sumcheck_RLC * r_inner_sumcheck_RLC *val * eq_rx_constr[*row] * key.evaluate_z_mle(&self.claimed_witness_evals, &[index_to_field_bitvector(*col, n_prefix), outer_sumcheck_r_step.to_owned()].concat());
+        }
+        for (row, val) in &key.uniform_r1cs.a.consts {
+            out += *val * eq_rx_constr[*row] * eq_rx_step_zero;
+        }
+        for (row, val) in &key.uniform_r1cs.b.consts {
+            out += r_inner_sumcheck_RLC * *val * eq_rx_constr[*row] * eq_rx_step_zero;
+        }
+        for (row, val) in &key.uniform_r1cs.c.consts {
+            out += r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * val * eq_rx_constr[*row] * eq_rx_step_zero;
+        }
 
-        assert_eq!(claim_inner_final, claim_inner_final_expected);
+        assert_eq!(claim_inner_final, out);
         if claim_inner_final != claim_inner_final_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
