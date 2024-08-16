@@ -87,7 +87,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted<I: ConstraintInput>(
         generators: &C::Setup,
-        constraint_builder: CombinedUniformBuilder<F, I>,
+        constraint_builder: &CombinedUniformBuilder<F, I>,
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         opening_accumulator: &mut PolynomialOpeningAccumulator<F>,

@@ -246,6 +246,7 @@ const RAM_2_INDEX: usize = RAM_2 - 3;
 const RAM_3_INDEX: usize = RAM_3 - 3;
 const RAM_4_INDEX: usize = RAM_4 - 3;
 
+// #[derive(Reflect)]
 pub struct ReadWriteMemory<F, C>
 where
     F: JoltField,

@@ -2,10 +2,9 @@
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
-use crate::r1cs::jolt_constraints::construct_jolt_constraints;
+use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bevy_reflect::prelude::*;
 use common::constants::RAM_START_ADDRESS;
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use serde::{Deserialize, Serialize};
@@ -110,7 +109,6 @@ where
     pub r1cs: R1CSProof<F, PCS>,
 }
 
-#[derive(Reflect)]
 pub struct JoltPolynomials<F, PCS>
 where
     F: JoltField,
@@ -123,7 +121,7 @@ where
     pub r1cs: R1CSPolynomials<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Reflect)]
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltCommitments<PCS: CommitmentScheme> {
     pub bytecode: BytecodeCommitment<PCS>,
     pub read_write_memory: MemoryCommitment<PCS>,
@@ -383,7 +381,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
         );
-        let r1cs_polynomials = R1CSPolynomials::new(&trace, r1cs_builder);
+        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
+            &r1cs_builder,
+            padded_trace_length,
+        );
+
+        let r1cs_polynomials =
+            R1CSPolynomials::new::<C, M, Self::InstructionSet>(&trace, &r1cs_builder);
 
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
@@ -393,12 +397,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             r1cs: r1cs_polynomials,
         };
 
-        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
-
-        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
-            &r1cs_builder,
-            padded_trace_length,
-        );
+        let jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 
@@ -432,11 +431,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
+        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted::<JoltIn>(
             &preprocessing.generators,
-            r1cs_builder,
+            &r1cs_builder,
             &spartan_key,
-            &jolt_polynomials,
+            todo!("polynomials"),
             &mut opening_accumulator,
             &mut transcript,
         )

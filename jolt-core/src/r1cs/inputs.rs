@@ -36,7 +36,7 @@ pub struct R1CSPolynomials<F: JoltField> {
 impl<F: JoltField> R1CSPolynomials<F> {
     pub fn new<const C: usize, const M: usize, InstructionSet: JoltInstructionSet>(
         trace: &[JoltTraceStep<InstructionSet>],
-        builder: CombinedUniformBuilder<F, JoltIn>,
+        builder: &CombinedUniformBuilder<F, JoltIn>,
     ) -> Self {
         let log_M = log2(M) as usize;
 
