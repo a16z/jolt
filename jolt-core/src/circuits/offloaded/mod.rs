@@ -3,6 +3,7 @@ use ark_ec::pairing::Pairing;
 use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_ff::{One, PrimeField};
 use ark_r1cs_std::alloc::AllocVar;
+use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::fields::FieldVar;
@@ -10,7 +11,23 @@ use ark_r1cs_std::groups::CurveVar;
 use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
 use ark_relations::ns;
 use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
+use ark_serialize::Valid;
+use ark_std::Zero;
 use std::marker::PhantomData;
+
+pub trait MSMGadget<FVar, G, GVar>
+where
+    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    G: CurveGroup,
+    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+{
+    fn msm(
+        &self,
+        cs: impl Into<Namespace<G::ScalarField>>,
+        g1s: &[GVar],
+        scalars: &[FVar],
+    ) -> Result<GVar, SynthesisError>;
+}
 
 pub struct OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
 where
@@ -98,10 +115,13 @@ where
                     scalar_input.enforce_equal(&x)?;
                 }
 
+                let mut offsets = vec![];
+
                 // write g1s to public_input
                 for g1 in g1s {
                     let f_vec = g1.to_constraint_field()?;
 
+                    offsets.push(cs.num_instance_variables() - 1);
                     for f in f_vec.iter() {
                         let f_input = FpVar::new_input(ns!(cs, "g1s"), || f.value())?;
                         f_input.enforce_equal(f)?;
@@ -110,8 +130,10 @@ where
 
                 // write msm_g1 to public_input
                 {
+                    dbg!(cs.num_instance_variables() - 1);
                     let f_vec = msm_g1_var.to_constraint_field()?;
 
+                    offsets.push(cs.num_instance_variables() - 1);
                     for f in f_vec.iter() {
                         let f_input = FpVar::new_input(ns!(cs, "msm_g1"), || f.value())?;
                         f_input.enforce_equal(f)?;
@@ -120,7 +142,7 @@ where
                 dbg!(cs.num_constraints());
                 dbg!(cs.num_instance_variables());
 
-                Ok(full_msm_value)
+                Ok((full_msm_value, offsets))
             })
         };
         dbg!(cs.num_constraints());
@@ -129,16 +151,114 @@ where
     }
 }
 
-pub trait MSMGadget<FVar, G, GVar>
+pub trait PairingGadget<E, G1Var>
 where
-    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
-    G: CurveGroup,
-    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    E: Pairing,
+    G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    fn msm(
+    fn multi_pairing_is_zero(
         &self,
-        cs: impl Into<Namespace<G::ScalarField>>,
+        cs: impl Into<Namespace<E::ScalarField>>,
+        g1s: &[G1Var],
+        g2s: &[E::G2Affine],
+    ) -> Result<(), SynthesisError>;
+}
+
+pub struct OffloadedPairingGadget<'a, E, FVar, GVar, Circuit>
+where
+    E: Pairing,
+    Circuit: OffloadedDataCircuit<E::G1>,
+    FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+{
+    _params: PhantomData<(E, FVar, GVar)>,
+    circuit: &'a Circuit,
+}
+
+impl<'a, E, FVar, GVar, Circuit> OffloadedPairingGadget<'a, E, FVar, GVar, Circuit>
+where
+    E: Pairing,
+    Circuit: OffloadedDataCircuit<E::G1>,
+    FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+{
+    pub(crate) fn new(circuit: &'a Circuit) -> Self {
+        Self {
+            _params: PhantomData,
+            circuit,
+        }
+    }
+}
+
+impl<'a, E, FVar, GVar, Circuit> PairingGadget<E, GVar>
+    for OffloadedPairingGadget<'a, E, FVar, GVar, Circuit>
+where
+    E: Pairing,
+    Circuit: OffloadedDataCircuit<E::G1>,
+    FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+{
+    fn multi_pairing_is_zero(
+        &self,
+        cs: impl Into<Namespace<E::ScalarField>>,
         g1s: &[GVar],
-        scalars: &[FVar],
-    ) -> Result<GVar, SynthesisError>;
+        g2s: &[E::G2Affine],
+    ) -> Result<(), SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+
+        let g1_values_opt = g1s
+            .iter()
+            .map(|g1| g1.value().ok())
+            .collect::<Option<Vec<_>>>();
+
+        let g2_values = g2s;
+
+        let is_zero_opt =
+            g1_values_opt.map(|g1_values| E::multi_pairing(dbg!(&g1_values), g2_values).is_zero());
+        if let Some(false) = is_zero_opt {
+            dbg!("multi_pairing_is_zero: false");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+
+        // {
+        //     let g1s = g1s.to_vec();
+        //     let ns = ns!(cs, "deferred_pairing");
+        //     let cs = ns.cs();
+        //
+        //     self.circuit.defer_msm(move || {
+        //         let mut offsets = vec![];
+        //
+        //         // write g1s to public_input
+        //         for g1 in g1s {
+        //             let f_vec = g1.to_constraint_field()?;
+        //
+        //             offsets.push(cs.num_instance_variables() - 1);
+        //             for f in f_vec.iter() {
+        //                 let f_input = FpVar::new_input(ns!(cs, "g1s"), || f.value())?;
+        //                 f_input.enforce_equal(f)?;
+        //             }
+        //         }
+        //
+        //         // write g2s to public_input
+        //         for g2 in g2s {
+        //             let f_vec = g2.to_constraint_field()?;
+        //
+        //             offsets.push(cs.num_instance_variables() - 1);
+        //             for f in f_vec.iter() {
+        //                 let f_input = FpVar::new_input(ns!(cs, "g2s"), || f.value())?;
+        //                 f_input.enforce_equal(f)?;
+        //             }
+        //         }
+        //
+        //         dbg!(cs.num_constraints());
+        //         dbg!(cs.num_instance_variables());
+        //
+        //         Ok(())
+        //     })
+        // }
+
+        dbg!("multi_pairing_is_zero: success");
+        Ok(())
+    }
 }

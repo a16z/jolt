@@ -121,16 +121,9 @@ mod tests {
     {
         type Circuit = DelayedOpsCircuit<E, G1Var>;
 
-        fn offloaded_setup(
-            circuit: Self::Circuit,
-            snark_vk: S::ProcessedVerifyingKey,
-        ) -> Result<OffloadedSNARKVerifyingKey<E, S>, OffloadedSNARKError<S::Error>> {
-            Ok(OffloadedSNARKVerifyingKey {
-                snark_pvk: snark_vk,
-                delayed_pairings: vec![], // TODO none yet
-                g2_elements: vec![],
-            })
-        }
+        // fn pairing_setup(circuit: Self::Circuit) -> Vec<Vec<E::G2Affine>> {
+        //     vec![]
+        // }
     }
 
     #[test]

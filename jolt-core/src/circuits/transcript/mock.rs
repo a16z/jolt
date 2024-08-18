@@ -1,4 +1,4 @@
-use crate::circuits::transcript::IS_SLICE;
+use crate::circuits::transcript::SLICE;
 use crate::field::JoltField;
 use crate::utils::transcript::ProofTranscript;
 use ark_crypto_primitives::sponge::constraints::{
@@ -83,21 +83,30 @@ where
 
     fn absorb(&mut self, input: &impl AbsorbGadget<ConstraintF>) -> Result<(), SynthesisError> {
         let bytes = input.to_sponge_bytes()?;
-        let is_slice = IS_SLICE.take();
-        let fs = bytes
+        let bs = bytes
             .iter()
             .map(|f| match self.cs.is_in_setup_mode() {
                 true => Ok(0u8),
                 false => f.value(),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if is_slice {
-            self.transcript.append_message(b"begin_append_vector");
+
+        let slice_opt = SLICE.take();
+        match slice_opt {
+            Some(slice_len) => {
+                self.transcript.append_message(b"begin_append_vector");
+                if slice_len != 0 {
+                    for chunk in bs.chunks(bs.len() / slice_len) {
+                        self.transcript.append_bytes(chunk);
+                    }
+                }
+                self.transcript.append_message(b"end_append_vector");
+            }
+            None => {
+                self.transcript.append_bytes(&bs);
+            }
         }
-        self.transcript.append_bytes(&fs);
-        if is_slice {
-            self.transcript.append_message(b"end_append_vector");
-        }
+
         Ok(())
     }
 
@@ -119,7 +128,6 @@ where
         &mut self,
         num_elements: usize,
     ) -> Result<Vec<FpVar<ConstraintF>>, SynthesisError> {
-        dbg!(&self.transcript.n_rounds);
         self.transcript
             .challenge_vector::<ConstraintF>(num_elements)
             .iter()

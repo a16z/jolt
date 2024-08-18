@@ -7,6 +7,7 @@ use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
 use ark_relations::ns;
 use ark_relations::r1cs::SynthesisError;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::iterable::Iterable;
 use ark_std::Zero;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -30,7 +31,7 @@ where
 }
 
 thread_local! {
-    static IS_SLICE: RefCell<bool> = RefCell::new(false);
+    static SLICE: RefCell<Option<usize>> = RefCell::new(None);
 }
 
 impl<'a, T, F> AbsorbGadget<F> for ImplAbsorb<'a, T, F>
@@ -59,7 +60,7 @@ where
     where
         Self: Sized,
     {
-        IS_SLICE.set(true);
+        SLICE.set(Some(batch.len()));
         let mut result = Vec::new();
         for item in batch {
             result.append(&mut (item.to_sponge_bytes()?))
