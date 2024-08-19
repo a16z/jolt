@@ -191,8 +191,6 @@ where
             .next()
             .unwrap();
 
-        dbg!(r.value());
-
         let u = vec![r.clone(), r.negate()?, r.clone() * &r];
 
         let com = [vec![c.clone()], com.clone()].concat();
@@ -229,16 +227,12 @@ where
         )?;
         let q_powers = q_powers::<E, S>(transcript, ell)?;
 
-        dbg!(q_powers.value());
-
         transcript.absorb(&w.iter().map(|g| ImplAbsorb::wrap(g)).collect::<Vec<_>>())?;
         let d = transcript
             .squeeze_field_elements(1)?
             .into_iter()
             .next()
             .unwrap();
-
-        dbg!(d.value());
 
         let d_square = d.square()?;
         let q_power_multiplier = one + &d + &d_square;
@@ -275,26 +269,19 @@ where
         .concat();
         debug_assert_eq!(l_g1s.len(), l_scalars.len());
 
-        dbg!(transcript.cs().num_instance_variables() - 1);
         let l_g1 = msm_gadget.msm(ns!(transcript.cs(), "l_g1"), l_g1s, l_scalars)?;
-
-        dbg!(w.as_slice().value());
 
         let r_g1s = w.as_slice();
         let r_scalars = &[FpVar::one().negate()?, d.negate()?, d_square.negate()?];
         debug_assert_eq!(r_g1s.len(), r_scalars.len());
 
-        dbg!(transcript.cs().num_instance_variables() - 1);
         let r_g1 = msm_gadget.msm(ns!(transcript.cs(), "r_g1"), r_g1s, r_scalars)?;
-
-        // (dbg!(l_g1.value()), dbg!(r_g1.value()));
 
         pairing_gadget.multi_pairing_is_zero(
             ns!(transcript.cs(), "multi_pairing"),
             &[l_g1, r_g1],
             self.g2_elements.as_slice(),
         )?;
-        dbg!();
 
         Ok(Boolean::TRUE)
     }

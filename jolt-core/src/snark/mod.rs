@@ -69,10 +69,8 @@ pub enum DeferredOp<E: Pairing> {
     Pairing(OffloadedPairingDef<E>),
 }
 
-pub type DeferredFn<G: CurveGroup> = dyn FnOnce() -> Result<
-    (Option<(Vec<G::Affine>, Vec<G::ScalarField>)>, Vec<usize>),
-    SynthesisError,
->;
+pub type DeferredFn<G: CurveGroup> =
+    dyn FnOnce() -> Result<Option<(Vec<G::Affine>, Vec<G::ScalarField>)>, SynthesisError>;
 
 pub type DeferredFnsRef<G: CurveGroup> = Rc<RefCell<Vec<Box<DeferredFn<G>>>>>;
 
@@ -84,10 +82,8 @@ where
 
     fn defer_msm(
         &self,
-        f: impl FnOnce() -> Result<
-                (Option<(Vec<G::Affine>, Vec<G::ScalarField>)>, Vec<usize>),
-                SynthesisError,
-            > + 'static,
+        f: impl FnOnce() -> Result<Option<(Vec<G::Affine>, Vec<G::ScalarField>)>, SynthesisError>
+            + 'static,
     ) {
         self.deferred_fns_ref().borrow_mut().push(Box::new(f));
     }
@@ -115,21 +111,20 @@ where
 {
     circuit: C,
     offloaded_data_ref: Rc<OnceCell<OffloadedData<E::G1>>>,
-    g1_offsets_ref: Rc<OnceCell<Vec<Vec<usize>>>>,
 }
 
 fn run_deferred<E: Pairing>(
     deferred_fns: Vec<Box<DeferredFn<E::G1>>>,
-) -> Result<(Option<OffloadedData<E::G1>>, Vec<Vec<usize>>), SynthesisError> {
-    let (msms, g1_offsets) = deferred_fns
+) -> Result<Option<OffloadedData<E::G1>>, SynthesisError> {
+    let msms = deferred_fns
         .into_iter()
         .map(|f| f())
-        .collect::<Result<(Vec<_>, Vec<_>), _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
 
     // can't collect into `Option<Vec<_>>` above: it short-circuits on the first None
     let msms = msms.into_iter().collect::<Option<Vec<_>>>();
 
-    Ok((msms.map(|msms| OffloadedData { msms }), g1_offsets))
+    Ok(msms.map(|msms| OffloadedData { msms }))
 }
 
 impl<E, C> ConstraintSynthesizer<E::ScalarField> for WrappedCircuit<E, C>
@@ -141,16 +136,14 @@ where
         let deferred_fns_ref = self.circuit.deferred_fns_ref().clone();
 
         let offloaded_data_ref = self.offloaded_data_ref.clone();
-        let g1_offsets_ref = self.g1_offsets_ref.clone();
 
         self.circuit.generate_constraints(cs)?;
 
-        let (offloaded_data, g1_offsets) = run_deferred::<E>(deferred_fns_ref.take())?;
+        let offloaded_data = run_deferred::<E>(deferred_fns_ref.take())?;
 
         if let Some(offloaded_data) = offloaded_data {
             offloaded_data_ref.set(offloaded_data).unwrap();
         }
-        g1_offsets_ref.set(g1_offsets).unwrap();
 
         Ok(())
     }
@@ -173,7 +166,6 @@ where
         let circuit: WrappedCircuit<E, Self::Circuit> = WrappedCircuit {
             circuit,
             offloaded_data_ref: Default::default(),
-            g1_offsets_ref: Default::default(),
         };
         Self::circuit_specific_setup(circuit, rng)
     }
@@ -183,8 +175,6 @@ where
         rng: &mut R,
     ) -> Result<(S::ProvingKey, OffloadedSNARKVerifyingKey<E, S>), OffloadedSNARKError<S::Error>>
     {
-        let g1_offsets_ref = circuit.g1_offsets_ref.clone();
-
         let offloaded_circuit = circuit.circuit.clone();
 
         let (pk, snark_vk) = S::circuit_specific_setup(circuit, rng)
@@ -209,8 +199,6 @@ where
         Ok((pk, vk))
     }
 
-    // fn pairing_setup(circuit: Self::Circuit) -> Vec<Vec<E::G2Affine>>;
-
     fn prove<R: RngCore + CryptoRng>(
         circuit_pk: &S::ProvingKey,
         circuit: Self::Circuit,
@@ -219,7 +207,6 @@ where
         let circuit: WrappedCircuit<E, Self::Circuit> = WrappedCircuit {
             circuit,
             offloaded_data_ref: Default::default(),
-            g1_offsets_ref: Default::default(),
         };
 
         let offloaded_data_ref = circuit.offloaded_data_ref.clone();
@@ -316,17 +303,10 @@ where
                 g1s
             })
             .collect::<Result<Vec<Vec<E::G1>>, SerializationError>>();
-        Ok(g1_vectors?
-            .into_iter()
-            .zip(Self::g2_elements(vk, public_input, proof))
-            .collect())
+        Ok(g1_vectors?.into_iter().zip(Self::g2_elements(vk)).collect())
     }
 
-    fn g2_elements(
-        vk: &OffloadedSNARKVerifyingKey<E, S>,
-        public_input: &[E::ScalarField],
-        proof: &S::Proof,
-    ) -> Vec<Vec<E::G2>> {
+    fn g2_elements(vk: &OffloadedSNARKVerifyingKey<E, S>) -> Vec<Vec<E::G2>> {
         vk.delayed_pairings
             .iter()
             .map(|pairing_def| {

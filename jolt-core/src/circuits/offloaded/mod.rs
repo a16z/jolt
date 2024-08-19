@@ -115,13 +115,10 @@ where
                     scalar_input.enforce_equal(&x)?;
                 }
 
-                let mut offsets = vec![];
-
                 // write g1s to public_input
                 for g1 in g1s {
                     let f_vec = g1.to_constraint_field()?;
 
-                    offsets.push(cs.num_instance_variables() - 1);
                     for f in f_vec.iter() {
                         let f_input = FpVar::new_input(ns!(cs, "g1s"), || f.value())?;
                         f_input.enforce_equal(f)?;
@@ -133,7 +130,6 @@ where
                     dbg!(cs.num_instance_variables() - 1);
                     let f_vec = msm_g1_var.to_constraint_field()?;
 
-                    offsets.push(cs.num_instance_variables() - 1);
                     for f in f_vec.iter() {
                         let f_input = FpVar::new_input(ns!(cs, "msm_g1"), || f.value())?;
                         f_input.enforce_equal(f)?;
@@ -142,7 +138,7 @@ where
                 dbg!(cs.num_constraints());
                 dbg!(cs.num_instance_variables());
 
-                Ok((full_msm_value, offsets))
+                Ok(full_msm_value)
             })
         };
         dbg!(cs.num_constraints());
@@ -214,10 +210,9 @@ where
 
         let g2_values = g2s;
 
-        let is_zero_opt =
-            g1_values_opt.map(|g1_values| E::multi_pairing(dbg!(&g1_values), g2_values).is_zero());
-        if let Some(false) = is_zero_opt {
-            dbg!("multi_pairing_is_zero: false");
+        if let Some(false) =
+            g1_values_opt.map(|g1_values| E::multi_pairing(&g1_values, g2_values).is_zero())
+        {
             return Err(SynthesisError::Unsatisfiable);
         }
 
@@ -258,7 +253,6 @@ where
         //     })
         // }
 
-        dbg!("multi_pairing_is_zero: success");
         Ok(())
     }
 }
