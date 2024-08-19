@@ -9,6 +9,7 @@ use crate::jolt::vm::JoltTraceStep;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::jolt_constraints::JoltIn;
+use crate::r1cs::ops::ConstraintInput;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
@@ -102,12 +103,12 @@ pub struct R1CSAuxVariables<F: JoltField> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
-    pub key: UniformSpartanKey<F>,
+pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>, I: ConstraintInput> {
+    pub key: UniformSpartanKey<F, I>,
     pub proof: UniformSpartanProof<F, C>,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>, I: ConstraintInput> R1CSProof<F, C, I> {
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
     pub fn verify(
         &self,

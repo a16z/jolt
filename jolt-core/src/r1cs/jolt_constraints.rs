@@ -1,3 +1,7 @@
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
+
 use crate::{
     assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
     jolt::vm::rv32i_vm::C,
@@ -150,6 +154,33 @@ pub enum JoltIn {
     IF_Virt_Assert_VALID_DIV0,
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
+impl CanonicalSerialize for JoltIn {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        _writer: W,
+        _: Compress,
+    ) -> Result<(), SerializationError> {
+        todo!();
+    }
+
+    fn serialized_size(&self, _: Compress) -> usize {
+        std::mem::size_of::<Self>()
+    }
+}
+impl CanonicalDeserialize for JoltIn {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        todo!()
+    }
+}
+impl Valid for JoltIn {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
 impl ConstraintInput for JoltIn {}
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;

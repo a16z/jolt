@@ -6,6 +6,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
+use crate::r1cs::jolt_constraints::JoltIn;
 use ark_bn254::{Bn254, Fr, G1Projective};
 use serde::Serialize;
 
@@ -112,8 +113,11 @@ where
         let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M, JoltIn>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+        );
 
         println!("Proof sizing:");
         serialize_and_print_size("jolt_commitments", &jolt_commitments);
@@ -162,8 +166,11 @@ where
         let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M, JoltIn>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+        );
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),

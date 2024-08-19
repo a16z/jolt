@@ -3,8 +3,11 @@
 
 use crate::{
     field::{JoltField, OptimizedMul},
+    jolt::vm::JoltPolynomials,
+    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
     utils::thread::unsafe_allocate_zero_vec,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -18,14 +21,21 @@ pub trait ConstraintInput:
     + Eq
     + PartialOrd
     + Ord
-    + IntoEnumIterator
-    + EnumCount
-    + Into<usize>
     + Hash
     + Sync
     + Send
+    + EnumCount
+    + Valid
+    + CanonicalSerialize
+    + CanonicalDeserialize
     + 'static
 {
+    fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        jolt_polynomials: &JoltPolynomials<F, PCS>,
+    ) -> &DensePolynomial<F> {
+        todo!()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

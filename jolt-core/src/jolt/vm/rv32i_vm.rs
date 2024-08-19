@@ -5,6 +5,7 @@ use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyrax::HyraxScheme;
+use crate::r1cs::jolt_constraints::JoltIn;
 use ark_bn254::{Fr, G1Projective};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
@@ -163,7 +164,7 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, CS> Jolt<F, CS, C, M> for RV32IJoltVM
+impl<F, CS> Jolt<F, CS, C, M, JoltIn> for RV32IJoltVM
 where
     F: JoltField,
     CS: CommitmentScheme<Field = F>,
@@ -172,7 +173,7 @@ where
     type Subtables = RV32ISubtables<F>;
 }
 
-pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
+pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>, JoltIn>;
 
 use eyre::Result;
 use std::fs::File;

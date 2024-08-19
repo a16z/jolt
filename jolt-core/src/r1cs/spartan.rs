@@ -75,7 +75,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     pub fn setup_precommitted<I: ConstraintInput>(
         constraint_builder: &CombinedUniformBuilder<F, I>,
         padded_num_steps: usize,
-    ) -> UniformSpartanKey<F> {
+    ) -> UniformSpartanKey<F, I> {
         assert_eq!(
             padded_num_steps,
             constraint_builder.uniform_repeat().next_power_of_two()
@@ -88,7 +88,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     pub fn prove_precommitted<I: ConstraintInput>(
         generators: &C::Setup,
         constraint_builder: &CombinedUniformBuilder<F, I>,
-        key: &UniformSpartanKey<F>,
+        key: &UniformSpartanKey<F, I>,
         witness_segments: Vec<Vec<F>>,
         opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
@@ -221,9 +221,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
-    pub fn verify_precommitted(
+    pub fn verify_precommitted<I: ConstraintInput>(
         &self,
-        key: &UniformSpartanKey<F>,
+        key: &UniformSpartanKey<F, I>,
         witness_segment_commitments: Vec<&C::Commitment>,
         generators: &C::Setup,
         transcript: &mut ProofTranscript,

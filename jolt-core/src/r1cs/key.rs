@@ -3,7 +3,7 @@ use sha3::Sha3_256;
 
 use crate::{
     field::JoltField,
-    poly::eq_poly::EqPolynomial,
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     r1cs::special_polys::{eq_plus_one, SparsePolynomial},
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
@@ -16,8 +16,8 @@ use crate::utils::math::Math;
 use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<F: JoltField> {
-    pub uniform_r1cs: UniformR1CS<F>,
+pub struct UniformSpartanKey<F: JoltField, I: ConstraintInput> {
+    pub uniform_r1cs: UniformR1CS<F, I>,
 
     pub offset_eq_r1cs: NonUniformR1CS<F>,
 
@@ -31,19 +31,20 @@ pub struct UniformSpartanKey<F: JoltField> {
     pub(crate) vk_digest: F,
 }
 
-pub type Coeff<F> = (usize, usize, F);
+/// (row, col, value)
+pub type Coeff<F, Input: ConstraintInput> = (usize, Input, F);
 
 /// Sparse representation of a single R1CS matrix.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseConstraints<F: JoltField> {
+pub struct SparseConstraints<F: JoltField, I: ConstraintInput> {
     /// Non-zero, non-constant coefficients
-    pub vars: Vec<Coeff<F>>,
+    pub vars: Vec<Coeff<F, I>>,
 
     /// Non-zero constant coefficients stored as (uniform_row_index, coeff)
     pub consts: Vec<(usize, F)>,
 }
 
-impl<F: JoltField> SparseConstraints<F> {
+impl<F: JoltField, I: ConstraintInput> SparseConstraints<F, I> {
     pub fn empty_with_capacity(vars: usize, consts: usize) -> Self {
         Self {
             vars: Vec::with_capacity(vars),
@@ -55,10 +56,10 @@ impl<F: JoltField> SparseConstraints<F> {
 /// Sparse representation of all 3 uniform R1CS matrices. Uniform matrices can be repeated over a number of steps
 /// and efficiently evaluated by taking advantage of the structure.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformR1CS<F: JoltField> {
-    pub a: SparseConstraints<F>,
-    pub b: SparseConstraints<F>,
-    pub c: SparseConstraints<F>,
+pub struct UniformR1CS<F: JoltField, I: ConstraintInput> {
+    pub a: SparseConstraints<F, I>,
+    pub b: SparseConstraints<F, I>,
+    pub c: SparseConstraints<F, I>,
 
     /// Unpadded number of variables in uniform instance.
     pub num_vars: usize,
@@ -129,10 +130,8 @@ impl<F: JoltField> SparseEqualityItem<F> {
     }
 }
 
-impl<F: JoltField> UniformSpartanKey<F> {
-    pub fn from_builder<I: ConstraintInput>(
-        constraint_builder: &CombinedUniformBuilder<F, I>,
-    ) -> Self {
+impl<F: JoltField, I: ConstraintInput> UniformSpartanKey<F, I> {
+    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<F, I>) -> Self {
         let uniform_r1cs = constraint_builder.materialize_uniform();
         let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 
@@ -188,7 +187,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // 3. Add the non uniform constraint rows
 
         let compute_repeated =
-            |constraints: &SparseConstraints<F>, non_uni_constants: Option<Vec<F>>| -> Vec<F> {
+            |constraints: &SparseConstraints<F, I>, non_uni_constants: Option<Vec<F>>| -> Vec<F> {
                 // +1 for constant
                 let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars + 1);
                 for (row, col, val) in constraints.vars.iter() {
@@ -325,7 +324,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let constant_column = index_to_field_bitvector(self.num_cols_total() / 2, total_cols_bits);
         let col_eq_constant = EqPolynomial::new(r_col.to_vec()).evaluate(&constant_column);
 
-        let compute_uniform_matrix_mle = |constraints: &SparseConstraints<F>| -> F {
+        let compute_uniform_matrix_mle = |constraints: &SparseConstraints<F, I>| -> F {
             let mut full_mle_evaluation: F = constraints
                 .vars
                 .iter()
@@ -391,7 +390,11 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Returns the digest of the r1cs shape
-    fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &NonUniformR1CS<F>, num_steps: usize) -> F {
+    fn digest(
+        uniform_r1cs: &UniformR1CS<F, I>,
+        offset_eq: &NonUniformR1CS<F>,
+        num_steps: usize,
+    ) -> F {
         let mut hash_bytes = Vec::new();
         uniform_r1cs.serialize_compressed(&mut hash_bytes).unwrap();
         let mut offset_eq_bytes = Vec::new();

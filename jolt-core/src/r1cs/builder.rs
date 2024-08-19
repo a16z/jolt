@@ -1,3 +1,5 @@
+use crate::jolt::vm::JoltPolynomials;
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::{
     field::JoltField,
     r1cs::key::{SparseConstraints, UniformR1CS},
@@ -38,51 +40,52 @@ struct Constraint<I: ConstraintInput> {
 impl<I: ConstraintInput> Constraint<I> {
     #[cfg(test)]
     fn is_sat(&self, inputs: &[i64]) -> bool {
-        // Find the number of variables and the number of aux. Inputs should be equal to this combined length
-        let num_inputs = I::COUNT;
+        todo!("fix");
+        // // Find the number of variables and the number of aux. Inputs should be equal to this combined length
+        // let num_inputs = I::COUNT;
 
-        let mut aux_set = std::collections::HashSet::new();
-        for constraint in [&self.a, &self.b, &self.c] {
-            for Term(var, _value) in constraint.terms() {
-                if let Variable::Auxiliary(aux) = var {
-                    aux_set.insert(aux);
-                }
-            }
-        }
-        let num_aux = aux_set.len();
-        if !aux_set.is_empty() {
-            assert_eq!(num_aux, *aux_set.iter().max().unwrap() + 1); // Ensure there are no gaps
-        }
-        let aux_index = |aux_index: usize| num_inputs + aux_index;
+        // let mut aux_set = std::collections::HashSet::new();
+        // for constraint in [&self.a, &self.b, &self.c] {
+        //     for Term(var, _value) in constraint.terms() {
+        //         if let Variable::Auxiliary(aux) = var {
+        //             aux_set.insert(aux);
+        //         }
+        //     }
+        // }
+        // let num_aux = aux_set.len();
+        // if !aux_set.is_empty() {
+        //     assert_eq!(num_aux, *aux_set.iter().max().unwrap() + 1); // Ensure there are no gaps
+        // }
+        // let aux_index = |aux_index: usize| num_inputs + aux_index;
 
-        let num_vars = num_inputs + num_aux;
-        assert_eq!(num_vars, inputs.len());
+        // let num_vars = num_inputs + num_aux;
+        // assert_eq!(num_vars, inputs.len());
 
-        let mut a = 0;
-        let mut b = 0;
-        let mut c = 0;
-        let mut buckets = [&mut a, &mut b, &mut c];
-        let constraints = [&self.a, &self.b, &self.c];
-        for (bucket, constraint) in buckets.iter_mut().zip(constraints.iter()) {
-            for Term(var, coefficient) in constraint.terms() {
-                match var {
-                    Variable::Input(input) => {
-                        let in_u: usize = (*input).into();
-                        **bucket += inputs[in_u] * *coefficient;
-                    }
-                    Variable::Auxiliary(aux) => {
-                        **bucket += inputs[aux_index(*aux)] * *coefficient;
-                    }
-                    Variable::Constant => {
-                        **bucket += *coefficient;
-                    }
-                }
-            }
-        }
+        // let mut a = 0;
+        // let mut b = 0;
+        // let mut c = 0;
+        // let mut buckets = [&mut a, &mut b, &mut c];
+        // let constraints = [&self.a, &self.b, &self.c];
+        // for (bucket, constraint) in buckets.iter_mut().zip(constraints.iter()) {
+        //     for Term(var, coefficient) in constraint.terms() {
+        //         match var {
+        //             Variable::Input(input) => {
+        //                 let in_u: usize = (*input).into();
+        //                 **bucket += inputs[in_u] * *coefficient;
+        //             }
+        //             Variable::Auxiliary(aux) => {
+        //                 **bucket += inputs[aux_index(*aux)] * *coefficient;
+        //             }
+        //             Variable::Constant => {
+        //                 **bucket += *coefficient;
+        //             }
+        //         }
+        //     }
+        // }
 
-        println!("a * b == c      {a} * {b} == {c}");
+        // println!("a * b == c      {a} * {b} == {c}");
 
-        a * b == c
+        // a * b == c
     }
 }
 
@@ -210,13 +213,15 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     }
 
     /// Index of variable within z.
+    #[cfg(test)]
     pub fn witness_index(&self, var: impl Into<Variable<I>>) -> usize {
-        let var: Variable<I> = var.into();
-        match var {
-            Variable::Input(inner) => inner.into(),
-            Variable::Auxiliary(aux_index) => I::COUNT + aux_index,
-            Variable::Constant => I::COUNT + self.next_aux,
-        }
+        todo!("fix");
+        // let var: Variable<I> = var.into();
+        // match var {
+        //     Variable::Input(inner) => inner.into(),
+        //     Variable::Auxiliary(aux_index) => I::COUNT + aux_index,
+        //     Variable::Constant => I::COUNT + self.next_aux,
+        // }
     }
 
     pub fn constrain_eq(&mut self, left: impl Into<LC<I>>, right: impl Into<LC<I>>) {
@@ -422,15 +427,15 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         self.next_aux
     }
 
-    fn variable_to_column(&self, var: Variable<I>) -> usize {
-        match var {
-            Variable::Input(inner) => inner.into(),
-            Variable::Auxiliary(aux) => I::COUNT + aux,
-            Variable::Constant => (I::COUNT + self.num_aux()).next_power_of_two(),
-        }
-    }
+    // fn variable_to_column(&self, var: Variable<I>) -> usize {
+    //     match var {
+    //         Variable::Input(inner) => inner.into(),
+    //         Variable::Auxiliary(aux) => I::COUNT + aux,
+    //         Variable::Constant => (I::COUNT + self.num_aux()).next_power_of_two(),
+    //     }
+    // }
 
-    fn materialize(&self) -> UniformR1CS<F> {
+    fn materialize(&self) -> UniformR1CS<F, I> {
         let a_len: usize = self.constraints.iter().map(|c| c.a.num_vars()).sum();
         let b_len: usize = self.constraints.iter().map(|c| c.b.num_vars()).sum();
         let c_len: usize = self.constraints.iter().map(|c| c.c.num_vars()).sum();
@@ -438,11 +443,19 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let mut b_sparse = SparseConstraints::empty_with_capacity(b_len, self.constraints.len());
         let mut c_sparse = SparseConstraints::empty_with_capacity(c_len, self.constraints.len());
 
-        let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F>| {
+        let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F, I>| {
             lc.terms()
                 .iter()
                 .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
                 .for_each(|term| {
+                    // match term.0 {
+                    //     Variable::Input(inner) => sparse.vars.push((
+                    //         row_index,
+                    //         inner
+                    //     )),
+                    //     Variable::Auxiliary(aux) => todo!(),
+                    //     Variable::Constant => panic!("uh oh"),
+                    // };
                     sparse.vars.push((
                         row_index,
                         self.variable_to_column(term.0),
@@ -464,7 +477,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         assert_eq!(b_sparse.vars.len(), b_len);
         assert_eq!(c_sparse.vars.len(), c_len);
 
-        UniformR1CS::<F> {
+        UniformR1CS::<F, I> {
             a: a_sparse,
             b: b_sparse,
             c: c_sparse,
@@ -553,7 +566,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]].
     #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_aux")]
     pub fn compute_aux(&self, inputs: &[Vec<F>]) -> Vec<Vec<F>> {
-        assert_eq!(inputs.len(), I::COUNT);
+        // assert_eq!(inputs.len(), I::COUNT);
         inputs
             .iter()
             .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
@@ -644,8 +657,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         self.uniform_repeat
     }
 
-    /// Materializes the uniform constraints into a single sparse (value != 0) A, B, C matrix represented in (row, col, value) format.
-    pub fn materialize_uniform(&self) -> UniformR1CS<F> {
+    /// Materializes the uniform constraints into sparse (value != 0) A, B, C matrices represented in (row, col, value) format.
+    pub fn materialize_uniform(&self) -> UniformR1CS<F, I> {
         self.uniform_builder.materialize()
     }
 
@@ -733,7 +746,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         SparsePolynomial<F>,
         SparsePolynomial<F>,
     ) {
-        assert_eq!(inputs.len(), I::COUNT);
+        // assert_eq!(inputs.len(), I::COUNT);
         let num_aux = self.uniform_builder.num_aux();
         assert_eq!(aux.len(), num_aux);
         assert!(inputs
