@@ -16,10 +16,7 @@ use ark_r1cs_std::{fields::fp::FpVar, prelude::*, ToConstraintFieldGadget};
 use ark_std::vec::Vec;
 use binius_field::PackedField;
 
-/// This module provides a generic implementation of G1 and G2 for
-/// the [\[BLS12]\](<https://eprint.iacr.org/2002/088.pdf>) family of bilinear groups.
-pub mod bls12;
-
+pub mod bls12_381;
 pub mod bn254;
 
 /// This module provides a generic implementation of elliptic curve operations
