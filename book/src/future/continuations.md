@@ -26,6 +26,7 @@ Accordingly, we expect the non-recursive approach to space control to lead to a 
 
 The non-recursive approach will also place the security of the SNARK on firmer footing: security of recursive SNARKs is heuristic, while non-recursive SNARKs like Jolt itself have unconditional security in idealized models such as the Random Oracle model (perhaps with additional assumptions such as hardness of discrete logarithms, depending on the choice of commitment scheme to use in Jolt). 
 
+Crucial to non-recursive space control is that Lasso, the lookup argument used in Jolt, does not require any sorting. 
 
 # Planned partial steps toward continuations
 As discussed above, today Jolt is a monolithic SNARK. RISC-V traces cannot be broken up, they must be proven monolithically or not at all. As a result, Jolt has a fixed maximum trace length that can be proved which is a function of the available RAM on the prover machine. Long term we'd like to solve this by implementing a streaming version of Jolt's prover such that prover RAM usage is tunable with minimal performance loss. 
