@@ -7,7 +7,7 @@ A crude and speculative explanation of where this estimate comes from is below.
 
 ### Costs due to processing commitments 
 Once we fully implement batching of polynomial evaluation proofs, Jolt will only require one HyperKZG opening. 
-That's something like $7 + \log N \approx 40$ (conservatively) scalar multiplications, and two pairings, where
+That's something like $7 + \log(N) \approx 40$ (conservatively) scalar multiplications, and two pairings, where
 $N$ is the number of RISC-V cycles being proven. 
 
 On top of that, the verifier is going to do about 80 scalar multiplications for homomorphically combining various commitments.
