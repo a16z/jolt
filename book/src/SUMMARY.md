@@ -18,6 +18,7 @@
             - [Read-write memory](./how/read_write_memory.md)
             - [Bytecode](./how/bytecode.md)
             - [R1CS constraints](./how/r1cs_constraints.md)
+            - [Sparse constraint systems](./how/sparse-constraint-systems.md)
         - [M extension](./how/m-extension.md)
     - [Background](./background.md)
         - [Sumcheck](./background/sumcheck.md)
