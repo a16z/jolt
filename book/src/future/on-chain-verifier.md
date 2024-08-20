@@ -13,8 +13,8 @@ $N$ is the number of RISC-V cycles being proven.
 On top of that, the verifier is going to do about 80 scalar multiplications for homomorphically combining various commitments.
 
 Let's conservatively ballpark this at 150 scalar multiplications and two pairings in total for the verifier. Each scalar
-multiplication [costs](https://www.evm.codes/precompiled) 6,000 gas and each pairing costs 45,000 gas. Hence, 
-these ~150 scalar mults plus pairings cost about 1 million gas. 
+multiplication [costs](https://www.evm.codes/precompiled) 6,000 gas and each pairing costs 45,000 gas. That's about 1 million gas total
+due to scalar multiplications and pairings. 
 
 ### Costs due to sum-check verification and multilinear extension evaluations
 The Jolt verifier will invoke the sum-check protocol about ten times (as little as 5 if we fully batch these sum-checks,
