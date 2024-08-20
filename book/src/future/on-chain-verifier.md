@@ -29,11 +29,9 @@ one from doing an input/output-consistency check, and one from the "collation" s
 The total amount of data sent in these sum-checks (plus HyperKZG commitments and evaluation proof) should be a few dozen KBs.
 Indeed, each sum-check should be roughly 40 rounds, with at most three field elements sent per round (except for the collation
 sum-check, as the polynomial involved there has degree 6 or so in each variable). 
-That's $40 \cdot 3 \cdot 32=3840 bytes of data in each invocation of sum-check, and another 7 KBs or so for HyperKZG commitments and the evaluation proof. 
-In total, that's perhaps 40 KBs of data. 
+That's $40 \cdot 3 \cdot 32=3840$ bytes of data in each invocation of sum-check, and another 7 KBs or so for HyperKZG commitments and the evaluation proof. In total, that's perhaps 40 KBs of data. 
 
-Sum-check verification is simply field work, let's say ~100 field ops total per sum-check (very crude estimate), plus associated Fiat-Shamir hashing. 
-On top of all of that, the Jolt verifier does MLE evaluations for all the "subtables" used in Lasso.
+Sum-check verification is simply field work, let's say ~100 field ops total per sum-check (very crude estimate), plus associated Fiat-Shamir hashing. On top of all of that, the Jolt verifier does MLE evaluations for all the "subtables" used in Lasso.
 
 All told we can ballpark the total number of field ops done by the verifier as about $2,000$, and Fiat-Shamir-hashing at most 40 KBs of data.
 
