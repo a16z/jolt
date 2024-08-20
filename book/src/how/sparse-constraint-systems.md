@@ -36,7 +36,7 @@ committing to 0s will no longer be "free", but we still expect the commitment co
 These variables might not satisfy the original constraint but will satisfy the modified one
 simply because $b_j$ will be set to 0. We say that $b_j$ "turned off'' the constraint. 
 
-Moreover, in sum-check-based SNARKs for R1CS like Spartan, there are prover algorithms dating to CTY11 and CMT12 
+Moreover, in sum-check-based SNARKs for R1CS like Spartan, there are prover algorithms dating to [CTY11](https://arxiv.org/abs/1109.6882) and [CMT12](https://dl.acm.org/doi/pdf/10.1145/2090236.2090245?casa_token=HjA6caUU7n0AAAAA:i03m3k8MR9Hz3uPH-ZjZmPL6c0OuIfFJg2Q_zko4G5bh-wL2HdvqLI4M1T186F01DxDfVeMt2pdq5w) 
 where the prover's runtime grows only with the number of constraints where the associated flag $b_j$ is not zero. 
 So the prover effectively pays nothing at all (no commitment costs, no field work) for constraints
 at any cycle where the pre-compile is not actually executed. We call these algorithms "streaming/sparse sum-check proving."
