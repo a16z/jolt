@@ -127,7 +127,7 @@ where
     E: Pairing<ScalarField: PrimeField + JoltField>,
     S: SpongeWithGadget<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
-    Circuit: OffloadedDataCircuit<E::G1>,
+    Circuit: OffloadedDataCircuit<E>,
 {
     _params: PhantomData<(E, S, G1Var)>,
     circuit: &'a Circuit,
@@ -139,7 +139,7 @@ where
     E: Pairing<ScalarField: PrimeField + JoltField>,
     S: SpongeWithGadget<E::ScalarField>,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
-    Circuit: OffloadedDataCircuit<E::G1>,
+    Circuit: OffloadedDataCircuit<E>,
 {
     pub fn new(circuit: &'a Circuit, g2_elements: Vec<E::G2Affine>) -> Self {
         Self {
@@ -157,7 +157,7 @@ where
     E: Pairing<ScalarField = F>,
     S: SpongeWithGadget<F>,
     G1Var: CurveVar<E::G1, F> + ToConstraintFieldGadget<F>,
-    Circuit: OffloadedDataCircuit<E::G1>,
+    Circuit: OffloadedDataCircuit<E>,
 {
     type VerifyingKeyVar = HyperKZGVerifierKeyVar<G1Var>;
     type ProofVar = HyperKZGProofVar<E, G1Var>;
@@ -252,7 +252,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        let msm_gadget = OffloadedMSMGadget::<FpVar<F>, E::G1, G1Var, Circuit>::new(self.circuit);
+        let msm_gadget = OffloadedMSMGadget::<FpVar<F>, E, G1Var, Circuit>::new(self.circuit);
         let pairing_gadget =
             OffloadedPairingGadget::<E, FpVar<F>, G1Var, Circuit>::new(self.circuit);
 
@@ -346,7 +346,7 @@ mod tests {
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
         _params: PhantomData<G1Var>,
-        deferred_fns_ref: DeferredFnsRef<E::G1>,
+        deferred_fns_ref: DeferredFnsRef<E>,
         pcs_pk_vk: (HyperKZGProverKey<E>, HyperKZGVerifierKey<E>),
         commitment: Option<HyperKZGCommitment<E>>,
         point: Vec<Option<E::ScalarField>>,
@@ -355,12 +355,12 @@ mod tests {
         expected_result: Option<bool>,
     }
 
-    impl<E, G1Var> OffloadedDataCircuit<E::G1> for HyperKZGVerifierCircuit<E, G1Var>
+    impl<E, G1Var> OffloadedDataCircuit<E> for HyperKZGVerifierCircuit<E, G1Var>
     where
         E: Pairing,
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
-        fn deferred_fns_ref(&self) -> &DeferredFnsRef<E::G1> {
+        fn deferred_fns_ref(&self) -> &DeferredFnsRef<E> {
             &self.deferred_fns_ref
         }
     }

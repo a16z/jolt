@@ -1,4 +1,4 @@
-use crate::snark::OffloadedDataCircuit;
+use crate::snark::{DeferredOpData, OffloadedData, OffloadedDataCircuit};
 use ark_ec::pairing::Pairing;
 use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_ff::{One, PrimeField};
@@ -29,23 +29,23 @@ where
     ) -> Result<GVar, SynthesisError>;
 }
 
-pub struct OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
+pub struct OffloadedMSMGadget<'a, FVar, E, GVar, Circuit>
 where
-    Circuit: OffloadedDataCircuit<G>,
-    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
-    G: CurveGroup,
-    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    Circuit: OffloadedDataCircuit<E>,
+    FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    E: Pairing,
+    GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
-    _params: PhantomData<(FVar, G, GVar)>,
+    _params: PhantomData<(FVar, E, GVar)>,
     circuit: &'a Circuit,
 }
 
-impl<'a, FVar, G, GVar, Circuit> OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
+impl<'a, FVar, E, GVar, Circuit> OffloadedMSMGadget<'a, FVar, E, GVar, Circuit>
 where
-    Circuit: OffloadedDataCircuit<G>,
-    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
-    G: CurveGroup,
-    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    Circuit: OffloadedDataCircuit<E>,
+    FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    E: Pairing,
+    GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
     pub fn new(circuit: &'a Circuit) -> Self {
         Self {
@@ -55,17 +55,17 @@ where
     }
 }
 
-impl<'a, FVar, G, GVar, Circuit> MSMGadget<FVar, G, GVar>
-    for OffloadedMSMGadget<'a, FVar, G, GVar, Circuit>
+impl<'a, FVar, E, GVar, Circuit> MSMGadget<FVar, E::G1, GVar>
+    for OffloadedMSMGadget<'a, FVar, E, GVar, Circuit>
 where
-    Circuit: OffloadedDataCircuit<G>,
-    FVar: FieldVar<G::ScalarField, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
-    G: CurveGroup,
-    GVar: CurveVar<G, G::ScalarField> + ToConstraintFieldGadget<G::ScalarField>,
+    Circuit: OffloadedDataCircuit<E>,
+    FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
+    E: Pairing,
+    GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
     fn msm(
         &self,
-        cs: impl Into<Namespace<G::ScalarField>>,
+        cs: impl Into<Namespace<E::ScalarField>>,
         g1s: &[GVar],
         scalars: &[FVar],
     ) -> Result<GVar, SynthesisError> {
@@ -85,8 +85,8 @@ where
         let (full_msm_value, msm_g1_value) = g1_values
             .zip(scalar_values)
             .map(|(g1s, scalars)| {
-                let r_g1 = G::msm_unchecked(&g1s, &scalars);
-                let minus_one = -G::ScalarField::one();
+                let r_g1 = E::G1::msm_unchecked(&g1s, &scalars);
+                let minus_one = -E::ScalarField::one();
                 (
                     (
                         [g1s, vec![r_g1.into()]].concat(),
@@ -108,7 +108,7 @@ where
             let ns = ns!(cs, "deferred_msm");
             let cs = ns.cs();
 
-            self.circuit.defer_msm(move || {
+            self.circuit.defer_op(move || {
                 // write scalars to public_input
                 for x in scalars {
                     let scalar_input = FVar::new_input(ns!(cs, "scalar"), || x.value())?;
@@ -138,7 +138,7 @@ where
                 dbg!(cs.num_constraints());
                 dbg!(cs.num_instance_variables());
 
-                Ok(full_msm_value)
+                Ok(DeferredOpData::MSM(full_msm_value))
             })
         };
         dbg!(cs.num_constraints());
@@ -163,7 +163,7 @@ where
 pub struct OffloadedPairingGadget<'a, E, FVar, GVar, Circuit>
 where
     E: Pairing,
-    Circuit: OffloadedDataCircuit<E::G1>,
+    Circuit: OffloadedDataCircuit<E>,
     FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
@@ -174,7 +174,7 @@ where
 impl<'a, E, FVar, GVar, Circuit> OffloadedPairingGadget<'a, E, FVar, GVar, Circuit>
 where
     E: Pairing,
-    Circuit: OffloadedDataCircuit<E::G1>,
+    Circuit: OffloadedDataCircuit<E>,
     FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
@@ -190,7 +190,7 @@ impl<'a, E, FVar, GVar, Circuit> PairingGadget<E, GVar>
     for OffloadedPairingGadget<'a, E, FVar, GVar, Circuit>
 where
     E: Pairing,
-    Circuit: OffloadedDataCircuit<E::G1>,
+    Circuit: OffloadedDataCircuit<E>,
     FVar: FieldVar<E::ScalarField, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     GVar: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
 {
@@ -205,53 +205,41 @@ where
 
         let g1_values_opt = g1s
             .iter()
-            .map(|g1| g1.value().ok())
+            .map(|g1| g1.value().ok().map(|g1| g1.into_affine()))
             .collect::<Option<Vec<_>>>();
 
         let g2_values = g2s;
 
-        if let Some(false) =
-            g1_values_opt.map(|g1_values| E::multi_pairing(&g1_values, g2_values).is_zero())
-        {
-            return Err(SynthesisError::Unsatisfiable);
+        for g1_values in g1_values_opt.iter() {
+            if !E::multi_pairing(g1_values, g2_values).is_zero() {
+                return Err(SynthesisError::Unsatisfiable);
+            }
         }
 
-        // {
-        //     let g1s = g1s.to_vec();
-        //     let ns = ns!(cs, "deferred_pairing");
-        //     let cs = ns.cs();
-        //
-        //     self.circuit.defer_msm(move || {
-        //         let mut offsets = vec![];
-        //
-        //         // write g1s to public_input
-        //         for g1 in g1s {
-        //             let f_vec = g1.to_constraint_field()?;
-        //
-        //             offsets.push(cs.num_instance_variables() - 1);
-        //             for f in f_vec.iter() {
-        //                 let f_input = FpVar::new_input(ns!(cs, "g1s"), || f.value())?;
-        //                 f_input.enforce_equal(f)?;
-        //             }
-        //         }
-        //
-        //         // write g2s to public_input
-        //         for g2 in g2s {
-        //             let f_vec = g2.to_constraint_field()?;
-        //
-        //             offsets.push(cs.num_instance_variables() - 1);
-        //             for f in f_vec.iter() {
-        //                 let f_input = FpVar::new_input(ns!(cs, "g2s"), || f.value())?;
-        //                 f_input.enforce_equal(f)?;
-        //             }
-        //         }
-        //
-        //         dbg!(cs.num_constraints());
-        //         dbg!(cs.num_instance_variables());
-        //
-        //         Ok(())
-        //     })
-        // }
+        {
+            let g1_values_opt = g1_values_opt;
+            let g2_values = g2_values.to_vec();
+            let g1s = g1s.to_vec();
+            let ns = ns!(cs, "deferred_pairing");
+            let cs = ns.cs();
+
+            self.circuit.defer_op(move || {
+                // write g1s to public_input
+                for g1 in g1s {
+                    let f_vec = g1.to_constraint_field()?;
+
+                    for f in f_vec.iter() {
+                        let f_input = FpVar::new_input(ns!(cs, "g1s"), || f.value())?;
+                        f_input.enforce_equal(f)?;
+                    }
+                }
+
+                dbg!(cs.num_constraints());
+                dbg!(cs.num_instance_variables());
+
+                Ok(DeferredOpData::Pairing(g1_values_opt, g2_values))
+            })
+        }
 
         Ok(())
     }
