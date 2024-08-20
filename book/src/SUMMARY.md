@@ -34,6 +34,7 @@
     - [Roadmap](./tasks.md)
         - [Optimizations](./future/opts.md)
         - [Zero Knowledge](./future/zk.md)
+        - [On-chain verifier (no recursion/composition)](./future/on-chain-verifier.md)
         - [Groth16 Recursion](./future/groth-16.md)
         - [Precompiles](./future/precompiles.md)
         - [Prover space control](./future/continuations.md)
