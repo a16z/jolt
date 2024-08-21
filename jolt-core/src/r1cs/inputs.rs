@@ -222,7 +222,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
     }
 
     #[tracing::instrument(skip_all, name = "R1CSProof::format_commitments")]
-    fn format_commitments(jolt_commitments: &JoltCommitments<C>, C: usize) -> Vec<&C::Commitment> {
+    pub fn format_commitments(
+        jolt_commitments: &JoltCommitments<C>,
+        C: usize,
+    ) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments

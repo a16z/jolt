@@ -20,7 +20,7 @@ pub struct UniPoly<F> {
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct CompressedUniPoly<F: JoltField> {
-    coeffs_except_linear_term: Vec<F>,
+    pub coeffs_except_linear_term: Vec<F>,
 }
 
 impl<F: JoltField> UniPoly<F> {
@@ -222,15 +222,27 @@ impl<F: JoltField> CompressedUniPoly<F> {
         assert_eq!(self.coeffs_except_linear_term.len() + 1, coeffs.len());
         UniPoly { coeffs }
     }
-}
 
-impl<F: JoltField> AppendToTranscript for UniPoly<F> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"UniPoly_begin");
-        for i in 0..self.coeffs.len() {
-            transcript.append_scalar(&self.coeffs[i]);
+    // In the verifier we do not have to check that f(0) + f(1) = hint as we can just
+    // recover the linear term assuming the prover did it right, then eval the poly
+    pub fn eval_from_hint(&self, hint: &F, x: &F) -> F {
+        let mut linear_term =
+            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
+        for i in 1..self.coeffs_except_linear_term.len() {
+            linear_term -= self.coeffs_except_linear_term[i];
         }
-        transcript.append_message(b"UniPoly_end");
+
+        let mut running_point = *x;
+        let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
+        for i in 1..self.coeffs_except_linear_term.len() {
+            running_point = running_point * x;
+            running_sum += self.coeffs_except_linear_term[i] * running_point;
+        }
+        running_sum
+    }
+
+    pub fn degree(&self) -> usize {
+        self.coeffs_except_linear_term.len()
     }
 }
 

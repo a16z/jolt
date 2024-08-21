@@ -486,7 +486,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct SumcheckInstanceProof<F: JoltField> {
-    compressed_polys: Vec<CompressedUniPoly<F>>,
+    pub compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
 impl<F: JoltField> SumcheckInstanceProof<F> {
@@ -520,29 +520,23 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         // verify that there is a univariate polynomial for each round
         assert_eq!(self.compressed_polys.len(), num_rounds);
         for i in 0..self.compressed_polys.len() {
-            let poly = self.compressed_polys[i].decompress(&e);
-
             // verify degree bound
-            if poly.degree() != degree_bound {
+            if self.compressed_polys[i].degree() != degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
-                    poly.degree(),
+                    self.compressed_polys[i].degree(),
                 ));
             }
-
-            // check if G_k(0) + G_k(1) = e
-            assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
             // append the prover's message to the transcript
             self.compressed_polys[i].append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar();
-
             r.push(r_i);
 
-            // evaluate the claimed degree-ell polynomial at r_i
-            e = poly.evaluate(&r_i);
+            // evaluate the claimed degree-ell polynomial at r_i using the hint
+            e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
         }
 
         Ok((e, r))

@@ -97,12 +97,12 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         transcript: &mut ProofTranscript,
     ) {
         let layer_proof = &layer_proofs[layer_index];
+
         let expected_sumcheck_claim: F = (0..grand_product_claims.len())
             .map(|i| coeffs[i] * layer_proof.left_claims[i] * layer_proof.right_claims[i] * eq_eval)
             .sum();
 
         assert_eq!(expected_sumcheck_claim, sumcheck_claim);
-
         // produce a random challenge to condense two claims into a single claim
         let r_layer = transcript.challenge_scalar();
 
@@ -134,7 +134,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
             // produce a fresh set of coeffs
             let coeffs: Vec<F> = transcript.challenge_vector(claims_to_verify.len());
             // produce a joint claim
-            let claim = claims_to_verify
+            let claim: F = claims_to_verify
                 .iter()
                 .zip(coeffs.iter())
                 .map(|(&claim, &coeff)| claim * coeff)
