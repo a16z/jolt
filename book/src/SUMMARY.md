@@ -15,7 +15,7 @@
         - [Memory Checking](./how/memory-checking.md)
         - [GKR](./how/gkr.md)
         - [Jolt](./how/jolt.md)
-             -[Improvements since release](./how/improvements-since-release.md)
+             - [Improvements since release](./how/improvements-since-release.md)
     - [Background](./background.md)
         - [Sumcheck](./background/sumcheck.md)
         - [Multilinear Extensions](./background/multilinear-extensions.md)
