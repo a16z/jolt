@@ -16,7 +16,7 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*, ToConstraintFieldGadget};
 use ark_relations::{
     ns,
-    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError},
+    r1cs::{Namespace, SynthesisError},
 };
 use ark_std::{borrow::Borrow, iterable::Iterable, marker::PhantomData, One};
 
@@ -185,7 +185,7 @@ where
             .next()
             .unwrap();
 
-        let u = vec![r.clone(), r.negate()?, r.clone() * &r];
+        let u = [r.clone(), r.negate()?, r.clone() * &r];
 
         let com = [vec![c.clone()], com.clone()].concat();
 
@@ -323,7 +323,10 @@ mod tests {
     use ark_crypto_primitives::{snark::SNARK, sponge::constraints::CryptographicSpongeVar};
     use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
     use ark_r1cs_std::ToConstraintFieldGadget;
-    use ark_relations::ns;
+    use ark_relations::{
+        ns,
+        r1cs::{ConstraintSynthesizer, ConstraintSystemRef},
+    };
     use rand_core::{RngCore, SeedableRng};
 
     #[derive(Clone)]

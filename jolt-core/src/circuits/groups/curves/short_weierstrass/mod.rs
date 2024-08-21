@@ -339,10 +339,10 @@ where
         for bit in affine_bits.iter().skip(1) {
             if bit.is_constant() {
                 if *bit == &Boolean::TRUE {
-                    accumulator = accumulator.add_unchecked(&multiple_of_power_of_two)?;
+                    accumulator = accumulator.add_unchecked(multiple_of_power_of_two)?;
                 }
             } else {
-                let temp = accumulator.add_unchecked(&multiple_of_power_of_two)?;
+                let temp = accumulator.add_unchecked(multiple_of_power_of_two)?;
                 accumulator = bit.select(&temp, &accumulator)?;
             }
             multiple_of_power_of_two.double_in_place()?;
@@ -365,7 +365,7 @@ where
                 }
             } else {
                 let temp = &*mul_result + &multiple_of_power_of_two.into_projective();
-                *mul_result = bit.select(&temp, &mul_result)?;
+                *mul_result = bit.select(&temp, mul_result)?;
             }
             multiple_of_power_of_two.double_in_place()?;
         }
@@ -507,10 +507,8 @@ where
         &self,
         bits: impl Iterator<Item = &'a Boolean<ConstraintF>>,
     ) -> Result<Self, SynthesisError> {
-        if self.is_constant() {
-            if self.value().unwrap().is_zero() {
-                return Ok(self.clone());
-            }
+        if self.is_constant() && self.value().unwrap().is_zero() {
+            return Ok(self.clone());
         }
         let self_affine = self.to_affine()?;
         let (x, y, infinity) = (self_affine.x, self_affine.y, self_affine.infinity);
@@ -519,7 +517,7 @@ where
         let non_zero_self = NonZeroAffineVar::new(x, y);
 
         let mut bits = bits.collect::<Vec<_>>();
-        if bits.len() == 0 {
+        if bits.is_empty() {
             return Ok(Self::zero());
         }
         // Remove unnecessary constant zeros in the most-significant positions.
@@ -528,7 +526,7 @@ where
             // We iterate from the MSB down.
             .rev()
             // Skip leading zeros, if they are constants.
-            .skip_while(|b| b.is_constant() && (b.value().unwrap() == false))
+            .skip_while(|b| b.is_constant() && (!b.value().unwrap()))
             .collect();
         // After collecting we are in big-endian form; we have to reverse to get back to
         // little-endian.
@@ -791,11 +789,7 @@ where
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
-        Self::new_variable(
-            cs,
-            || f().map(|b| SWProjective::from((*b.borrow()).clone())),
-            mode,
-        )
+        Self::new_variable(cs, || f().map(|b| SWProjective::from(*b.borrow())), mode)
     }
 }
 

@@ -23,7 +23,7 @@ where
 }
 
 thread_local! {
-    static SLICE: RefCell<Option<usize>> = RefCell::new(None);
+    static SLICE: RefCell<Option<usize>> = const { RefCell::new(None) };
 }
 
 impl<'a, T, F> AbsorbGadget<F> for ImplAbsorb<'a, T, F>

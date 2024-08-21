@@ -87,7 +87,7 @@ where
     /// Sets `self = self.mul_by_base_field_constant(fe)`.
     #[inline]
     pub fn mul_assign_by_base_field_constant(&mut self, fe: P::BaseField) {
-        *self = (&*self).mul_by_base_field_constant(fe);
+        *self = (*self).mul_by_base_field_constant(fe);
     }
 }
 

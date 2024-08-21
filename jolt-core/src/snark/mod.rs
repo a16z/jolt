@@ -61,7 +61,7 @@ pub struct ProofData<E: Pairing> {
     /// It's the verifiers responsibility to ensure that the sum is zero.
     /// The scalar at index `length-1` is, by convention, always `-1`, so
     /// we save one public input element per MSM.
-    msms: Vec<(Vec<E::G1Affine>, Vec<E::ScalarField>)>,
+    msms: Vec<MSMDef<E>>,
     /// Blocks of G1 elements `Gᵢ` in the public input, used in multi-pairings with
     /// the corresponding G2 elements in the offloaded SNARK verification key.
     /// It's the verifiers responsibility to ensure that the sum is zero.
@@ -77,9 +77,16 @@ pub struct OffloadedData<E: Pairing> {
 }
 
 pub enum DeferredOpData<E: Pairing> {
-    MSM(Option<(Vec<E::G1Affine>, Vec<E::ScalarField>)>),
+    MSM(Option<MSMDef<E>>),
     Pairing(Option<Vec<E::G1Affine>>, Vec<E::G2Affine>),
 }
+
+pub type MSMDef<E> = (
+    Vec<<E as Pairing>::G1Affine>,
+    Vec<<E as Pairing>::ScalarField>,
+);
+
+pub type MultiPairingDef<E> = (Vec<<E as Pairing>::G1>, Vec<<E as Pairing>::G2>);
 
 pub type DeferredFn<E> = dyn FnOnce() -> Result<DeferredOpData<E>, SynthesisError>;
 
@@ -217,10 +224,10 @@ where
     {
         let offloaded_data_ref = circuit.offloaded_data_ref.clone();
 
-        let (pk, snark_vk) = S::circuit_specific_setup(circuit, rng)
-            .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        let (pk, snark_vk) =
+            S::circuit_specific_setup(circuit, rng).map_err(OffloadedSNARKError::SNARKError)?;
 
-        let snark_pvk = S::process_vk(&snark_vk).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        let snark_pvk = S::process_vk(&snark_vk).map_err(OffloadedSNARKError::SNARKError)?;
 
         let setup_data = offloaded_data_ref.get().unwrap().clone().setup_data;
 
@@ -252,8 +259,7 @@ where
 
         let offloaded_data_ref = circuit.offloaded_data_ref.clone();
 
-        let proof =
-            S::prove(circuit_pk, circuit, rng).map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+        let proof = S::prove(circuit_pk, circuit, rng).map_err(OffloadedSNARKError::SNARKError)?;
 
         let proof_data = match offloaded_data_ref.get().unwrap().clone().proof_data {
             Some(proof_data) => proof_data,
@@ -282,14 +288,14 @@ where
         let public_input = build_public_input::<E, G1Var>(public_input, &proof.offloaded_data);
 
         let r = S::verify_with_processed_vk(&vk.snark_pvk, &public_input, &proof.snark_proof)
-            .map_err(|e| OffloadedSNARKError::SNARKError(e))?;
+            .map_err(OffloadedSNARKError::SNARKError)?;
         if !r {
             return Ok(false);
         }
 
         for (g1s, scalars) in &proof.offloaded_data.msms {
             assert_eq!(g1s.len(), scalars.len());
-            let r = E::G1::msm_unchecked(&g1s, &scalars);
+            let r = E::G1::msm_unchecked(g1s, scalars);
             if !r.is_zero() {
                 return Ok(false);
             }
@@ -325,11 +331,11 @@ where
 
     fn pairing_inputs(
         vk: &OffloadedSNARKVerifyingKey<E, S>,
-        g1_vectors: &Vec<Vec<E::G1Affine>>,
-    ) -> Result<Vec<(Vec<E::G1>, Vec<E::G2>)>, SerializationError> {
+        g1_vectors: &[Vec<E::G1Affine>],
+    ) -> Result<Vec<MultiPairingDef<E>>, SerializationError> {
         Ok(g1_vectors
-            .into_iter()
-            .map(|g1_vec| g1_vec.into_iter().map(|&g1| g1.into()).collect())
+            .iter()
+            .map(|g1_vec| g1_vec.iter().map(|&g1| g1.into()).collect())
             .zip(Self::g2_elements(vk))
             .collect())
     }
@@ -419,7 +425,7 @@ where
     [public_input.to_vec(), msm_data, pairing_data].concat()
 }
 
-fn to_scalars<E, G1Var>(g1s: &Vec<E::G1Affine>) -> Vec<E::ScalarField>
+fn to_scalars<E, G1Var>(g1s: &[E::G1Affine]) -> Vec<E::ScalarField>
 where
     E: Pairing,
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,

@@ -213,7 +213,6 @@ where
         }
 
         {
-            let g1_values_opt = g1_values_opt;
             let g2_values = g2_values.to_vec();
             let g1s = g1s.to_vec();
             let ns = ns!(cs, "deferred_pairing");

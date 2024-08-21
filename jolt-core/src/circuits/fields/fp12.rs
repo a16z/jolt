@@ -45,11 +45,11 @@ where
         c1: &Fp2Var<Fp2Config<P>, ConstraintF>,
         d1: &Fp2Var<Fp2Config<P>, ConstraintF>,
     ) -> Result<Self, SynthesisError> {
-        let v0 = self.c0.mul_by_c0_c1_0(&c0, &c1)?;
-        let v1 = self.c1.mul_by_0_c1_0(&d1)?;
+        let v0 = self.c0.mul_by_c0_c1_0(c0, c1)?;
+        let v1 = self.c1.mul_by_0_c1_0(d1)?;
         let new_c0 = Self::mul_base_field_by_nonresidue(&v1)? + &v0;
 
-        let new_c1 = (&self.c0 + &self.c1).mul_by_c0_c1_0(&c0, &(c1 + d1))? - &v0 - &v1;
+        let new_c1 = (&self.c0 + &self.c1).mul_by_c0_c1_0(c0, &(c1 + d1))? - &v0 - &v1;
         Ok(Self::new(new_c0, new_c1))
     }
 
@@ -66,11 +66,11 @@ where
         let a1 = &self.c0.c1 * c0;
         let a2 = &self.c0.c2 * c0;
         let a = Fp6Var::new(a0, a1, a2);
-        let b = self.c1.mul_by_c0_c1_0(&d0, &d1)?;
+        let b = self.c1.mul_by_c0_c1_0(d0, d1)?;
 
         let c0 = c0 + d0;
         let c1 = d1;
-        let e = (&self.c0 + &self.c1).mul_by_c0_c1_0(&c0, &c1)?;
+        let e = (&self.c0 + &self.c1).mul_by_c0_c1_0(&c0, c1)?;
         let new_c1 = e - (&a + &b);
         let new_c0 = Self::mul_base_field_by_nonresidue(&b)? + &a;
 
