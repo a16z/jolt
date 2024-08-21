@@ -1,6 +1,6 @@
 # Improvements complete or in progress since the initial release of Jolt in April 2024
 
-There are many tasks described in the various files in the "future" section of the wiki. 
+There are many tasks described in the various files in the "roadmap/future" section of the wiki. 
 Let's use this file as the primary means of tracking what is done or in progress. Anything
 not mentioned in this file is presumably not yet started (or barely started). 
 
