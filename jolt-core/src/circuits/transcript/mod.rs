@@ -1,17 +1,9 @@
-use crate::utils::transcript::ProofTranscript;
 use ark_crypto_primitives::sponge::constraints::AbsorbGadget;
 use ark_ff::PrimeField;
-use ark_r1cs_std::fields::fp::FpVar;
-use ark_r1cs_std::prelude::*;
-use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
-use ark_relations::ns;
-use ark_relations::r1cs::SynthesisError;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::iterable::Iterable;
-use ark_std::Zero;
-use std::cell::RefCell;
-use std::fmt::Debug;
-use std::marker::PhantomData;
+use ark_r1cs_std::{fields::fp::FpVar, prelude::*, R1CSVar};
+use ark_relations::{ns, r1cs::SynthesisError};
+use ark_serialize::CanonicalSerialize;
+use ark_std::{cell::RefCell, fmt::Debug, marker::PhantomData, Zero};
 
 pub mod mock;
 
@@ -49,7 +41,7 @@ where
 
         t_value
             .serialize_compressed(&mut buf)
-            .map_err(|e| SynthesisError::Unsatisfiable)?;
+            .map_err(|_e| SynthesisError::Unsatisfiable)?;
 
         buf.into_iter()
             .map(|b| UInt8::new_witness(ns!(self.0.cs(), "sponge_byte"), || Ok(b)))

@@ -1,6 +1,5 @@
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use ark_crypto_primitives::sponge::constraints::SpongeWithGadget;
-use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::prelude::*;

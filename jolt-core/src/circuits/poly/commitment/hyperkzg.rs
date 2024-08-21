@@ -1,30 +1,24 @@
-use crate::circuits::offloaded::{
-    MSMGadget, OffloadedMSMGadget, OffloadedPairingGadget, PairingGadget,
+use crate::{
+    circuits::{
+        offloaded::{MSMGadget, OffloadedMSMGadget, OffloadedPairingGadget, PairingGadget},
+        poly::commitment::commitment_scheme::CommitmentVerifierGadget,
+        transcript::ImplAbsorb,
+    },
+    field::JoltField,
+    poly::commitment::hyperkzg::{
+        HyperKZG, HyperKZGCommitment, HyperKZGProof, HyperKZGProverKey, HyperKZGVerifierKey,
+    },
+    snark::OffloadedDataCircuit,
 };
-use crate::circuits::poly::commitment::commitment_scheme::CommitmentVerifierGadget;
-use crate::circuits::transcript::ImplAbsorb;
-use crate::field::JoltField;
-use crate::poly::commitment::hyperkzg::{
-    HyperKZG, HyperKZGCommitment, HyperKZGProof, HyperKZGProverKey, HyperKZGVerifierKey,
-};
-use crate::snark::OffloadedDataCircuit;
-use ark_crypto_primitives::sponge::constraints::{
-    AbsorbGadget, CryptographicSpongeVar, SpongeWithGadget,
-};
-use ark_crypto_primitives::sponge::CryptographicSponge;
+use ark_crypto_primitives::sponge::constraints::{CryptographicSpongeVar, SpongeWithGadget};
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, PrimeField};
-use ark_r1cs_std::boolean::Boolean;
-use ark_r1cs_std::fields::fp::FpVar;
-use ark_r1cs_std::pairing::PairingVar;
-use ark_r1cs_std::prelude::*;
-use ark_r1cs_std::ToConstraintFieldGadget;
-use ark_relations::ns;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError};
-use ark_std::borrow::Borrow;
-use ark_std::iterable::Iterable;
-use ark_std::marker::PhantomData;
-use ark_std::One;
+use ark_ff::PrimeField;
+use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*, ToConstraintFieldGadget};
+use ark_relations::{
+    ns,
+    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError},
+};
+use ark_std::{borrow::Borrow, iterable::Iterable, marker::PhantomData, One};
 
 #[derive(Clone)]
 pub struct HyperKZGProofVar<E, G1Var>
@@ -300,7 +294,7 @@ fn q_powers<E: Pairing, S: SpongeWithGadget<E::ScalarField>>(
     let q_powers = [vec![FpVar::Constant(E::ScalarField::one()), q.clone()], {
         let mut q_power = q.clone();
         (2..ell)
-            .map(|i| {
+            .map(|_i| {
                 q_power *= &q;
                 q_power.clone()
             })
@@ -313,31 +307,24 @@ fn q_powers<E: Pairing, S: SpongeWithGadget<E::ScalarField>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::circuits::groups::curves::short_weierstrass::bn254::G1Var;
-    use crate::circuits::transcript::mock::{MockSponge, MockSpongeVar};
-    use crate::poly::commitment::hyperkzg::{
-        HyperKZG, HyperKZGProverKey, HyperKZGSRS, HyperKZGVerifierKey,
+    use crate::{
+        circuits::{
+            groups::curves::short_weierstrass::bn254::G1Var,
+            transcript::mock::{MockSponge, MockSpongeVar},
+        },
+        poly::{
+            commitment::hyperkzg::{HyperKZG, HyperKZGProverKey, HyperKZGSRS, HyperKZGVerifierKey},
+            dense_mlpoly::DensePolynomial,
+        },
+        snark::{DeferredFnsRef, OffloadedDataCircuit, OffloadedSNARK},
+        utils::{errors::ProofVerifyError, transcript::ProofTranscript},
     };
-    use crate::poly::commitment::kzg::KZGVerifierKey;
-    use crate::poly::dense_mlpoly::DensePolynomial;
-    use crate::snark::{
-        DeferredFnsRef, OffloadedDataCircuit, OffloadedPairingDef, OffloadedSNARK,
-        OffloadedSNARKError, OffloadedSNARKVerifyingKey,
-    };
-    use crate::utils::errors::ProofVerifyError;
-    use crate::utils::transcript::ProofTranscript;
     use ark_bn254::Bn254;
-    use ark_crypto_primitives::snark::{CircuitSpecificSetupSNARK, SNARK};
-    use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
-    use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
-    use ark_crypto_primitives::sponge::poseidon::{PoseidonConfig, PoseidonDefaultConfigField};
+    use ark_crypto_primitives::{snark::SNARK, sponge::constraints::CryptographicSpongeVar};
     use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
     use ark_r1cs_std::ToConstraintFieldGadget;
     use ark_relations::ns;
-    use ark_serialize::SerializationError;
-    use ark_std::rand::Rng;
-    use ark_std::Zero;
-    use rand_core::{CryptoRng, RngCore, SeedableRng};
+    use rand_core::{RngCore, SeedableRng};
 
     #[derive(Clone)]
     struct HyperKZGVerifierCircuit<E, G1Var>
@@ -539,7 +526,7 @@ mod tests {
 
                 // Create a groth16 proof with our parameters.
                 let proof = VerifierSNARK::prove(&cpk, verifier_circuit, &mut rng)
-                    .map_err(|e| ProofVerifyError::InternalError)?;
+                    .map_err(|_e| ProofVerifyError::InternalError)?;
 
                 let result = VerifierSNARK::verify_with_processed_vk(&cvk, &instance, &proof);
                 match result {

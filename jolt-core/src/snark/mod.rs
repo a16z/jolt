@@ -2,7 +2,7 @@ use ark_crypto_primitives::snark::SNARK;
 use ark_ec::{
     pairing::Pairing,
     short_weierstrass::{Affine, SWCurveConfig},
-    AffineRepr, CurveGroup, VariableBaseMSM,
+    AffineRepr, VariableBaseMSM,
 };
 use ark_ff::{PrimeField, Zero};
 use ark_r1cs_std::{
@@ -14,10 +14,9 @@ use ark_r1cs_std::{
 use ark_relations::r1cs;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
-use ark_std::{cell::OnceCell, cell::RefCell, marker::PhantomData, rc::Rc};
+use ark_std::{cell::OnceCell, cell::RefCell, rc::Rc};
 use itertools::Itertools;
 use rand_core::{CryptoRng, RngCore};
-use std::any::Any;
 
 /// Describes G1 elements to be used in a multi-pairing.
 /// The verifier is responsible for ensuring that the sum of the pairings is zero.
@@ -112,7 +111,7 @@ where
     SynthesisError(#[from] SynthesisError),
 }
 
-struct WrappedCircuit<E, C>
+pub struct WrappedCircuit<E, C>
 where
     E: Pairing,
     C: ConstraintSynthesizer<E::ScalarField> + OffloadedDataCircuit<E>,

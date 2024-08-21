@@ -1,7 +1,8 @@
 use crate::circuits::fields::quadratic_extension::*;
-use ark_ff::fields::{Fp2Config, Fp2ConfigWrapper, QuadExtConfig};
-use ark_ff::PrimeField;
-use ark_r1cs_std::fields::fp::FpVar;
+use ark_ff::{
+    fields::{Fp2Config, Fp2ConfigWrapper, QuadExtConfig},
+    PrimeField,
+};
 use ark_r1cs_std::fields::nonnative::NonNativeFieldVar;
 
 /// A quadratic extension field constructed over a prime field.

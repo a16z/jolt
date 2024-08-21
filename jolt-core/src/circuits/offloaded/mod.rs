@@ -1,18 +1,14 @@
-use crate::snark::{DeferredOpData, OffloadedData, OffloadedDataCircuit};
-use ark_ec::pairing::Pairing;
-use ark_ec::{CurveGroup, VariableBaseMSM};
-use ark_ff::{One, PrimeField};
-use ark_r1cs_std::alloc::AllocVar;
-use ark_r1cs_std::boolean::Boolean;
-use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::fields::fp::FpVar;
-use ark_r1cs_std::fields::FieldVar;
-use ark_r1cs_std::groups::CurveVar;
-use ark_r1cs_std::{R1CSVar, ToConstraintFieldGadget};
-use ark_relations::ns;
-use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
-use ark_serialize::Valid;
-use ark_std::Zero;
+use crate::snark::{DeferredOpData, OffloadedDataCircuit};
+use ark_ec::{pairing::Pairing, CurveGroup, VariableBaseMSM};
+use ark_r1cs_std::{
+    alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, fields::FieldVar, groups::CurveVar, R1CSVar,
+    ToConstraintFieldGadget,
+};
+use ark_relations::{
+    ns,
+    r1cs::{Namespace, SynthesisError},
+};
+use ark_std::{One, Zero};
 use std::marker::PhantomData;
 
 pub trait MSMGadget<FVar, G, GVar>

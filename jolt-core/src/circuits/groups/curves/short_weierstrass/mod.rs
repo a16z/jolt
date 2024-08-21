@@ -5,16 +5,11 @@ use ark_ec::{
     AffineRepr, CurveGroup,
 };
 use ark_ff::{BigInteger, BitIteratorBE, Field, One, PrimeField, Zero};
-use ark_r1cs_std::impl_bounded_ops;
+use ark_r1cs_std::{fields::fp::FpVar, impl_bounded_ops, prelude::*, ToConstraintFieldGadget};
 use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
-use ark_std::{borrow::Borrow, marker::PhantomData, ops::Mul};
+use ark_std::{borrow::Borrow, marker::PhantomData, ops::Mul, vec::Vec};
 use derivative::Derivative;
 use non_zero_affine::NonZeroAffineVar;
-
-use ark_r1cs_std::{fields::fp::FpVar, prelude::*, ToConstraintFieldGadget};
-
-use ark_std::vec::Vec;
-use binius_field::PackedField;
 
 pub mod bls12_381;
 pub mod bn254;
@@ -852,7 +847,7 @@ where
                 let (mut ge, iter) = if cofactor_weight < modulus_minus_1_weight {
                     let ge = Self::new_variable_omit_prime_order_check(
                         ark_relations::ns!(cs, "Witness without subgroup check with cofactor mul"),
-                        || f().map(|g| g.borrow().into_affine().mul_by_cofactor_inv().into()),
+                        || f().map(|g| g.into_affine().mul_by_cofactor_inv().into()),
                         mode,
                     )?;
                     (
