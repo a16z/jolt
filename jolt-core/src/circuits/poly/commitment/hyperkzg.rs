@@ -1,8 +1,9 @@
+use crate::circuits::transcript::ImplAbsorbGVar;
 use crate::{
     circuits::{
         offloaded::{MSMGadget, OffloadedMSMGadget, OffloadedPairingGadget, PairingGadget},
         poly::commitment::commitment_scheme::CommitmentVerifierGadget,
-        transcript::ImplAbsorb,
+        transcript::ImplAbsorbFVar,
     },
     field::JoltField,
     poly::commitment::hyperkzg::{
@@ -175,7 +176,7 @@ where
 
         transcript.absorb(
             &com.iter()
-                .map(|com| ImplAbsorb::wrap(com))
+                .map(|com| ImplAbsorbGVar::wrap(com))
                 .collect::<Vec<_>>(),
         )?;
 
@@ -216,12 +217,16 @@ where
         transcript.absorb(
             &v.iter()
                 .flatten()
-                .map(|v_ij| ImplAbsorb::wrap(v_ij))
+                .map(|v_ij| ImplAbsorbFVar::wrap(v_ij))
                 .collect::<Vec<_>>(),
         )?;
         let q_powers = q_powers::<E, S>(transcript, ell)?;
 
-        transcript.absorb(&w.iter().map(|g| ImplAbsorb::wrap(g)).collect::<Vec<_>>())?;
+        transcript.absorb(
+            &w.iter()
+                .map(|g| ImplAbsorbGVar::wrap(g))
+                .collect::<Vec<_>>(),
+        )?;
         let d = transcript
             .squeeze_field_elements(1)?
             .into_iter()
@@ -276,6 +281,7 @@ where
             &[l_g1, r_g1],
             self.g2_elements.as_slice(),
         )?;
+        dbg!();
 
         Ok(Boolean::TRUE)
     }

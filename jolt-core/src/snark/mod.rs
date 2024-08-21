@@ -18,20 +18,11 @@ use ark_std::{cell::OnceCell, cell::RefCell, rc::Rc};
 use itertools::Itertools;
 use rand_core::{CryptoRng, RngCore};
 
-/// Describes G1 elements to be used in a multi-pairing.
-/// The verifier is responsible for ensuring that the sum of the pairings is zero.
-/// The verifier needs to use appropriate G2 elements from the verification key or the proof
-/// (depending on the protocol).
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct OffloadedPairingDef<E>
 where
     E: Pairing,
 {
-    /// Offsets of the G1 elements in the public input. The G1 elements are stored as sequences of scalar field elements
-    /// encoding the compressed coordinates of the G1 points (which would natively be numbers in the base field).
-    /// The offsets are in the number of scalar field elements in the public input before the G1 element.
-    /// The last element, by convention, is always used in the multi-pairing computation with coefficient `-1`.
-    pub g1_offsets: Vec<usize>,
     pub g2_elements: Vec<E::G2Affine>,
 }
 
@@ -233,10 +224,7 @@ where
 
         let delayed_pairings = setup_data
             .into_iter()
-            .map(|g2| OffloadedPairingDef {
-                g1_offsets: vec![],
-                g2_elements: g2,
-            })
+            .map(|g2| OffloadedPairingDef { g2_elements: g2 })
             .collect();
 
         let vk = OffloadedSNARKVerifyingKey {
