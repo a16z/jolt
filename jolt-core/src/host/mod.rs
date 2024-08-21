@@ -25,7 +25,9 @@ use crate::{
     field::JoltField,
     jolt::{
         instruction::{
-            mulh::MULHInstruction, mulhsu::MULHSUInstruction, VirtualInstructionSequence,
+            div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
+            mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
+            VirtualInstructionSequence,
         },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
@@ -34,7 +36,7 @@ use crate::{
 
 use self::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
-use self::toolchain::install_toolchain;
+use self::toolchain::{install_no_std_toolchain, install_toolchain};
 
 pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,22 +104,31 @@ impl Program {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
+            #[cfg(not(target_arch = "wasm32"))]
+            install_no_std_toolchain().unwrap();
+
             self.save_linker();
 
             let rust_flags = [
                 "-C",
                 &format!("link-arg=-T{}", self.linker_path()),
                 "-C",
-                "passes=loweratomic",
+                "passes=lower-atomic",
                 "-C",
                 "panic=abort",
             ];
 
-            let toolchain = "riscv32i-jolt-zkvm-elf";
-            let mut envs = vec![
-                ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
-                ("RUSTUP_TOOLCHAIN", toolchain.to_string()),
-            ];
+            let toolchain = if self.std {
+                "riscv32im-jolt-zkvm-elf"
+            } else {
+                "riscv32im-unknown-none-elf"
+            };
+
+            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
+
+            if self.std {
+                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
+            }
 
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
@@ -176,12 +187,12 @@ impl Program {
         let trace: Vec<_> = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
-                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::DIV => todo!(),
-                tracer::RV32IM::DIVU => todo!(),
-                tracer::RV32IM::REM => todo!(),
-                tracer::RV32IM::REMU => todo!(),
+                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {
@@ -199,6 +210,7 @@ impl Program {
                 }
             })
             .collect();
+
         let padded_trace_len = trace.len().next_power_of_two();
 
         let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
@@ -214,7 +226,6 @@ impl Program {
                     }
                 });
             });
-
         (io_device, trace, circuit_flag_trace)
     }
 

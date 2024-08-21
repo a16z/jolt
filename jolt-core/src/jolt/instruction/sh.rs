@@ -18,7 +18,6 @@ impl JoltInstruction for SHInstruction {
     fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        assert!(vals.len() == 1);
         vals[0]
     }
 
@@ -31,13 +30,20 @@ impl JoltInstruction for SHInstruction {
         C: usize,
         M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        // This assertion ensures that we only need two TruncateOverflowSubtables
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        vec![(
-            Box::new(IdentitySubtable::<F>::new()),
-            SubtableIndices::from(C - 1),
-        )]
+        vec![
+            (
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(C - 1),
+            ),
+            (
+                // Not used for lookup, but this implicitly range-checks
+                // the remaining query chunks
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(0..C - 1),
+            ),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {

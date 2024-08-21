@@ -49,7 +49,7 @@ jobs:
       - name: Cache Jolt RISC-V Rust toolchain
         uses: actions/cache@v4
         with:
-          key: jolt-rust-toolchain-${{hashFiles('.jolt.rust.toolchain-tag')}}
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
           path: ~/.jolt
       - name: Install Jolt RISC-V Rust toolchain
         run: cargo run install-toolchain

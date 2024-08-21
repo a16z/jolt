@@ -23,6 +23,7 @@ use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
+use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, virtual_movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -81,6 +82,7 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::MULHU => Ok(MULHUInstruction::default().into()),
 
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction::default().into()),
+            RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction::default().into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction::default().into()),
@@ -146,6 +148,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction(row.advice_value.unwrap()).into()),
+            RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction(row.register_state.rs1_val.unwrap()).into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),

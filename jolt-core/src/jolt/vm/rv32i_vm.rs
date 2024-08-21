@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
+use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyrax::HyraxScheme;
@@ -119,6 +120,7 @@ instruction_set!(
   MULU: MULUInstruction<WORD_SIZE>,
   MULHU: MULHUInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
+  VIRTUAL_MOVE: MOVEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction,
@@ -174,9 +176,44 @@ pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>
 
 use eyre::Result;
 use std::fs::File;
+use std::io::Cursor;
 use std::path::PathBuf;
 
 pub type PCS = HyraxScheme<G1Projective>;
+pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
+    /// Gets the byte size of the serialized data
+    fn size(&self) -> Result<usize> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer.len())
+    }
+
+    /// Saves the data to a file
+    fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
+        let file = File::create(path.into())?;
+        self.serialize_compressed(file)?;
+        Ok(())
+    }
+
+    /// Reads data from a file
+    fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
+        let file = File::open(path.into())?;
+        Ok(Self::deserialize_compressed(file)?)
+    }
+
+    /// Serializes the data to a byte vector
+    fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Deserializes data from a byte vector
+    fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
+        let cursor = Cursor::new(bytes);
+        Ok(Self::deserialize_compressed(cursor)?)
+    }
+}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RV32IHyraxProof {
@@ -184,40 +221,7 @@ pub struct RV32IHyraxProof {
     pub commitments: JoltCommitments<PCS>,
 }
 
-impl RV32IHyraxProof {
-    /// Gets the byte size of the full proof
-    pub fn size(&self) -> Result<usize> {
-        let mut buffer = Vec::new();
-        self.serialize_compressed(&mut buffer)?;
-        Ok(buffer.len())
-    }
-
-    /// Saves the proof to a file
-    pub fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
-        let file = File::create(path.into())?;
-        self.serialize_compressed(file)?;
-        Ok(())
-    }
-
-    /// Reads a proof from a file
-    pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        let file = File::open(path.into())?;
-        Ok(RV32IHyraxProof::deserialize_compressed(file)?)
-    }
-
-    /// Serializes the proof to a byte vector
-    pub fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
-        self.serialize_compressed(&mut buffer)?;
-        Ok(buffer)
-    }
-
-    /// Deserializes a proof from a byte vector
-    pub fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
-        let cursor = std::io::Cursor::new(bytes);
-        Ok(RV32IHyraxProof::deserialize_compressed(cursor)?)
-    }
-}
+impl Serializable for RV32IHyraxProof {}
 
 // ==================== TEST ====================
 
@@ -319,6 +323,33 @@ mod tests {
     //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
     //     fib_e2e::<Field, MockCommitScheme<Field>>();
     // }
+
+    #[test]
+    fn muldiv_e2e_hyrax() {
+        let mut program = host::Program::new("muldiv-guest");
+        program.set_input(&123u32);
+        program.set_input(&234u32);
+        program.set_input(&345u32);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
+                io_device,
+                trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
+
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
 
     #[test]
     fn sha3_e2e_hyrax() {

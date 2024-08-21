@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::{
     field::JoltField,
-    jolt::subtable::{
-        eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
-        ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
-    },
+    jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -21,40 +18,26 @@ impl JoltInstruction for ASSERTLTEInstruction {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        // LTS(x,y)
         let vals_by_subtable = self.slice_values(vals, C, M);
+        let ltu = vals_by_subtable[0];
+        let eq = vals_by_subtable[1];
 
-        let left_msb = vals_by_subtable[0];
-        let right_msb = vals_by_subtable[1];
-        let ltu = vals_by_subtable[2];
-        let eq = vals_by_subtable[3];
-        let lt_abs = vals_by_subtable[4];
-        let eq_abs = vals_by_subtable[5];
+        // Accumulator for LTU(x, y)
+        let mut ltu_sum = F::zero();
+        // Accumulator for EQ(x, y)
+        let mut eq_prod = F::one();
 
-        // Accumulator for LTU(x_{<s}, y_{<s})
-        let mut ltu_sum = lt_abs[0];
-        // Accumulator for EQ(x_{<s}, y_{<s})
-        let mut eq_prod = eq_abs[0];
-
-        for (ltu_i, eq_i) in ltu.iter().zip(&eq[1..]) {
-            ltu_sum += *ltu_i * eq_prod;
-            eq_prod *= *eq_i;
+        for i in 0..C {
+            ltu_sum += ltu[i] * eq_prod;
+            eq_prod *= eq[i];
         }
 
-        // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
-        let lt = left_msb[0] * (F::one() - right_msb[0])
-            + (left_msb[0] * right_msb[0] + (F::one() - left_msb[0]) * (F::one() - right_msb[0]))
-                * ltu_sum;
-
-        // EQ(x,y)
-        let eq = eq.iter().product::<F>();
-
-        // LTS(x,y) || EQ(x,y)
-        lt + eq - lt * eq
+        // LTU(x,y) || EQ(x,y)
+        ltu_sum + eq_prod
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
-        C + 1
+        C
     }
 
     fn subtables<F: JoltField>(
@@ -63,12 +46,8 @@ impl JoltInstruction for ASSERTLTEInstruction {
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
             (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
-            (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
     }
 
@@ -77,7 +56,7 @@ impl JoltInstruction for ASSERTLTEInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
-        ((self.0 as i32) <= (self.1 as i32)).into()
+        (self.0 <= self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {

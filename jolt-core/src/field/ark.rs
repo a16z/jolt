@@ -26,6 +26,23 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    fn to_u64(&self) -> Option<u64> {
+        let bigint = self.into_bigint();
+        let limbs: &[u64] = bigint.as_ref();
+        let result = limbs[0];
+
+        match <Self as JoltField>::from_u64(result) {
+            None => None,
+            Some(x) => {
+                if x == *self {
+                    Some(result)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     fn square(&self) -> Self {
         <Self as ark_ff::Field>::square(self)
     }

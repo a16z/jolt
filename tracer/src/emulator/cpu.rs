@@ -902,7 +902,7 @@ impl Cpu {
 						((halfword >> 1) & 0x3c0) | // nzuimm{9:6] <= [10:7]
 						((halfword >> 4) & 0x4) | // nzuimm[2] <= [6]
 						((halfword >> 2) & 0x8); // nzuimm[3] <= [5]
-                         // nzuimm == 0 is reserved instruction
+                               // nzuimm == 0 is reserved instruction
                     if nzuimm != 0 {
                         return (nzuimm << 20) | (2 << 15) | ((rd + 8) << 7) | 0x13;
                     }
@@ -1847,7 +1847,7 @@ fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1860,7 +1860,7 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1873,7 +1873,7 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1886,7 +1886,7 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1899,7 +1899,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -1913,7 +1913,7 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-        virtual_sequence_index: None,
+        virtual_sequence_remaining: None,
     }
 }
 
@@ -2459,7 +2459,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -2477,7 +2477,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3130,7 +3130,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3145,7 +3145,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3165,7 +3165,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3184,7 +3184,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3273,7 +3273,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3290,7 +3290,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
