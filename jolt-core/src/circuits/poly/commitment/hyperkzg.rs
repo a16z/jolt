@@ -454,12 +454,6 @@ mod tests {
         G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     {
         type Circuit = HyperKZGVerifierCircuit<E, G1Var>;
-
-        // fn pairing_setup(circuit: Self::Circuit) -> Vec<Vec<E::G2Affine>> {
-        //     let KZGVerifierKey { g1, g2, beta_g2 } = circuit.pcs_pk_vk.1.kzg_vk;
-        //
-        //     vec![vec![g2, beta_g2]]
-        // }
     }
 
     #[test]
