@@ -12,7 +12,7 @@ without increases in per-cycle prover cost.
 The technique is already incorporated into Jolt in the context of lookups, but it's simplest
 to explain in the context of pre-compiles. 
 
-Here is the rough idea. Suppose a precompile is implemented via some constraint system (say, R1CS for concreteness). 
+Here is the rough idea. Suppose a pre-compile is implemented via some constraint system (say, R1CS for concreteness). 
 As a first attempt at supporting the pre-compile, we can include into Jolt a single, data-parallel constraint system that "assumes" that the pre-compile is executed
 at every single cycle that the VM ran for. There are two problems with this. First,
 the pre-compile will not actually be executed at every cycle, so we need a way to "turn off"
@@ -20,14 +20,14 @@ all the constraints for every cycle at which the pre-compile is not executed. Se
 the constraints that are turned off.
 
 To address both of these issues, for each cycle $j$ we have the prover commit to a binary flag $b_j$ indicating
-whether or not that precompile was actually executed at that cycle. 
+whether or not that pre-compile was actually executed at that cycle. 
 
 For each cycle $j$ consider the $i$'th constraint that is part of the pre-compile, say: 
 $$ \langle a_i, z \rangle \cdot \langle b_i, z \rangle  - \langle c_i, z \rangle = 0.$$
 
 Here, one should think of $z$ as an execution trace for the VM, i.e., a list of everything
 that happened at each and every cycle of VM. In Jolt, there are under 100 entries of $z$ per cycle
-(though as we add precompiles this number might grow).
+(though as we add pre-compiles this number might grow).
 
 We modify each constraint by multiplying the left hand side by the binary flag $b_j$, i.e., 
 $$b_j \cdot \left(\langle a_i, z \rangle \cdot \langle b_i, z \rangle  - \langle c_i, z \rangle \right) = 0.$$
