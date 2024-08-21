@@ -38,4 +38,5 @@ All told we can ballpark the total number of field ops done by the verifier as a
 The gas costs of this hashing, plus field work, plus storing the entire proof in CALLDATA, should be well under $1$ million,
 and perhaps as little as a few hundred thousand gas with enough optimization. 
 
+Combined with the ~1 million gas to perform scalar multiplications and pairings, we obtain an estimate of between 1.3 million and 2 million gas in total. 
 
