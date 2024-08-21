@@ -97,12 +97,6 @@ where
         }
         .into_affine();
 
-        if g.is_zero() {
-            return Ok(vec![UInt8::constant(0); 64]);
-        }
-
-        let (x, y) = g.xy().unwrap();
-
         fn serialize<F: Field>(x: &F) -> Vec<u8> {
             let mut buf = vec![];
             x.serialize_compressed(&mut buf)
@@ -111,12 +105,15 @@ where
             buf
         }
 
-        let x_buf = serialize(x);
-        let y_buf = serialize(y);
+        let buf = match g.is_zero() {
+            true => vec![0u8; 64],
+            false => {
+                let (x, y) = g.xy().unwrap();
+                [serialize(x), serialize(y)].concat()
+            }
+        };
 
-        [x_buf, y_buf]
-            .iter()
-            .flatten()
+        buf.iter()
             .map(|b| UInt8::new_witness(ns!(self.0.cs(), "sponge_byte"), || Ok(b)))
             .collect::<Result<Vec<_>, _>>()
     }

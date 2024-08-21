@@ -15,6 +15,7 @@ use ark_crypto_primitives::sponge::constraints::{CryptographicSpongeVar, SpongeW
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*, ToConstraintFieldGadget};
+use ark_relations::r1cs::ConstraintSystemRef;
 use ark_relations::{
     ns,
     r1cs::{Namespace, SynthesisError},
@@ -126,6 +127,7 @@ where
 {
     _params: PhantomData<(E, S, G1Var)>,
     circuit: &'a Circuit,
+    cs: ConstraintSystemRef<E::ScalarField>,
     g2_elements: Vec<E::G2Affine>,
 }
 
@@ -136,10 +138,17 @@ where
     G1Var: CurveVar<E::G1, E::ScalarField> + ToConstraintFieldGadget<E::ScalarField>,
     Circuit: OffloadedDataCircuit<E>,
 {
-    pub fn new(circuit: &'a Circuit, g2_elements: Vec<E::G2Affine>) -> Self {
+    pub fn new(
+        circuit: &'a Circuit,
+        cs: impl Into<Namespace<E::ScalarField>>,
+        g2_elements: Vec<E::G2Affine>,
+    ) -> Self {
+        let ns = cs.into();
+        let cs: ConstraintSystemRef<E::ScalarField> = ns.cs();
         Self {
             _params: PhantomData,
             circuit,
+            cs,
             g2_elements,
         }
     }
@@ -268,16 +277,16 @@ where
         .concat();
         debug_assert_eq!(l_g1s.len(), l_scalars.len());
 
-        let l_g1 = msm_gadget.msm(ns!(transcript.cs(), "l_g1"), l_g1s, l_scalars)?;
+        let l_g1 = msm_gadget.msm(ns!(self.cs, "l_g1"), l_g1s, l_scalars)?;
 
         let r_g1s = w.as_slice();
         let r_scalars = &[FpVar::one().negate()?, d.negate()?, d_square.negate()?];
         debug_assert_eq!(r_g1s.len(), r_scalars.len());
 
-        let r_g1 = msm_gadget.msm(ns!(transcript.cs(), "r_g1"), r_g1s, r_scalars)?;
+        let r_g1 = msm_gadget.msm(ns!(self.cs, "r_g1"), r_g1s, r_scalars)?;
 
         pairing_gadget.multi_pairing_is_zero(
-            ns!(transcript.cs(), "multi_pairing"),
+            ns!(self.cs, "multi_pairing"),
             &[l_g1, r_g1],
             self.g2_elements.as_slice(),
         )?;
@@ -419,6 +428,7 @@ mod tests {
             let hyper_kzg =
                 HyperKZGVerifierGadget::<E, MockSponge<E::ScalarField>, G1Var, Self>::new(
                     &self,
+                    ns!(cs, "hyperkzg"),
                     vec![kzg_vk.g2, kzg_vk.beta_g2],
                 );
 
