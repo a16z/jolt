@@ -18,6 +18,7 @@ not mentioned in this file is presumably not yet started (or barely started).
 
 *Add support for Quarks/Spartan grand product argument and hybrid grand product 
 (which achieves most of the verifier benefits of Quarks without a significant hit to prover time).
+    **Still todo here: Significant [optimization](https://github.com/a16z/jolt/issues/444) to how the prover commits to partial products. 
 
 *In progress: change how we are batching grand products, treating them all laid side-by-side as one giant circuit. This
 will reduce proof size by up to 200KB.
