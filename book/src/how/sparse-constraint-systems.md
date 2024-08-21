@@ -4,14 +4,12 @@ Jolt uses the technique to achieve what is sometimes called "a la carte" prover 
 each cycle of the VM, the Jolt prover only "pays" for the primitive instruction
 that was actually executed at that cycle, regardless of how many instructions are
 in the Instruction Set Architecture (in Jolt's case, RISC-V). 
-
 This design will allow Jolt to be extended to richer instruction sets
 (which is [equivalent to supporting different pre-compiles](https://a16zcrypto.com/posts/article/understanding-jolt-clarifications-and-reflections/#section--4)) 
 without increases in per-cycle prover cost. 
 
 The technique is already incorporated into Jolt in the context of lookups, but it's simplest
 to explain in the context of pre-compiles. 
-
 Here is the rough idea. Suppose a pre-compile is implemented via some constraint system (say, R1CS for concreteness). 
 As a first attempt at supporting the pre-compile, we can include into Jolt a single, data-parallel constraint system that "assumes" that the pre-compile is executed
 at every single cycle that the VM ran for. There are two problems with this. First,
