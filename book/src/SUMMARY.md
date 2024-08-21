@@ -33,6 +33,7 @@
         - [Install](./dev/install.md)
         - [Tools](./dev/tools.md)
     - [Roadmap](./tasks.md)
+        - [Improvements to Jolt since initial release](./future/improvements-since-release.md)
         - [Optimizations](./future/opts.md)
         - [Zero Knowledge](./future/zk.md)
         - [On-chain verifier (no recursion/composition)](./future/on-chain-verifier.md)
