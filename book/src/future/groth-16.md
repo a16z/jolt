@@ -57,7 +57,7 @@ The Spartan verifier only does at most a couple of hundred field operations (sin
 $2 \sqrt{n}$ here will be on the order of 3,000. Each scalar multiplication (which are done natively in this R1CS) yields 
 about $4,000$ constraints. So that's 12 million constraints being fed to Groth16.
 
-The calculation above is quite delicate, because running Groth16 on 12 million constraints would be okay for many settings, but 50 million constraints would not be. We do think 12 million is about the right estimate for this approach. 
+The calculation above is quite delicate, because running Groth16 on 12 million constraints would be okay for many settings, but 50 million constraints would not be. We do think 12 million is about the right estimate for this approach, especially given that 2,000 field operations for the Jolt verifier is a conservative estimate. 
 
 ## Details of the Jolt-with-HyperKZG verifier
 The easiest way to understand the workload of the verifier circuit is to jump through the codebase starting at `vm/mod.rs Jolt::verify(...)`.  Verification can be split into 4 logical modules: [instruction lookups](https://jolt.a16zcrypto.com/how/instruction_lookups.html), [read-write memory](https://jolt.a16zcrypto.com/how/read_write_memory.html), [bytecode](https://jolt.a16zcrypto.com/how/bytecode.html), [r1cs](https://jolt.a16zcrypto.com/how/r1cs_constraints.html).
