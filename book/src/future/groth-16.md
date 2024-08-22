@@ -31,7 +31,7 @@ should cost about 6 million constraints.
 We do expect advances in representing non-native field arithmetic in constraints to bring the above numbers
 down some, but not nearly enough to make naive composition sensible. 
 
-# A First Step to Reducing Gas Costs
+# A first step to reducing gas costs
 
 A simple first approach to reducing gas costs is to leave all scalar multiplications and HyperKZG-evaluation-proof-checking done by the Jolt verifier out of the composition, doing those directly on-chain. 
 
