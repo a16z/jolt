@@ -48,7 +48,7 @@ The field operations
 done by the Jolt verifier in the various invocations of the sum-check protocol need to be represented non-natively in these R1CS constraints, but since there are only about 2,000 such field operations they still only cost perhaps 5 million constraints in total. See the [Testudo](https://eprint.iacr.org/2023/961) paper for a similar approach and associated calculations. 
 
 We expect upcoming advances in 
-methods for addressing non-native field arithmetic to bring this down to under 2 million constraints. 
+methods for addressing non-native field arithmetic (and/or more careful optimizations of the Jolt verifier) to bring this down to under 2 million constraints. 
 
 But the Spartan proof is still too big to post on-chain. So, second, represent the Spartan verifier as an R1CS instance over the BN254 scalar field, and apply Groth16 to this R1CS. This the proof
 posted and verified on-chain. 
