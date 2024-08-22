@@ -15,7 +15,7 @@ Below, we describe alternate ways forward.
 # Cost accounting for naive composition
 
 In naive composition, the bulk of the constraints are devoted
-to implementing the [~150 scalar multiplications done by the Jolt verifier](on-chain-verifier) 
+to implementing the [~150 scalar multiplications done by the Jolt verifier](on-chain-verifier.md) 
 (or more accurately, ~150 scalar multiplications will be the dominant verifier cost once we finish all optimizations that
 are now in progress). 
 
