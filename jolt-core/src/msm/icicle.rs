@@ -11,6 +11,8 @@ use icicle_cuda_runtime::{
     memory::{DeviceVec, HostSlice},
     stream::CudaStream,
 };
+use rayon::iter::ParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
 
 use crate::msm::VariableBaseMSM;
 
@@ -64,7 +66,8 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     let span = tracing::span!(tracing::Level::INFO, "convert_bases");
     let _guard = span.enter();
 
-    let bases = bases.iter().map(|base| V::from_ark_affine(base)).collect::<Vec<_>>();
+    let bases = bases.par_iter().map(|base| V::from_ark_affine(base)).collect::<Vec<_>>();
+    let bases_mont = unsafe { &*(&bases[..] as *const _ as *const [Affine<V::C>]) };
     let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(bases.len()).unwrap();
     drop(_guard);
     drop(span);
@@ -79,13 +82,14 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     drop(span);
 
     let stream = CudaStream::create().unwrap();
-    bases_slice.copy_from_host_async(HostSlice::from_slice(&bases), &stream).unwrap();
+    bases_slice.copy_from_host_async(HostSlice::from_slice(&bases_mont), &stream).unwrap();
     scalars_slice.copy_from_host_async(HostSlice::from_slice(&scalars_mont), &stream).unwrap();
     let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(1).unwrap();
     let mut cfg = MSMConfig::default();
     cfg.ctx.stream = &stream;
     cfg.is_async = true;
     cfg.are_scalars_montgomery_form = true;
+    cfg.are_points_montgomery_form = true;
 
     let span = tracing::span!(tracing::Level::INFO, "msm");
     let _guard = span.enter();
