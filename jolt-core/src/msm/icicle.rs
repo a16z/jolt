@@ -61,26 +61,51 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     bases: &[V::MulBase],
     scalars: &[V::ScalarField],
 ) -> V {
-    let bases = bases
-        .iter()
-        .map(|base| V::from_ark_affine(base))
-        .collect::<Vec<_>>();
-    let bases_slice = HostSlice::from_slice(&bases);
-    let scalars = &scalars
-        .iter()
-        .map(|scalar| <<V as Icicle>::C as Curve>::ScalarField::from_ark(*scalar))
-        .collect::<Vec<_>>();
-    let scalars_slice = HostSlice::from_slice(scalars);
-    let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(1).unwrap();
+    let span = tracing::span!(tracing::Level::INFO, "convert_bases");
+    let _guard = span.enter();
+
+    let bases = bases.iter().map(|base| V::from_ark_affine(base)).collect::<Vec<_>>();
+    let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(bases.len()).unwrap();
+    drop(_guard);
+    drop(span);
+
+    let span = tracing::span!(tracing::Level::INFO, "convert_scalars");
+    let _guard = span.enter();
+
+    let mut scalars_slice = DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::cuda_malloc(scalars.len()).unwrap();
+    let scalars_mont = unsafe { &*(&scalars[..] as *const _ as *const [<<V as Icicle>::C as Curve>::ScalarField]) };
+
+    drop(_guard);
+    drop(span);
+
     let stream = CudaStream::create().unwrap();
+    bases_slice.copy_from_host_async(HostSlice::from_slice(&bases), &stream).unwrap();
+    scalars_slice.copy_from_host_async(HostSlice::from_slice(&scalars_mont), &stream).unwrap();
+    let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(1).unwrap();
     let mut cfg = MSMConfig::default();
     cfg.ctx.stream = &stream;
     cfg.is_async = true;
-    msm(scalars_slice, bases_slice, &cfg, &mut msm_result[..]).unwrap();
+    cfg.are_scalars_montgomery_form = true;
+
+    let span = tracing::span!(tracing::Level::INFO, "msm");
+    let _guard = span.enter();
+
+    msm(&scalars_slice[..], &bases_slice[..], &cfg, &mut msm_result[..]).unwrap();
+
+    drop(_guard);
+    drop(span);
     let mut msm_host_result = [Projective::<V::C>::zero(); 1];
+
+    let span = tracing::span!(tracing::Level::INFO, "copy_msm_result");
+    let _guard = span.enter();
+
     msm_result
         .copy_to_host(HostSlice::from_mut_slice(&mut msm_host_result[..]))
         .unwrap();
+
+    drop(_guard);
+    drop(span);
+
     stream.synchronize().unwrap();
     stream.destroy().unwrap();
     V::to_ark_projective(&msm_host_result[0])
