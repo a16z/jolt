@@ -1,17 +1,8 @@
-use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{interleave, Itertools};
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-use rayon::prelude::*;
-use std::marker::PhantomData;
-use tracing::trace_span;
-
-use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::utils::mul_0_1_optimized;
+use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
@@ -22,12 +13,20 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::{interleave, Itertools};
+use jolt_types::field::JoltField;
+use jolt_types::utils::mul_0_1_optimized;
+use jolt_types::utils::{
+    errors::ProofVerifyError,
+    math::Math,
+    transcript::{AppendToTranscript, ProofTranscript},
+};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
+use std::marker::PhantomData;
+use tracing::trace_span;
 
 use super::JoltTraceStep;
 

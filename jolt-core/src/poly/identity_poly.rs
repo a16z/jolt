@@ -1,6 +1,6 @@
-use crate::field::JoltField;
+use jolt_types::field::JoltField;
 
-use crate::utils::math::Math;
+use jolt_types::utils::math::Math;
 
 pub struct IdentityPolynomial {
     size_point: usize,

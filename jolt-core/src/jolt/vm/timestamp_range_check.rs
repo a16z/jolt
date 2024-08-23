@@ -1,4 +1,3 @@
-use crate::field::JoltField;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
@@ -7,6 +6,7 @@ use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
+use jolt_types::field::JoltField;
 use rayon::iter::{
     IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
 };
@@ -15,7 +15,11 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::utils::transcript::AppendToTranscript;
+use jolt_types::utils::{
+    errors::ProofVerifyError, mul_0_1_optimized, transcript::AppendToTranscript,
+    transcript::ProofTranscript,
+};
+
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -27,7 +31,6 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
 use super::read_write_memory::MemoryCommitment;

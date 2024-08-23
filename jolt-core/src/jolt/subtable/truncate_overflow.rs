@@ -1,8 +1,8 @@
-use crate::field::JoltField;
 use ark_std::log2;
+use jolt_types::field::JoltField;
 use std::marker::PhantomData;
 
-use crate::utils::split_bits;
+use jolt_types::utils::split_bits;
 
 use super::LassoSubtable;
 

@@ -2,13 +2,10 @@ use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::{
-    field::JoltField,
-    poly::dense_mlpoly::DensePolynomial,
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
+use crate::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
+use jolt_types::utils::{
+    errors::ProofVerifyError,
+    transcript::{AppendToTranscript, ProofTranscript},
 };
 
 use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};

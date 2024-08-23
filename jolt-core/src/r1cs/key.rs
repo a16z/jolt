@@ -2,16 +2,16 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
 use crate::{
-    field::JoltField,
     poly::eq_poly::EqPolynomial,
     r1cs::special_polys::{eq_plus_one, SparsePolynomial},
-    utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
+    utils::thread::unsafe_allocate_zero_vec,
 };
+use jolt_types::field::JoltField;
 
 use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
 use sha3::Digest;
 
-use crate::utils::math::Math;
+use jolt_types::utils::{index_to_field_bitvector, math::Math, mul_0_1_optimized};
 
 use rayon::prelude::*;
 
@@ -439,8 +439,9 @@ mod test {
                 materialize_full_uniform, simp_test_big_matrices, simp_test_builder_key, TestInputs,
             },
         },
-        utils::{index_to_field_bitvector, math::Math},
+        utils::index_to_field_bitvector,
     };
+    use jolt_types::utils::math::Math;
     use strum::EnumCount;
 
     #[test]

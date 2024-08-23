@@ -1,11 +1,11 @@
 #![allow(dead_code)]
-use crate::field::JoltField;
+use jolt_types::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
 
 use crate::utils::gaussian_elimination::gaussian_elimination;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 use rand_core::{CryptoRng, RngCore};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 

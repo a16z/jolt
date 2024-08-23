@@ -1,16 +1,16 @@
 #![allow(clippy::len_without_is_empty)]
 
-use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::special_polys::SegmentedPaddedWitness;
-use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
+use jolt_types::field::JoltField;
+use jolt_types::utils::math::Math;
 
-use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
+use jolt_types::utils::transcript::ProofTranscript;
 
 use thiserror::Error;
 

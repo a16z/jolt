@@ -1,14 +1,16 @@
-use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::unipoly::UniPoly;
-use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
+use jolt_types::field::JoltField;
+use jolt_types::utils::errors::ProofVerifyError;
 use rand_core::{CryptoRng, RngCore};
 use std::marker::PhantomData;
 use std::sync::Arc;
+
+pub use jolt_types::poly::commitment::kzg::KZGVerifierKey;
 
 #[derive(Clone, Debug)]
 pub struct SRS<P: Pairing> {
@@ -98,13 +100,6 @@ impl<P: Pairing> KZGProverKey<P> {
     pub fn g1_powers(&self) -> &[P::G1Affine] {
         &self.srs.g1_powers[self.offset..self.offset + self.supported_size]
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct KZGVerifierKey<P: Pairing> {
-    pub g1: P::G1Affine,
-    pub g2: P::G2Affine,
-    pub beta_g2: P::G2Affine,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]

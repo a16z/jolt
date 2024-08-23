@@ -1,6 +1,6 @@
-use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_types::field::JoltField;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
 
@@ -15,7 +15,9 @@ use crate::{
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
+};
+use jolt_types::utils::{
+    errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript,
 };
 
 pub struct SurgePolys<F, PCS>

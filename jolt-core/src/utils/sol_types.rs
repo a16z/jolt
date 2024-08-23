@@ -2,7 +2,6 @@ use ark_bn254::Bn254;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 
-use crate::field::JoltField;
 use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
@@ -13,6 +12,7 @@ use alloy_sol_types::sol;
 use ark_bn254::FrConfig;
 use ark_ff::Fp;
 use ark_ff::MontBackend;
+use jolt_types::field::JoltField;
 
 sol!(struct HyperKZGProofSol {
     uint256[] com; // G1 points represented pairwise

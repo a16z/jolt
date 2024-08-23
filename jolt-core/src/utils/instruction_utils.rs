@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_types::field::JoltField;
 
 /// Asserts that `C * log_M` is at least as large as the word size.
 pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {

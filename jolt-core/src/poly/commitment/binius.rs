@@ -4,9 +4,9 @@ use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::utils::errors::ProofVerifyError;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_types::utils::errors::ProofVerifyError;
+use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 
 #[derive(Clone)]
 pub struct Binius128Scheme {}

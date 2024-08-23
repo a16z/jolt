@@ -1,0 +1,25 @@
+[package]
+name = "jolt-svm-verifier"
+version = "0.1.0"
+description = "SVM program to verify JOLT proofs"
+edition = "2021"
+
+[workspace]
+members = [
+]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+ark-serialize = "0.4.2"
+ark-bn254 = {  version = "0.4.0", default-features = false }
+ark-ec = {  version = "0.4.2", default-features = false }
+ark-std = { version = "0.4.0", default-features = false }
+ark-ff = { version = "0.4.2", default-features = false }
+array-bytes = "6.2.3"
+solana-program = "2.0.6"
+jolt-types = { path = "../../jolt-types", default-features = false }
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+jolt-types = { path = "../../jolt-types" }

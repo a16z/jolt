@@ -1,0 +1,42 @@
+[package]
+name = "jolt-types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-bn254 = "0.4.0"
+ark-ec = { version = "0.4.2", default-features = false }
+ark-ff = { version = "0.4.2", default-features = false }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+ark-std = { version = "0.4.0", default-features = false }
+sha3 = "0.10.8"
+thiserror = "1.0.63"
+itertools = "0.13.0"
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+rand = "0.7.3"
+tracing = "0.1.40"
+rand_chacha = { version = "0.3.0", default-features = false }
+rand_core = { version = "0.6.4", default-features = false }
+rayon = { version = "^1.8.0", optional = true }
+memory-stats = "1.0.0"
+lazy_static = "1.4.0"
+
+[lib]
+name = "jolt_types"
+path = "src/lib.rs"
+
+[features]
+default = [
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "ark-ff/asm",
+    "rayon",
+]
+
+# Handle the unexpected cfg warnings when not building for solana
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os,  values("solana"))'] }

@@ -1,9 +1,5 @@
-use crate::{field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable};
-use rand::prelude::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-
 use super::{JoltInstruction, SubtableIndices};
+use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, left_is_zero::LeftIsZeroSubtable,
@@ -12,6 +8,10 @@ use crate::{
     },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
+use jolt_types::field::JoltField;
+use rand::prelude::StdRng;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 /// (remainder, divisor)

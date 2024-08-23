@@ -20,6 +20,7 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs"]
 
 [dependencies]
+jolt-types = { path = "../jolt-types" }
 ark-bn254 = "0.4.0"
 ark-ec = { version = "0.4.2", default-features = false }
 ark-ff = { version = "0.4.2", default-features = false }

@@ -1,13 +1,9 @@
 use crate::{
-    field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
-    utils::{
-        compute_dotproduct_low_optimized,
-        math::Math,
-        mul_0_1_optimized,
-        thread::{drop_in_background_thread, unsafe_allocate_sparse_zero_vec},
-    },
+    utils::thread::{drop_in_background_thread, unsafe_allocate_sparse_zero_vec},
 };
+use jolt_types::field::JoltField;
+use jolt_types::utils::{compute_dotproduct_low_optimized, math::Math, mul_0_1_optimized};
 use num_integer::Integer;
 use rayon::prelude::*;
 
@@ -218,7 +214,7 @@ impl<F: JoltField> SparsePolynomial<F> {
     #[cfg(test)]
     #[tracing::instrument(skip_all)]
     pub fn to_dense(self) -> DensePolynomial<F> {
-        use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
+        use crate::utils::thread::unsafe_allocate_zero_vec;
 
         let mut evals = unsafe_allocate_zero_vec(self.num_vars.pow2());
 

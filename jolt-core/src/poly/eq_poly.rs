@@ -1,7 +1,7 @@
-use crate::field::JoltField;
+use crate::utils::thread::unsafe_allocate_zero_vec;
+use jolt_types::field::JoltField;
+use jolt_types::utils::math::Math;
 use rayon::prelude::*;
-
-use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
 pub struct EqPolynomial<F> {
     r: Vec<F>,

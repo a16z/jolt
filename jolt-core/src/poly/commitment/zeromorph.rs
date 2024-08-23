@@ -3,20 +3,20 @@
 
 use std::{iter, marker::PhantomData};
 
-use crate::field;
 use crate::msm::VariableBaseMSM;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
-use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::{
-    errors::ProofVerifyError,
-    transcript::{AppendToTranscript, ProofTranscript},
-};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use itertools::izip;
+use jolt_types::field;
+use jolt_types::utils::{
+    errors::ProofVerifyError,
+    mul_0_1_optimized,
+    transcript::{AppendToTranscript, ProofTranscript},
+};
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
@@ -596,10 +596,10 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::utils::math::Math;
     use ark_bn254::{Bn254, Fr};
     use ark_ff::{BigInt, Zero};
     use ark_std::{test_rng, UniformRand};
+    use jolt_types::utils::math::Math;
     use rand_core::SeedableRng;
 
     // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficent formula

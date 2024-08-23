@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{sltu::SLTUInstruction, JoltInstruction, SubtableIndices};
 use crate::{
-    field::JoltField,
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
+use jolt_types::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct BGEUInstruction(pub u64, pub u64);

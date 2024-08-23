@@ -9,23 +9,23 @@
 //! and within the KZG commitment scheme implementation itself).
 use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
-    kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
+    kzg::{KZGProverKey, UnivariateKZG},
 };
-use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
-use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+use jolt_types::field;
+use jolt_types::utils::mul_0_1_optimized;
+use jolt_types::utils::{
+    errors::ProofVerifyError,
+    transcript::{AppendToTranscript, ProofTranscript},
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 use rayon::iter::{
@@ -34,6 +34,8 @@ use rayon::iter::{
 };
 use std::{marker::PhantomData, sync::Arc};
 use tracing::trace_span;
+
+pub use jolt_types::poly::commitment::hyperkzg::{HyperKZGProof, HyperKZGVerifierKey};
 
 pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 
@@ -53,11 +55,6 @@ pub struct HyperKZGProverKey<P: Pairing> {
     pub kzg_pk: KZGProverKey<P>,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct HyperKZGVerifierKey<P: Pairing> {
-    pub kzg_vk: KZGVerifierKey<P>,
-}
-
 #[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
@@ -65,13 +62,6 @@ impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());
     }
-}
-
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct HyperKZGProof<P: Pairing> {
-    pub com: Vec<P::G1Affine>,
-    pub w: Vec<P::G1Affine>,
-    pub v: Vec<Vec<P::ScalarField>>,
 }
 
 // On input f(x) and u compute the witness polynomial used to prove

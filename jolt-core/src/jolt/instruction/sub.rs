@@ -1,5 +1,5 @@
-use crate::field::JoltField;
 use ark_std::log2;
+use jolt_types::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

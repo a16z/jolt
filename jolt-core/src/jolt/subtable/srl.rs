@@ -1,11 +1,11 @@
-use crate::field::JoltField;
 use ark_std::log2;
 use std::cmp::min;
+use jolt_types::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
-use crate::utils::math::Math;
-use crate::utils::split_bits;
+use jolt_types::utils::math::Math;
+use jolt_types::utils::split_bits;
 
 #[derive(Default)]
 pub struct SrlSubtable<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> {

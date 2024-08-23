@@ -1,15 +1,15 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{IndexablePoly, SparsePolynomial, SparseTripleIterator};
-use crate::utils::errors::ProofVerifyError;
-use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use jolt_types::field::JoltField;
+use jolt_types::utils::errors::ProofVerifyError;
+use jolt_types::utils::mul_0_optimized;
+use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 use rayon::prelude::*;
 
 /// Batched cubic sumcheck used in grand products

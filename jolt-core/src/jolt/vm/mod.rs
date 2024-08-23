@@ -1,12 +1,12 @@
 #![allow(clippy::type_complexity)]
 
-use crate::field::JoltField;
 use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
+use jolt_types::field::JoltField;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
@@ -26,13 +26,13 @@ use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::inputs::{R1CSCommitment, R1CSInputs, R1CSProof};
-use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
+use jolt_types::utils::errors::ProofVerifyError;
+use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 
 use self::bytecode::BytecodePreprocessing;
 use self::instruction_lookups::{

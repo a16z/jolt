@@ -1,9 +1,9 @@
-use crate::field::JoltField;
 use ark_std::log2;
+use jolt_types::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
-use crate::utils::split_bits;
+use jolt_types::utils::split_bits;
 
 #[derive(Default)]
 pub struct OrSubtable<F: JoltField> {

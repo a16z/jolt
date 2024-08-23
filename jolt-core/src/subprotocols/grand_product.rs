@@ -1,15 +1,15 @@
 use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
-use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
-use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
 use ark_ff::Zero;
 use ark_serialize::*;
 use itertools::Itertools;
+use jolt_types::field::{JoltField, OptimizedMul};
+use jolt_types::utils::math::Math;
+use jolt_types::utils::transcript::ProofTranscript;
 use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]

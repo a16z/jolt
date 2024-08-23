@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
 use crate::{
-    field::JoltField,
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
         ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
     },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
+use jolt_types::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct BGEInstruction(pub u64, pub u64);

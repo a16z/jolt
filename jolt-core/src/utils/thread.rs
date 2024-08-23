@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use std::thread::{self, JoinHandle};
 
-use crate::field::JoltField;
+use jolt_types::field::JoltField;
 
 pub fn drop_in_background_thread<T>(data: T)
 where

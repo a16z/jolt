@@ -1,4 +1,3 @@
-use crate::field::JoltField;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
@@ -8,6 +7,7 @@ use crate::poly::commitment::hyrax::HyraxScheme;
 use ark_bn254::{Fr, G1Projective};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
+use jolt_types::field::JoltField;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
@@ -231,7 +231,6 @@ mod tests {
 
     use std::collections::HashSet;
 
-    use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
@@ -240,6 +239,7 @@ mod tests {
     use crate::poly::commitment::hyrax::HyraxScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
+    use jolt_types::field::JoltField;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
