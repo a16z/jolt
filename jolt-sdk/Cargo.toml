@@ -42,5 +42,6 @@ ark-serialize = { version = "0.4.2", features = ["derive"], optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
 jolt-core = { path = "../jolt-core", optional = true }
+jolt-types = { path = "../jolt-types" }
 tracer = { path = "../tracer", optional = true }
 common = { path = "../common", optional = true }

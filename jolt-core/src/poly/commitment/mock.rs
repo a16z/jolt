@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
+use crate::poly::dense_mlpoly::DensePolynomial;
+use jolt_types::field::JoltField;
 use jolt_types::utils::{
     errors::ProofVerifyError,
     transcript::{AppendToTranscript, ProofTranscript},

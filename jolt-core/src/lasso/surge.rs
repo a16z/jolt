@@ -788,9 +788,9 @@ mod tests {
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
         poly::{commitment::hyrax::HyraxScheme, commitment::pedersen::PedersenGenerators},
-        utils::transcript::ProofTranscript,
     };
     use ark_bn254::{Fr, G1Projective};
+    use jolt_types::utils::transcript::ProofTranscript;
 
     #[test]
     fn e2e() {

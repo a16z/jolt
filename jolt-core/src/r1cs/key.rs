@@ -439,9 +439,8 @@ mod test {
                 materialize_full_uniform, simp_test_big_matrices, simp_test_builder_key, TestInputs,
             },
         },
-        utils::index_to_field_bitvector,
     };
-    use jolt_types::utils::math::Math;
+    use jolt_types::utils::{index_to_field_bitvector, math::Math};
     use strum::EnumCount;
 
     #[test]
