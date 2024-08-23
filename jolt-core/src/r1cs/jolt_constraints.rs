@@ -2,21 +2,18 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 
-use crate::{
-    assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
-    jolt::vm::rv32i_vm::C,
-};
+use crate::{field::JoltField, impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C};
 
 use super::{
     builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
     ops::{ConstraintInput, Variable},
 };
 
-pub fn construct_jolt_constraints<F: JoltField>(
+pub fn construct_jolt_constraints<const C: usize, F: JoltField>(
     padded_trace_length: usize,
     memory_start: u64,
-) -> CombinedUniformBuilder<F, JoltIn> {
-    let mut uniform_builder = R1CSBuilder::<F, JoltIn>::new();
+) -> CombinedUniformBuilder<C, F, JoltIn> {
+    let mut uniform_builder = R1CSBuilder::<C, F, JoltIn>::new();
     let constraints = UniformJoltConstraints::new(memory_start);
     constraints.build_constraints(&mut uniform_builder);
 
@@ -52,19 +49,7 @@ pub fn construct_jolt_constraints<F: JoltField>(
 // TODO(#377): Dedupe OpFlags / CircuitFlags
 // TODO(#378): Explicit unit test for comparing OpFlags and InstructionFlags
 #[allow(non_camel_case_types)]
-#[derive(
-    strum_macros::EnumIter,
-    strum_macros::EnumCount,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Hash,
-    Ord,
-)]
-#[repr(usize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
 pub enum JoltIn {
     Bytecode_A, // Virtual address
     // Bytecode_V
@@ -181,7 +166,59 @@ impl Valid for JoltIn {
         Ok(())
     }
 }
-impl ConstraintInput for JoltIn {}
+impl<const C: usize> ConstraintInput<C> for JoltIn {
+    fn from_index(index: usize) -> Self {
+        todo!();
+    }
+    fn to_index(&self) -> usize {
+        todo!();
+    }
+}
+
+// #[derive(
+//     strum_macros::EnumIter,
+//     strum_macros::EnumCount,
+//     Clone,
+//     Copy,
+//     Debug,
+//     PartialEq,
+//     Eq,
+//     PartialOrd,
+//     Hash,
+//     Ord,
+// )]
+// #[repr(usize)]
+// pub enum AuxVariables {
+//     Todo,
+// }
+// impl ConstraintInputBase for AuxVariables {}
+// impl CanonicalSerialize for AuxVariables {
+//     fn serialize_with_mode<W: std::io::Write>(
+//         &self,
+//         _writer: W,
+//         _: Compress,
+//     ) -> Result<(), SerializationError> {
+//         todo!();
+//     }
+
+//     fn serialized_size(&self, _: Compress) -> usize {
+//         std::mem::size_of::<Self>()
+//     }
+// }
+// impl CanonicalDeserialize for AuxVariables {
+//     fn deserialize_with_mode<R: std::io::Read>(
+//         reader: R,
+//         compress: Compress,
+//         validate: Validate,
+//     ) -> Result<Self, SerializationError> {
+//         todo!()
+//     }
+// }
+// impl Valid for AuxVariables {
+//     fn check(&self) -> Result<(), SerializationError> {
+//         Ok(())
+//     }
+// }
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
@@ -199,9 +236,9 @@ impl UniformJoltConstraints {
     }
 }
 
-impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
+impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F> for UniformJoltConstraints {
     type Inputs = JoltIn;
-    fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
+    fn build_constraints(&self, cs: &mut R1CSBuilder<C, F, Self::Inputs>) {
         let flags = input_range!(JoltIn::OpFlags_IsPC, JoltIn::IF_Virt_Assert_VALID_DIV0);
         for flag in flags {
             cs.constrain_binary(flag);
@@ -252,14 +289,14 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         );
 
         let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = R1CSBuilder::<F, JoltIn>::pack_le(ram_writes.to_vec(), 8);
+        let packed_load_store = R1CSBuilder::<C, F, JoltIn>::pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags_IsStore,
             packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
 
-        let packed_query = R1CSBuilder::<F, JoltIn>::pack_be(
+        let packed_query = R1CSBuilder::<C, F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
             LOG_M,
         );
@@ -288,11 +325,11 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
 
-        let chunked_x = R1CSBuilder::<F, JoltIn>::pack_be(
+        let chunked_x = R1CSBuilder::<C, F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
             OPERAND_SIZE,
         );
-        let chunked_y = R1CSBuilder::<F, JoltIn>::pack_be(
+        let chunked_y = R1CSBuilder::<C, F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
@@ -336,13 +373,13 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         );
 
         let should_branch = cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
-        let next_pc = cs.allocate_if_else(
+        let _next_pc = cs.allocate_if_else(
             should_branch,
             4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
             next_pc_jump,
         );
 
-        assert_static_aux_index!(next_pc, NEXT_PC);
+        // assert_static_aux_index!(next_pc, NEXT_PC);
     }
 }
 

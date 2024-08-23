@@ -1,5 +1,3 @@
-use crate::jolt::vm::JoltPolynomials;
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::{
     field::JoltField,
     r1cs::key::{SparseConstraints, UniformR1CS},
@@ -15,6 +13,7 @@ use crate::{
 #[allow(unused_imports)] // clippy thinks these aren't needed lol
 use ark_std::{One, Zero};
 use rayon::prelude::*;
+use std::collections::BTreeMap;
 use std::{collections::HashMap, fmt::Debug};
 
 use super::{
@@ -23,21 +22,21 @@ use super::{
     special_polys::SparsePolynomial,
 };
 
-pub trait R1CSConstraintBuilder<F: JoltField> {
-    type Inputs: ConstraintInput;
+pub trait R1CSConstraintBuilder<const C: usize, F: JoltField> {
+    type Inputs: ConstraintInput<C>;
 
-    fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>);
+    fn build_constraints(&self, builder: &mut R1CSBuilder<C, F, Self::Inputs>);
 }
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone, Debug)]
-struct Constraint<I: ConstraintInput> {
+struct Constraint<const C: usize, I: ConstraintInput<C>> {
     a: LC<I>,
     b: LC<I>,
     c: LC<I>,
 }
 
-impl<I: ConstraintInput> Constraint<I> {
+impl<const C: usize, I: ConstraintInput<C>> Constraint<C, I> {
     #[cfg(test)]
     fn is_sat(&self, inputs: &[i64]) -> bool {
         todo!("fix");
@@ -91,12 +90,12 @@ impl<I: ConstraintInput> Constraint<I> {
 
 type AuxComputationFunction<F> = dyn Fn(&[F]) -> F + Send + Sync;
 
-struct AuxComputation<F: JoltField, I: ConstraintInput> {
+struct AuxComputation<const C: usize, F: JoltField, I: ConstraintInput<C>> {
     symbolic_inputs: Vec<LC<I>>,
     compute: Box<AuxComputationFunction<F>>,
 }
 
-impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput<C>> AuxComputation<C, F, I> {
     fn new(
         _output: Variable<I>,
         symbolic_inputs: Vec<LC<I>>,
@@ -177,37 +176,34 @@ impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
     }
 }
 
-pub struct R1CSBuilder<F: JoltField, I: ConstraintInput> {
-    constraints: Vec<Constraint<I>>,
-    pub next_aux: usize,
-    aux_computations: Vec<AuxComputation<F, I>>,
+pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput<C>> {
+    constraints: Vec<Constraint<C, I>>,
+    aux_computations: BTreeMap<I, AuxComputation<C, F, I>>,
 }
 
-impl<F: JoltField, I: ConstraintInput> Default for R1CSBuilder<F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput<C>> Default for R1CSBuilder<C, F, I> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSBuilder<C, F, I> {
     pub fn new() -> Self {
         Self {
             constraints: vec![],
-            next_aux: 0,
-            aux_computations: vec![],
+            aux_computations: BTreeMap::new(),
         }
     }
 
     fn allocate_aux(
         &mut self,
+        aux_symbol: I,
         symbolic_inputs: Vec<LC<I>>,
         compute: Box<AuxComputationFunction<F>>,
     ) -> Variable<I> {
-        let new_aux = Variable::Auxiliary(self.next_aux);
-        self.next_aux += 1;
-
+        let new_aux = Variable::Auxiliary(aux_symbol);
         let computation = AuxComputation::new(new_aux, symbolic_inputs, compute);
-        self.aux_computations.push(computation);
+        self.aux_computations.insert(aux_symbol, computation);
 
         new_aux
     }
@@ -423,10 +419,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         self.allocate_aux(symbolic_inputs, compute)
     }
 
-    fn num_aux(&self) -> usize {
-        self.next_aux
-    }
-
     // fn variable_to_column(&self, var: Variable<I>) -> usize {
     //     match var {
     //         Variable::Input(inner) => inner.into(),
@@ -435,7 +427,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     //     }
     // }
 
-    fn materialize(&self) -> UniformR1CS<F, I> {
+    fn materialize(&self) -> UniformR1CS<F> {
         let a_len: usize = self.constraints.iter().map(|c| c.a.num_vars()).sum();
         let b_len: usize = self.constraints.iter().map(|c| c.b.num_vars()).sum();
         let c_len: usize = self.constraints.iter().map(|c| c.c.num_vars()).sum();
@@ -443,25 +435,17 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let mut b_sparse = SparseConstraints::empty_with_capacity(b_len, self.constraints.len());
         let mut c_sparse = SparseConstraints::empty_with_capacity(c_len, self.constraints.len());
 
-        let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F, I>| {
-            lc.terms()
-                .iter()
-                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-                .for_each(|term| {
-                    // match term.0 {
-                    //     Variable::Input(inner) => sparse.vars.push((
-                    //         row_index,
-                    //         inner
-                    //     )),
-                    //     Variable::Auxiliary(aux) => todo!(),
-                    //     Variable::Constant => panic!("uh oh"),
-                    // };
-                    sparse.vars.push((
-                        row_index,
-                        self.variable_to_column(term.0),
-                        F::from_i64(term.1),
-                    ))
-                });
+        let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F>| {
+            lc.terms().iter().for_each(|term| {
+                match term.0 {
+                    Variable::Input(inner) | Variable::Auxiliary(inner) => {
+                        sparse
+                            .vars
+                            .push((row_index, inner.to_index(), F::from_i64(term.1)))
+                    }
+                    Variable::Constant => {}
+                };
+            });
             if let Some(term) = lc.constant_term() {
                 sparse.consts.push((row_index, F::from_i64(term.1)));
             }
@@ -477,11 +461,12 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         assert_eq!(b_sparse.vars.len(), b_len);
         assert_eq!(c_sparse.vars.len(), c_len);
 
-        UniformR1CS::<F, I> {
+        UniformR1CS::<F> {
             a: a_sparse,
             b: b_sparse,
             c: c_sparse,
-            num_vars: I::COUNT + self.num_aux(),
+            // num_vars: I::COUNT + self.num_aux(),
+            num_vars: todo!(),
             num_rows: self.constraints.len(),
         }
     }
@@ -493,13 +478,13 @@ pub type OffsetLC<I> = (bool, LC<I>);
 
 /// A conditional constraint that Linear Combinations a, b are equal where a and b need not be in the same step an a
 /// uniform constraint system.
-pub struct OffsetEqConstraint<I: ConstraintInput> {
+pub struct OffsetEqConstraint<const C: usize, I: ConstraintInput<C>> {
     cond: OffsetLC<I>,
     a: OffsetLC<I>,
     b: OffsetLC<I>,
 }
 
-impl<I: ConstraintInput> OffsetEqConstraint<I> {
+impl<const C: usize, I: ConstraintInput<C>> OffsetEqConstraint<C, I> {
     pub fn new(
         condition: (impl Into<LC<I>>, bool),
         a: (impl Into<LC<I>>, bool),
@@ -523,36 +508,35 @@ impl<I: ConstraintInput> OffsetEqConstraint<I> {
 }
 
 // TODO(sragss): Detailed documentation with wiki.
-pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
-    uniform_builder: R1CSBuilder<F, I>,
+pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput<C>> {
+    uniform_builder: R1CSBuilder<C, F, I>,
 
     /// Padded to the nearest power of 2
     uniform_repeat: usize,
 
-    offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
+    offset_equality_constraints: Vec<OffsetEqConstraint<C, I>>,
 }
 
 #[tracing::instrument(skip_all, name = "batch_inputs")]
-fn batch_inputs<'a, I: ConstraintInput, F: JoltField>(
+fn batch_inputs<'a, const C: usize, I: ConstraintInput<C>, F: JoltField>(
     lc: &LC<I>,
     inputs: &'a [Vec<F>],
     aux: &'a [Vec<F>],
 ) -> Vec<&'a [F]> {
-    // TODO: Use bevy_reflect(?) to index into inputs and aux?
     let mut batch: Vec<&'a [F]> = Vec::with_capacity(lc.terms().len());
     lc.terms().iter().for_each(|term| match term.0 {
-        Variable::Input(input) => batch.push(&inputs[input.into()]),
-        Variable::Auxiliary(aux_index) => batch.push(&aux[aux_index]),
+        Variable::Input(input) => batch.push(&inputs[input.to_index()]),
+        Variable::Auxiliary(inner) => batch.push(&aux[inner.to_index()]),
         _ => {}
     });
     batch
 }
 
-impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput<C>> CombinedUniformBuilder<C, F, I> {
     pub fn construct(
-        uniform_builder: R1CSBuilder<F, I>,
+        uniform_builder: R1CSBuilder<C, F, I>,
         uniform_repeat: usize,
-        offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
+        offset_equality_constraints: Vec<OffsetEqConstraint<C, I>>,
     ) -> Self {
         assert!(uniform_repeat.is_power_of_two());
         Self {
@@ -573,7 +557,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
         let mut lc_evals: HashMap<LC<I>, Vec<F>> = HashMap::new();
         for aux_computation in &self.uniform_builder.aux_computations {
-            for input in &aux_computation.symbolic_inputs {
+            for input in &aux_computation.1.symbolic_inputs {
                 lc_evals
                     .entry(input.clone())
                     .or_insert_with(|| unsafe_allocate_zero_vec(self.uniform_repeat));
@@ -601,8 +585,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                     1
                 );
 
-                if let Variable::Auxiliary(aux_index) = term.0 {
-                    aux_dep_map.insert(aux_index, lc.clone());
+                if let Variable::Auxiliary(aux) = term.0 {
+                    aux_dep_map.insert(aux.to_index(), lc.clone());
                 }
             }
         }
@@ -620,6 +604,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter().enumerate() {
             let inputs_by_step: Vec<&[F]> = aux_compute
+                .1
                 .symbolic_inputs
                 .iter()
                 .map(|lc| lc_evals.get(lc).unwrap().as_ref())
@@ -658,7 +643,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     }
 
     /// Materializes the uniform constraints into sparse (value != 0) A, B, C matrices represented in (row, col, value) format.
-    pub fn materialize_uniform(&self) -> UniformR1CS<F, I> {
+    pub fn materialize_uniform(&self) -> UniformR1CS<F> {
         self.uniform_builder.materialize()
     }
 
@@ -679,13 +664,11 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 .1
                 .terms()
                 .iter()
-                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-                .for_each(|term| {
-                    condition.offset_vars.push((
-                        self.uniform_builder.variable_to_column(term.0),
-                        constraint.cond.0,
-                        F::from_i64(term.1),
-                    ))
+                .for_each(|term| match term.0 {
+                    Variable::Input(inner) | Variable::Auxiliary(inner) => condition
+                        .offset_vars
+                        .push((inner.to_index(), constraint.cond.0, F::from_i64(term.1))),
+                    Variable::Constant => {}
                 });
             if let Some(term) = constraint.cond.1.constant_term() {
                 condition.constant = F::from_i64(term.1);
@@ -695,26 +678,18 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             let lhs = constraint.a.1.clone();
             let rhs = -constraint.b.1.clone();
 
-            lhs.terms()
-                .iter()
-                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-                .for_each(|term| {
-                    eq.offset_vars.push((
-                        self.uniform_builder.variable_to_column(term.0),
-                        constraint.a.0,
-                        F::from_i64(term.1),
-                    ))
-                });
-            rhs.terms()
-                .iter()
-                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-                .for_each(|term| {
-                    eq.offset_vars.push((
-                        self.uniform_builder.variable_to_column(term.0),
-                        constraint.b.0,
-                        F::from_i64(term.1),
-                    ))
-                });
+            lhs.terms().iter().for_each(|term| match term.0 {
+                Variable::Input(inner) | Variable::Auxiliary(inner) => condition
+                    .offset_vars
+                    .push((inner.to_index(), constraint.cond.0, F::from_i64(term.1))),
+                Variable::Constant => {}
+            });
+            rhs.terms().iter().for_each(|term| match term.0 {
+                Variable::Input(inner) | Variable::Auxiliary(inner) => condition
+                    .offset_vars
+                    .push((inner.to_index(), constraint.cond.0, F::from_i64(term.1))),
+                Variable::Constant => {}
+            });
 
             // Handle constants
             lhs.terms().iter().for_each(|term| {
@@ -747,8 +722,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         SparsePolynomial<F>,
     ) {
         // assert_eq!(inputs.len(), I::COUNT);
-        let num_aux = self.uniform_builder.num_aux();
-        assert_eq!(aux.len(), num_aux);
+        // let num_aux = self.uniform_builder.num_aux();
+        // assert_eq!(aux.len(), num_aux);
         assert!(inputs
             .iter()
             .chain(aux.iter())

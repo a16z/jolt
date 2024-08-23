@@ -11,9 +11,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::hash::Hash;
-use strum::{EnumCount, IntoEnumIterator};
 
-pub trait ConstraintInput:
+pub trait ConstraintInput<const C: usize>:
     Clone
     + Copy
     + Debug
@@ -24,12 +23,14 @@ pub trait ConstraintInput:
     + Hash
     + Sync
     + Send
-    + EnumCount
     + Valid
     + CanonicalSerialize
     + CanonicalDeserialize
     + 'static
 {
+    fn from_index(index: usize) -> Self;
+    fn to_index(&self) -> usize;
+
     fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
         jolt_polynomials: &JoltPolynomials<F, PCS>,
@@ -41,7 +42,7 @@ pub trait ConstraintInput:
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Variable<I: ConstraintInput> {
     Input(I),
-    Auxiliary(usize),
+    Auxiliary(I),
     Constant,
 }
 
@@ -448,30 +449,30 @@ macro_rules! impl_r1cs_input_lc_conversions {
 /// let expected_range = [Variable::Input(Inputs::B), Variable::Input(Inputs::C), Variable::Input(Inputs::D)];
 /// assert_eq!(range, expected_range);
 /// ```
-#[macro_export]
-macro_rules! input_range {
-    ($start:path, $end:path) => {{
-        let mut arr = [Variable::Input($start); ($end as usize) - ($start as usize) + 1];
-        #[allow(clippy::missing_transmute_annotations)]
-        for i in ($start as usize)..=($end as usize) {
-            arr[i - ($start as usize)] =
-                Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
-        }
-        arr
-    }};
-}
+// #[macro_export]
+// macro_rules! input_range {
+//     ($start:path, $end:path) => {{
+//         let mut arr = [Variable::Input($start); ($end as usize) - ($start as usize) + 1];
+//         #[allow(clippy::missing_transmute_annotations)]
+//         for i in ($start as usize)..=($end as usize) {
+//             arr[i - ($start as usize)] =
+//                 Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
+//         }
+//         arr
+//     }};
+// }
 
-/// Used to fix an aux variable to a constant index at runtime for use elsewhere (largely OffsetEqConstraints).
-#[macro_export]
-macro_rules! assert_static_aux_index {
-    ($var:expr, $index:expr) => {{
-        if let Variable::Auxiliary(aux_index) = $var {
-            assert_eq!(aux_index, $index, "Unexpected auxiliary index");
-        } else {
-            panic!("Variable is not of variant type Variable::Auxiliary");
-        }
-    }};
-}
+// /// Used to fix an aux variable to a constant index at runtime for use elsewhere (largely OffsetEqConstraints).
+// #[macro_export]
+// macro_rules! assert_static_aux_index {
+//     ($var:expr, $index:expr) => {{
+//         if let Variable::Auxiliary(aux_index) = $var {
+//             assert_eq!(aux_index, $index, "Unexpected auxiliary index");
+//         } else {
+//             panic!("Variable is not of variant type Variable::Auxiliary");
+//         }
+//     }};
+// }
 
 #[cfg(test)]
 mod test {
@@ -493,7 +494,20 @@ mod test {
             val as usize
         }
     }
-    impl ConstraintInput for Inputs {}
+    impl ConstraintInput for Inputs {
+        fn from_index(index: usize) -> Self {
+            match index {
+                0 => Inputs::A,
+                1 => Inputs::B,
+                2 => Inputs::C,
+                3 => Inputs::D,
+                _ => panic!("Unexpected index"),
+            }
+        }
+        fn to_index(&self) -> usize {
+            self as usize
+        }
+    }
 
     #[test]
     fn variable_ordering() {

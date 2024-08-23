@@ -62,15 +62,15 @@ pub enum SpartanError {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
+pub struct UniformSpartanProof<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F>,
     pub(crate) claimed_witness_evals: Vec<F>,
-    pub(crate) opening_proof: C::BatchedProof,
+    pub(crate) opening_proof: PCS::BatchedProof,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> UniformSpartanProof<F, PCS> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
     pub fn setup_precommitted<I: ConstraintInput>(
         constraint_builder: &CombinedUniformBuilder<F, I>,
@@ -86,7 +86,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted<I: ConstraintInput>(
-        generators: &C::Setup,
+        generators: &PCS::Setup,
         constraint_builder: &CombinedUniformBuilder<F, I>,
         key: &UniformSpartanKey<F, I>,
         witness_segments: Vec<Vec<F>>,
@@ -193,7 +193,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         println!("# witness segments = {}", witness_segment_polys.len());
 
-        let opening_proof = C::batch_prove(
+        let opening_proof = PCS::batch_prove(
             generators,
             &witness_segment_polys_ref,
             r_col_step,
@@ -221,11 +221,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
-    pub fn verify_precommitted<I: ConstraintInput>(
+    pub fn verify_precommitted<I: ConstraintInput<C>>(
         &self,
-        key: &UniformSpartanKey<F, I>,
-        witness_segment_commitments: Vec<&C::Commitment>,
-        generators: &C::Setup,
+        key: &UniformSpartanKey<C, F, I>,
+        witness_segment_commitments: Vec<&PCS::Commitment>,
+        generators: &PCS::Setup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
@@ -291,7 +291,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        C::batch_verify(
+        PCS::batch_verify(
             &self.opening_proof,
             generators,
             r_y_point,
