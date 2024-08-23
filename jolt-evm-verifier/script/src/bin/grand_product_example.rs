@@ -1,10 +1,9 @@
 use jolt_core::{
-    field::JoltField,
     poly::commitment::hyperkzg::HyperKZG,
     subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct},
-    utils::transcript::ProofTranscript,
-    utils::sol_types::GrandProductProof
+    utils::sol_types::GrandProductProof,
 };
+use jolt_types::{field::JoltField, utils::transcript::ProofTranscript};
 use std::env;
 
 use alloy_primitives::{hex, U256};
@@ -20,10 +19,9 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
         Fr,
         HyperKZG<Bn254>,
     >>::prove_grand_product(batched_circuit, &mut transcript, None);
-    let claims =
-        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, HyperKZG<Bn254>>>::claims(
-            batched_circuit,
-        );
+    let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, HyperKZG<Bn254>>>::claims(
+        batched_circuit,
+    );
 
     //encoding the proof into abi
 
@@ -33,10 +31,7 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
         uint256[] r_prover;
     });
 
-    let r_prover = r_prover
-        .iter()
-        .map(fr_to_uint256)
-        .collect::<Vec<_>>();
+    let r_prover = r_prover.iter().map(fr_to_uint256).collect::<Vec<_>>();
 
     let claims = claims.iter().map(fr_to_uint256).collect::<Vec<_>>();
 

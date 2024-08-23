@@ -17,6 +17,7 @@ host = [
     "dep:tracer",
     "dep:common",
     "dep:jolt-core",
+    "dep:jolt-types",
     "dep:ark-ec",
     "dep:ark-ff",
     "dep:ark-bn254",
@@ -42,6 +43,6 @@ ark-serialize = { version = "0.4.2", features = ["derive"], optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
 jolt-core = { path = "../jolt-core", optional = true }
-jolt-types = { path = "../jolt-types" }
+jolt-types = { path = "../jolt-types", optional = true }
 tracer = { path = "../tracer", optional = true }
 common = { path = "../common", optional = true }

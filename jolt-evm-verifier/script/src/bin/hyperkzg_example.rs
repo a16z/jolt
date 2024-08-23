@@ -8,7 +8,7 @@ use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use jolt_core::poly::commitment::hyperkzg::*;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::utils::transcript::ProofTranscript;
+use jolt_types::utils::transcript::ProofTranscript;
 use rand_core::SeedableRng;
 
 use jolt_core::utils::sol_types::{HyperKZGProofSol, VK};

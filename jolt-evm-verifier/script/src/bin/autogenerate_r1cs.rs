@@ -1,7 +1,7 @@
 use alloy_primitives::hex;
-use jolt_core::field::JoltField;
 use jolt_core::r1cs::key::SparseConstraints;
 use jolt_core::r1cs::key::SparseEqualityItem;
+use jolt_types::field::JoltField;
 
 // This code is provided as an example of how to turn the sparse constraints into solidity, and was the base
 // for the code in R1CSMatrix, however because the key is not expected to change often full auto-generation is not

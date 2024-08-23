@@ -5,8 +5,6 @@ description = "SVM program to verify JOLT proofs"
 edition = "2021"
 
 [workspace]
-members = [
-]
 
 [lib]
 crate-type = ["cdylib", "lib"]

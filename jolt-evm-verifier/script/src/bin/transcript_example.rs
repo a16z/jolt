@@ -1,4 +1,4 @@
-use jolt_core::{field::JoltField, utils::transcript::ProofTranscript};
+use jolt_types::{field::JoltField, utils::transcript::ProofTranscript};
 
 use ark_ff::{BigInteger, PrimeField};
 
