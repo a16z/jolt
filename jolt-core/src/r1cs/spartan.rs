@@ -411,6 +411,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
+        println!("LORD ALMIGHTY THE MLE EVALUATION BY THE VERIFIER PASSED"); 
+
         let r_y_point = &inner_sumcheck_r[n_prefix..];
         C::batch_verify(
             &self.opening_proof,

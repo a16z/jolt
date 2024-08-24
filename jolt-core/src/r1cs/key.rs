@@ -324,9 +324,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(F::one(), 0)]);
         let eval_const = const_poly.evaluate(r_rest);
 
-        let z = (F::one() - r_const) * eval_variables + r_const * eval_const;
-        z
-        // z * (F::one() - eq_const) + eq_const
+        let z = (F::one() - r_const) * eval_variables + eq_const;
+        z 
     }
 
     /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
