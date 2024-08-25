@@ -1,4 +1,4 @@
-use common::rv_trace::CircuitFlags;
+use common::{constants::RAM_OPS_PER_INSTRUCTION, rv_trace::CircuitFlags};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -33,7 +33,7 @@ pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInp
     // not padding), then check the PC update.
     let pc_constraint = OffsetEqConstraint::new(
         (JoltIn::Bytecode_ELFAddress, true),
-        (Variable::Auxiliary(NEXT_PC), false),
+        (JoltIn::Aux(AuxVariable::NextPC), false),
         (4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS, true),
     );
 
@@ -58,8 +58,6 @@ pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInp
     )
 }
 
-// TODO(#377): Dedupe OpFlags / CircuitFlags
-// TODO(#378): Explicit unit test for comparing OpFlags and InstructionFlags
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
 pub enum JoltIn {
@@ -77,32 +75,14 @@ pub enum JoltIn {
     RS1_Read,
     RS2_Read,
     RD_Read,
-    RAM_Read_Byte0,
-    RAM_Read_Byte1,
-    RAM_Read_Byte2,
-    RAM_Read_Byte3,
+    RAM_Read(usize),
     RD_Write,
-    RAM_Write_Byte0,
-    RAM_Write_Byte1,
-    RAM_Write_Byte2,
-    RAM_Write_Byte3,
+    RAM_Write(usize),
 
-    ChunksQ_0,
-    ChunksQ_1,
-    ChunksQ_2,
-    ChunksQ_3,
-
+    ChunksQuery(usize),
     LookupOutput,
-
-    ChunksX_0,
-    ChunksX_1,
-    ChunksX_2,
-    ChunksX_3,
-
-    ChunksY_0,
-    ChunksY_1,
-    ChunksY_2,
-    ChunksY_3,
+    ChunksX(usize),
+    ChunksY(usize),
 
     OpFlags(CircuitFlags),
     InstructionFlags(RV32I),
@@ -142,56 +122,10 @@ impl ConstraintInput for JoltIn {
     }
 }
 
-// #[derive(
-//     strum_macros::EnumIter,
-//     strum_macros::EnumCount,
-//     Clone,
-//     Copy,
-//     Debug,
-//     PartialEq,
-//     Eq,
-//     PartialOrd,
-//     Hash,
-//     Ord,
-// )]
-// #[repr(usize)]
-// pub enum AuxVariables {
-//     Todo,
-// }
-// impl ConstraintInputBase for AuxVariables {}
-// impl CanonicalSerialize for AuxVariables {
-//     fn serialize_with_mode<W: std::io::Write>(
-//         &self,
-//         _writer: W,
-//         _: Compress,
-//     ) -> Result<(), SerializationError> {
-//         todo!();
-//     }
-
-//     fn serialized_size(&self, _: Compress) -> usize {
-//         std::mem::size_of::<Self>()
-//     }
-// }
-// impl CanonicalDeserialize for AuxVariables {
-//     fn deserialize_with_mode<R: std::io::Read>(
-//         reader: R,
-//         compress: Compress,
-//         validate: Validate,
-//     ) -> Result<Self, SerializationError> {
-//         todo!()
-//     }
-// }
-// impl Valid for AuxVariables {
-//     fn check(&self) -> Result<(), SerializationError> {
-//         Ok(())
-//     }
-// }
-
 pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
-pub const NEXT_PC: usize = 12;
 
 pub struct UniformJoltConstraints {
     memory_start: u64,
@@ -249,39 +183,30 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
             JoltIn::RAM_A + memory_start,
         );
 
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags(CircuitFlags::Load),
-            JoltIn::RAM_Read_Byte0,
-            JoltIn::RAM_Write_Byte0,
-        );
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags(CircuitFlags::Load),
-            JoltIn::RAM_Read_Byte1,
-            JoltIn::RAM_Write_Byte1,
-        );
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags(CircuitFlags::Load),
-            JoltIn::RAM_Read_Byte2,
-            JoltIn::RAM_Write_Byte2,
-        );
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags(CircuitFlags::Load),
-            JoltIn::RAM_Read_Byte3,
-            JoltIn::RAM_Write_Byte3,
-        );
+        for i in 0..RAM_OPS_PER_INSTRUCTION {
+            cs.constrain_eq_conditional(
+                JoltIn::OpFlags(CircuitFlags::Load),
+                JoltIn::RAM_Read(i),
+                JoltIn::RAM_Write(i),
+            );
+        }
 
-        let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = R1CSBuilder::<C, F, JoltIn>::pack_le(ram_writes.to_vec(), 8);
+        let ram_writes = (0..RAM_OPS_PER_INSTRUCTION)
+            .into_iter()
+            .map(|i| Variable::Input(JoltIn::RAM_Write(i).to_index::<C>()))
+            .collect();
+        let packed_load_store = R1CSBuilder::<C, F, JoltIn>::pack_le(ram_writes, 8);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags(CircuitFlags::Store),
             packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
 
-        let packed_query = R1CSBuilder::<C, F, JoltIn>::pack_be(
-            input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
-            LOG_M,
-        );
+        let query_chunks: Vec<Variable> = (0..C)
+            .into_iter()
+            .map(|i| Variable::Input(JoltIn::ChunksQuery(i).to_index::<C>()))
+            .collect();
+        let packed_query = R1CSBuilder::<C, F, JoltIn>::pack_be(query_chunks.clone(), LOG_M);
 
         cs.constrain_eq_conditional(
             JoltIn::InstructionFlags(ADDInstruction::default().into()),
@@ -322,22 +247,24 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
             1,
         );
 
-        let chunked_x = R1CSBuilder::<C, F, JoltIn>::pack_be(
-            input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
-            OPERAND_SIZE,
-        );
-        let chunked_y = R1CSBuilder::<C, F, JoltIn>::pack_be(
-            input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
-            OPERAND_SIZE,
-        );
+        let x_chunks: Vec<Variable> = (0..C)
+            .into_iter()
+            .map(|i| Variable::Input(JoltIn::ChunksX(i).to_index::<C>()))
+            .collect();
+        let y_chunks: Vec<Variable> = (0..C)
+            .into_iter()
+            .map(|i| Variable::Input(JoltIn::ChunksY(i).to_index::<C>()))
+            .collect();
+        let x_concat = R1CSBuilder::<C, F, JoltIn>::pack_be(x_chunks.clone(), OPERAND_SIZE);
+        let y_concat = R1CSBuilder::<C, F, JoltIn>::pack_be(y_chunks.clone(), OPERAND_SIZE);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-            chunked_x,
+            x_concat,
             x,
         );
         cs.constrain_eq_conditional(
             JoltIn::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-            chunked_y,
+            y_concat,
             y,
         );
 
@@ -345,20 +272,17 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
         let is_shift = JoltIn::InstructionFlags(SLLInstruction::default().into())
             + JoltIn::InstructionFlags(SRLInstruction::default().into())
             + JoltIn::InstructionFlags(SRAInstruction::default().into());
-        let chunks_x = input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3);
-        let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
-        let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);
         for i in 0..C {
             let relevant_chunk_y = cs.allocate_if_else(
                 JoltIn::Aux(AuxVariable::RelevantYChunk(i)),
                 is_shift.clone(),
-                chunks_y[C - 1],
-                chunks_y[i],
+                y_chunks[C - 1],
+                y_chunks[i],
             );
             cs.constrain_eq_conditional(
                 JoltIn::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-                chunks_query[i],
-                (1i64 << 8) * chunks_x[i] + relevant_chunk_y,
+                query_chunks[i],
+                x_chunks[i] * (1i64 << 8) + relevant_chunk_y,
             );
         }
 
@@ -402,8 +326,6 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
             4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
             next_pc_jump,
         );
-
-        // assert_static_aux_index!(next_pc, NEXT_PC);
     }
 }
 

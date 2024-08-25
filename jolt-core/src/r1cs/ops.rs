@@ -421,45 +421,6 @@ macro_rules! impl_r1cs_input_lc_conversions {
     };
 }
 
-// ```rust
-// use jolt_core::input_range;
-// use jolt_core::r1cs::ops::{ConstraintInput, Variable};
-// # use strum_macros::{EnumCount, EnumIter};
-
-// # #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter, Hash)]
-// #[repr(usize)]
-// pub enum Inputs {
-//     A,
-//     B,
-//     C,
-//     D
-// }
-// #
-// # impl Into<usize> for Inputs {
-// #   fn into(self) -> usize {
-// #       self as usize
-// #   }
-// # }
-// #
-// impl ConstraintInput for Inputs {};
-
-// let range = input_range!(Inputs::B, Inputs::D);
-// let expected_range = [Variable::Input(Inputs::B), Variable::Input(Inputs::C), Variable::Input(Inputs::D)];
-// assert_eq!(range, expected_range);
-// ```
-// #[macro_export]
-// macro_rules! input_range {
-//     ($start:path, $end:path) => {{
-//         let mut arr = [Variable::Input($start); ($end as usize) - ($start as usize) + 1];
-//         #[allow(clippy::missing_transmute_annotations)]
-//         for i in ($start as usize)..=($end as usize) {
-//             arr[i - ($start as usize)] =
-//                 Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
-//         }
-//         arr
-//     }};
-// }
-
 // /// Used to fix an aux variable to a constant index at runtime for use elsewhere (largely OffsetEqConstraints).
 // #[macro_export]
 // macro_rules! assert_static_aux_index {

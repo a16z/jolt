@@ -203,10 +203,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         symbolic_inputs: Vec<LC>,
         compute: Box<AuxComputationFunction<F>>,
     ) -> Variable {
-        let new_aux = Variable::Auxiliary(aux_symbol.to_index());
+        let new_aux = Variable::Auxiliary(aux_symbol.to_index::<C>());
         let computation = AuxComputation::new(new_aux, symbolic_inputs, compute);
         self.aux_computations
-            .insert(aux_symbol.to_index(), computation);
+            .insert(aux_symbol.to_index::<C>(), computation);
 
         new_aux
     }
