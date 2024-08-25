@@ -230,6 +230,10 @@ pub struct ELFInstruction {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
+pub enum CircuitFlags {
+    RS1IsPC,
+    RS2IsImm,
+}
 pub const NUM_CIRCUIT_FLAGS: usize = 12;
 
 impl ELFInstruction {

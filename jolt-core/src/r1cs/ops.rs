@@ -15,15 +15,14 @@ use std::hash::Hash;
 pub trait ConstraintInput<const C: usize>:
     Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Sync + Send + 'static
 {
+    fn num_inputs() -> usize;
     fn from_index(index: usize) -> Self;
     fn to_index(&self) -> usize;
 
     fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
         jolt_polynomials: &JoltPolynomials<F, PCS>,
-    ) -> &DensePolynomial<F> {
-        todo!()
-    }
+    ) -> &DensePolynomial<F>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

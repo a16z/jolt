@@ -1,4 +1,11 @@
-use crate::{field::JoltField, impl_r1cs_input_lc_conversions, input_range};
+use strum_macros::{EnumCount, EnumIter};
+
+use crate::{
+    field::JoltField,
+    impl_r1cs_input_lc_conversions, input_range,
+    jolt::vm::JoltPolynomials,
+    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
+};
 
 use super::{
     builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
@@ -133,13 +140,38 @@ pub enum JoltIn<const C: usize> {
     IF_Virt_Assert_VALID_SIGNED_REMAINDER,
     IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
     IF_Virt_Assert_VALID_DIV0,
+    Aux(AuxVariable),
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
+enum AuxVariable {
+    X,
+    Y,
+    ImmSigned,
+    Product,
+    RelevantYChunk(usize),
+    WriteLookupOutputToRD,
+    WritePCtoRD,
+    NextPCJump,
+    ShouldBranch,
+    NextPC,
+}
+
 impl_r1cs_input_lc_conversions!(JoltIn<4>);
 impl<const C: usize> ConstraintInput<C> for JoltIn<C> {
+    fn num_inputs() -> usize {
+        0
+    }
     fn from_index(index: usize) -> Self {
         todo!();
     }
     fn to_index(&self) -> usize {
+        todo!();
+    }
+
+    fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        jolt_polynomials: &JoltPolynomials<F, PCS>,
+    ) -> &DensePolynomial<F> {
         todo!();
     }
 }
@@ -205,11 +237,11 @@ impl UniformJoltConstraints {
     }
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<C, F, I>
+impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
     for UniformJoltConstraints
 {
     type Inputs = JoltIn<C>;
-    fn build_constraints(&self, cs: &mut R1CSBuilder<C, F, I>) {
+    fn build_constraints(&self, cs: &mut R1CSBuilder<C, F, JoltIn<C>>) {
         let flags = input_range!(JoltIn::OpFlags_IsPC, JoltIn::IF_Virt_Assert_VALID_DIV0);
         for flag in flags {
             cs.constrain_binary(flag);
@@ -218,8 +250,14 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
         let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltIn::OpFlags_IsPC, real_pc, JoltIn::RS1_Read);
+        let x = cs.allocate_if_else(
+            JoltIn::Aux(AuxVariable::X),
+            JoltIn::OpFlags_IsPC,
+            real_pc,
+            JoltIn::RS1_Read,
+        );
         let y = cs.allocate_if_else(
+            JoltIn::Aux(AuxVariable::Y),
             JoltIn::OpFlags_IsImm,
             JoltIn::Bytecode_Imm,
             JoltIn::RS2_Read,
@@ -227,8 +265,12 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
 
         // Converts from unsigned to twos-complement representation
         let signed_output = JoltIn::Bytecode_Imm - (0xffffffffi64 + 1i64);
-        let imm_signed =
-            cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
+        let imm_signed = cs.allocate_if_else(
+            JoltIn::Aux(AuxVariable::ImmSigned),
+            JoltIn::OpFlags_SignImm,
+            signed_output,
+            JoltIn::Bytecode_Imm,
+        );
 
         let is_load_or_store = JoltIn::OpFlags_IsLoad + JoltIn::OpFlags_IsStore;
         let memory_start: i64 = self.memory_start.try_into().unwrap();
@@ -260,14 +302,14 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
         );
 
         let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = R1CSBuilder::<C, F, I>::pack_le(ram_writes.to_vec(), 8);
+        let packed_load_store = R1CSBuilder::<C, F, JoltIn<C>>::pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags_IsStore,
             packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
 
-        let packed_query = R1CSBuilder::<C, F, I>::pack_be(
+        let packed_query = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
             input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
             LOG_M,
         );
@@ -280,7 +322,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
             x - y + (0xffffffffi64 + 1),
         );
         let is_mul = JoltIn::IF_Mul + JoltIn::IF_MulU + JoltIn::IF_MulHu;
-        let product = cs.allocate_prod(x, y);
+        let product = cs.allocate_prod(JoltIn::Aux(AuxVariable::Product), x, y);
         cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
         cs.constrain_eq_conditional(
             JoltIn::IF_Movsign + JoltIn::IF_Virt_Move,
@@ -296,11 +338,11 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
 
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
 
-        let chunked_x = R1CSBuilder::<C, F, I>::pack_be(
+        let chunked_x = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
             OPERAND_SIZE,
         );
-        let chunked_y = R1CSBuilder::<C, F, I>::pack_be(
+        let chunked_y = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
@@ -313,8 +355,12 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
         let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
         let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);
         for i in 0..C {
-            let relevant_chunk_y =
-                cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
+            let relevant_chunk_y = cs.allocate_if_else(
+                JoltIn::Aux(AuxVariable::RelevantYChunk(i)),
+                is_shift.clone(),
+                chunks_y[C - 1],
+                chunks_y[i],
+            );
             cs.constrain_eq_conditional(
                 JoltIn::OpFlags_IsConcat,
                 chunks_query[i],
@@ -324,27 +370,40 @@ impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSConstraintBuilder<
 
         // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
-        let rd_nonzero_and_lookup_to_rd =
-            cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
+        let rd_nonzero_and_lookup_to_rd = cs.allocate_prod(
+            JoltIn::Aux(AuxVariable::WriteLookupOutputToRD),
+            JoltIn::Bytecode_RD,
+            JoltIn::OpFlags_LookupOutToRd,
+        );
         cs.constrain_eq_conditional(
             rd_nonzero_and_lookup_to_rd,
             JoltIn::RD_Write,
             JoltIn::LookupOutput,
         );
-        let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
+        let rd_nonzero_and_jmp = cs.allocate_prod(
+            JoltIn::Aux(AuxVariable::WritePCtoRD),
+            JoltIn::Bytecode_RD,
+            JoltIn::OpFlags_IsJmp,
+        );
         let lhs = JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
         let next_pc_jump = cs.allocate_if_else(
+            JoltIn::Aux(AuxVariable::NextPCJump),
             JoltIn::OpFlags_IsJmp,
             JoltIn::LookupOutput + 4,
             4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + 4
                 - 4 * JoltIn::OpFlags_DoNotUpdatePC,
         );
 
-        let should_branch = cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
+        let should_branch = cs.allocate_prod(
+            JoltIn::Aux(AuxVariable::ShouldBranch),
+            JoltIn::OpFlags_IsBranch,
+            JoltIn::LookupOutput,
+        );
         let _next_pc = cs.allocate_if_else(
+            JoltIn::Aux(AuxVariable::NextPC),
             should_branch,
             4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
             next_pc_jump,
