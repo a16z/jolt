@@ -13,7 +13,9 @@ use crate::{
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 /// (remainder, divisor)
 pub struct AssertValidSignedRemainderInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 

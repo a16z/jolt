@@ -8,7 +8,9 @@ use crate::field::JoltField;
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 pub struct ANDInstruction(pub u64, pub u64);
 
 impl JoltInstruction for ANDInstruction {

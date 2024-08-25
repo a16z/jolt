@@ -22,8 +22,8 @@ use super::{
     special_polys::SparsePolynomial,
 };
 
-pub trait R1CSConstraintBuilder<const C: usize, F: JoltField, I: ConstraintInput<C>> {
-    type Inputs: ConstraintInput<C>;
+pub trait R1CSConstraintBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
+    type Inputs: ConstraintInput;
 
     fn build_constraints(&self, builder: &mut R1CSBuilder<C, F, I>);
 }
@@ -176,19 +176,19 @@ impl<F: JoltField> AuxComputation<F> {
     }
 }
 
-pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput<C>> {
+pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
     _inputs: PhantomData<I>,
     constraints: Vec<Constraint>,
     aux_computations: BTreeMap<usize, AuxComputation<F>>,
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput<C>> Default for R1CSBuilder<C, F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput> Default for R1CSBuilder<C, F, I> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput<C>> R1CSBuilder<C, F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
     pub fn new() -> Self {
         Self {
             _inputs: PhantomData,
@@ -506,7 +506,7 @@ impl OffsetEqConstraint {
 }
 
 // TODO(sragss): Detailed documentation with wiki.
-pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput<C>> {
+pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
     uniform_builder: R1CSBuilder<C, F, I>,
 
     /// Padded to the nearest power of 2
@@ -530,7 +530,7 @@ fn batch_inputs<'a, F: JoltField>(
     batch
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput<C>> CombinedUniformBuilder<C, F, I> {
+impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C, F, I> {
     pub fn construct(
         uniform_builder: R1CSBuilder<C, F, I>,
         uniform_repeat: usize,

@@ -8,7 +8,9 @@ use crate::jolt::subtable::identity::IdentitySubtable;
 use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 pub struct SBInstruction(pub u64);
 
 impl JoltInstruction for SBInstruction {

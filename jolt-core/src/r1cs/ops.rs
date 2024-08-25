@@ -11,12 +11,12 @@ use rayon::prelude::*;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-pub trait ConstraintInput<const C: usize>:
+pub trait ConstraintInput:
     Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Sync + Send + 'static
 {
-    fn num_inputs() -> usize;
-    fn from_index(index: usize) -> Self;
-    fn to_index(&self) -> usize;
+    fn num_inputs<const C: usize>() -> usize;
+    fn from_index<const C: usize>(index: usize) -> Self;
+    fn to_index<const C: usize>(&self) -> usize;
 
     fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
@@ -326,7 +326,7 @@ impl std::ops::Mul<Variable> for i64 {
 /// Conversions and arithmetic for concrete ConstraintInput
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
-    ($ConcreteInput:ty) => {
+    ($ConcreteInput:ty, $C:expr) => {
         // impl Into<usize> for $ConcreteInput {
         //     fn into(self) -> usize {
         //         self as usize
@@ -334,20 +334,26 @@ macro_rules! impl_r1cs_input_lc_conversions {
         // }
         impl Into<$crate::r1cs::ops::Variable> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Variable {
-                $crate::r1cs::ops::Variable::Input(self.to_index())
+                $crate::r1cs::ops::Variable::Input(self.to_index::<$C>())
             }
         }
 
         impl Into<$crate::r1cs::ops::Term> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Term {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.to_index()), 1)
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
+                    1,
+                )
             }
         }
 
         impl Into<$crate::r1cs::ops::LC> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::LC {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.to_index()), 1)
-                    .into()
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
+                    1,
+                )
+                .into()
             }
         }
 
@@ -383,7 +389,10 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.to_index()), rhs)
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
+                    rhs,
+                )
             }
         }
 
@@ -391,15 +400,20 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), self)
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(rhs.to_index::<$C>()),
+                    self,
+                )
             }
         }
         impl std::ops::Add<$ConcreteInput> for i64 {
             type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 =
-                    $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), 1);
+                let term1 = $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(rhs.to_index::<$C>()),
+                    1,
+                );
                 let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, self);
                 $crate::r1cs::ops::LC::new(vec![term1, term2])
             }

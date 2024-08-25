@@ -9,7 +9,9 @@ use crate::jolt::subtable::{
 };
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 pub struct LHInstruction(pub u64);
 
 impl JoltInstruction for LHInstruction {

@@ -9,7 +9,9 @@ use crate::{
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 pub struct ASSERTLTEInstruction(pub u64, pub u64);
 
 impl JoltInstruction for ASSERTLTEInstruction {

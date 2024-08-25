@@ -97,7 +97,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<const C: usize, const M: usize, I, F, PCS, InstructionSet, Subtables>
 where
-    I: ConstraintInput<C>,
+    I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
@@ -269,7 +269,7 @@ where
 pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
-    type R1CSInputs: ConstraintInput<C>;
+    type R1CSInputs: ConstraintInput;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(

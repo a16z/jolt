@@ -38,7 +38,7 @@ impl<F: JoltField> R1CSPolynomials<F> {
         const C: usize,
         const M: usize,
         InstructionSet: JoltInstructionSet,
-        I: ConstraintInput<C>,
+        I: ConstraintInput,
     >(
         trace: &[JoltTraceStep<InstructionSet>],
         builder: &CombinedUniformBuilder<C, F, I>,
@@ -109,7 +109,7 @@ pub struct R1CSAuxVariables<F: JoltField> {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSProof<
     const C: usize,
-    I: ConstraintInput<C>,
+    I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 > {
@@ -117,7 +117,7 @@ pub struct R1CSProof<
     pub proof: UniformSpartanProof<C, I, F, PCS>,
 }
 
-impl<const C: usize, I: ConstraintInput<C>, F: JoltField, PCS: CommitmentScheme<Field = F>>
+impl<const C: usize, I: ConstraintInput, F: JoltField, PCS: CommitmentScheme<Field = F>>
     R1CSProof<C, I, F, PCS>
 {
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]

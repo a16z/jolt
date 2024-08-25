@@ -9,7 +9,9 @@ use crate::jolt::instruction::SubtableIndices;
 use crate::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 pub struct XORInstruction(pub u64, pub u64);
 
 impl JoltInstruction for XORInstruction {

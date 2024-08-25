@@ -1,9 +1,18 @@
 use common::rv_trace::CircuitFlags;
+use strum::IntoEnumIterator;
 
 use crate::{
     field::JoltField,
-    impl_r1cs_input_lc_conversions, input_range,
-    jolt::vm::JoltPolynomials,
+    impl_r1cs_input_lc_conversions,
+    jolt::{
+        instruction::{
+            add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+            mulu::MULUInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction,
+            sub::SUBInstruction, virtual_move::MOVEInstruction,
+            virtual_movsign::MOVSIGNInstruction,
+        },
+        vm::{rv32i_vm::RV32I, JoltPolynomials},
+    },
     poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
 };
 
@@ -12,7 +21,7 @@ use super::{
     ops::{ConstraintInput, Variable},
 };
 
-pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInput<C>>(
+pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInput>(
     padded_trace_length: usize,
     memory_start: u64,
 ) -> CombinedUniformBuilder<C, F, I> {
@@ -53,7 +62,7 @@ pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInp
 // TODO(#378): Explicit unit test for comparing OpFlags and InstructionFlags
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
-pub enum JoltIn<const C: usize> {
+pub enum JoltIn {
     Bytecode_A, // Virtual address
     // Bytecode_V
     Bytecode_ELFAddress,
@@ -96,38 +105,7 @@ pub enum JoltIn<const C: usize> {
     ChunksY_3,
 
     OpFlags(CircuitFlags),
-
-    // Instruction Flags
-    // Should match JoltInstructionSet
-    IF_Add,
-    IF_Sub,
-    IF_And,
-    IF_Or,
-    IF_Xor,
-    IF_Lb,
-    IF_Lh,
-    IF_Sb,
-    IF_Sh,
-    IF_Sw,
-    IF_Beq,
-    IF_Bge,
-    IF_Bgeu,
-    IF_Bne,
-    IF_Slt,
-    IF_Sltu,
-    IF_Sll,
-    IF_Sra,
-    IF_Srl,
-    IF_Movsign,
-    IF_Mul,
-    IF_MulU,
-    IF_MulHu,
-    IF_Virt_Advice,
-    IF_Virt_Move,
-    IF_Virt_Assert_LTE,
-    IF_Virt_Assert_VALID_SIGNED_REMAINDER,
-    IF_Virt_Assert_VALID_UNSIGNED_REMAINDER,
-    IF_Virt_Assert_VALID_DIV0,
+    InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
@@ -144,15 +122,15 @@ enum AuxVariable {
     NextPC,
 }
 
-impl_r1cs_input_lc_conversions!(JoltIn<4>);
-impl<const C: usize> ConstraintInput<C> for JoltIn<C> {
-    fn num_inputs() -> usize {
+impl_r1cs_input_lc_conversions!(JoltIn, 4);
+impl ConstraintInput for JoltIn {
+    fn num_inputs<const C: usize>() -> usize {
         0
     }
-    fn from_index(index: usize) -> Self {
+    fn from_index<const C: usize>(index: usize) -> Self {
         todo!();
     }
-    fn to_index(&self) -> usize {
+    fn to_index<const C: usize>(&self) -> usize {
         todo!();
     }
 
@@ -225,17 +203,19 @@ impl UniformJoltConstraints {
     }
 }
 
-impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
-    for UniformJoltConstraints
-{
-    type Inputs = JoltIn<C>;
-    fn build_constraints(&self, cs: &mut R1CSBuilder<C, F, JoltIn<C>>) {
-        let flags = input_range!(JoltIn::OpFlags_IsPC, JoltIn::IF_Virt_Assert_VALID_DIV0);
-        for flag in flags {
-            cs.constrain_binary(flag);
+impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for UniformJoltConstraints {
+    type Inputs = JoltIn;
+    fn build_constraints(&self, cs: &mut R1CSBuilder<C, F, JoltIn>) {
+        for flag in RV32I::iter() {
+            cs.constrain_binary(JoltIn::InstructionFlags(flag));
         }
+        // TODO(moodlezoup)
+        // for flag in CircuitFlags::iter() {
+        //     cs.constrain_binary(JoltIn::OpFlags(flag));
+        // }
 
-        cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
+        // TODO(moodlezoup)
+        // cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
         let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(
@@ -291,30 +271,37 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         );
 
         let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = R1CSBuilder::<C, F, JoltIn<C>>::pack_le(ram_writes.to_vec(), 8);
+        let packed_load_store = R1CSBuilder::<C, F, JoltIn>::pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
             JoltIn::OpFlags(CircuitFlags::Store),
             packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
 
-        let packed_query = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
+        let packed_query = R1CSBuilder::<C, F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
             LOG_M,
         );
 
-        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query.clone(), x + y);
+        cs.constrain_eq_conditional(
+            JoltIn::InstructionFlags(ADDInstruction::default().into()),
+            packed_query.clone(),
+            x + y,
+        );
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(
-            JoltIn::IF_Sub,
+            JoltIn::InstructionFlags(SUBInstruction::default().into()),
             packed_query.clone(),
             x - y + (0xffffffffi64 + 1),
         );
-        let is_mul = JoltIn::IF_Mul + JoltIn::IF_MulU + JoltIn::IF_MulHu;
+        let is_mul = JoltIn::InstructionFlags(MULInstruction::default().into())
+            + JoltIn::InstructionFlags(MULUInstruction::default().into())
+            + JoltIn::InstructionFlags(MULHUInstruction::default().into());
         let product = cs.allocate_prod(JoltIn::Aux(AuxVariable::Product), x, y);
         cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
         cs.constrain_eq_conditional(
-            JoltIn::IF_Movsign + JoltIn::IF_Virt_Move,
+            JoltIn::InstructionFlags(MOVSIGNInstruction::default().into())
+                + JoltIn::InstructionFlags(MOVEInstruction::default().into()),
             packed_query.clone(),
             x,
         );
@@ -335,11 +322,11 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
             1,
         );
 
-        let chunked_x = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
+        let chunked_x = R1CSBuilder::<C, F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
             OPERAND_SIZE,
         );
-        let chunked_y = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
+        let chunked_y = R1CSBuilder::<C, F, JoltIn>::pack_be(
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
@@ -355,7 +342,9 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         );
 
         // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
-        let is_shift = JoltIn::IF_Sll + JoltIn::IF_Srl + JoltIn::IF_Sra;
+        let is_shift = JoltIn::InstructionFlags(SLLInstruction::default().into())
+            + JoltIn::InstructionFlags(SRLInstruction::default().into())
+            + JoltIn::InstructionFlags(SRAInstruction::default().into());
         let chunks_x = input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3);
         let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
         let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);

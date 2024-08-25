@@ -43,7 +43,7 @@ macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
         #[repr(u8)]
-        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro, Serialize, Deserialize)]
+        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord)]
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl JoltInstructionSet for $enum_name {}
@@ -171,10 +171,10 @@ where
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
-    type R1CSInputs = JoltIn<C>;
+    type R1CSInputs = JoltIn;
 }
 
-pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltIn<C>, F, PCS, RV32I, RV32ISubtables<F>>;
+pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltIn, F, PCS, RV32I, RV32ISubtables<F>>;
 
 use eyre::Result;
 use std::fs::File;

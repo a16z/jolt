@@ -66,7 +66,7 @@ pub enum SpartanError {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanProof<
     const C: usize,
-    I: ConstraintInput<C>,
+    I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 > {
@@ -78,7 +78,7 @@ pub struct UniformSpartanProof<
     pub(crate) opening_proof: PCS::BatchedProof,
 }
 
-impl<const C: usize, I: ConstraintInput<C>, F: JoltField, PCS: CommitmentScheme<Field = F>>
+impl<const C: usize, I: ConstraintInput, F: JoltField, PCS: CommitmentScheme<Field = F>>
     UniformSpartanProof<C, I, F, PCS>
 {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]

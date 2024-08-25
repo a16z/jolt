@@ -8,7 +8,9 @@ use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
+)]
 pub struct SWInstruction(pub u64);
 
 impl JoltInstruction for SWInstruction {
