@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
@@ -16,7 +18,8 @@ use crate::utils::math::Math;
 use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<F: JoltField> {
+pub struct UniformSpartanKey<const C: usize, I: ConstraintInput<C>, F: JoltField> {
+    _inputs: PhantomData<I>,
     pub uniform_r1cs: UniformR1CS<F>,
 
     pub offset_eq_r1cs: NonUniformR1CS<F>,
@@ -130,10 +133,8 @@ impl<F: JoltField> SparseEqualityItem<F> {
     }
 }
 
-impl<F: JoltField> UniformSpartanKey<F> {
-    pub fn from_builder<const C: usize, I: ConstraintInput<C>>(
-        constraint_builder: &CombinedUniformBuilder<C, F, I>,
-    ) -> Self {
+impl<const C: usize, F: JoltField, I: ConstraintInput<C>> UniformSpartanKey<C, I, F> {
+    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<C, F, I>) -> Self {
         let uniform_r1cs = constraint_builder.materialize_uniform();
         let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 
@@ -143,6 +144,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let vk_digest = Self::digest(&uniform_r1cs, &offset_eq_r1cs, num_steps);
 
         Self {
+            _inputs: PhantomData,
             uniform_r1cs,
             offset_eq_r1cs,
             num_cons_total: total_rows,

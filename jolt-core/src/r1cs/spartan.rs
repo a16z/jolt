@@ -1,5 +1,7 @@
 #![allow(clippy::len_without_is_empty)]
 
+use std::marker::PhantomData;
+
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -62,7 +64,13 @@ pub enum SpartanError {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+pub struct UniformSpartanProof<
+    const C: usize,
+    I: ConstraintInput<C>,
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+> {
+    _inputs: PhantomData<I>,
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F>,
@@ -70,12 +78,14 @@ pub struct UniformSpartanProof<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub(crate) opening_proof: PCS::BatchedProof,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> UniformSpartanProof<F, PCS> {
+impl<const C: usize, I: ConstraintInput<C>, F: JoltField, PCS: CommitmentScheme<Field = F>>
+    UniformSpartanProof<C, I, F, PCS>
+{
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
-    pub fn setup_precommitted<I: ConstraintInput>(
-        constraint_builder: &CombinedUniformBuilder<F, I>,
+    pub fn setup_precommitted(
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
         padded_num_steps: usize,
-    ) -> UniformSpartanKey<F, I> {
+    ) -> UniformSpartanKey<C, I, F> {
         assert_eq!(
             padded_num_steps,
             constraint_builder.uniform_repeat().next_power_of_two()
@@ -85,10 +95,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> UniformSpartanProof<F, PCS>
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
-    pub fn prove_precommitted<I: ConstraintInput>(
+    pub fn prove_precommitted(
         generators: &PCS::Setup,
-        constraint_builder: &CombinedUniformBuilder<F, I>,
-        key: &UniformSpartanKey<F, I>,
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+        key: &UniformSpartanKey<C, I, F>,
         witness_segments: Vec<Vec<F>>,
         opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
@@ -211,6 +221,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> UniformSpartanProof<F, PCS>
             outer_sumcheck_claims[3],
         );
         Ok(UniformSpartanProof {
+            _inputs: PhantomData,
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
@@ -221,9 +232,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> UniformSpartanProof<F, PCS>
 
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
-    pub fn verify_precommitted<I: ConstraintInput<C>>(
+    pub fn verify_precommitted(
         &self,
-        key: &UniformSpartanKey<C, F, I>,
+        key: &UniformSpartanKey<C, I, F>,
         witness_segment_commitments: Vec<&PCS::Commitment>,
         generators: &PCS::Setup,
         transcript: &mut ProofTranscript,

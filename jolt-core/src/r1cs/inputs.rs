@@ -8,8 +8,6 @@ use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::JoltTraceStep;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::r1cs::jolt_constraints::JoltIn;
-use crate::r1cs::ops::ConstraintInput;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
@@ -17,6 +15,7 @@ use crate::{
 };
 
 use super::key::UniformSpartanKey;
+use super::ops::ConstraintInput;
 use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
@@ -35,9 +34,14 @@ pub struct R1CSPolynomials<F: JoltField> {
 }
 
 impl<F: JoltField> R1CSPolynomials<F> {
-    pub fn new<const C: usize, const M: usize, InstructionSet: JoltInstructionSet>(
+    pub fn new<
+        const C: usize,
+        const M: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput<C>,
+    >(
         trace: &[JoltTraceStep<InstructionSet>],
-        builder: &CombinedUniformBuilder<F, JoltIn>,
+        builder: &CombinedUniformBuilder<C, F, I>,
     ) -> Self {
         let log_M = log2(M) as usize;
 
@@ -103,21 +107,27 @@ pub struct R1CSAuxVariables<F: JoltField> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>, I: ConstraintInput> {
-    pub key: UniformSpartanKey<F, I>,
-    pub proof: UniformSpartanProof<F, C>,
+pub struct R1CSProof<
+    const C: usize,
+    I: ConstraintInput<C>,
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+> {
+    pub key: UniformSpartanKey<C, I, F>,
+    pub proof: UniformSpartanProof<C, I, F, PCS>,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>, I: ConstraintInput> R1CSProof<F, C, I> {
+impl<const C: usize, I: ConstraintInput<C>, F: JoltField, PCS: CommitmentScheme<Field = F>>
+    R1CSProof<C, I, F, PCS>
+{
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
     pub fn verify(
         &self,
-        generators: &C::Setup,
-        jolt_commitments: JoltCommitments<C>,
-        C: usize,
+        generators: &PCS::Setup,
+        jolt_commitments: JoltCommitments<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
-        let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
+        let witness_segment_commitments = Self::format_commitments(&jolt_commitments);
         self.proof.verify_precommitted(
             &self.key,
             witness_segment_commitments,
@@ -127,10 +137,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>, I: ConstraintInput> R1CSProof
     }
 
     #[tracing::instrument(skip_all, name = "R1CSProof::format_commitments")]
-    pub fn format_commitments(
-        jolt_commitments: &JoltCommitments<C>,
-        C: usize,
-    ) -> Vec<&C::Commitment> {
+    pub fn format_commitments(jolt_commitments: &JoltCommitments<PCS>) -> Vec<&PCS::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
@@ -141,7 +148,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>, I: ConstraintInput> R1CSProof
             [jolt_commitments.instruction_lookups.trace_commitment.len() - RV32I::COUNT - 1
                 ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
 
-        let mut combined_commitments: Vec<&C::Commitment> = Vec::new();
+        let mut combined_commitments: Vec<&PCS::Commitment> = Vec::new();
 
         combined_commitments.push(&bytecode_trace_commitments[0]); // "virtual" address
         combined_commitments.push(&bytecode_trace_commitments[2]); // "real" address

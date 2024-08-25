@@ -164,16 +164,17 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, CS> Jolt<F, CS, C, M, JoltIn> for RV32IJoltVM
+impl<F, PCS> Jolt<F, PCS, C, M> for RV32IJoltVM
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
+    type R1CSInputs = JoltIn<C>;
 }
 
-pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>, JoltIn>;
+pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltIn<C>, F, PCS, RV32I, RV32ISubtables<F>>;
 
 use eyre::Result;
 use std::fs::File;

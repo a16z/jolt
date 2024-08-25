@@ -3,7 +3,6 @@
 use crate::field::JoltField;
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
-use crate::r1cs::ops::ConstraintInput;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
@@ -26,6 +25,7 @@ use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::inputs::{R1CSPolynomials, R1CSProof};
+use crate::r1cs::ops::ConstraintInput;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -95,20 +95,20 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables, R1CSInputs>
+pub struct JoltProof<const C: usize, const M: usize, I, F, PCS, InstructionSet, Subtables>
 where
+    I: ConstraintInput<C>,
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
-    R1CSInputs: ConstraintInput,
 {
     pub trace_length: usize,
     pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, PCS>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-    pub r1cs: R1CSProof<F, PCS, R1CSInputs>,
+    pub r1cs: R1CSProof<C, I, F, PCS>,
 }
 
 pub struct JoltPolynomials<F, PCS>
@@ -266,16 +266,10 @@ where
     }
 }
 
-pub trait Jolt<
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    const C: usize,
-    const M: usize,
-    R1CSInputs: ConstraintInput,
->
-{
+pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
+    type R1CSInputs: ConstraintInput<C>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
@@ -350,7 +344,7 @@ pub trait Jolt<
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         preprocessing: JoltPreprocessing<F, PCS>,
     ) -> (
-        JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables, JoltIn>,
+        JoltProof<C, M, Self::R1CSInputs, F, PCS, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<PCS>,
     ) {
         let trace_length = trace.len();
@@ -390,13 +384,16 @@ pub trait Jolt<
             padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
         );
-        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
-            &r1cs_builder,
-            padded_trace_length,
-        );
+        let spartan_key =
+            spartan::UniformSpartanProof::<C, Self::R1CSInputs, F, PCS>::setup_precommitted(
+                &r1cs_builder,
+                padded_trace_length,
+            );
 
-        let r1cs_polynomials =
-            R1CSPolynomials::new::<C, M, Self::InstructionSet>(&trace, &r1cs_builder);
+        let r1cs_polynomials = R1CSPolynomials::new::<C, M, Self::InstructionSet, Self::R1CSInputs>(
+            &trace,
+            &r1cs_builder,
+        );
 
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
@@ -440,7 +437,7 @@ pub trait Jolt<
             &mut transcript,
         );
 
-        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted::<JoltIn>(
+        let spartan_proof = UniformSpartanProof::<C, Self::R1CSInputs, F, PCS>::prove_precommitted(
             &preprocessing.generators,
             &r1cs_builder,
             &spartan_key,
@@ -475,7 +472,7 @@ pub trait Jolt<
     #[tracing::instrument(skip_all)]
     fn verify(
         mut preprocessing: JoltPreprocessing<F, PCS>,
-        proof: JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables, JoltIn>,
+        proof: JoltProof<C, M, Self::R1CSInputs, F, PCS, Self::InstructionSet, Self::Subtables>,
         commitments: JoltCommitments<PCS>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -564,12 +561,12 @@ pub trait Jolt<
     #[tracing::instrument(skip_all)]
     fn verify_r1cs(
         generators: &PCS::Setup,
-        proof: R1CSProof<F, PCS, JoltIn>,
+        proof: R1CSProof<C, Self::R1CSInputs, F, PCS>,
         commitments: JoltCommitments<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
-            .verify(generators, commitments, C, transcript)
+            .verify(generators, commitments, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
