@@ -230,10 +230,23 @@ pub struct ELFInstruction {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
+// #[derive(EnumIter, EnumCount)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
 pub enum CircuitFlags {
     RS1IsPC,
     RS2IsImm,
+    Load,
+    Store,
+    Jump,
+    Branch,
+    WriteLookupOutputToRD,
+    ImmSignBit,
+    ConcatLookupQueryChunks,
+    Virtual,
+    Assert,
+    DoNotUpdatePC,
 }
+// TODO(moodlezoup): use EnumCount
 pub const NUM_CIRCUIT_FLAGS: usize = 12;
 
 impl ELFInstruction {
@@ -255,12 +268,12 @@ impl ELFInstruction {
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
-        flags[0] = matches!(
+        flags[CircuitFlags::RS1IsPC as usize] = matches!(
             self.opcode,
             RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
         );
 
-        flags[1] = matches!(
+        flags[CircuitFlags::RS2IsImm as usize] = matches!(
             self.opcode,
             RV32IM::ADDI
             | RV32IM::XORI
@@ -276,28 +289,28 @@ impl ELFInstruction {
             | RV32IM::JALR,
         );
 
-        flags[2] = matches!(
+        flags[CircuitFlags::Load as usize] = matches!(
             self.opcode,
             RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU,
         );
 
-        flags[3] = matches!(
+        flags[CircuitFlags::Store as usize] = matches!(
             self.opcode,
             RV32IM::SB | RV32IM::SH | RV32IM::SW,
         );
 
-        flags[4] = matches!(
+        flags[CircuitFlags::Jump as usize] = matches!(
             self.opcode,
             RV32IM::JAL | RV32IM::JALR,
         );
 
-        flags[5] = matches!(
+        flags[CircuitFlags::Branch as usize] = matches!(
             self.opcode,
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
         // loads, stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
-        flags[6] = !matches!(
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = !matches!(
             self.opcode,
             RV32IM::SB
             | RV32IM::SH
@@ -319,9 +332,9 @@ impl ELFInstruction {
         );
 
         let mask = 1u32 << 31;
-        flags[7] = matches!(self.imm, Some(imm) if imm & mask == mask);
+        flags[CircuitFlags::ImmSignBit as usize] = matches!(self.imm, Some(imm) if imm & mask == mask);
 
-        flags[8] = matches!(
+        flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
             self.opcode,
             RV32IM::XOR
             | RV32IM::XORI
@@ -352,9 +365,9 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
 
-        flags[9] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
 
-        flags[10] = matches!(self.opcode,
+        flags[CircuitFlags::Assert as usize] = matches!(self.opcode,
             RV32IM::VIRTUAL_ASSERT_EQ                        |
             RV32IM::VIRTUAL_ASSERT_LTE                       |
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
@@ -365,7 +378,7 @@ impl ELFInstruction {
         // All instructions in virtual sequence are mapped from the same
         // ELF address. Thus if an instruction is virtual (and not the last one
         // in its sequence), then we should *not* update the PC.
-        flags[11] = match self.virtual_sequence_remaining {
+        flags[CircuitFlags::DoNotUpdatePC as usize] = match self.virtual_sequence_remaining {
             Some(i) => i != 0,
             None => false
         };

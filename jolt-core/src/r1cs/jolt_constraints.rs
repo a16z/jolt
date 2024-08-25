@@ -1,4 +1,4 @@
-use strum_macros::{EnumCount, EnumIter};
+use common::rv_trace::CircuitFlags;
 
 use crate::{
     field::JoltField,
@@ -37,7 +37,7 @@ pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInp
     // any virtual sequences.
 
     let virtual_sequence_constraint = OffsetEqConstraint::new(
-        (JoltIn::OpFlags_IsVirtualInstruction, false),
+        (JoltIn::OpFlags(CircuitFlags::Virtual), false),
         (JoltIn::Bytecode_A, true),
         (JoltIn::Bytecode_A + 1, false),
     );
@@ -95,19 +95,7 @@ pub enum JoltIn<const C: usize> {
     ChunksY_2,
     ChunksY_3,
 
-    // Should match rv_trace.to_circuit_flags()
-    OpFlags_IsPC,
-    OpFlags_IsImm,
-    OpFlags_IsLoad,
-    OpFlags_IsStore,
-    OpFlags_IsJmp,
-    OpFlags_IsBranch,
-    OpFlags_LookupOutToRd,
-    OpFlags_SignImm,
-    OpFlags_IsConcat,
-    OpFlags_IsVirtualInstruction,
-    OpFlags_IsAssert,
-    OpFlags_DoNotUpdatePC,
+    OpFlags(CircuitFlags),
 
     // Instruction Flags
     // Should match JoltInstructionSet
@@ -252,13 +240,13 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(
             JoltIn::Aux(AuxVariable::X),
-            JoltIn::OpFlags_IsPC,
+            JoltIn::OpFlags(CircuitFlags::RS1IsPC),
             real_pc,
             JoltIn::RS1_Read,
         );
         let y = cs.allocate_if_else(
             JoltIn::Aux(AuxVariable::Y),
-            JoltIn::OpFlags_IsImm,
+            JoltIn::OpFlags(CircuitFlags::RS2IsImm),
             JoltIn::Bytecode_Imm,
             JoltIn::RS2_Read,
         );
@@ -267,12 +255,13 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         let signed_output = JoltIn::Bytecode_Imm - (0xffffffffi64 + 1i64);
         let imm_signed = cs.allocate_if_else(
             JoltIn::Aux(AuxVariable::ImmSigned),
-            JoltIn::OpFlags_SignImm,
+            JoltIn::OpFlags(CircuitFlags::ImmSignBit),
             signed_output,
             JoltIn::Bytecode_Imm,
         );
 
-        let is_load_or_store = JoltIn::OpFlags_IsLoad + JoltIn::OpFlags_IsStore;
+        let is_load_or_store =
+            JoltIn::OpFlags(CircuitFlags::Load) + JoltIn::OpFlags(CircuitFlags::Store);
         let memory_start: i64 = self.memory_start.try_into().unwrap();
         cs.constrain_eq_conditional(
             is_load_or_store,
@@ -281,22 +270,22 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         );
 
         cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
+            JoltIn::OpFlags(CircuitFlags::Load),
             JoltIn::RAM_Read_Byte0,
             JoltIn::RAM_Write_Byte0,
         );
         cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
+            JoltIn::OpFlags(CircuitFlags::Load),
             JoltIn::RAM_Read_Byte1,
             JoltIn::RAM_Write_Byte1,
         );
         cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
+            JoltIn::OpFlags(CircuitFlags::Load),
             JoltIn::RAM_Read_Byte2,
             JoltIn::RAM_Write_Byte2,
         );
         cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
+            JoltIn::OpFlags(CircuitFlags::Load),
             JoltIn::RAM_Read_Byte3,
             JoltIn::RAM_Write_Byte3,
         );
@@ -304,7 +293,7 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
         let packed_load_store = R1CSBuilder::<C, F, JoltIn<C>>::pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsStore,
+            JoltIn::OpFlags(CircuitFlags::Store),
             packed_load_store.clone(),
             JoltIn::LookupOutput,
         );
@@ -330,13 +319,21 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
             x,
         );
         cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
+            JoltIn::OpFlags(CircuitFlags::Load),
             packed_query.clone(),
             packed_load_store,
         );
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RS2_Read);
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags(CircuitFlags::Store),
+            packed_query,
+            JoltIn::RS2_Read,
+        );
 
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags(CircuitFlags::Assert),
+            JoltIn::LookupOutput,
+            1,
+        );
 
         let chunked_x = R1CSBuilder::<C, F, JoltIn<C>>::pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
@@ -346,8 +343,16 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
             input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_x, x);
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_y, y);
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
+            chunked_x,
+            x,
+        );
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
+            chunked_y,
+            y,
+        );
 
         // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
         let is_shift = JoltIn::IF_Sll + JoltIn::IF_Srl + JoltIn::IF_Sra;
@@ -362,7 +367,7 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
                 chunks_y[i],
             );
             cs.constrain_eq_conditional(
-                JoltIn::OpFlags_IsConcat,
+                JoltIn::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
                 chunks_query[i],
                 (1i64 << 8) * chunks_x[i] + relevant_chunk_y,
             );
@@ -373,7 +378,7 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         let rd_nonzero_and_lookup_to_rd = cs.allocate_prod(
             JoltIn::Aux(AuxVariable::WriteLookupOutputToRD),
             JoltIn::Bytecode_RD,
-            JoltIn::OpFlags_LookupOutToRd,
+            JoltIn::OpFlags(CircuitFlags::WriteLookupOutputToRD),
         );
         cs.constrain_eq_conditional(
             rd_nonzero_and_lookup_to_rd,
@@ -383,7 +388,7 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
         let rd_nonzero_and_jmp = cs.allocate_prod(
             JoltIn::Aux(AuxVariable::WritePCtoRD),
             JoltIn::Bytecode_RD,
-            JoltIn::OpFlags_IsJmp,
+            JoltIn::OpFlags(CircuitFlags::Jump),
         );
         let lhs = JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RD_Write;
@@ -391,15 +396,15 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn<C>>
 
         let next_pc_jump = cs.allocate_if_else(
             JoltIn::Aux(AuxVariable::NextPCJump),
-            JoltIn::OpFlags_IsJmp,
+            JoltIn::OpFlags(CircuitFlags::Jump),
             JoltIn::LookupOutput + 4,
             4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS + 4
-                - 4 * JoltIn::OpFlags_DoNotUpdatePC,
+                - 4 * JoltIn::OpFlags(CircuitFlags::DoNotUpdatePC),
         );
 
         let should_branch = cs.allocate_prod(
             JoltIn::Aux(AuxVariable::ShouldBranch),
-            JoltIn::OpFlags_IsBranch,
+            JoltIn::OpFlags(CircuitFlags::Branch),
             JoltIn::LookupOutput,
         );
         let _next_pc = cs.allocate_if_else(

@@ -2,7 +2,7 @@
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
-use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
+use crate::r1cs::jolt_constraints::construct_jolt_constraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;

@@ -4,6 +4,7 @@ use ark_ff::PrimeField;
 
 use crate::field::JoltField;
 use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
+use crate::r1cs::jolt_constraints::JoltIn;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use crate::subprotocols::grand_product::BatchedGrandProductProof;
@@ -155,7 +156,10 @@ pub fn into_uint256<F: JoltField>(from: F) -> U256 {
     U256::from_le_slice(&buf)
 }
 
-impl Into<SpartanProof> for &UniformSpartanProof<Fp<MontBackend<FrConfig, 4>, 4>, HyperKZG<Bn254>> {
+const C: usize = 4;
+impl Into<SpartanProof>
+    for &UniformSpartanProof<C, JoltIn<C>, Fp<MontBackend<FrConfig, 4>, 4>, HyperKZG<Bn254>>
+{
     fn into(self) -> SpartanProof {
         let claimed_evals = self
             .claimed_witness_evals
