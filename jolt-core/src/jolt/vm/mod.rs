@@ -123,6 +123,17 @@ where
     pub r1cs: R1CSPolynomials<F>,
 }
 
+impl<F, PCS> JoltPolynomials<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    pub fn r1cs_witness_value<const C: usize, I: ConstraintInput>(&self, index: usize) -> F {
+        let trace_len = self.bytecode.a_read_write.len();
+        I::from_index::<C>(index / trace_len).get_poly_ref(self)[index % trace_len]
+    }
+}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltCommitments<PCS: CommitmentScheme> {
     pub bytecode: BytecodeCommitment<PCS>,

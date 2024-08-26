@@ -7,7 +7,6 @@ use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::r1cs::key::UniformSpartanKey;
-use crate::r1cs::special_polys::SegmentedPaddedWitness;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
@@ -86,11 +85,11 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         UniformSpartanKey::from_builder(constraint_builder)
     }
 
-    pub fn prove_new<PCS: CommitmentScheme<Field = F>>(
+    pub fn prove_new<'a, PCS: CommitmentScheme<Field = F>>(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
-        polynomials: &JoltPolynomials<F, PCS>,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
+        polynomials: &'a JoltPolynomials<F, PCS>,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
@@ -162,11 +161,11 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
+            SumcheckInstanceProof::prove_spartan_quadratic::<C, PCS, I>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                &segmented_padded_witness,
+                polynomials,
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
@@ -176,17 +175,21 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
 
         let chi = EqPolynomial::evals(r_col_step);
-        let witness_polys: Vec<_> = I::flatten()
+        let witness_polys: Vec<_> = I::flatten::<C>()
             .iter()
             .map(|witness| witness.get_poly_ref(polynomials))
             .collect();
-        let claimed_witness_evals = witness_polys
+        let claimed_witness_evals: Vec<_> = I::flatten::<C>()
             .par_iter()
-            .map(|poly| poly.evaluate_at_chi_low_optimized(&chi))
+            .map(|witness| {
+                witness
+                    .get_poly_ref(polynomials)
+                    .evaluate_at_chi_low_optimized(&chi)
+            })
             .collect();
 
         for (poly, claim) in witness_polys.iter().zip(claimed_witness_evals.iter()) {
-            opening_accumulator.append(poly, r_col_step.to_vec(), claim);
+            opening_accumulator.append(poly, r_col_step.to_vec(), *claim);
         }
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
@@ -273,6 +276,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
+        // TODO(moodlezoup)
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         Ok(())

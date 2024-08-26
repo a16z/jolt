@@ -44,7 +44,6 @@ sol!(
         uint256 outerClaimC;
         SumcheckProof inner;
         uint256[] claimedEvals;
-        HyperKZGProofSol openingProof;
     }
 );
 
@@ -172,7 +171,6 @@ impl Into<SpartanProof> for &UniformSpartanProof<C, JoltIn, Fp<MontBackend<FrCon
             outerClaimC: into_uint256(self.outer_sumcheck_claims.2),
             inner: (&self.inner_sumcheck_proof).into(),
             claimedEvals: claimed_evals,
-            openingProof: (&self.opening_proof).into(),
         }
     }
 }

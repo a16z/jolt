@@ -43,10 +43,9 @@ macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
         #[repr(u8)]
-        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord, Default)]
+        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord)]
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name {
-            #[default]  // Need a default so that we can derive EnumIter on `JoltIn`
             $($alias($struct)),+
         }
         impl JoltInstructionSet for $enum_name {}
@@ -60,6 +59,12 @@ macro_rules! instruction_set {
                     .next()
                     .unwrap();
                 instruction.random(rng)
+            }
+        }
+        // Need a default so that we can derive EnumIter on `JoltIn`
+        impl Default for $enum_name {
+            fn default() -> Self {
+                $enum_name::iter().collect::<Vec<_>>()[0]
             }
         }
     };
