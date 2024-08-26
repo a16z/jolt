@@ -157,9 +157,7 @@ pub fn into_uint256<F: JoltField>(from: F) -> U256 {
 }
 
 const C: usize = 4;
-impl Into<SpartanProof>
-    for &UniformSpartanProof<C, JoltIn, Fp<MontBackend<FrConfig, 4>, 4>, HyperKZG<Bn254>>
-{
+impl Into<SpartanProof> for &UniformSpartanProof<C, JoltIn, Fp<MontBackend<FrConfig, 4>, 4>> {
     fn into(self) -> SpartanProof {
         let claimed_evals = self
             .claimed_witness_evals

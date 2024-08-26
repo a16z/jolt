@@ -1,5 +1,6 @@
 use common::{constants::RAM_OPS_PER_INSTRUCTION, rv_trace::CircuitFlags};
 use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 use crate::{
     field::JoltField,
@@ -58,7 +59,7 @@ pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInp
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumIter)]
 pub enum JoltIn {
     Bytecode_A, // Virtual address
     // Bytecode_V
@@ -87,8 +88,9 @@ pub enum JoltIn {
     InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, Default, EnumIter)]
 enum AuxVariable {
+    #[default] // Need a default so that we can derive EnumIter on `JoltIn`
     LeftLookupOperand,
     RightLookupOperand,
     ImmSigned,
@@ -103,16 +105,39 @@ enum AuxVariable {
 
 impl_r1cs_input_lc_conversions!(JoltIn, 4);
 impl ConstraintInput for JoltIn {
-    fn num_inputs<const C: usize>() -> usize {
-        0
+    fn flatten<const C: usize>() -> Vec<Self> {
+        JoltIn::iter()
+            .flat_map(|variant| match variant {
+                Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION)
+                    .into_iter()
+                    .map(|i| Self::RAM_Read(i))
+                    .collect(),
+                Self::RAM_Write(_) => (0..RAM_OPS_PER_INSTRUCTION)
+                    .into_iter()
+                    .map(|i| Self::RAM_Write(i))
+                    .collect(),
+                Self::ChunksQuery(_) => (0..C).into_iter().map(|i| Self::ChunksQuery(i)).collect(),
+                Self::ChunksX(_) => (0..C).into_iter().map(|i| Self::ChunksX(i)).collect(),
+                Self::ChunksY(_) => (0..C).into_iter().map(|i| Self::ChunksY(i)).collect(),
+                Self::OpFlags(_) => CircuitFlags::iter()
+                    .map(|flag| Self::OpFlags(flag))
+                    .collect(),
+                Self::InstructionFlags(_) => RV32I::iter()
+                    .map(|flag| Self::InstructionFlags(flag))
+                    .collect(),
+                Self::Aux(_) => AuxVariable::iter()
+                    .flat_map(|aux| match aux {
+                        AuxVariable::RelevantYChunk(_) => (0..C)
+                            .into_iter()
+                            .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
+                            .collect(),
+                        _ => vec![Self::Aux(aux)],
+                    })
+                    .collect(),
+                _ => vec![variant],
+            })
+            .collect()
     }
-    fn from_index<const C: usize>(index: usize) -> Self {
-        todo!();
-    }
-    fn to_index<const C: usize>(&self) -> usize {
-        todo!();
-    }
-
     fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
         jolt_polynomials: &JoltPolynomials<F, PCS>,

@@ -6,25 +6,18 @@
 
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::JoltTraceStep;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::{
-    jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    utils::transcript::ProofTranscript,
-};
+use crate::utils::transcript::ProofTranscript;
 
 use super::key::UniformSpartanKey;
 use super::ops::ConstraintInput;
 use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
-use crate::r1cs::builder::CombinedUniformBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
-use strum::EnumCount;
 
 pub struct AuxPolynomials<F: JoltField> {
     pub left_lookup_operand: DensePolynomial<F>,
@@ -54,7 +47,6 @@ impl<F: JoltField> R1CSPolynomials<F> {
         I: ConstraintInput,
     >(
         trace: &[JoltTraceStep<InstructionSet>],
-        builder: &CombinedUniformBuilder<C, F, I>,
     ) -> Self {
         let log_M = log2(M) as usize;
 
@@ -100,71 +92,14 @@ impl<F: JoltField> R1CSPolynomials<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<
-    const C: usize,
-    I: ConstraintInput,
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-> {
+pub struct R1CSProof<const C: usize, I: ConstraintInput, F: JoltField> {
     pub key: UniformSpartanKey<C, I, F>,
-    pub proof: UniformSpartanProof<C, I, F, PCS>,
+    pub proof: UniformSpartanProof<C, I, F>,
 }
 
-impl<const C: usize, I: ConstraintInput, F: JoltField, PCS: CommitmentScheme<Field = F>>
-    R1CSProof<C, I, F, PCS>
-{
+impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
-    pub fn verify(
-        &self,
-        generators: &PCS::Setup,
-        jolt_commitments: JoltCommitments<PCS>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError> {
-        let witness_segment_commitments = Self::format_commitments(&jolt_commitments);
-        self.proof.verify_precommitted(
-            &self.key,
-            witness_segment_commitments,
-            generators,
-            transcript,
-        )
-    }
-
-    #[tracing::instrument(skip_all, name = "R1CSProof::format_commitments")]
-    pub fn format_commitments(jolt_commitments: &JoltCommitments<PCS>) -> Vec<&PCS::Commitment> {
-        let r1cs_commitments = &jolt_commitments.r1cs;
-        let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
-        let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
-            [..1 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
-        let instruction_lookup_indices_commitments =
-            &jolt_commitments.instruction_lookups.trace_commitment[..C];
-        let instruction_flag_commitments = &jolt_commitments.instruction_lookups.trace_commitment
-            [jolt_commitments.instruction_lookups.trace_commitment.len() - RV32I::COUNT - 1
-                ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
-
-        let mut combined_commitments: Vec<&PCS::Commitment> = Vec::new();
-
-        combined_commitments.push(&bytecode_trace_commitments[0]); // "virtual" address
-        combined_commitments.push(&bytecode_trace_commitments[2]); // "real" address
-        combined_commitments.push(&bytecode_trace_commitments[3]); // op_flags_packed
-        combined_commitments.push(&bytecode_trace_commitments[4]); // rd
-        combined_commitments.push(&bytecode_trace_commitments[5]); // rs1
-        combined_commitments.push(&bytecode_trace_commitments[6]); // rs2
-        combined_commitments.push(&bytecode_trace_commitments[7]); // imm
-
-        combined_commitments.extend(memory_trace_commitments.iter());
-
-        combined_commitments.extend(instruction_lookup_indices_commitments.iter());
-        combined_commitments.push(
-            jolt_commitments
-                .instruction_lookups
-                .trace_commitment
-                .last()
-                .unwrap(),
-        );
-
-        combined_commitments.extend(r1cs_commitments.iter());
-        combined_commitments.extend(instruction_flag_commitments.iter());
-
-        combined_commitments
+    pub fn verify(&self, transcript: &mut ProofTranscript) -> Result<(), SpartanError> {
+        self.proof.verify_precommitted(&self.key, transcript)
     }
 }

@@ -231,8 +231,11 @@ pub struct ELFInstruction {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumCountMacro, EnumIter)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumCountMacro, EnumIter, Default,
+)]
 pub enum CircuitFlags {
+    #[default] // Need a default so that we can derive EnumIter on `JoltIn`
     RS1IsPC,
     RS2IsImm,
     Load,

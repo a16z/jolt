@@ -108,7 +108,7 @@ where
     pub bytecode: BytecodeProof<F, PCS>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-    pub r1cs: R1CSProof<C, I, F, PCS>,
+    pub r1cs: R1CSProof<C, I, F>,
 }
 
 pub struct JoltPolynomials<F, PCS>
@@ -386,15 +386,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
         );
         let spartan_key =
-            spartan::UniformSpartanProof::<C, Self::R1CSInputs, F, PCS>::setup_precommitted(
+            spartan::UniformSpartanProof::<C, Self::R1CSInputs, F>::setup_precommitted(
                 &r1cs_builder,
                 padded_trace_length,
             );
 
-        let r1cs_polynomials = R1CSPolynomials::new::<C, M, Self::InstructionSet, Self::R1CSInputs>(
-            &trace,
-            &r1cs_builder,
-        );
+        let r1cs_polynomials =
+            R1CSPolynomials::new::<C, M, Self::InstructionSet, Self::R1CSInputs>(&trace);
 
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
@@ -440,7 +438,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        let spartan_proof = UniformSpartanProof::<C, Self::R1CSInputs, F, PCS>::prove_new(
+        let spartan_proof = UniformSpartanProof::<C, Self::R1CSInputs, F>::prove_new(
             &preprocessing.generators,
             &r1cs_builder,
             &spartan_key,
@@ -508,12 +506,9 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             proof.program_io,
             &mut transcript,
         )?;
-        Self::verify_r1cs(
-            &preprocessing.generators,
-            proof.r1cs,
-            commitments,
-            &mut transcript,
-        )?;
+        Self::verify_r1cs(proof.r1cs, &mut transcript)?;
+
+        todo!("verify batched opening");
         Ok(())
     }
 
@@ -563,13 +558,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     #[tracing::instrument(skip_all)]
     fn verify_r1cs(
-        generators: &PCS::Setup,
-        proof: R1CSProof<C, Self::R1CSInputs, F, PCS>,
-        commitments: JoltCommitments<PCS>,
+        proof: R1CSProof<C, Self::R1CSInputs, F>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
-            .verify(generators, commitments, transcript)
+            .verify(transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 

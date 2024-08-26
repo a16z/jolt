@@ -14,9 +14,20 @@ use std::hash::Hash;
 pub trait ConstraintInput:
     Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Sync + Send + 'static
 {
-    fn num_inputs<const C: usize>() -> usize;
-    fn from_index<const C: usize>(index: usize) -> Self;
-    fn to_index<const C: usize>(&self) -> usize;
+    // TODO(moodlezoup): Move flattened version to r1cs preprocesing
+    fn flatten<const C: usize>() -> Vec<Self>;
+    fn num_inputs<const C: usize>() -> usize {
+        Self::flatten::<C>().len()
+    }
+    fn from_index<const C: usize>(index: usize) -> Self {
+        Self::flatten::<C>()[index]
+    }
+    fn to_index<const C: usize>(&self) -> usize {
+        match Self::flatten::<C>().iter().position(|x| x == self) {
+            Some(index) => index,
+            None => panic!("Invalid JoltIn variant {:?}", self),
+        }
+    }
 
     fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
