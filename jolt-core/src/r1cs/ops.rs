@@ -29,10 +29,10 @@ pub trait ConstraintInput:
         }
     }
 
-    fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    fn get_poly_ref<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
-        jolt_polynomials: &JoltPolynomials<F, PCS>,
-    ) -> &DensePolynomial<F>;
+        jolt_polynomials: &'a JoltPolynomials<F, PCS>,
+    ) -> &'a DensePolynomial<F>;
 
     fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
@@ -104,8 +104,6 @@ impl LC {
             .count()
     }
 
-    // pub fn evaluate_new<F: JoltField>(&self, JoltPolynomials<F>)
-
     pub fn evaluate<F: JoltField>(&self, values: &[F]) -> F {
         let num_vars = self.num_vars();
         assert_eq!(num_vars, values.len());
@@ -128,42 +126,48 @@ impl LC {
         result
     }
 
-    pub fn evaluate_batch<F: JoltField>(&self, inputs: &[&[F]], batch_size: usize) -> Vec<F> {
+    pub fn evaluate_batch<
+        const C: usize,
+        I: ConstraintInput,
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        &self,
+        polynomials: &JoltPolynomials<F, PCS>,
+        batch_size: usize,
+    ) -> Vec<F> {
         let mut output = unsafe_allocate_zero_vec(batch_size);
-        self.evaluate_batch_mut(inputs, &mut output);
+        self.evaluate_batch_mut::<C, I, F, PCS>(polynomials, &mut output);
         output
     }
 
-    #[tracing::instrument(skip_all, name = "LC::evaluate_batch_mut")]
-    pub fn evaluate_batch_mut<F: JoltField>(&self, inputs: &[&[F]], output: &mut [F]) {
-        let batch_size = output.len();
-        inputs
-            .iter()
-            .for_each(|inner| assert_eq!(inner.len(), batch_size));
-
-        let terms: Vec<F> = self.to_field_elements();
-
-        output
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(batch_index, output_slot)| {
-                *output_slot = self
-                    .terms()
-                    .iter()
-                    .enumerate()
-                    .map(|(term_index, term)| match term.0 {
-                        Variable::Input(_) | Variable::Auxiliary(_) => {
-                            // TODO: index inputs by something else?
-                            terms[term_index].mul_01_optimized(inputs[term_index][batch_index])
-                        }
-                        Variable::Constant => terms[term_index],
-                    })
-                    .sum();
-            });
+    pub fn evaluate_batch_mut<
+        const C: usize,
+        I: ConstraintInput,
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        &self,
+        polynomials: &JoltPolynomials<F, PCS>,
+        output: &mut [F],
+    ) {
+        output.par_iter_mut().enumerate().for_each(|(i, eval)| {
+            *eval = self
+                .terms()
+                .iter()
+                .map(|term| match term.0 {
+                    Variable::Input(var_index) | Variable::Auxiliary(var_index) => F::from_i64(
+                        term.1,
+                    )
+                    .mul_01_optimized(I::from_index::<C>(var_index).get_poly_ref(polynomials)[i]),
+                    Variable::Constant => F::from_i64(term.1),
+                })
+                .sum()
+        });
     }
 
     #[cfg(test)]
-    fn assert_no_duplicate_terms(terms: &[Term<I>]) {
+    fn assert_no_duplicate_terms(terms: &[Term]) {
         let mut term_vec = Vec::new();
         for term in terms {
             if term_vec.contains(&term.0) {

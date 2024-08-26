@@ -138,11 +138,11 @@ impl ConstraintInput for JoltIn {
             })
             .collect()
     }
-    fn get_poly_ref<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    fn get_poly_ref<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &self,
-        jolt_polynomials: &JoltPolynomials<F, PCS>,
-    ) -> &DensePolynomial<F> {
-        todo!();
+        jolt_polynomials: &'a JoltPolynomials<F, PCS>,
+    ) -> &'a DensePolynomial<F> {
+        todo!()
     }
 
     fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(

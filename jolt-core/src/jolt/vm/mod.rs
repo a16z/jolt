@@ -439,7 +439,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
 
         let spartan_proof = UniformSpartanProof::<C, Self::R1CSInputs, F>::prove_new(
-            &preprocessing.generators,
             &r1cs_builder,
             &spartan_key,
             &jolt_polynomials,

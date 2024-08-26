@@ -15,6 +15,7 @@ use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
+use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -86,7 +87,6 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
     }
 
     pub fn prove_new<PCS: CommitmentScheme<Field = F>>(
-        generators: &PCS::Setup,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &JoltPolynomials<F, PCS>,
@@ -175,8 +175,19 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
         let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
 
-        // TODO: let claimed_witness_evals = evaluate polys at r_col_step
-        // Add to opening accumulator
+        let chi = EqPolynomial::evals(r_col_step);
+        let witness_polys: Vec<_> = I::flatten()
+            .iter()
+            .map(|witness| witness.get_poly_ref(polynomials))
+            .collect();
+        let claimed_witness_evals = witness_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chi))
+            .collect();
+
+        for (poly, claim) in witness_polys.iter().zip(claimed_witness_evals.iter()) {
+            opening_accumulator.append(poly, r_col_step.to_vec(), claim);
+        }
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
@@ -189,7 +200,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
-            claimed_witness_evals: todo!(),
+            claimed_witness_evals,
         })
     }
 

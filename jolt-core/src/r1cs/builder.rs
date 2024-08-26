@@ -15,8 +15,8 @@ use crate::{
 #[allow(unused_imports)] // clippy thinks these aren't needed lol
 use ark_std::{One, Zero};
 use rayon::prelude::*;
+use std::fmt::Debug;
 use std::{collections::BTreeMap, marker::PhantomData};
-use std::{collections::HashMap, fmt::Debug};
 
 use super::{
     key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
@@ -556,21 +556,6 @@ pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInp
     offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
-#[tracing::instrument(skip_all, name = "batch_inputs")]
-fn batch_inputs<'a, F: JoltField>(
-    lc: &LC,
-    inputs: &'a [Vec<F>],
-    aux: &'a [Vec<F>],
-) -> Vec<&'a [F]> {
-    let mut batch: Vec<&'a [F]> = Vec::with_capacity(lc.terms().len());
-    lc.terms().iter().for_each(|term| match term.0 {
-        Variable::Input(input) => batch.push(&inputs[input]),
-        Variable::Auxiliary(inner) => batch.push(&aux[inner]),
-        _ => {}
-    });
-    batch
-}
-
 impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C, F, I> {
     pub fn construct(
         uniform_builder: R1CSBuilder<C, F, I>,
@@ -593,12 +578,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             *I::from_index::<C>(*aux_index).get_poly_ref_mut(jolt_polynomials) =
                 aux_compute.compute_aux_poly::<C, I, PCS>(jolt_polynomials, self.uniform_repeat);
         }
-
-        // #[cfg(test)]
-        // {
-        //     let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(jolt_polynomials);
-        //     builder.assert_valid(&az, &bz, &cz);
-        // }
     }
 
     /// Total number of rows used across all uniform constraints across all repeats. Repeat padded to 2, but repeat * num_constraints not, num_constraints not.
@@ -685,30 +664,15 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         NonUniformR1CS { constraints }
     }
 
-    /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
-    /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
-    #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan_sparse")]
-    #[allow(clippy::type_complexity)]
-    pub fn compute_spartan_Az_Bz_Cz(
+    pub fn compute_spartan_Az_Bz_Cz<PCS: CommitmentScheme<Field = F>>(
         &self,
-        inputs: &[Vec<F>],
-        aux: &[Vec<F>],
+        polynomials: &JoltPolynomials<F, PCS>,
     ) -> (
         SparsePolynomial<F>,
         SparsePolynomial<F>,
         SparsePolynomial<F>,
     ) {
-        // assert_eq!(inputs.len(), I::COUNT);
-        // let num_aux = self.uniform_builder.num_aux();
-        // assert_eq!(aux.len(), num_aux);
-        assert!(inputs
-            .iter()
-            .chain(aux.iter())
-            .all(|inner_input| inner_input.len() == self.uniform_repeat));
-
         let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
-
-        let batch_inputs = |lc: &LC| batch_inputs(lc, inputs, aux);
 
         // uniform_constraints: Xz[0..uniform_constraint_rows]
         let span = tracing::span!(tracing::Level::DEBUG, "uniform_evals");
@@ -723,8 +687,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
                 let mut evaluate_lc_chunk = |lc: &LC| {
                     if !lc.terms().is_empty() {
-                        let inputs = batch_inputs(lc);
-                        lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
+                        lc.evaluate_batch_mut::<C, I, F, PCS>(
+                            polynomials,
+                            &mut dense_output_buffer,
+                        );
 
                         // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
                         let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
@@ -765,15 +731,15 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             let condition_evals = constr
                 .cond
                 .1
-                .evaluate_batch(&batch_inputs(&constr.cond.1), self.uniform_repeat);
+                .evaluate_batch::<C, I, F, PCS>(polynomials, self.uniform_repeat);
             let eq_a_evals = constr
                 .a
                 .1
-                .evaluate_batch(&batch_inputs(&constr.a.1), self.uniform_repeat);
+                .evaluate_batch::<C, I, F, PCS>(polynomials, self.uniform_repeat);
             let eq_b_evals = constr
                 .b
                 .1
-                .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
+                .evaluate_batch::<C, I, F, PCS>(polynomials, self.uniform_repeat);
 
             (0..self.uniform_repeat).for_each(|step_index| {
                 // Write corresponding values, if outside the step range, only include the constant.
