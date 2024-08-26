@@ -1,5 +1,7 @@
 use crate::{
     field::JoltField,
+    jolt::vm::JoltPolynomials,
+    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{
         math::Math,
@@ -120,12 +122,12 @@ impl<F: JoltField> AuxComputation<F> {
                 Variable::Auxiliary(output_index) => output_index,
                 _ => panic!("Output must be of the Variable::Aux variant"),
             };
-            for aux_var in &flat_vars {
-                if let Variable::Auxiliary(aux_calc_index) = aux_var {
+            for var in &flat_vars {
+                if let Variable::Auxiliary(aux_index) = var {
                     // Currently do not support aux computations dependent on those allocated after. Could support with dependency graph, instead
                     // dev should write their constraints sequentially. Simplifies aux computation parallelism.
-                    if output_index <= *aux_calc_index {
-                        panic!("Aux computation depends on future aux computation: {_output:?} = f({aux_var:?})");
+                    if output_index <= *aux_index {
+                        panic!("Aux computation depends on future aux computation: {_output:?} = f({var:?})");
                     }
                 }
             }
@@ -135,6 +137,46 @@ impl<F: JoltField> AuxComputation<F> {
             symbolic_inputs,
             compute,
         }
+    }
+
+    fn compute_aux_poly<const C: usize, I: ConstraintInput, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        jolt_polynomials: &JoltPolynomials<F, PCS>,
+        batch_size: usize,
+    ) -> DensePolynomial<F> {
+        let mut aux_poly: Vec<F> = unsafe_allocate_zero_vec(batch_size);
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = (batch_size + num_threads - 1) / num_threads;
+
+        aux_poly
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
+                chunk.iter_mut().enumerate().for_each(|(offset, result)| {
+                    let global_index = chunk_index * chunk_size + offset;
+                    let compute_inputs: Vec<_> = self
+                        .symbolic_inputs
+                        .iter()
+                        .map(|lc| {
+                            let mut input = F::zero();
+                            for term in lc.terms().iter() {
+                                match term.0 {
+                                    Variable::Input(index) | Variable::Auxiliary(index) => {
+                                        input += I::from_index::<C>(index)
+                                            .get_poly_ref(jolt_polynomials)[global_index]
+                                            * F::from_i64(term.1);
+                                    }
+                                    Variable::Constant => input += F::from_i64(term.1),
+                                }
+                            }
+                            input
+                        })
+                        .collect();
+                    *result = (self.compute)(&compute_inputs);
+                });
+            });
+
+        DensePolynomial::new(aux_poly)
     }
 
     /// Computes auxiliary variable for batch_size steps using the evaluations of each
@@ -213,7 +255,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
 
     /// Index of variable within z.
     #[cfg(test)]
-    pub fn witness_index(&self, var: impl Into<Variable<I>>) -> usize {
+    pub fn witness_index(&self, var: impl Into<Variable>) -> usize {
         todo!("fix");
         // let var: Variable<I> = var.into();
         // match var {
@@ -463,8 +505,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
             a: a_sparse,
             b: b_sparse,
             c: c_sparse,
-            // num_vars: I::COUNT + self.num_aux(),
-            num_vars: todo!(),
+            num_vars: I::num_inputs::<C>(),
             num_rows: self.constraints.len(),
         }
     }
@@ -544,82 +585,20 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         }
     }
 
-    /// Computes all auxiliary variables from inputs.
-    /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]].
-    #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_aux")]
-    pub fn compute_aux(&self, inputs: &[Vec<F>]) -> Vec<Vec<F>> {
-        // assert_eq!(inputs.len(), I::COUNT);
-        inputs
-            .iter()
-            .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
-
-        let mut lc_evals: HashMap<LC, Vec<F>> = HashMap::new();
-        for aux_computation in &self.uniform_builder.aux_computations {
-            for input in &aux_computation.1.symbolic_inputs {
-                lc_evals
-                    .entry(input.clone())
-                    .or_insert_with(|| unsafe_allocate_zero_vec(self.uniform_repeat));
-            }
+    pub fn compute_aux<PCS: CommitmentScheme<Field = F>>(
+        &self,
+        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
+    ) {
+        for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
+            *I::from_index::<C>(*aux_index).get_poly_ref_mut(jolt_polynomials) =
+                aux_compute.compute_aux_poly::<C, I, PCS>(jolt_polynomials, self.uniform_repeat);
         }
 
-        let span_allocate = tracing::span!(tracing::Level::DEBUG, "eval_lcs");
-        let _enter_allocate = span_allocate.enter();
-
-        // Find aux vars with dependencies
-        // AuxCompute.output -> Variable::Auxiliary
-        let mut aux_dep_map = HashMap::new();
-        for lc in lc_evals.keys() {
-            let aux_term = lc
-                .terms()
-                .iter()
-                .find(|term| matches!(term.0, Variable::Auxiliary(_)));
-            if let Some(term) = aux_term {
-                #[cfg(test)]
-                assert_eq!(
-                    lc.terms()
-                        .iter()
-                        .filter(|term| matches!(term.0, Variable::Auxiliary(_)))
-                        .count(),
-                    1
-                );
-
-                if let Variable::Auxiliary(aux) = term.0 {
-                    aux_dep_map.insert(aux, lc.clone());
-                }
-            }
-        }
-
-        let mut aux_evals = vec![vec![]; self.uniform_builder.num_aux()];
-
-        // Evaluate the LCs with no dependencies
-        lc_evals.par_iter_mut().for_each(|(lc, result)| {
-            if !aux_dep_map.values().any(|v| v == lc) {
-                let inputs = batch_inputs(lc, inputs, &aux_evals);
-                lc.evaluate_batch_mut(&inputs, result);
-            }
-        });
-        drop(_enter_allocate);
-
-        for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter().enumerate() {
-            let inputs_by_step: Vec<&[F]> = aux_compute
-                .1
-                .symbolic_inputs
-                .iter()
-                .map(|lc| lc_evals.get(lc).unwrap().as_ref())
-                .collect();
-
-            aux_evals[aux_index] = aux_compute.compute_batch(inputs_by_step, self.uniform_repeat);
-
-            if let Some(lc) = aux_dep_map.get(&aux_index) {
-                let result = lc_evals.get_mut(lc).unwrap();
-                let inputs = batch_inputs(lc, inputs, &aux_evals);
-                lc.evaluate_batch_mut(&inputs, result);
-            }
-        }
-
-        drop_in_background_thread(lc_evals);
-
-        aux_evals
+        // #[cfg(test)]
+        // {
+        //     let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(jolt_polynomials);
+        //     builder.assert_valid(&az, &bz, &cz);
+        // }
     }
 
     /// Total number of rows used across all uniform constraints across all repeats. Repeat padded to 2, but repeat * num_constraints not, num_constraints not.

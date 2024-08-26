@@ -200,13 +200,14 @@ where
             .collect();
         let num_instruction_polys = instruction_trace_polys.len();
 
+        let aux_polys = self.r1cs.aux.as_ref().unwrap();
         let r1cs_trace_polys: Vec<&DensePolynomial<F>> = self
             .r1cs
             .chunks_x
             .iter()
             .chain(self.r1cs.chunks_y.iter())
             .chain(self.r1cs.circuit_flags.iter())
-            .chain(self.r1cs.aux.iter())
+            // .chain(todo!("aux polys"))
             .collect();
 
         let all_trace_polys = bytecode_trace_polys
@@ -395,13 +396,15 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &r1cs_builder,
         );
 
-        let jolt_polynomials = JoltPolynomials {
+        let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
             timestamp_range_check: range_check_polys,
             instruction_lookups: instruction_polynomials,
             r1cs: r1cs_polynomials,
         };
+
+        r1cs_builder.compute_aux(&mut jolt_polynomials);
 
         let jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
 
@@ -437,11 +440,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        let spartan_proof = UniformSpartanProof::<C, Self::R1CSInputs, F, PCS>::prove_precommitted(
+        let spartan_proof = UniformSpartanProof::<C, Self::R1CSInputs, F, PCS>::prove_new(
             &preprocessing.generators,
             &r1cs_builder,
             &spartan_key,
-            todo!("polynomials"),
+            &jolt_polynomials,
             &mut opening_accumulator,
             &mut transcript,
         )

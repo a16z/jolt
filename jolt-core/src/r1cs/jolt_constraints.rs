@@ -44,7 +44,6 @@ pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInp
     // instruction. But that should never happen because the execution
     // trace should always end with some return handling, which shouldn't involve
     // any virtual sequences.
-
     let virtual_sequence_constraint = OffsetEqConstraint::new(
         (JoltIn::OpFlags(CircuitFlags::Virtual), false),
         (JoltIn::Bytecode_A, true),
@@ -90,8 +89,8 @@ pub enum JoltIn {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
 enum AuxVariable {
-    X,
-    Y,
+    LeftLookupOperand,
+    RightLookupOperand,
     ImmSigned,
     Product,
     RelevantYChunk(usize),
@@ -120,6 +119,13 @@ impl ConstraintInput for JoltIn {
     ) -> &DensePolynomial<F> {
         todo!();
     }
+
+    fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
+    ) -> &mut DensePolynomial<F> {
+        todo!();
+    }
 }
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;
@@ -143,23 +149,25 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
         for flag in RV32I::iter() {
             cs.constrain_binary(JoltIn::InstructionFlags(flag));
         }
-        // TODO(moodlezoup)
-        // for flag in CircuitFlags::iter() {
-        //     cs.constrain_binary(JoltIn::OpFlags(flag));
-        // }
+        for flag in CircuitFlags::iter() {
+            cs.constrain_binary(JoltIn::OpFlags(flag));
+        }
 
-        // TODO(moodlezoup)
-        // cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
+        let flags = RV32I::iter()
+            .map(|flag| JoltIn::InstructionFlags(flag).into())
+            .chain(CircuitFlags::iter().map(|flag| JoltIn::OpFlags(flag).into()))
+            .collect();
+        cs.constrain_pack_be(flags, JoltIn::Bytecode_Bitflags, 1);
 
         let real_pc = 4i64 * JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(
-            JoltIn::Aux(AuxVariable::X),
+            JoltIn::Aux(AuxVariable::LeftLookupOperand),
             JoltIn::OpFlags(CircuitFlags::RS1IsPC),
             real_pc,
             JoltIn::RS1_Read,
         );
         let y = cs.allocate_if_else(
-            JoltIn::Aux(AuxVariable::Y),
+            JoltIn::Aux(AuxVariable::RightLookupOperand),
             JoltIn::OpFlags(CircuitFlags::RS2IsImm),
             JoltIn::Bytecode_Imm,
             JoltIn::RS2_Read,

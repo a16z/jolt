@@ -26,11 +26,24 @@ use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use strum::EnumCount;
 
+pub struct AuxPolynomials<F: JoltField> {
+    pub left_lookup_operand: DensePolynomial<F>,
+    pub right_lookup_operand: DensePolynomial<F>,
+    pub imm_signed: DensePolynomial<F>,
+    pub product: DensePolynomial<F>,
+    pub relevant_y_chunks: Vec<DensePolynomial<F>>,
+    pub write_lookup_output_to_rd: DensePolynomial<F>,
+    pub write_pc_to_rd: DensePolynomial<F>,
+    pub next_pc_jump: DensePolynomial<F>,
+    pub should_branch: DensePolynomial<F>,
+    pub next_pc: DensePolynomial<F>,
+}
+
 pub struct R1CSPolynomials<F: JoltField> {
     pub chunks_x: Vec<DensePolynomial<F>>,
     pub chunks_y: Vec<DensePolynomial<F>>,
     pub circuit_flags: [DensePolynomial<F>; NUM_CIRCUIT_FLAGS],
-    pub aux: Vec<DensePolynomial<F>>,
+    pub aux: Option<AuxPolynomials<F>>,
 }
 
 impl<F: JoltField> R1CSPolynomials<F> {
@@ -66,13 +79,6 @@ impl<F: JoltField> R1CSPolynomials<F> {
             }
         }
 
-        let aux = builder.compute_aux(todo!("polynomials"));
-        // #[cfg(test)]
-        // {
-        //     let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(todo!("polynomials"), &aux);
-        //     builder.assert_valid(&az, &bz, &cz);
-        // }
-
         Self {
             chunks_x: chunks_x
                 .into_iter()
@@ -88,22 +94,9 @@ impl<F: JoltField> R1CSPolynomials<F> {
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap(),
-            aux: todo!(),
+            aux: None,
         }
     }
-}
-
-pub struct R1CSAuxVariables<F: JoltField> {
-    x: DensePolynomial<F>,
-    y: DensePolynomial<F>,
-    imm_signed: DensePolynomial<F>,
-    x_times_y: DensePolynomial<F>,
-    relevant_chunk_y: [DensePolynomial<F>; 4],
-    rd_nonzero_and_lookup_to_rd: DensePolynomial<F>,
-    rd_nonzero_and_jmp: DensePolynomial<F>,
-    next_pc_jump: DensePolynomial<F>,
-    should_branch: DensePolynomial<F>,
-    next_pc: DensePolynomial<F>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]

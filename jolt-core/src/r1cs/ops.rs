@@ -22,6 +22,11 @@ pub trait ConstraintInput:
         &self,
         jolt_polynomials: &JoltPolynomials<F, PCS>,
     ) -> &DensePolynomial<F>;
+
+    fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
+    ) -> &mut DensePolynomial<F>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -87,6 +92,8 @@ impl LC {
             .filter(|term| matches!(term.0, Variable::Auxiliary(_) | Variable::Input(_)))
             .count()
     }
+
+    // pub fn evaluate_new<F: JoltField>(&self, JoltPolynomials<F>)
 
     pub fn evaluate<F: JoltField>(&self, values: &[F]) -> F {
         let num_vars = self.num_vars();
@@ -420,18 +427,6 @@ macro_rules! impl_r1cs_input_lc_conversions {
         }
     };
 }
-
-// /// Used to fix an aux variable to a constant index at runtime for use elsewhere (largely OffsetEqConstraints).
-// #[macro_export]
-// macro_rules! assert_static_aux_index {
-//     ($var:expr, $index:expr) => {{
-//         if let Variable::Auxiliary(aux_index) = $var {
-//             assert_eq!(aux_index, $index, "Unexpected auxiliary index");
-//         } else {
-//             panic!("Variable is not of variant type Variable::Auxiliary");
-//         }
-//     }};
-// }
 
 // #[cfg(test)]
 // mod test {

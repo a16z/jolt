@@ -3,7 +3,8 @@ use std::str::FromStr;
 use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
-use strum_macros::FromRepr;
+use strum::EnumCount;
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RVTraceRow {
@@ -230,8 +231,7 @@ pub struct ELFInstruction {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-// #[derive(EnumIter, EnumCount)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumCountMacro, EnumIter)]
 pub enum CircuitFlags {
     RS1IsPC,
     RS2IsImm,
@@ -246,8 +246,7 @@ pub enum CircuitFlags {
     Assert,
     DoNotUpdatePC,
 }
-// TODO(moodlezoup): use EnumCount
-pub const NUM_CIRCUIT_FLAGS: usize = 12;
+pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 impl ELFInstruction {
     #[rustfmt::skip]

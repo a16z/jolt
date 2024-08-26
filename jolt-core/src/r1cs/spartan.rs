@@ -3,6 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::field::JoltField;
+use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
@@ -91,6 +92,132 @@ impl<const C: usize, I: ConstraintInput, F: JoltField, PCS: CommitmentScheme<Fie
             constraint_builder.uniform_repeat().next_power_of_two()
         );
         UniformSpartanKey::from_builder(constraint_builder)
+    }
+
+    pub fn prove_new(
+        generators: &PCS::Setup,
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+        key: &UniformSpartanKey<C, I, F>,
+        polynomials: &JoltPolynomials<F, PCS>,
+        opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Self, SpartanError> {
+        let num_rounds_x = key.num_rows_total().log_2();
+        let num_rounds_y = key.num_cols_total().log_2();
+
+        // outer sum-check
+        let tau = (0..num_rounds_x)
+            .map(|_i| transcript.challenge_scalar())
+            .collect::<Vec<F>>();
+        let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
+
+        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(polynomials);
+
+        let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
+            // Below is an optimized form of: *A * (*B * *C - *D)
+            if az.is_zero() || bz.is_zero() {
+                if cz.is_zero() {
+                    F::zero()
+                } else {
+                    *eq * (-(*cz))
+                }
+            } else {
+                let inner = *az * *bz - *cz;
+                if inner.is_zero() {
+                    F::zero()
+                } else {
+                    *eq * inner
+                }
+            }
+        };
+
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
+            SumcheckInstanceProof::prove_spartan_cubic::<_>(
+                &F::zero(), // claim is zero
+                num_rounds_x,
+                &mut poly_tau,
+                &mut az,
+                &mut bz,
+                &mut cz,
+                comb_func_outer,
+                transcript,
+            );
+        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+        drop_in_background_thread((az, bz, cz, poly_tau));
+
+        // claims from the end of sum-check
+        // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
+        let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
+            outer_sumcheck_claims[1],
+            outer_sumcheck_claims[2],
+            outer_sumcheck_claims[3],
+        );
+        ProofTranscript::append_scalars(transcript, [claim_Az, claim_Bz, claim_Cz].as_slice());
+
+        // inner sum-check
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
+        let claim_inner_joint = claim_Az
+            + r_inner_sumcheck_RLC * claim_Bz
+            + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
+
+        // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
+        let num_steps_bits = constraint_builder
+            .uniform_repeat()
+            .next_power_of_two()
+            .ilog2();
+        let (rx_con, rx_ts) =
+            outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
+        let mut poly_ABC =
+            DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
+
+        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
+                &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
+                num_rounds_y,
+                &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
+                &segmented_padded_witness,
+                transcript,
+            );
+        drop_in_background_thread(poly_ABC);
+
+        // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
+        let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
+        let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
+
+        // Evaluate polys at r_col_step
+
+        let witness_evals = segmented_padded_witness.evaluate_all(r_col_step.to_owned());
+
+        let witness_segment_polys: Vec<DensePolynomial<F>> =
+            segmented_padded_witness.into_dense_polys();
+        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
+            witness_segment_polys.iter().collect();
+
+        let opening_proof = PCS::batch_prove(
+            generators,
+            &witness_segment_polys_ref,
+            r_col_step,
+            &witness_evals,
+            BatchType::Big,
+            transcript,
+        );
+
+        drop_in_background_thread(witness_segment_polys);
+
+        // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
+        let outer_sumcheck_claims = (
+            outer_sumcheck_claims[1],
+            outer_sumcheck_claims[2],
+            outer_sumcheck_claims[3],
+        );
+        Ok(UniformSpartanProof {
+            _inputs: PhantomData,
+            outer_sumcheck_proof,
+            outer_sumcheck_claims,
+            inner_sumcheck_proof,
+            claimed_witness_evals: witness_evals,
+            opening_proof,
+        })
     }
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
