@@ -39,8 +39,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
             if x_sign == 0 {
                 entries.push(F::zero());
             } else {
-                let row =
-                    (0..(y % WORD_SIZE)).fold(0 as u64, |acc, i| acc + (1 << (WORD_SIZE - 1 - i)));
+                let row = (0..(y % WORD_SIZE)).fold(0, |acc, i| acc + (1 << (WORD_SIZE - 1 - i)));
                 entries.push(F::from_u64(row).unwrap());
             }
         }
