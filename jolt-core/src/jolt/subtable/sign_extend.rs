@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
@@ -18,8 +19,10 @@ impl<F: JoltField, const WIDTH: usize> SignExtendSubtable<F, WIDTH> {
 
 impl<F: JoltField, const WIDTH: usize> LassoSubtable<F> for SignExtendSubtable<F, WIDTH> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        // TODO(moodlezoup): This subtable currently only works for M = 2^16
-        assert_eq!(M, 1 << 16);
+        // table[x] = x[b - WIDTH] * (2^{WIDTH} - 1)
+        // Take the WIDTH-th bit of the input (counting from the LSB), then multiply by (2^{WIDTH} - 1)
+        // Requires `log2(M) >= WIDTH`
+        debug_assert!(WIDTH <= log2(M) as usize);
         let mut entries: Vec<F> = Vec::with_capacity(M);
 
         // The sign-extension will be the same width as the value being extended
@@ -36,7 +39,8 @@ impl<F: JoltField, const WIDTH: usize> LassoSubtable<F> for SignExtendSubtable<F
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        assert_eq!(point.len(), 16);
+        // 2 ^ {WIDTH - 1} * x_{b - WIDTH}
+        debug_assert!(point.len() >= WIDTH);
 
         let sign_bit = point[point.len() - WIDTH];
         let ones: u64 = (1 << WIDTH) - 1;

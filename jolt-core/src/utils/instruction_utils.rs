@@ -1,12 +1,14 @@
 use crate::field::JoltField;
 
+/// Asserts that `C * log_M` is at least as large as the word size.
 pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
     assert!(C * log_M >= word_size);
 }
 
-/// Concatenates `C` `vals` field elements each of max size 2^`operand_bits`-1
-/// into a single field element. `operand_bits` is the number of bits required to represent
-/// each element in `vals`. If an element of `vals` is larger it will not be truncated, which
+/// Concatenates a slice `vals` of `C` field elements (assumed to be `operand_bits`-bit numbers)
+/// into a single field element.
+/// `operand_bits` is the number of bits required to represent each element in `vals`.
+/// If an element of `vals` is larger it will not be truncated, which
 /// is commonly used by the collation functions of instructions.
 pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usize) -> F {
     assert_eq!(vals.len(), C);
@@ -21,7 +23,23 @@ pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usi
     sum
 }
 
-/// Returns the chunks of an operand passed as input
+/// Splits a 64-bit unsigned integer `x` into a `C`-length vector of `u64`, each representing a
+/// `chunk_len`-bit chunk.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::chunk_operand;
+
+/// // Normal usage
+/// let x = 0b1100_1010_1111_0000;
+/// assert_eq!(chunk_operand(x, 4, 4), vec![12, 10, 15, 0]);
+/// // Edge cases
+/// // More chunks than bits in x
+/// assert_eq!(chunk_operand(0xFF, 5, 2), vec![0, 3, 3, 3, 3]);
+/// // Fewer chunks * chunk_len than bits in x (remaining bits discarded)
+/// assert_eq!(chunk_operand(0xFFF, 2, 4), vec![15, 15]);
+/// ```
 pub fn chunk_operand(x: u64, C: usize, chunk_len: usize) -> Vec<u64> {
     let bit_mask = (1 << chunk_len) - 1;
     (0..C)
@@ -32,7 +50,24 @@ pub fn chunk_operand(x: u64, C: usize, chunk_len: usize) -> Vec<u64> {
         .collect()
 }
 
-/// Returns the chunks of an operand passed as input
+/// Splits a 64-bit unsigned integer `x` into a `C`-length vector of `usize`, each representing a
+/// `chunk_len`-bit chunk. Only different from `chunk_operand` in that it returns `usize` instead of
+/// `u64`.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::chunk_operand_usize;
+
+/// // Normal usage
+/// let x = 0b1100_1010_1111_0000;
+/// assert_eq!(chunk_operand_usize(x, 4, 4), vec![12, 10, 15, 0]);
+/// // Edge cases
+/// // More chunks than bits in x
+/// assert_eq!(chunk_operand_usize(0xFF, 5, 2), vec![0, 3, 3, 3, 3]);
+/// // Fewer chunks * chunk_len than bits in x (remaining bits discarded)
+/// assert_eq!(chunk_operand_usize(0xFFF, 2, 4), vec![15, 15]);
+/// ```
 pub fn chunk_operand_usize(x: u64, C: usize, chunk_len: usize) -> Vec<usize> {
     let bit_mask = (1 << chunk_len) - 1;
     (0..C)
@@ -44,10 +79,11 @@ pub fn chunk_operand_usize(x: u64, C: usize, chunk_len: usize) -> Vec<usize> {
 }
 
 /// Chunks `x` || `y` into `C` chunks bitwise.
-/// `log_M` is the number of bits of each of the `C` expected results.
-/// `log_M = num_bits(x || y) / C`
 ///
-/// Given the operation x_0, x_1, x_2, x_3 || y_0, y_1, y_2, y_3 with C=2, log_M =4
+/// `log_M` is the number of bits of each of the `C` expected results, so we expect
+/// `log_M = num_bits(x || y) / C`.
+///
+/// Given the operation x_0, x_1, x_2, x_3 || y_0, y_1, y_2, y_3 with `C=2`, `log_M =4`,
 /// chunks to `vec![x_0||x_1||y_0||y_1,   x_2||x_3||y_2||y_3]`.
 pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
     let operand_bits: usize = log_M / 2;

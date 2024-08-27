@@ -18,10 +18,12 @@ impl<F: JoltField> IdentitySubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for IdentitySubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x] = x
         (0..M).map(|i| F::from_u64(i as u64).unwrap()).collect()
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
+        // \sum_i 2^i * x_{b - i - 1}
         let mut result = F::zero();
         for i in 0..point.len() {
             result += F::from_u64(1u64 << i).unwrap() * point[point.len() - 1 - i];

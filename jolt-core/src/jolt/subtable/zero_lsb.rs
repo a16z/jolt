@@ -18,13 +18,15 @@ impl<F: JoltField> ZeroLSBSubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for ZeroLSBSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        // always set LSB to 0
+        // table[x] = x - (x & 2)
+        // i.e. set LSB to 0
         (0..M)
             .map(|i| F::from_u64((i - (i % 2)) as u64).unwrap())
             .collect()
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
+        // \sum_{i > 0} 2^i * x_{b - i - 1}
         let mut result = F::zero();
         // skip LSB
         for i in 1..point.len() {

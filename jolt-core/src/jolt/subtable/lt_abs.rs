@@ -20,6 +20,7 @@ impl<F: JoltField> LtAbsSubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for LtAbsSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x | y] = (x & 0b011..11) < (y & 0b011..11)
         let mut entries: Vec<F> = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
         // 0b01111...11
@@ -39,7 +40,7 @@ impl<F: JoltField> LassoSubtable<F> for LtAbsSubtable<F> {
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // \prod_i x_i * y_i + (1 - x_i) * (1 - y_i)
+        // \sum_{i > 0} (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
         debug_assert!(point.len() % 2 == 0);
         let b = point.len() / 2;
         let (x, y) = point.split_at(b);
