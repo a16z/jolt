@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct SLTInstruction(pub u64, pub u64);
+pub struct SLTInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for SLTInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for SLTInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -70,7 +70,17 @@ impl JoltInstruction for SLTInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
-        ((self.0 as i32) < (self.1 as i32)).into()
+        if WORD_SIZE == 32 {
+            let x = self.0 as i32;
+            let y = self.1 as i32;
+            (x < y) as u64
+        } else if WORD_SIZE == 64 {
+            let x = self.0 as i64;
+            let y = self.1 as i64;
+            (x < y) as u64
+        } else {
+            panic!("SLT is only implemented for 32-bit or 64-bit word sizes")
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -93,23 +103,59 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
             let y = rng.next_u32() as u64;
-            let instruction = SLTInstruction(x, y);
+            let instruction = SLTInstruction::<WORD_SIZE>(x, y);
             jolt_instruction_test!(instruction);
         }
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            SLTInstruction(100, 0),
-            SLTInstruction(0, 100),
-            SLTInstruction(1, 0),
-            SLTInstruction(0, u32_max),
-            SLTInstruction(u32_max, 0),
-            SLTInstruction(u32_max, u32_max),
-            SLTInstruction(u32_max, 1 << 8),
-            SLTInstruction(1 << 8, u32_max),
+            SLTInstruction::<32>(100, 0),
+            SLTInstruction::<32>(0, 100),
+            SLTInstruction::<32>(1, 0),
+            SLTInstruction::<32>(0, u32_max),
+            SLTInstruction::<32>(u32_max, 0),
+            SLTInstruction::<32>(u32_max, u32_max),
+            SLTInstruction::<32>(u32_max, 1 << 8),
+            SLTInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn slt_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let y = rng.next_u64();
+            let instruction = SLTInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        let i64_min = i64::MIN as u64;
+        let i64_max = i64::MAX as u64;
+        let instructions = vec![
+            SLTInstruction::<64>(100, 0),
+            SLTInstruction::<64>(0, 100),
+            SLTInstruction::<64>(1, 0),
+            SLTInstruction::<64>(0, i64_max),
+            SLTInstruction::<64>(i64_max, 0),
+            SLTInstruction::<64>(i64_max, i64_max),
+            SLTInstruction::<64>(i64_max, 1 << 32),
+            SLTInstruction::<64>(1 << 32, i64_max),
+            SLTInstruction::<64>(i64_min, 0),
+            SLTInstruction::<64>(0, i64_min),
+            SLTInstruction::<64>(i64_min, i64_max),
+            SLTInstruction::<64>(i64_max, i64_min),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

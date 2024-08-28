@@ -5,11 +5,29 @@ pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
     assert!(C * log_M >= word_size);
 }
 
-/// Concatenates a slice `vals` of `C` field elements (assumed to be `operand_bits`-bit numbers)
-/// into a single field element.
-/// `operand_bits` is the number of bits required to represent each element in `vals`.
-/// If an element of `vals` is larger it will not be truncated, which
-/// is commonly used by the collation functions of instructions.
+/// Concatenates a slice of field elements into a single field element.
+///
+/// # Arguments
+///
+/// * `vals` - A slice of `C` field elements, each assumed to be an `operand_bits`-bit number.
+/// * `C` - The number of field elements in `vals`.
+/// * `operand_bits` - The number of bits required to represent each element in `vals`.
+///
+/// # Notes
+///
+/// If an element of `vals` is larger than `operand_bits`, it will not be truncated.
+/// This behavior is commonly used by the collation functions of instructions.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::concatenate_lookups;
+/// use ark_bn254::Fr;
+///
+/// let vals = vec![Fr::from(1), Fr::from(2), Fr::from(3)];
+/// let result = concatenate_lookups(&vals, 3, 2);
+/// assert_eq!(result, Fr::from(0b01_10_11));
+/// ```
 pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usize) -> F {
     assert_eq!(vals.len(), C);
 
@@ -78,13 +96,37 @@ pub fn chunk_operand_usize(x: u64, C: usize, chunk_len: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Chunks `x` || `y` into `C` chunks bitwise.
+/// Chunks and concatenates two 64-bit unsigned integers `x` and `y` into a `C`-length vector of `usize`,
+/// where each element represents a `log_M`-bit chunk that is the concatenation of `log_M / 2`-bit
+/// chunks from each of `x` and `y`.
 ///
-/// `log_M` is the number of bits of each of the `C` expected results, so we expect
-/// `log_M = num_bits(x || y) / C`.
+/// # Arguments
 ///
-/// Given the operation x_0, x_1, x_2, x_3 || y_0, y_1, y_2, y_3 with `C=2`, `log_M =4`,
-/// chunks to `vec![x_0||x_1||y_0||y_1,   x_2||x_3||y_2||y_3]`.
+/// * `x` - The first 64-bit unsigned integer to chunk and concatenate.
+/// * `y` - The second 64-bit unsigned integer to chunk and concatenate.
+/// * `C` - The number of chunks to produce.
+/// * `log_M` - The number of bits in each resulting chunk.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::chunk_and_concatenate_operands;
+///
+/// // Normal usage
+/// let x = 0b1100_1010;
+/// let y = 0b1111_0000;
+/// assert_eq!(chunk_and_concatenate_operands(x, y, 2, 8), vec![0b1100_1111, 0b1010_0000]);
+///
+/// let x = 0b11_00_11;
+/// let y = 0b00_11_00;
+/// assert_eq!(chunk_and_concatenate_operands(x, y, 3, 4), vec![0b1100, 0b0011, 0b1100]);
+///
+/// // More chunks than bits in x | y
+/// assert_eq!(chunk_and_concatenate_operands(0b11, 0b11, 5, 2), vec![0, 0, 0, 3, 3]);
+///
+/// // Fewer chunks than bits in x | y (remaining bits discarded)
+/// assert_eq!(chunk_and_concatenate_operands(0xFF, 0xFF, 2, 4), vec![15, 15]);
+/// ```
 pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
     let operand_bits: usize = log_M / 2;
 
@@ -112,6 +154,21 @@ pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) ->
 
 /// Chunks `z` into `C` chunks bitwise where `z = x + y`.
 /// `log_M` is the number of bits for each of the `C` chunks of `z`.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::add_and_chunk_operands;
+///
+/// // Normal usage
+/// assert_eq!(add_and_chunk_operands(12, 3, 2, 2), vec![0b11, 0b11]);
+///
+/// // More chunks than bits in x | y
+/// assert_eq!(add_and_chunk_operands(3, 4, 2, 2), vec![0b01, 0b11]);
+///
+/// // Fewer chunks than bits in x | y (remaining bits discarded)
+/// assert_eq!(add_and_chunk_operands(31, 31, 3, 2), vec![0b11, 0b11, 0b10]);
+/// ```
 pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<usize> {
     let sum_chunk_bits: usize = log_M;
     let sum_chunk_bit_mask: usize = (1 << sum_chunk_bits) - 1;
@@ -127,6 +184,21 @@ pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<u
 
 /// Chunks `z` into `C` chunks bitwise where `z = x * y`.
 /// `log_M` is the number of bits for each of the `C` chunks of `z`.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::multiply_and_chunk_operands;
+///
+/// // Normal usage
+/// assert_eq!(multiply_and_chunk_operands(5, 3, 2, 2), vec![0b11, 0b11]);
+///
+/// // More chunks than bits in x | y
+/// assert_eq!(multiply_and_chunk_operands(7, 1, 2, 2), vec![0b01, 0b11]);
+///
+/// // Fewer chunks than bits in x | y (remaining bits discarded)
+/// assert_eq!(multiply_and_chunk_operands(2, 31, 3, 2), vec![0b11, 0b11, 0b10]);
+/// ```
 pub fn multiply_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<usize> {
     let product_chunk_bits: usize = log_M;
     let product_chunk_bit_mask: usize = (1 << product_chunk_bits) - 1;
@@ -139,8 +211,34 @@ pub fn multiply_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> 
         .collect()
 }
 
-/// Splits `x`, `y` into `C` chunks and writes [ x_{C-1} || y_0, ..., x_0 || y_0 ]
-/// where `x_{C-1}`` is the the big end of `x``, and `y_0`` is the small end of `y`.
+/// Chunks and concatenates two 64-bit unsigned integers `x` and `y` into a vector of concatenated chunks,
+/// where the second half of each concatenated chunk is always `y_0`, the last chunk of `y` (from left to right).
+///
+/// # Arguments
+///
+/// * `x` - The first 64-bit unsigned integer to chunk.
+/// * `y` - The second 64-bit unsigned integer to chunk.
+/// * `C` - The number of chunks to produce.
+/// * `log_M` - The number of bits in each resulting concatenated chunk.
+///
+/// # Result
+/// [ x_{C-1} || y_0, ..., x_0 || y_0 ],
+/// where `x_{C-1}` is the big end of `x`, and `y_0` is the small end of `y`.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::instruction_utils::chunk_and_concatenate_for_shift;
+///
+/// // Normal usage
+/// assert_eq!(chunk_and_concatenate_for_shift(0b1001, 0b0010, 2, 4), vec![0b1010, 0b0110]);
+///
+/// // More chunks than bits in x | y
+/// assert_eq!(chunk_and_concatenate_for_shift(0b10_11, 0b00_01, 3, 4), vec![0b00_01, 0b10_01, 0b11_01]);
+///
+/// // Fewer chunks than bits in x | y (chunks larger than `C` discarded)
+/// assert_eq!(chunk_and_concatenate_for_shift(0b10_01_11, 0b00_00_01, 2, 4), vec![0b01_01, 0b11_01]);
+/// ```
 pub fn chunk_and_concatenate_for_shift(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
     let operand_bits: usize = log_M / 2;
     let operand_bit_mask: usize = (1 << operand_bits) - 1;

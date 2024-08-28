@@ -117,7 +117,13 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -136,23 +142,34 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
             let y = rng.next_u32() as u64;
-            let instruction = AssertValidSignedRemainderInstruction::<32>(x, y);
+            let instruction = AssertValidSignedRemainderInstruction::<WORD_SIZE>(x, y);
             jolt_instruction_test!(instruction);
         }
+
+        // x == y
+        for _ in 0..256 {
+            let x = rng.next_u32() as u64;
+            let instruction = AssertValidSignedRemainderInstruction::<WORD_SIZE>(x, x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            AssertValidSignedRemainderInstruction::<32>(100, 0),
-            AssertValidSignedRemainderInstruction::<32>(0, 100),
-            AssertValidSignedRemainderInstruction::<32>(1, 0),
-            AssertValidSignedRemainderInstruction::<32>(0, u32_max),
-            AssertValidSignedRemainderInstruction::<32>(u32_max, 0),
-            AssertValidSignedRemainderInstruction::<32>(u32_max, u32_max),
-            AssertValidSignedRemainderInstruction::<32>(u32_max, 1 << 8),
-            AssertValidSignedRemainderInstruction::<32>(1 << 8, u32_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(100, 0),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(0, 100),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(1, 0),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(0, u32_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u32_max, 0),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u32_max, u32_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(1 << 8, u32_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
@@ -164,15 +181,37 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            let instruction = AssertValidSignedRemainderInstruction::<64>(x, y);
+            let instruction = AssertValidSignedRemainderInstruction::<WORD_SIZE>(x, y);
             jolt_instruction_test!(instruction);
         }
+
+        // x == y
         for _ in 0..256 {
             let x = rng.next_u64();
-            let instruction = AssertValidSignedRemainderInstruction::<64>(x, x);
+            let instruction = AssertValidSignedRemainderInstruction::<WORD_SIZE>(x, x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(100, 0),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(0, 100),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(1, 0),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(0, u64_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, 0),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, u64_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, 1 << 8),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(1 << 8, u64_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, 1 << 40),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, u64_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }

@@ -9,18 +9,17 @@ use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct SWInstruction(pub u64);
+pub struct SWInstruction<const WORD_SIZE: usize>(pub u64);
 
-impl JoltInstruction for SWInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for SWInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (0, self.0)
     }
 
-    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        assert!(vals.len() == 2);
-        concatenate_lookups(vals, 2, log2(M) as usize)
+        concatenate_lookups(vals, C, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -51,7 +50,13 @@ impl JoltInstruction for SWInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -65,27 +70,62 @@ mod test {
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
-    fn sw_instruction_e2e() {
+    fn sw_instruction_32_e2e() {
         let mut rng = test_rng();
-        const C: usize = 4;
+        const C: usize = 2;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = SWInstruction(x);
+            let instruction = SWInstruction::<WORD_SIZE>(x);
             jolt_instruction_test!(instruction);
         }
 
+        // Edge cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            SWInstruction(0),
-            SWInstruction(1),
-            SWInstruction(100),
-            SWInstruction(u32_max),
-            SWInstruction(1 << 8),
+            SWInstruction::<WORD_SIZE>(0),
+            SWInstruction::<WORD_SIZE>(1),
+            SWInstruction::<WORD_SIZE>(100),
+            SWInstruction::<WORD_SIZE>(1 << 8),
+            SWInstruction::<WORD_SIZE>(u32_max),
+            SWInstruction::<WORD_SIZE>(u32_max - 2),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }
+
+    // Doesn't work for now
+    // #[test]
+    // fn sw_instruction_64_e2e() {
+    //     let mut rng = test_rng();
+    //     const C: usize = 4;
+    //     const M: usize = 1 << 16;
+    //     const WORD_SIZE: usize = 64;
+
+    //     // Random
+    //     for _ in 0..256 {
+    //         let x = rng.next_u64();
+    //         let instruction = SWInstruction::<WORD_SIZE>(x);
+    //         jolt_instruction_test!(instruction);
+    //     }
+
+    //     // Edge cases
+    //     let u64_max: u64 = u64::MAX;
+    //     let instructions = vec![
+    //         SWInstruction::<WORD_SIZE>(0),
+    //         SWInstruction::<WORD_SIZE>(1),
+    //         SWInstruction::<WORD_SIZE>(100),
+    //         SWInstruction::<WORD_SIZE>(1 << 8),
+    //         SWInstruction::<WORD_SIZE>(1 << 40),
+    //         SWInstruction::<WORD_SIZE>(u64_max),
+    //         SWInstruction::<WORD_SIZE>(u64_max - 1),
+    //     ];
+    //     for instruction in instructions {
+    //         jolt_instruction_test!(instruction);
+    //     }
+    // }
 }

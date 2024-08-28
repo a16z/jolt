@@ -60,15 +60,29 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
-        (self.0 as u32)
-            .checked_shl(self.1 as u32 % WORD_SIZE as u32)
-            .unwrap_or(0)
-            .into()
+        // SLL is specified to ignore all but the last 5 (resp. 6) bits of y: https://jemu.oscc.cc/SLL
+        if WORD_SIZE == 32 {
+            (self.0 as u32)
+                .checked_shl(self.1 as u32 % WORD_SIZE as u32)
+                .unwrap_or(0)
+                .into()
+        } else if WORD_SIZE == 64 {
+            self.0
+                .checked_shl((self.1 % WORD_SIZE as u64) as u32)
+                .unwrap_or(0)
+        } else {
+            panic!("SLL is only implemented for 32-bit or 64-bit word sizes")
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -89,22 +103,57 @@ mod test {
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
             let instruction = SLLInstruction::<WORD_SIZE>(x as u64, y as u64);
             jolt_instruction_test!(instruction);
         }
 
+        // Edge cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            SLLInstruction::<32>(100, 0),
-            SLLInstruction::<32>(0, 100),
-            SLLInstruction::<32>(1, 0),
-            SLLInstruction::<32>(0, u32_max),
-            SLLInstruction::<32>(u32_max, 0),
-            SLLInstruction::<32>(u32_max, u32_max),
-            SLLInstruction::<32>(u32_max, 1 << 8),
-            SLLInstruction::<32>(1 << 8, u32_max),
+            SLLInstruction::<WORD_SIZE>(100, 0),
+            SLLInstruction::<WORD_SIZE>(0, 100),
+            SLLInstruction::<WORD_SIZE>(1, 0),
+            SLLInstruction::<WORD_SIZE>(0, u32_max),
+            SLLInstruction::<WORD_SIZE>(u32_max, 0),
+            SLLInstruction::<WORD_SIZE>(u32_max, u32_max),
+            SLLInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            SLLInstruction::<WORD_SIZE>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn sll_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        // Random
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u64(), rng.next_u64());
+            let instruction = SLLInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            SLLInstruction::<WORD_SIZE>(100, 0),
+            SLLInstruction::<WORD_SIZE>(0, 100),
+            SLLInstruction::<WORD_SIZE>(1, 0),
+            SLLInstruction::<WORD_SIZE>(0, u64_max),
+            SLLInstruction::<WORD_SIZE>(u64_max, 0),
+            SLLInstruction::<WORD_SIZE>(u64_max, u64_max),
+            SLLInstruction::<WORD_SIZE>(u64_max, 1 << 8),
+            SLLInstruction::<WORD_SIZE>(1 << 8, u64_max),
+            SLLInstruction::<WORD_SIZE>(u64_max, 1 << 63),
+            SLLInstruction::<WORD_SIZE>(1 << 63, 63),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

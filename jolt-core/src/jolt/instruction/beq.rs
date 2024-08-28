@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct BEQInstruction(pub u64, pub u64);
+pub struct BEQInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for BEQInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for BEQInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -41,11 +41,18 @@ impl JoltInstruction for BEQInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
+        // This is the same for both 32-bit and 64-bit
         (self.0 == self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported")
+        }
     }
 }
 
@@ -64,25 +71,26 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            let instruction = BEQInstruction(x, y);
+            let instruction = BEQInstruction::<WORD_SIZE>(x, y);
             jolt_instruction_test!(instruction);
         }
 
         // Test edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            BEQInstruction(100, 0),
-            BEQInstruction(0, 100),
-            BEQInstruction(1, 0),
-            BEQInstruction(0, u32_max),
-            BEQInstruction(u32_max, 0),
-            BEQInstruction(u32_max, u32_max),
-            BEQInstruction(u32_max, 1 << 8),
-            BEQInstruction(1 << 8, u32_max),
+            BEQInstruction::<WORD_SIZE>(100, 0),
+            BEQInstruction::<WORD_SIZE>(0, 100),
+            BEQInstruction::<WORD_SIZE>(1, 0),
+            BEQInstruction::<WORD_SIZE>(0, u32_max),
+            BEQInstruction::<WORD_SIZE>(u32_max, 0),
+            BEQInstruction::<WORD_SIZE>(u32_max, u32_max),
+            BEQInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            BEQInstruction::<WORD_SIZE>(1 << 8, u32_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
@@ -94,10 +102,32 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            let instruction = BEQInstruction(x, y);
+            let instruction = BEQInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Test edge-cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            BEQInstruction::<WORD_SIZE>(100, 0),
+            BEQInstruction::<WORD_SIZE>(0, 100),
+            BEQInstruction::<WORD_SIZE>(1, 0),
+            BEQInstruction::<WORD_SIZE>(0, u64_max),
+            BEQInstruction::<WORD_SIZE>(u64_max, 0),
+            BEQInstruction::<WORD_SIZE>(u64_max, u64_max),
+            BEQInstruction::<WORD_SIZE>(u64_max, 1 << 32),
+            BEQInstruction::<WORD_SIZE>(1 << 32, u64_max),
+            BEQInstruction::<WORD_SIZE>(1 << 63, 1),
+            BEQInstruction::<WORD_SIZE>(1, 1 << 63),
+            BEQInstruction::<WORD_SIZE>(u64_max - 1, u64_max),
+            BEQInstruction::<WORD_SIZE>(u64_max, u64_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }

@@ -30,6 +30,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         C: usize,
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
+        // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
+        // which only happens at runtime).
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
@@ -55,9 +58,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        let x = self.0 as u32;
-        let y = (self.1 % WORD_SIZE as u64) as u32;
-        x.checked_shr(y).unwrap_or(0).into()
+        if WORD_SIZE == 32 {
+            let x = self.0 as u32;
+            let y = (self.1 % 32) as u32;
+            (x.wrapping_shr(y)).into()
+        } else if WORD_SIZE == 64 {
+            let x = self.0;
+            let y = (self.1 % 64) as u32;
+            x.wrapping_shr(y)
+        } else {
+            panic!("SRL is only implemented for 32-bit or 64-bit word sizes")
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -76,7 +87,7 @@ mod test {
     use super::SRLInstruction;
 
     #[test]
-    fn srl_instruction_e2e() {
+    fn srl_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
@@ -98,6 +109,38 @@ mod test {
             SRLInstruction::<32>(u32_max, 1 << 8),
             SRLInstruction::<32>(1 << 8, u32_max),
         ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn srl_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u64(), rng.next_u64());
+            let instruction = SRLInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            SRLInstruction::<64>(100, 0),
+            SRLInstruction::<64>(0, 2),
+            SRLInstruction::<64>(1, 2),
+            SRLInstruction::<64>(0, 64),
+            SRLInstruction::<64>(u64_max, 0),
+            SRLInstruction::<64>(u64_max, 63),
+            SRLInstruction::<64>(u64_max, 1 << 8),
+            SRLInstruction::<64>(1 << 32, 1 << 16),
+            SRLInstruction::<64>(1 << 63, 1),
+            SRLInstruction::<64>((1 << 63) - 1, 1),
+        ];
+
         for instruction in instructions {
             jolt_instruction_test!(instruction);
         }

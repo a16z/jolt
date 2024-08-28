@@ -13,16 +13,16 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct BGEInstruction(pub u64, pub u64);
+pub struct BGEInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for BGEInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for BGEInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // 1 - LTS(x, y) =
-        F::one() - SLTInstruction(self.0, self.1).combine_lookups(vals, C, M)
+        F::one() - SLTInstruction::<WORD_SIZE>(self.0, self.1).combine_lookups(vals, C, M)
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -49,11 +49,27 @@ impl JoltInstruction for BGEInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
-        ((self.0 as i32) >= (self.1 as i32)).into()
+        if WORD_SIZE == 32 {
+            let x = self.0 as i32;
+            let y = self.1 as i32;
+            (x >= y) as u64
+        } else if WORD_SIZE == 64 {
+            let x = self.0 as i64;
+            let y = self.1 as i64;
+            (x >= y) as u64
+        } else {
+            panic!("BGE is only implemented for 32-bit or 64-bit word sizes")
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -68,17 +84,18 @@ mod test {
     use super::BGEInstruction;
 
     #[test]
-    fn bge_instruction_e2e() {
+    fn bge_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         // Random
         for _ in 0..256 {
             let x = rng.next_u32();
             let y = rng.next_u32();
 
-            let instruction = BGEInstruction(x as u64, y as u64);
+            let instruction = BGEInstruction::<WORD_SIZE>(x as u64, y as u64);
 
             jolt_instruction_test!(instruction);
         }
@@ -86,20 +103,65 @@ mod test {
         // Ones
         for _ in 0..256 {
             let x = rng.next_u32();
-            jolt_instruction_test!(BGEInstruction(x as u64, x as u64));
+            jolt_instruction_test!(BGEInstruction::<WORD_SIZE>(x as u64, x as u64));
         }
 
         // Edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            BGEInstruction(100, 0),
-            BGEInstruction(0, 100),
-            BGEInstruction(1, 0),
-            BGEInstruction(0, u32_max),
-            BGEInstruction(u32_max, 0),
-            BGEInstruction(u32_max, u32_max),
-            BGEInstruction(u32_max, 1 << 8),
-            BGEInstruction(1 << 8, u32_max),
+            BGEInstruction::<WORD_SIZE>(100, 0),
+            BGEInstruction::<WORD_SIZE>(0, 100),
+            BGEInstruction::<WORD_SIZE>(1, 0),
+            BGEInstruction::<WORD_SIZE>(0, u32_max),
+            BGEInstruction::<WORD_SIZE>(u32_max, 0),
+            BGEInstruction::<WORD_SIZE>(u32_max, u32_max),
+            BGEInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            BGEInstruction::<WORD_SIZE>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn bge_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        // Random
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let y = rng.next_u64();
+            let instruction = BGEInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Ones
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            jolt_instruction_test!(BGEInstruction::<WORD_SIZE>(x, x));
+        }
+
+        // Edge-cases
+        let i64_min = i64::MIN as u64;
+        let i64_max = i64::MAX as u64;
+        let instructions = vec![
+            BGEInstruction::<WORD_SIZE>(100, 0),
+            BGEInstruction::<WORD_SIZE>(0, 100),
+            BGEInstruction::<WORD_SIZE>(1, 1),
+            BGEInstruction::<WORD_SIZE>(0, i64_max),
+            BGEInstruction::<WORD_SIZE>(i64_max, 0),
+            BGEInstruction::<WORD_SIZE>(i64_max, i64_max),
+            BGEInstruction::<WORD_SIZE>(i64_max, 1 << 32),
+            BGEInstruction::<WORD_SIZE>(1 << 32, i64_max),
+            BGEInstruction::<WORD_SIZE>(i64_min, 0),
+            BGEInstruction::<WORD_SIZE>(0, i64_min),
+            BGEInstruction::<WORD_SIZE>(i64_min, i64_max),
+            BGEInstruction::<WORD_SIZE>(i64_max, i64_min),
+            BGEInstruction::<WORD_SIZE>(-1i64 as u64, 0),
+            BGEInstruction::<WORD_SIZE>(0, -1i64 as u64),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

@@ -30,6 +30,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         C: usize,
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
+        // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
+        // which only happens at runtime).
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
@@ -62,9 +65,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        let x = self.0 as i32;
-        let y = self.1 as u32 % (WORD_SIZE as u32);
-        (x.checked_shr(y).unwrap_or(0) as u32).into()
+        if WORD_SIZE == 32 {
+            let x = self.0 as i32;
+            let y = (self.1 as u32 % 32) as u32;
+            (x.wrapping_shr(y) as u32).into()
+        } else if WORD_SIZE == 64 {
+            let x = self.0 as i64;
+            let y = (self.1 % 64) as u32;
+            x.wrapping_shr(y) as u64
+        } else {
+            panic!("SRA is only implemented for 32-bit or 64-bit word sizes")
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -89,22 +100,59 @@ mod test {
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
             let instruction = SRAInstruction::<WORD_SIZE>(x as u64, y as u64);
             jolt_instruction_test!(instruction);
         }
+
+        // Edge cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            SRAInstruction::<32>(100, 0),
-            SRAInstruction::<32>(0, 2),
-            SRAInstruction::<32>(1, 2),
-            SRAInstruction::<32>(0, 32),
-            SRAInstruction::<32>(u32_max, 0),
-            SRAInstruction::<32>(u32_max, 31),
-            SRAInstruction::<32>(u32_max, 1 << 8),
-            SRAInstruction::<32>(1 << 8, 1 << 16),
+            SRAInstruction::<WORD_SIZE>(100, 0),
+            SRAInstruction::<WORD_SIZE>(0, 2),
+            SRAInstruction::<WORD_SIZE>(1, 2),
+            SRAInstruction::<WORD_SIZE>(0, 32),
+            SRAInstruction::<WORD_SIZE>(u32_max, 0),
+            SRAInstruction::<WORD_SIZE>(u32_max, 31),
+            SRAInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            SRAInstruction::<WORD_SIZE>(1 << 8, 1 << 16),
         ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn sra_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        // Random
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u64(), rng.next_u64());
+            let instruction = SRAInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            SRAInstruction::<WORD_SIZE>(100, 0),
+            SRAInstruction::<WORD_SIZE>(0, 2),
+            SRAInstruction::<WORD_SIZE>(1, 2),
+            SRAInstruction::<WORD_SIZE>(0, 64),
+            SRAInstruction::<WORD_SIZE>(u64_max, 0),
+            SRAInstruction::<WORD_SIZE>(u64_max, 63),
+            SRAInstruction::<WORD_SIZE>(u64_max, 1 << 8),
+            SRAInstruction::<WORD_SIZE>(1 << 32, 1 << 16),
+            SRAInstruction::<WORD_SIZE>(1 << 63, 1),
+            SRAInstruction::<WORD_SIZE>((1 << 63) - 1, 1),
+        ];
+
         for instruction in instructions {
             jolt_instruction_test!(instruction);
         }

@@ -9,9 +9,9 @@ use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSu
 use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct SBInstruction(pub u64);
+pub struct SBInstruction<const WORD_SIZE: usize>(pub u64);
 
-impl JoltInstruction for SBInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for SBInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (0, self.0)
     }
@@ -54,11 +54,18 @@ impl JoltInstruction for SBInstruction {
 
     fn lookup_entry(&self) -> u64 {
         // Lower 8 bits of the rs2 value
+        // Same for both 32-bit and 64-bit word sizes
         self.0 & 0xff
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -72,24 +79,56 @@ mod test {
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
-    fn sb_instruction_e2e() {
+    fn sb_instruction_32_e2e() {
         let mut rng = test_rng();
-        const C: usize = 4;
+        const C: usize = 2;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = SBInstruction(x);
+            let instruction = SBInstruction::<WORD_SIZE>(x);
             jolt_instruction_test!(instruction);
         }
 
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            SBInstruction(0),
-            SBInstruction(1),
-            SBInstruction(100),
-            SBInstruction(u32_max),
-            SBInstruction(1 << 8),
+            SBInstruction::<WORD_SIZE>(0),
+            SBInstruction::<WORD_SIZE>(1),
+            SBInstruction::<WORD_SIZE>(100),
+            SBInstruction::<WORD_SIZE>(1 << 8),
+            SBInstruction::<WORD_SIZE>(1 << 8 - 1),
+            SBInstruction::<WORD_SIZE>(u32_max),
+            SBInstruction::<WORD_SIZE>(u32_max - 1),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn sb_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let instruction = SBInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            SBInstruction::<WORD_SIZE>(0),
+            SBInstruction::<WORD_SIZE>(1),
+            SBInstruction::<WORD_SIZE>(100),
+            SBInstruction::<WORD_SIZE>(1 << 8),
+            SBInstruction::<WORD_SIZE>(1 << 32),
+            SBInstruction::<WORD_SIZE>(1 << 40 - 10),
+            SBInstruction::<WORD_SIZE>(u64_max),
+            SBInstruction::<WORD_SIZE>(u64_max - 1),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

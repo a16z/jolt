@@ -47,11 +47,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVEInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
+        // Same for both 32-bit and 64-bit word sizes
         self.0
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -70,11 +77,26 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         // Random
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = MOVEInstruction::<32>(x);
+            let instruction = MOVEInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            MOVEInstruction::<WORD_SIZE>(0),
+            MOVEInstruction::<WORD_SIZE>(1),
+            MOVEInstruction::<WORD_SIZE>(100),
+            MOVEInstruction::<WORD_SIZE>(1 << 16),
+            MOVEInstruction::<WORD_SIZE>(u32_max),
+            MOVEInstruction::<WORD_SIZE>(u32_max - 10),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }
@@ -84,10 +106,28 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u64();
-            let instruction = MOVEInstruction::<64>(x);
+            let instruction = MOVEInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            MOVEInstruction::<WORD_SIZE>(0),
+            MOVEInstruction::<WORD_SIZE>(1),
+            MOVEInstruction::<WORD_SIZE>(100),
+            MOVEInstruction::<WORD_SIZE>(1 << 16),
+            MOVEInstruction::<WORD_SIZE>(1 << 32),
+            MOVEInstruction::<WORD_SIZE>(1 << 48),
+            MOVEInstruction::<WORD_SIZE>(u64_max),
+            MOVEInstruction::<WORD_SIZE>(u64_max - 2),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }
