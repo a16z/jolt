@@ -105,7 +105,7 @@ where
     pub bytecode: BytecodeProof<F, PCS>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-    pub r1cs: R1CSProof<F, PCS>,
+    pub r1cs: UniformSpartanProof<F, PCS>,
 }
 
 pub struct JoltPolynomials<F, PCS>
@@ -367,6 +367,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             instruction_lookups: instruction_polynomials,
         };
 
+        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
+
         let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
             padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
@@ -376,14 +378,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.generators,
         );
 
-        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
-
         let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
             &r1cs_builder,
             padded_trace_length,
         );
-
-        transcript.append_scalar(&spartan_key.vk_digest);
 
         jolt_commitments.r1cs = Some(r1cs_commitments);
         jolt_commitments.append_to_transcript(&mut transcript);
@@ -420,10 +418,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         )
         .expect("r1cs proof failed");
-        let r1cs_proof = R1CSProof {
-            key: spartan_key,
-            proof: spartan_proof,
-        };
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -431,7 +425,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
-            r1cs: r1cs_proof,
+            r1cs: spartan_proof,
         };
 
         (jolt_proof, jolt_commitments)
@@ -446,8 +440,22 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
-        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
-        transcript.append_scalar(&proof.r1cs.key.vk_digest);
+        // Regenerate the uniform Spartan key
+        let padded_trace_length = proof.trace_length.next_power_of_two();
+
+        let memory_start = RAM_START_ADDRESS - proof.program_io.memory_layout.ram_witness_offset;
+
+        let r1cs_builder = construct_jolt_constraints(padded_trace_length, memory_start);
+
+        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
+            &r1cs_builder,
+            padded_trace_length,
+        );
+
+        let r1cs_proof = R1CSProof {
+            key: spartan_key,
+            proof: proof.r1cs,
+        };
 
         commitments.append_to_transcript(&mut transcript);
 
@@ -475,7 +483,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         )?;
         Self::verify_r1cs(
             &preprocessing.generators,
-            proof.r1cs,
+            r1cs_proof,
             commitments,
             &mut transcript,
         )?;
