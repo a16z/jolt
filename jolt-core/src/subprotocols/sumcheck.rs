@@ -2,15 +2,67 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{IndexablePoly, SparsePolynomial, SparseTripleIterator};
 use crate::utils::thread::drop_in_background_thread;
-use ark_serialize::*;
 use jolt_types::field::JoltField;
-use jolt_types::utils::errors::ProofVerifyError;
+use jolt_types::poly::unipoly::{CompressedUniPoly, UniPoly};
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_types::utils::mul_0_optimized;
 use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 use rayon::prelude::*;
+
+pub trait SumcheckProve<F: JoltField> {
+    fn prove_arbitrary<Func>(
+        claim: &F,
+        num_rounds: usize,
+        polys: &mut Vec<DensePolynomial<F>>,
+        comb_func: Func,
+        combined_degree: usize,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>, Vec<F>)
+    where
+        Func: Fn(&[F]) -> F + std::marker::Sync,
+        Self: Sized;
+
+    fn compute_eval_points_spartan_cubic<Func>(
+        poly_eq: &DensePolynomial<F>,
+        poly_A: &SparsePolynomial<F>,
+        poly_B: &SparsePolynomial<F>,
+        poly_C: &SparsePolynomial<F>,
+        comb_func: &Func,
+    ) -> (F, F, F)
+    where
+        Func: Fn(&F, &F, &F, &F) -> F + Sync;
+
+    fn prove_spartan_cubic<Func>(
+        claim: &F,
+        num_rounds: usize,
+        poly_eq: &mut DensePolynomial<F>,
+        poly_A: &mut SparsePolynomial<F>,
+        poly_B: &mut SparsePolynomial<F>,
+        poly_C: &mut SparsePolynomial<F>,
+        comb_func: Func,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>, Vec<F>)
+    where
+        Func: Fn(&F, &F, &F, &F) -> F + Sync,
+        Self: Sized;
+
+    fn prove_spartan_quadratic<P: IndexablePoly<F>>(
+        claim: &F,
+        num_rounds: usize,
+        poly_A: &mut DensePolynomial<F>,
+        W: &P,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>, Vec<F>)
+    where
+        Self: Sized;
+
+    fn compute_eval_points_spartan_quadratic(
+        poly_A: &DensePolynomial<F>,
+        poly_B: &DensePolynomial<F>,
+    ) -> (F, F);
+}
 
 /// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
@@ -64,7 +116,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProof<F> {
+impl<F: JoltField> SumcheckProve<F> for SumcheckInstanceProof<F> {
     /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
     ///
     /// Params
@@ -78,7 +130,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
     /// - `r_eval_point`: Final random point of evaluation
     /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
     #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
-    pub fn prove_arbitrary<Func>(
+    fn prove_arbitrary<Func>(
         _claim: &F,
         num_rounds: usize,
         polys: &mut Vec<DensePolynomial<F>>,
@@ -182,7 +234,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic"
     )]
     /// Binds from the bottom rather than the top.
-    pub fn compute_eval_points_spartan_cubic<Func>(
+    fn compute_eval_points_spartan_cubic<Func>(
         poly_eq: &DensePolynomial<F>,
         poly_A: &SparsePolynomial<F>,
         poly_B: &SparsePolynomial<F>,
@@ -249,7 +301,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
     }
 
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
-    pub fn prove_spartan_cubic<Func>(
+    fn prove_spartan_cubic<Func>(
         claim: &F,
         num_rounds: usize,
         poly_eq: &mut DensePolynomial<F>,
@@ -322,7 +374,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
     // passing them in as a single `MultilinearPolynomial`, which would require
     // an expensive concatenation. We defer the actual instantation of a
     // `MultilinearPolynomial` to the end of the 0th round.
-    pub fn prove_spartan_quadratic<P: IndexablePoly<F>>(
+    fn prove_spartan_quadratic<P: IndexablePoly<F>>(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
@@ -454,7 +506,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
     #[inline]
     #[tracing::instrument(skip_all, name = "Sumcheck::compute_eval_points_spartan_quadratic")]
-    pub fn compute_eval_points_spartan_quadratic(
+    fn compute_eval_points_spartan_quadratic(
         poly_A: &DensePolynomial<F>,
         poly_B: &DensePolynomial<F>,
     ) -> (F, F) {
@@ -481,64 +533,5 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 (eval_point_0, eval_point_2)
             })
             .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SumcheckInstanceProof<F: JoltField> {
-    pub compressed_polys: Vec<CompressedUniPoly<F>>,
-}
-
-impl<F: JoltField> SumcheckInstanceProof<F> {
-    pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> SumcheckInstanceProof<F> {
-        SumcheckInstanceProof { compressed_polys }
-    }
-
-    /// Verify this sumcheck proof.
-    /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
-    /// as the oracle is not passed in. Expected that the caller will implement.
-    ///
-    /// Params
-    /// - `claim`: Claimed evaluation
-    /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
-    /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
-    /// - `transcript`: Fiat-shamir transcript
-    ///
-    /// Returns (e, r)
-    /// - `e`: Claimed evaluation at random point
-    /// - `r`: Evaluation point
-    pub fn verify(
-        &self,
-        claim: F,
-        num_rounds: usize,
-        degree_bound: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(F, Vec<F>), ProofVerifyError> {
-        let mut e = claim;
-        let mut r: Vec<F> = Vec::new();
-
-        // verify that there is a univariate polynomial for each round
-        assert_eq!(self.compressed_polys.len(), num_rounds);
-        for i in 0..self.compressed_polys.len() {
-            // verify degree bound
-            if self.compressed_polys[i].degree() != degree_bound {
-                return Err(ProofVerifyError::InvalidInputLength(
-                    degree_bound,
-                    self.compressed_polys[i].degree(),
-                ));
-            }
-
-            // append the prover's message to the transcript
-            self.compressed_polys[i].append_to_transcript(transcript);
-
-            //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar();
-            r.push(r_i);
-
-            // evaluate the claimed degree-ell polynomial at r_i using the hint
-            e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
-        }
-
-        Ok((e, r))
     }
 }

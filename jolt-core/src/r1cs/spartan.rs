@@ -14,13 +14,11 @@ use jolt_types::utils::transcript::ProofTranscript;
 
 use thiserror::Error;
 
-use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
-    subprotocols::sumcheck::SumcheckInstanceProof,
-};
-
 use super::builder::CombinedUniformBuilder;
 use super::ops::ConstraintInput;
+use crate::poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial};
+use crate::subprotocols::sumcheck::SumcheckProve;
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {

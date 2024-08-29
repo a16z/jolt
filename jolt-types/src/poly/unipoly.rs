@@ -1,12 +1,14 @@
 #![allow(dead_code)]
-use jolt_types::field::JoltField;
+use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
 
 use crate::utils::gaussian_elimination::gaussian_elimination;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
-use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
+#[cfg(not(target_os = "solana"))]
 use rand_core::{CryptoRng, RngCore};
+#[cfg(not(target_os = "solana"))]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 // ax^2 + bx + c stored as vec![c,b,a]
@@ -57,7 +59,10 @@ impl<F: JoltField> UniPoly<F> {
 
     /// Divide self by another polynomial, and returns the
     /// quotient and remainder.
-    #[tracing::instrument(skip_all, name = "UniPoly::divide_with_remainder")]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, name = "UniPoly::divide_with_remainder")
+    )]
     pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
         if self.is_zero() {
             Some((Self::zero(), Self::zero()))
@@ -115,7 +120,10 @@ impl<F: JoltField> UniPoly<F> {
         (0..self.coeffs.len()).map(|i| self.coeffs[i]).sum()
     }
 
-    #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, name = "UniPoly::evaluate")
+    )]
     pub fn evaluate(&self, r: &F) -> F {
         let mut eval = self.coeffs[0];
         let mut power = *r;
@@ -134,6 +142,7 @@ impl<F: JoltField> UniPoly<F> {
         }
     }
 
+    #[cfg(not(target_os = "solana"))]
     pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
         Self::from_coeff(
             std::iter::from_fn(|| Some(F::random(&mut rng)))
@@ -143,17 +152,16 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
+        #[cfg(not(target_os = "solana"))]
+        {
+            self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
+        }
+        #[cfg(target_os = "solana")]
+        {
+            self.coeffs.iter_mut().for_each(|c| *c += *rhs);
+        }
     }
 }
-
-/*
-impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
-    fn add_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += rhs);
-    }
-}
-*/
 
 impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
     fn add_assign(&mut self, rhs: &Self) {
@@ -173,8 +181,16 @@ impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: F) -> Self {
-        let iter = self.coeffs.into_par_iter();
-        Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
+        #[cfg(not(target_os = "solana"))]
+        {
+            let iter = self.coeffs.into_par_iter();
+            Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
+        }
+        #[cfg(target_os = "solana")]
+        {
+            let iter = self.coeffs.into_iter();
+            Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
+        }
     }
 }
 
@@ -182,8 +198,29 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: &F) -> Self {
-        let iter = self.coeffs.into_par_iter();
-        Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+        #[cfg(not(target_os = "solana"))]
+        {
+            let iter = self.coeffs.into_par_iter();
+            Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+        }
+        #[cfg(target_os = "solana")]
+        {
+            let iter = self.coeffs.into_iter();
+            Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+        }
+    }
+}
+
+impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
+    fn mul_assign(&mut self, rhs: &F) {
+        #[cfg(not(target_os = "solana"))]
+        {
+            self.coeffs.par_iter_mut().for_each(|c| *c *= *rhs);
+        }
+        #[cfg(target_os = "solana")]
+        {
+            self.coeffs.iter_mut().for_each(|c| *c *= *rhs);
+        }
     }
 }
 
@@ -198,12 +235,6 @@ impl<F: JoltField> Index<usize> for UniPoly<F> {
 impl<F: JoltField> IndexMut<usize> for UniPoly<F> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.coeffs[index]
-    }
-}
-
-impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
-    fn mul_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c *= *rhs);
     }
 }
 

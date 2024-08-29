@@ -4,7 +4,7 @@
 use std::{iter, marker::PhantomData};
 
 use crate::msm::VariableBaseMSM;
-use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
@@ -22,12 +22,12 @@ use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
 use tracing::trace_span;
 
-use rayon::prelude::*;
-
 use super::{
     commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
+use jolt_types::poly::unipoly::UniPoly;
+use rayon::prelude::*;
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
 

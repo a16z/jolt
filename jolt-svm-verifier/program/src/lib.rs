@@ -1,10 +1,11 @@
 #![allow(non_snake_case)]
 
-mod constants;
+mod test_constants;
 mod subprotocols;
 mod utils;
+mod instruction;
 
-use constants::*;
+use test_constants::*;
 
 use crate::subprotocols::hyperkzg;
 use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine};
@@ -18,17 +19,44 @@ use jolt_types::utils::transcript::ProofTranscript;
 use solana_program::{
     account_info::AccountInfo, entrypoint, entrypoint::ProgramResult, msg, pubkey::Pubkey,
 };
+use solana_program::program_error::ProgramError;
+use crate::instruction::VerifierInstruction;
+use crate::subprotocols::grand_product::{verify_grand_product, GrandProductProof};
 
 entrypoint!(process_instruction);
 
 fn process_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
-    _instruction_data: &[u8],
+    instruction_data: &[u8],
 ) -> ProgramResult {
     msg!("Solana WIP Jolt Verifier!");
-    verify_hyperKZG_JOLT();
+
+    let instruction = VerifierInstruction::unpack(instruction_data)?;
+
+    match instruction {
+        VerifierInstruction::VerifyHyperKZG => {
+            msg!("Running verify_hyperKZG_JOLT");
+            verify_hyperKZG_JOLT();
+        }
+        VerifierInstruction::VerifySumcheck => {
+            msg!("Running verify_sumcheck");
+            verify_sumcheck();
+        }
+    }
+
     Ok(())
+}
+
+fn verify_sumcheck() {
+    let proof: GrandProductProof<Fr> = CanonicalDeserialize::deserialize_uncompressed(&GRAND_PRODUCT_BATCH_PROOFS[..]).unwrap();
+    let claims: Vec<Fr> = CanonicalDeserialize::deserialize_uncompressed(&GRAND_PRODUCT_CLAIMS[..]).unwrap();
+    let mut transcript = ProofTranscript::new(b"test_transcript");
+    let r_grand_product = verify_grand_product(&proof, &claims, &mut transcript);
+    let expected_r_grand_product: Vec<Fr> =
+        CanonicalDeserialize::deserialize_uncompressed(&GRAND_PRODUCT_R_PROVER[..]).unwrap();
+
+    assert_eq!(expected_r_grand_product, r_grand_product);
 }
 
 fn verify_hyperKZG_JOLT() {

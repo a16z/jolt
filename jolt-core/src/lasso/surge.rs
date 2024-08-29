@@ -4,6 +4,7 @@ use jolt_types::field::JoltField;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
 
+use crate::subprotocols::sumcheck::SumcheckProve;
 use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -14,8 +15,8 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
 };
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_types::utils::{
     errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript,
 };

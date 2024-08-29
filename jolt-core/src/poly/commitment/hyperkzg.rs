@@ -15,7 +15,7 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     msm::VariableBaseMSM,
-    poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
+    poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -36,6 +36,7 @@ use std::{marker::PhantomData, sync::Arc};
 use tracing::trace_span;
 
 pub use jolt_types::poly::commitment::hyperkzg::{HyperKZGProof, HyperKZGVerifierKey};
+use jolt_types::poly::unipoly::UniPoly;
 
 pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 

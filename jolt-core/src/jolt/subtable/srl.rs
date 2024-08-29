@@ -1,6 +1,6 @@
 use ark_std::log2;
-use std::cmp::min;
 use jolt_types::field::JoltField;
+use std::cmp::min;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;

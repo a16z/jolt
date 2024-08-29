@@ -1,37 +1,18 @@
 use super::grand_product_quarks::QuarkGrandProductProof;
-use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
+use super::sumcheck::BatchedCubicSumcheck;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::thread::drop_in_background_thread;
 use ark_ff::Zero;
 use ark_serialize::*;
 use itertools::Itertools;
 use jolt_types::field::{JoltField, OptimizedMul};
+use jolt_types::poly::unipoly::UniPoly;
+use jolt_types::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use jolt_types::utils::math::Math;
 use jolt_types::utils::transcript::ProofTranscript;
 use rayon::prelude::*;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductLayerProof<F: JoltField> {
-    pub proof: SumcheckInstanceProof<F>,
-    pub left_claims: Vec<F>,
-    pub right_claims: Vec<F>,
-}
-
-impl<F: JoltField> BatchedGrandProductLayerProof<F> {
-    pub fn verify(
-        &self,
-        claim: F,
-        num_rounds: usize,
-        degree_bound: usize,
-        transcript: &mut ProofTranscript,
-    ) -> (F, Vec<F>) {
-        self.proof
-            .verify(claim, num_rounds, degree_bound, transcript)
-            .unwrap()
-    }
-}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedGrandProductProof<C: CommitmentScheme> {

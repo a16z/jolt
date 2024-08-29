@@ -2,14 +2,15 @@ use super::grand_product::{
     BatchedDenseGrandProductLayer, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
 };
-use super::sumcheck::SumcheckInstanceProof;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::subprotocols::sumcheck::SumcheckProve;
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use itertools::Itertools;
 use jolt_types::field::JoltField;
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_types::utils::math::Math;
 use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 use rayon::prelude::*;

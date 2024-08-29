@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use super::JoltTraceStep;
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::subprotocols::sumcheck::SumcheckProve;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -21,7 +22,6 @@ use crate::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
         structured_poly::StructuredOpeningProof,
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -29,6 +29,7 @@ use common::constants::{
     RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_types::utils::transcript::AppendToTranscript;
 use jolt_types::utils::{
     errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript,

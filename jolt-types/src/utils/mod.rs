@@ -6,6 +6,7 @@ use ark_std::test_rng;
 #[cfg(not(target_os = "solana"))]
 use rayon::prelude::*;
 pub mod errors;
+pub mod gaussian_elimination;
 pub mod math;
 pub mod transcript;
 

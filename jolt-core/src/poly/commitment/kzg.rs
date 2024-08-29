@@ -1,10 +1,10 @@
 use crate::msm::VariableBaseMSM;
-use crate::poly::unipoly::UniPoly;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
 use jolt_types::field::JoltField;
+use jolt_types::poly::unipoly::UniPoly;
 use jolt_types::utils::errors::ProofVerifyError;
 use rand_core::{CryptoRng, RngCore};
 use std::marker::PhantomData;

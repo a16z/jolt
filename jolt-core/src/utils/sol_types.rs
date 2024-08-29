@@ -4,15 +4,15 @@ use ark_ff::PrimeField;
 
 use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
 use crate::r1cs::spartan::UniformSpartanProof;
-use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use crate::subprotocols::grand_product::BatchedGrandProductProof;
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use alloy_primitives::U256;
 use alloy_sol_types::sol;
 use ark_bn254::FrConfig;
 use ark_ff::Fp;
 use ark_ff::MontBackend;
 use jolt_types::field::JoltField;
+use jolt_types::subprotocols::grand_product::BatchedGrandProductLayerProof;
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 
 sol!(struct HyperKZGProofSol {
     uint256[] com; // G1 points represented pairwise

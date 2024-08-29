@@ -1,3 +1,4 @@
+use super::JoltTraceStep;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
@@ -10,13 +11,13 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
-        unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use jolt_types::field::JoltField;
+use jolt_types::poly::unipoly::{CompressedUniPoly, UniPoly};
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_types::utils::mul_0_1_optimized;
 use jolt_types::utils::{
     errors::ProofVerifyError,
@@ -27,8 +28,6 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterato
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
-
-use super::JoltTraceStep;
 
 /// All polynomials associated with Jolt instruction lookups.
 pub struct InstructionPolynomials<F, C>
