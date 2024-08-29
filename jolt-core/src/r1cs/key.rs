@@ -10,7 +10,7 @@ use crate::{
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
 
-use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
+use super::{builder::CombinedUniformBuilder, inputs::ConstraintInput};
 use sha3::Digest;
 
 use crate::utils::math::Math;

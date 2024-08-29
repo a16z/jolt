@@ -19,16 +19,11 @@ use std::fmt::Debug;
 use std::{collections::BTreeMap, marker::PhantomData};
 
 use super::{
+    inputs::ConstraintInput,
     key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
-    ops::{ConstraintInput, Term, Variable, LC},
+    ops::{Term, Variable, LC},
     special_polys::SparsePolynomial,
 };
-
-pub trait R1CSConstraintBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
-    type Inputs: ConstraintInput;
-
-    fn build_constraints(&self, builder: &mut R1CSBuilder<C, F, I>);
-}
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone, Debug)]

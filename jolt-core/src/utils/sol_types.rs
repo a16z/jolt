@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 
 use crate::field::JoltField;
 use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
-use crate::r1cs::jolt_constraints::JoltIn;
+use crate::r1cs::inputs::JoltIn;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use crate::subprotocols::grand_product::BatchedGrandProductProof;

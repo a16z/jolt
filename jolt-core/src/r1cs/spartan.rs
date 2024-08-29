@@ -23,7 +23,7 @@ use crate::{
 };
 
 use super::builder::CombinedUniformBuilder;
-use super::ops::ConstraintInput;
+use super::inputs::ConstraintInput;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {

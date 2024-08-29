@@ -1,10 +1,8 @@
 use common::{constants::RAM_OPS_PER_INSTRUCTION, rv_trace::CircuitFlags};
 use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 
 use crate::{
     field::JoltField,
-    impl_r1cs_input_lc_conversions,
     jolt::{
         instruction::{
             add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
@@ -12,165 +10,46 @@ use crate::{
             sub::SUBInstruction, virtual_move::MOVEInstruction,
             virtual_movsign::MOVSIGNInstruction,
         },
-        vm::{rv32i_vm::RV32I, JoltPolynomials},
+        vm::rv32i_vm::RV32I,
     },
-    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
 };
 
 use super::{
-    builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
-    ops::{ConstraintInput, Variable},
+    builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder},
+    inputs::{AuxVariable, ConstraintInput, JoltIn},
+    ops::Variable,
 };
-
-pub fn construct_jolt_constraints<const C: usize, F: JoltField, I: ConstraintInput>(
-    padded_trace_length: usize,
-    memory_start: u64,
-) -> CombinedUniformBuilder<C, F, I> {
-    let mut uniform_builder = R1CSBuilder::<C, F, I>::new();
-    let constraints = UniformJoltConstraints::new(memory_start);
-    constraints.build_constraints(&mut uniform_builder);
-
-    // If the next instruction's ELF address is not zero (i.e. it's
-    // not padding), then check the PC update.
-    let pc_constraint = OffsetEqConstraint::new(
-        (JoltIn::Bytecode_ELFAddress, true),
-        (JoltIn::Aux(AuxVariable::NextPC), false),
-        (4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS, true),
-    );
-
-    // If the current instruction is virtual, check that the next instruction
-    // in the trace is the next instruction in bytecode. Virtual sequences
-    // do not involve jumps or branches, so this should always hold,
-    // EXCEPT if we encounter a virtual instruction followed by a padding
-    // instruction. But that should never happen because the execution
-    // trace should always end with some return handling, which shouldn't involve
-    // any virtual sequences.
-    let virtual_sequence_constraint = OffsetEqConstraint::new(
-        (JoltIn::OpFlags(CircuitFlags::Virtual), false),
-        (JoltIn::Bytecode_A, true),
-        (JoltIn::Bytecode_A + 1, false),
-    );
-
-    CombinedUniformBuilder::construct(
-        uniform_builder,
-        padded_trace_length,
-        vec![pc_constraint, virtual_sequence_constraint],
-    )
-}
-
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumIter)]
-pub enum JoltIn {
-    Bytecode_A, // Virtual address
-    // Bytecode_V
-    Bytecode_ELFAddress,
-    Bytecode_Bitflags,
-    Bytecode_RS1,
-    Bytecode_RS2,
-    Bytecode_RD,
-    Bytecode_Imm,
-
-    RAM_A,
-    // Ram_V
-    RS1_Read,
-    RS2_Read,
-    RD_Read,
-    RAM_Read(usize),
-    RD_Write,
-    RAM_Write(usize),
-
-    ChunksQuery(usize),
-    LookupOutput,
-    ChunksX(usize),
-    ChunksY(usize),
-
-    OpFlags(CircuitFlags),
-    InstructionFlags(RV32I),
-    Aux(AuxVariable),
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, Default, EnumIter)]
-enum AuxVariable {
-    #[default] // Need a default so that we can derive EnumIter on `JoltIn`
-    LeftLookupOperand,
-    RightLookupOperand,
-    ImmSigned,
-    Product,
-    RelevantYChunk(usize),
-    WriteLookupOutputToRD,
-    WritePCtoRD,
-    NextPCJump,
-    ShouldBranch,
-    NextPC,
-}
-
-impl_r1cs_input_lc_conversions!(JoltIn, 4);
-impl ConstraintInput for JoltIn {
-    fn flatten<const C: usize>() -> Vec<Self> {
-        JoltIn::iter()
-            .flat_map(|variant| match variant {
-                Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION)
-                    .into_iter()
-                    .map(|i| Self::RAM_Read(i))
-                    .collect(),
-                Self::RAM_Write(_) => (0..RAM_OPS_PER_INSTRUCTION)
-                    .into_iter()
-                    .map(|i| Self::RAM_Write(i))
-                    .collect(),
-                Self::ChunksQuery(_) => (0..C).into_iter().map(|i| Self::ChunksQuery(i)).collect(),
-                Self::ChunksX(_) => (0..C).into_iter().map(|i| Self::ChunksX(i)).collect(),
-                Self::ChunksY(_) => (0..C).into_iter().map(|i| Self::ChunksY(i)).collect(),
-                Self::OpFlags(_) => CircuitFlags::iter()
-                    .map(|flag| Self::OpFlags(flag))
-                    .collect(),
-                Self::InstructionFlags(_) => RV32I::iter()
-                    .map(|flag| Self::InstructionFlags(flag))
-                    .collect(),
-                Self::Aux(_) => AuxVariable::iter()
-                    .flat_map(|aux| match aux {
-                        AuxVariable::RelevantYChunk(_) => (0..C)
-                            .into_iter()
-                            .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
-                            .collect(),
-                        _ => vec![Self::Aux(aux)],
-                    })
-                    .collect(),
-                _ => vec![variant],
-            })
-            .collect()
-    }
-    fn get_poly_ref<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
-        &self,
-        jolt_polynomials: &'a JoltPolynomials<F, PCS>,
-    ) -> &'a DensePolynomial<F> {
-        todo!()
-    }
-
-    fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(
-        &self,
-        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
-    ) -> &mut DensePolynomial<F> {
-        todo!();
-    }
-}
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
 
-pub struct UniformJoltConstraints {
-    memory_start: u64,
-}
+pub trait R1CSConstraints<const C: usize, F: JoltField> {
+    type Inputs: ConstraintInput;
+    fn construct_constraints(
+        padded_trace_length: usize,
+        memory_start: u64,
+    ) -> CombinedUniformBuilder<C, F, Self::Inputs> {
+        let mut uniform_builder = R1CSBuilder::<C, F, Self::Inputs>::new();
+        Self::uniform_constraints(&mut uniform_builder, memory_start);
+        let non_uniform_constraints = Self::non_uniform_constraints();
 
-impl UniformJoltConstraints {
-    pub fn new(memory_start: u64) -> Self {
-        Self { memory_start }
+        CombinedUniformBuilder::construct(
+            uniform_builder,
+            padded_trace_length,
+            non_uniform_constraints,
+        )
     }
+    fn uniform_constraints(builder: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64);
+    fn non_uniform_constraints() -> Vec<OffsetEqConstraint>;
 }
 
-impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for UniformJoltConstraints {
+pub struct JoltRV32IMConstraints;
+impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstraints {
     type Inputs = JoltIn;
-    fn build_constraints(&self, cs: &mut R1CSBuilder<C, F, JoltIn>) {
+
+    fn uniform_constraints(cs: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64) {
         for flag in RV32I::iter() {
             cs.constrain_binary(JoltIn::InstructionFlags(flag));
         }
@@ -209,7 +88,7 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
 
         let is_load_or_store =
             JoltIn::OpFlags(CircuitFlags::Load) + JoltIn::OpFlags(CircuitFlags::Store);
-        let memory_start: i64 = self.memory_start.try_into().unwrap();
+        let memory_start: i64 = memory_start.try_into().unwrap();
         cs.constrain_eq_conditional(
             is_load_or_store,
             JoltIn::RS1_Read + imm_signed,
@@ -360,6 +239,31 @@ impl<const C: usize, F: JoltField> R1CSConstraintBuilder<C, F, JoltIn> for Unifo
             next_pc_jump,
         );
     }
+
+    fn non_uniform_constraints() -> Vec<OffsetEqConstraint> {
+        // If the next instruction's ELF address is not zero (i.e. it's
+        // not padding), then check the PC update.
+        let pc_constraint = OffsetEqConstraint::new(
+            (JoltIn::Bytecode_ELFAddress, true),
+            (JoltIn::Aux(AuxVariable::NextPC), false),
+            (4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS, true),
+        );
+
+        // If the current instruction is virtual, check that the next instruction
+        // in the trace is the next instruction in bytecode. Virtual sequences
+        // do not involve jumps or branches, so this should always hold,
+        // EXCEPT if we encounter a virtual instruction followed by a padding
+        // instruction. But that should never happen because the execution
+        // trace should always end with some return handling, which shouldn't involve
+        // any virtual sequences.
+        let virtual_sequence_constraint = OffsetEqConstraint::new(
+            (JoltIn::OpFlags(CircuitFlags::Virtual), false),
+            (JoltIn::Bytecode_A, true),
+            (JoltIn::Bytecode_A + 1, false),
+        );
+
+        vec![pc_constraint, virtual_sequence_constraint]
+    }
 }
 
 #[cfg(test)]
@@ -384,8 +288,8 @@ mod tests {
     fn single_instruction_jolt() {
         let mut uniform_builder = R1CSBuilder::<Fr, JoltIn>::new();
 
-        let jolt_constraints = UniformJoltConstraints::new(0);
-        jolt_constraints.build_constraints(&mut uniform_builder);
+        let constraints = UniformJoltConstraints::new(0);
+        constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
         let combined_builder =

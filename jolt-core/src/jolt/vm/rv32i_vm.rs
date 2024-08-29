@@ -5,7 +5,8 @@ use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyrax::HyraxScheme;
-use crate::r1cs::jolt_constraints::JoltIn;
+use crate::r1cs::constraints::JoltRV32IMConstraints;
+use crate::r1cs::inputs::JoltIn;
 use ark_bn254::{Fr, G1Projective};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
@@ -179,7 +180,7 @@ where
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
-    type R1CSInputs = JoltIn;
+    type Constraints = JoltRV32IMConstraints;
 }
 
 pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltIn, F, PCS, RV32I, RV32ISubtables<F>>;
