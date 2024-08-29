@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use super::JoltInstruction;
 use crate::{
-    field::JoltField,
     jolt::{
         instruction::SubtableIndices,
         subtable::{identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable},
     },
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
+use jolt_types::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct MOVSIGNInstruction<const WORD_SIZE: usize>(pub u64);

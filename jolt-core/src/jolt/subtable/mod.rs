@@ -1,5 +1,5 @@
-use crate::field::JoltField;
 use enum_dispatch::enum_dispatch;
+use jolt_types::field::JoltField;
 use std::any::TypeId;
 use std::marker::Sync;
 use strum::{EnumCount, IntoEnumIterator};

@@ -4,11 +4,11 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::field::JoltField;
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
+use jolt_types::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);

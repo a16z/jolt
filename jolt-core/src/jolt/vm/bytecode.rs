@@ -6,15 +6,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
 use common::to_ram_address;
+use jolt_types::field::JoltField;
+use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 
 use rayon::prelude::*;
 
@@ -25,8 +25,8 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    utils::errors::ProofVerifyError,
 };
+use jolt_types::utils::errors::ProofVerifyError;
 
 use super::JoltTraceStep;
 

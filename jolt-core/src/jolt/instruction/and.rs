@@ -4,9 +4,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::field::JoltField;
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
+use jolt_types::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ANDInstruction(pub u64, pub u64);

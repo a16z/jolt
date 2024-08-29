@@ -1,4 +1,6 @@
-use ark_ff::{PrimeField, UniformRand};
+#[cfg(not(target_os = "solana"))]
+use ark_ff::UniformRand;
+use ark_ff::{BigInt, PrimeField};
 use ark_std::Zero;
 
 use super::{FieldOps, JoltField};
@@ -10,12 +12,13 @@ impl<'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
 
+    #[cfg(not(target_os = "solana"))]
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
     }
 
     fn from_u64(n: u64) -> Option<Self> {
-        <Self as ark_ff::PrimeField>::from_u64(n)
+        <Self as ark_ff::PrimeField>::from_bigint(BigInt::from(n))
     }
 
     fn from_i64(val: i64) -> Self {

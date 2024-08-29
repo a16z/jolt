@@ -1,8 +1,8 @@
 use crate::{
-    field::JoltField,
     impl_r1cs_input_lc_conversions,
     r1cs::builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
 };
+use jolt_types::field::JoltField;
 
 use super::{
     builder::CombinedUniformBuilder,

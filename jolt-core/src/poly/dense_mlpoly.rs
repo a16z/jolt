@@ -1,12 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
-use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
+use jolt_types::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 
-use crate::field::JoltField;
-use crate::utils::math::Math;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
+use jolt_types::field::JoltField;
+use jolt_types::utils::math::Math;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::ops::{AddAssign, Mul};
@@ -21,7 +21,7 @@ pub struct DensePolynomial<F: JoltField> {
 impl<F: JoltField> DensePolynomial<F> {
     pub fn new(Z: Vec<F>) -> Self {
         assert!(
-            utils::is_power_of_two(Z.len()),
+            jolt_types::utils::is_power_of_two(Z.len()),
             "Dense multi-linear polynomials must be made from a power of 2 (not {})",
             Z.len()
         );
@@ -36,7 +36,7 @@ impl<F: JoltField> DensePolynomial<F> {
     pub fn new_padded(evals: Vec<F>) -> Self {
         // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
         let mut poly_evals = evals;
-        while !(utils::is_power_of_two(poly_evals.len())) {
+        while !(jolt_types::utils::is_power_of_two(poly_evals.len())) {
             poly_evals.push(F::zero());
         }
 

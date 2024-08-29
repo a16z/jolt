@@ -1,16 +1,13 @@
-use crate::{
-    field::JoltField,
-    jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
-};
-use rand::prelude::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-
 use super::JoltInstruction;
+use crate::jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable};
 use crate::{
     jolt::{instruction::SubtableIndices, subtable::LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
+use jolt_types::field::JoltField;
+use rand::prelude::StdRng;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 /// (divisor, quotient)

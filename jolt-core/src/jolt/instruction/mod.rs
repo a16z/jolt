@@ -7,10 +7,10 @@ use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::{RVTraceRow, RegisterState};
 
-use crate::field::JoltField;
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::instruction_utils::chunk_operand;
 use common::rv_trace::ELFInstruction;
+use jolt_types::field::JoltField;
 use std::fmt::Debug;
 
 #[enum_dispatch]

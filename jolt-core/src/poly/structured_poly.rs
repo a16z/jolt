@@ -1,11 +1,9 @@
-use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_types::field::JoltField;
 
 use super::commitment::commitment_scheme::CommitmentScheme;
-use crate::{
-    lasso::memory_checking::NoPreprocessing,
-    utils::{errors::ProofVerifyError, transcript::ProofTranscript},
-};
+use crate::lasso::memory_checking::NoPreprocessing;
+use jolt_types::utils::{errors::ProofVerifyError, transcript::ProofTranscript};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient

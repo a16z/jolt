@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_types::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

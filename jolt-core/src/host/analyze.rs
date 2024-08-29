@@ -3,10 +3,8 @@ use std::{collections::HashMap, fs::File, io, path::PathBuf};
 use serde::{Deserialize, Serialize};
 use tracer::{ELFInstruction, JoltDevice, RVTraceRow, RV32IM};
 
-use crate::{
-    field::JoltField,
-    jolt::vm::{rv32i_vm::RV32I, JoltTraceStep},
-};
+use crate::jolt::vm::{rv32i_vm::RV32I, JoltTraceStep};
+use jolt_types::field::JoltField;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProgramSummary {

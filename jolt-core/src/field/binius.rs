@@ -3,7 +3,7 @@ use ark_std::{One, Zero};
 use binius_field::{BinaryField128b, BinaryField128bPolyval};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use super::{FieldOps, JoltField};
+use jolt_types::field::{FieldOps, JoltField};
 
 impl BiniusConstructable for BinaryField128b {
     fn new(n: u64) -> Self {
@@ -126,15 +126,15 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
         Self(self.0.square())
     }
 
-    fn inverse(&self) -> Option<Self> {
-        self.0.invert().map(Self)
-    }
-
     fn from_bytes(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), Self::NUM_BYTES);
 
         let field_element = bytemuck::try_from_bytes::<F>(bytes).unwrap();
         Self(field_element.to_owned())
+    }
+
+    fn inverse(&self) -> Option<Self> {
+        self.0.invert().map(Self)
     }
 }
 

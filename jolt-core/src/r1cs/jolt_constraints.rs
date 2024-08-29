@@ -1,7 +1,7 @@
 use crate::{
-    assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
-    jolt::vm::rv32i_vm::C,
+    assert_static_aux_index, impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C,
 };
+use jolt_types::field::JoltField;
 
 use super::{
     builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},

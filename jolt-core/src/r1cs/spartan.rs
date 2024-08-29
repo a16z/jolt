@@ -1,26 +1,24 @@
 #![allow(clippy::len_without_is_empty)]
 
-use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::special_polys::SegmentedPaddedWitness;
-use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
+use jolt_types::field::JoltField;
+use jolt_types::utils::math::Math;
 
-use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
+use jolt_types::utils::transcript::ProofTranscript;
 
 use thiserror::Error;
 
-use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
-    subprotocols::sumcheck::SumcheckInstanceProof,
-};
-
 use super::builder::CombinedUniformBuilder;
 use super::ops::ConstraintInput;
+use crate::poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial};
+use crate::subprotocols::sumcheck::SumcheckProve;
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {

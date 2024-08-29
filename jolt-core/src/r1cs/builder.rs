@@ -1,25 +1,21 @@
-use crate::{
-    field::JoltField,
-    r1cs::key::{SparseConstraints, UniformR1CS},
-    utils::{
-        math::Math,
-        mul_0_1_optimized,
-        thread::{
-            drop_in_background_thread, par_flatten_triple, unsafe_allocate_sparse_zero_vec,
-            unsafe_allocate_zero_vec,
-        },
-    },
-};
-#[allow(unused_imports)] // clippy thinks these aren't needed lol
-use ark_std::{One, Zero};
-use rayon::prelude::*;
-use std::{collections::HashMap, fmt::Debug};
-
 use super::{
     key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
     ops::{ConstraintInput, Term, Variable, LC},
     special_polys::SparsePolynomial,
 };
+use crate::{
+    r1cs::key::{SparseConstraints, UniformR1CS},
+    utils::thread::{
+        drop_in_background_thread, par_flatten_triple, unsafe_allocate_sparse_zero_vec,
+        unsafe_allocate_zero_vec,
+    },
+};
+#[allow(unused_imports)] // clippy thinks these aren't needed lol
+use ark_std::{One, Zero};
+use jolt_types::field::JoltField;
+use jolt_types::utils::{math::Math, mul_0_1_optimized};
+use rayon::prelude::*;
+use std::{collections::HashMap, fmt::Debug};
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
     type Inputs: ConstraintInput;

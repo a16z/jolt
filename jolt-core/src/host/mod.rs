@@ -12,17 +12,7 @@ use postcard;
 use rayon::prelude::*;
 use serde::Serialize;
 
-use common::{
-    constants::{
-        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    },
-    rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS},
-};
-use strum::EnumCount;
-pub use tracer::ELFInstruction;
-
 use crate::{
-    field::JoltField,
     jolt::{
         instruction::{
             div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -33,6 +23,15 @@ use crate::{
     },
     utils::thread::unsafe_allocate_zero_vec,
 };
+use common::{
+    constants::{
+        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    },
+    rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS},
+};
+use jolt_types::field::JoltField;
+use strum::EnumCount;
+pub use tracer::ELFInstruction;
 
 use self::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]

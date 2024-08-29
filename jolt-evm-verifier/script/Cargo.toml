@@ -16,6 +16,7 @@ ark-serialize = "0.4.2"
 ark-ec = "0.4.2"
 ark-std = "0.4.0"
 jolt-core = { path = "../../jolt-core", package = "jolt-core"}
+jolt-types = { path = "../../jolt-types" }
 rand_core = "0.6.4"
 rand_chacha = { version = "0.3.0", default-features = false }
 

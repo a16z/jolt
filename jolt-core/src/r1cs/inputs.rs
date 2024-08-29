@@ -4,20 +4,17 @@
     clippy::too_many_arguments
 )]
 
+use crate::jolt::vm::{rv32i_vm::RV32I, JoltCommitments};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::jolt_constraints::JoltIn;
-use crate::utils::transcript::AppendToTranscript;
-use crate::{
-    jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    utils::transcript::ProofTranscript,
-};
+use jolt_types::utils::transcript::{AppendToTranscript, ProofTranscript};
 
 use super::key::UniformSpartanKey;
 use super::spartan::{SpartanError, UniformSpartanProof};
 
-use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use jolt_types::field::JoltField;
 use rayon::prelude::*;
 
 use strum::EnumCount;

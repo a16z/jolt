@@ -1,5 +1,5 @@
-use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
+use jolt_types::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -9,8 +9,10 @@ use std::marker::PhantomData;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
+use super::JoltTraceStep;
+use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::utils::transcript::AppendToTranscript;
+use crate::subprotocols::sumcheck::SumcheckProve;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -20,8 +22,6 @@ use crate::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
         structured_poly::StructuredOpeningProof,
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -29,9 +29,11 @@ use common::constants::{
     RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
-
-use super::JoltTraceStep;
-use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
+use jolt_types::subprotocols::sumcheck::SumcheckInstanceProof;
+use jolt_types::utils::transcript::AppendToTranscript;
+use jolt_types::utils::{
+    errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript,
+};
 
 pub fn random_memory_trace<F: JoltField>(
     memory_init: &Vec<(u64, u8)>,

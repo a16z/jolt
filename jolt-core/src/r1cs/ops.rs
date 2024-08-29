@@ -1,10 +1,8 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
-use crate::{
-    field::{JoltField, OptimizedMul},
-    utils::thread::unsafe_allocate_zero_vec,
-};
+use crate::utils::thread::unsafe_allocate_zero_vec;
+use jolt_types::field::{JoltField, OptimizedMul};
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::hash::Hash;

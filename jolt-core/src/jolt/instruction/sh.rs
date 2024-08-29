@@ -3,9 +3,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::field::JoltField;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_operand_usize;
+use jolt_types::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct SHInstruction(pub u64);

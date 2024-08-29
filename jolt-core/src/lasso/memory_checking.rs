@@ -1,9 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
 use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -13,10 +11,12 @@ use crate::{
         BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
     },
 };
+use jolt_types::utils::errors::ProofVerifyError;
+use jolt_types::utils::transcript::ProofTranscript;
 
-use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
+use jolt_types::field::JoltField;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::iter::zip;
 use std::marker::PhantomData;

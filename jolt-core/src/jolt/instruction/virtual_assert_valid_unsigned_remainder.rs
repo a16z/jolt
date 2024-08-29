@@ -1,4 +1,5 @@
-use crate::{field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable};
+use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
+use jolt_types::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
