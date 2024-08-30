@@ -179,7 +179,7 @@ pub fn simp_test_builder_key<F: JoltField>(
     let combined_builder = CombinedUniformBuilder::construct(
         uniform_builder,
         num_steps_pad,
-        vec![/*offset_eq_constraint*/],
+        vec![offset_eq_constraint],
     );
     let key = UniformSpartanKey::from_builder(&combined_builder);
 

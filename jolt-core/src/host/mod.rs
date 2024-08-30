@@ -108,7 +108,7 @@ impl Program {
                 "-C",
                 &format!("link-arg=-T{}", self.linker_path()),
                 "-C",
-                "passes=loweratomic",
+                "passes=lower-atomic",
                 "-C",
                 "panic=abort",
             ];

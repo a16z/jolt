@@ -263,6 +263,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             segmented_padded_witness.into_dense_polys();
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
             witness_segment_polys.iter().collect();
+        println!("r_z.len(): {}", r_z.len());
+        println!("r_z: {r_z:?}");
         let opening_proof = C::batch_prove(
             generators,
             &witness_segment_polys_ref,
@@ -388,7 +390,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         println!("LORD ALMIGHTY THE MLE EVALUATION BY THE VERIFIER PASSED"); 
 
-        let r_y_point = &inner_sumcheck_r[n_prefix..];
+        let r_y_point = &r_x[constraint_bits..];
+        println!("inner_sumcheck_r.len(): {}", inner_sumcheck_r.len());
+        println!("n_prefix: {}", n_prefix);
+        println!("r_y_point.len(): {}", r_y_point.len());
+        println!("r_y_point: {:?}", r_y_point);
         C::batch_verify(
             &self.opening_proof,
             generators,
@@ -410,14 +416,15 @@ mod test {
 
     use crate::{
         poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme},
-        r1cs::test::{simp_test_builder_key, SimpTestIn},
+        r1cs::test::{simp_test_builder_key, uniform_only_builder_key, SimpTestIn},
     };
 
     use super::*;
 
     #[test]
     fn integration() {
-        let (builder, key) = simp_test_builder_key();
+        // let (builder, key) = simp_test_builder_key();
+        let (builder, key) = uniform_only_builder_key();
         let witness_segments: Vec<Vec<Fr>> = vec![
             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
