@@ -67,7 +67,6 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     let _guard = span.enter();
 
     let bases = bases.par_iter().map(|base| V::from_ark_affine(base)).collect::<Vec<_>>();
-    let bases_mont = unsafe { &*(&bases[..] as *const _ as *const [Affine<V::C>]) };
     let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(bases.len()).unwrap();
     drop(_guard);
     drop(span);
@@ -82,14 +81,13 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     drop(span);
 
     let stream = CudaStream::create().unwrap();
-    bases_slice.copy_from_host_async(HostSlice::from_slice(&bases_mont), &stream).unwrap();
+    bases_slice.copy_from_host_async(HostSlice::from_slice(&bases), &stream).unwrap();
     scalars_slice.copy_from_host_async(HostSlice::from_slice(&scalars_mont), &stream).unwrap();
     let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(1).unwrap();
     let mut cfg = MSMConfig::default();
     cfg.ctx.stream = &stream;
     cfg.is_async = true;
     cfg.are_scalars_montgomery_form = true;
-    cfg.are_points_montgomery_form = true;
 
     let span = tracing::span!(tracing::Level::INFO, "msm");
     let _guard = span.enter();
@@ -119,6 +117,7 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
 mod tests {
     use super::*;
     use ark_bn254::{Fr, G1Affine, G1Projective};
+    use icicle_bn254::curve::ScalarField as GPUScalar;
     use ark_ec::VariableBaseMSM as ark_VariableBaseMSM;
     use ark_std::UniformRand;
     use rand_core::SeedableRng;
@@ -146,5 +145,15 @@ mod tests {
                 assert_eq!(icicle_res, msm_res);
             }
         }
+    }
+
+    #[test]
+    fn casting() {
+        let ark = Fr::from(100);
+        let gpu = GPUScalar::from_ark(ark);
+
+        let ark_bytes: [u8; 32] = unsafe { std::mem::transmute(ark) };
+        let gpu_bytes: [u8; 32] = unsafe { std::mem::transmute(gpu) };
+        assert_eq!(ark_bytes, gpu_bytes);
     }
 }
