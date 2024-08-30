@@ -423,8 +423,8 @@ mod test {
 
     #[test]
     fn integration() {
-        // let (builder, key) = simp_test_builder_key();
-        let (builder, key) = uniform_only_builder_key();
+        let (builder, key) = simp_test_builder_key();
+        // let (builder, key) = uniform_only_builder_key();
         let witness_segments: Vec<Vec<Fr>> = vec![
             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
