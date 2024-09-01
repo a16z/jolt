@@ -120,11 +120,24 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                     }).collect()
                 }
                 MsmType::Small => {
-                    indices.into_par_iter().map(|i| {
-                        let scalars = scalars[i];
-                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        (i, msm_small(bases, scalars_u64, 10))
-                    }).collect()
+                    #[cfg(feature = "icicle")]
+                    {
+                        let scalar_batches: Vec<&[Self::ScalarField]> = indices.iter().map(|i| {
+                            scalars[*i]
+                        }).collect();
+                        let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches, 10);
+                        assert_eq!(batch_results.len(), scalar_batches.len());
+                        batch_results.into_iter().enumerate().map(|(batch_index, result)| (indices[batch_index], result)).collect()
+                    }
+
+                    #[cfg(not(feature = "icicle"))]
+                    {
+                        indices.into_par_iter().map(|i| {
+                            let scalars = scalars[i];
+                            let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                            (i, msm_small(bases, scalars_u64, 10))
+                        }).collect()
+                    }
                 }
                 MsmType::Medium => {
                     #[cfg(feature = "icicle")]
@@ -228,6 +241,30 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         }
 
         results
+    }
+
+    #[tracing::instrument(skip_all, name = "variable_batch_msm")]
+    fn variable_batch_msm(
+        bases: &[Self::MulBase],
+        scalar_batches: &[&[Self::ScalarField]],
+    ) -> Vec<Self> {
+        assert!(scalar_batches.iter().all(|s| s.len() <= bases.len()));
+
+        #[cfg(not(feature = "icicle"))]
+        {
+            scalar_batches
+                .par_iter()
+                .map(|scalars| {
+                    Self::msm(bases, scalars).unwrap()
+                })
+                .collect()
+        }
+
+        #[cfg(feature = "icicle")]
+        {
+            let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
+            icicle_variable_batch_msm::<Self>(&gpu_bases, scalar_batches, 256)
+        }
     }
 }
 

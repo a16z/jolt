@@ -160,6 +160,49 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     msm_host_results.into_iter().map(|res| V::to_ark_projective(&res)).collect()
 }
 
+#[tracing::instrument(skip_all, name = "icicle_batch_msm")]
+/// MSM which allows scalar_batches of non-uniform size
+pub fn icicle_variable_batch_msm<V: VariableBaseMSM + Icicle>(
+    bases: &[Affine<V::C>],
+    scalar_batches: &[&[V::ScalarField]],
+    bit_size: i32 
+) -> Vec<V> {
+    let base_len = bases.len();
+    let batch_size = scalar_batches.len();
+    assert!(scalar_batches.iter().all(|s| s.len() <= base_len));
+
+    let stream = CudaStream::create().unwrap();
+    let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(base_len).unwrap();
+    bases_slice.copy_from_host_async(&HostSlice::from_slice(&bases), &stream).unwrap();
+
+    let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(1).unwrap();
+    let mut msm_host_results = vec![Projective::<V::C>::zero(); batch_size];
+
+    for (batch_i, scalars) in scalar_batches.iter().enumerate() {
+        let mut scalars_slice = DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::cuda_malloc_async(scalars.len(), &stream).unwrap();
+        let scalars_mont = unsafe { &*(&scalars[..] as *const _ as *const [<<V as Icicle>::C as Curve>::ScalarField]) };
+        scalars_slice.copy_from_host_async(&HostSlice::from_slice(&scalars_mont), &stream).unwrap();
+
+        let mut cfg = MSMConfig::default();
+        cfg.ctx.stream = &stream;
+        cfg.is_async = true;
+        cfg.are_scalars_montgomery_form = true;
+        cfg.are_points_montgomery_form = false;
+        cfg.bitsize = bit_size;
+
+        msm(&scalars_slice[..], &bases_slice[..scalars.len()], &cfg, &mut msm_result[..]).unwrap();
+
+        msm_result
+            .copy_to_host_async(HostSlice::from_mut_slice(&mut msm_host_results[batch_i..(batch_i + 1)]), &stream)
+            .unwrap();
+    }
+
+    stream.synchronize().unwrap();
+
+    stream.destroy().unwrap();
+    msm_host_results.into_iter().map(|res| V::to_ark_projective(&res)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

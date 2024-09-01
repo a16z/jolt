@@ -349,12 +349,18 @@ where
         // We do not need to commit to the first polynomial as it is already committed.
         // Compute commitments in parallel
         // TODO(sragss): This could be done by batch too if it gets progressively smaller.
-        let com: Vec<P::G1Affine> = (1..polys.len())
-            .into_par_iter()
-            .map(|i| {
-                UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(polys[i].clone())).unwrap()
-            })
-            .collect();
+        // let com: Vec<P::G1Affine> = (1..polys.len())
+        //     .into_par_iter()
+        //     .map(|i| {
+        //         UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(polys[i].clone())).unwrap()
+        //     })
+        //     .collect();
+
+        let scalars: Vec<&[P::ScalarField]> = (1..polys.len()).into_iter().map(|i| polys[i].as_ref()).collect();
+        let com: Vec<P::G1Affine> = <P::G1 as VariableBaseMSM>::variable_batch_msm(
+            &pk.kzg_pk.g1_powers()[..polys[1].len()], 
+            &scalars
+        ).into_iter().map(|c| c.into_affine()).collect();
 
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
