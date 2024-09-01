@@ -100,7 +100,6 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                 0 => MsmType::Zero,
                 1 => MsmType::One,
                 2..=10 => MsmType::Small,
-                #[cfg(not(feature = "icicle"))]
                 11..=64 => MsmType::Medium,
                 _ => MsmType::Large,
             };
@@ -128,16 +127,30 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                     }).collect()
                 }
                 MsmType::Medium => {
-                    indices.into_par_iter().map(|i| {
-                        let scalars = scalars[i];
-                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        let result = if Self::NEGATION_IS_CHEAP {
-                            msm_u64_wnaf(bases, scalars_u64, 64)
-                        } else {
-                            msm_u64(bases, scalars_u64, 64)
-                        };
-                        (i, result)
-                    }).collect()
+                    #[cfg(feature = "icicle")]
+                    {
+                        
+                        let scalar_batches: Vec<&[Self::ScalarField]> = indices.iter().map(|i| {
+                            scalars[*i]
+                        }).collect();
+
+                        let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches, 64);
+                        batch_results.into_iter().enumerate().map(|(batch_index, result)| (indices[batch_index], result)).collect()
+                    }
+
+                    #[cfg(not(feature = "icicle"))]
+                    {
+                        indices.into_par_iter().map(|i| {
+                            let scalars = scalars[i];
+                            let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                            let result = if Self::NEGATION_IS_CHEAP {
+                                msm_u64_wnaf(bases, scalars_u64, 64)
+                            } else {
+                                msm_u64(bases, scalars_u64, 64)
+                            };
+                            (i, result)
+                        }).collect()
+                    }
                 }
                 MsmType::Large => {
                     #[cfg(feature = "icicle")]
@@ -147,7 +160,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                             scalars[*i]
                         }).collect();
 
-                        let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches);
+                        let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches, 256);
                         batch_results.into_iter().enumerate().map(|(batch_index, result)| (indices[batch_index], result)).collect()
                     }
 

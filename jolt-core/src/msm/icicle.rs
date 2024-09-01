@@ -122,6 +122,7 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
 pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     bases: &[Affine<V::C>],
     scalar_batches: &[&[V::ScalarField]],
+    bit_size: i32 
 ) -> Vec<V> {
     let len = bases.len();
     let batch_size = scalar_batches.len();
@@ -150,6 +151,7 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     cfg.ctx.stream = &stream;
     cfg.is_async = false;
     cfg.are_scalars_montgomery_form = true;
+    cfg.bitsize = bit_size;
     // cfg.batch_size = batch_size; // TODO(sragsss): Should happen automatically?
 
     let span = tracing::span!(tracing::Level::INFO, "msm");
