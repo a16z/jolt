@@ -67,7 +67,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
     fn lookup_entry(&self) -> u64 {
         if WORD_SIZE == 32 {
             let x = self.0 as i32;
-            let y = (self.1 as u32 % 32) as u32;
+            let y = self.1 as u32 % 32;
             (x.wrapping_shr(y) as u32).into()
         } else if WORD_SIZE == 64 {
             let x = self.0 as i64;
