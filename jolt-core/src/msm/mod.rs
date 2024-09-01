@@ -74,7 +74,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
 
         let slice_bit_size = 256 * scalars[0].len() * 3; 
-        let max_gpu_memory_gb = 5;
+        let max_gpu_memory_gb = 30;
         let max_gpu_memory_bits = max_gpu_memory_gb * 1024 * 1024 * 1024 * 8; 
         let slices_at_a_time = max_gpu_memory_bits / slice_bit_size;
 
@@ -133,8 +133,8 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                         let scalar_batches: Vec<&[Self::ScalarField]> = indices.iter().map(|i| {
                             scalars[*i]
                         }).collect();
-
                         let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches, 64);
+                        assert_eq!(batch_results.len(), scalar_batches.len());
                         batch_results.into_iter().enumerate().map(|(batch_index, result)| (indices[batch_index], result)).collect()
                     }
 
@@ -161,10 +161,11 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                         }).collect();
 
                         let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches, 256);
+                        assert_eq!(batch_results.len(), scalar_batches.len());
                         batch_results.into_iter().enumerate().map(|(batch_index, result)| (indices[batch_index], result)).collect()
                     }
 
-                    #[cfg(not(feature = "icicle"))]
+                    #[cfg(not(feature = "icicle"))] 
                     {
                         indices.into_par_iter().map(|i| {
                             let scalars = scalars[i];
@@ -172,7 +173,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                                 .par_iter()
                                 .map(|s| s.into_bigint())
                                 .collect::<Vec<_>>();
-                            let result = if Self::NEGATION_IS_CHEAP {
+                            let result: Self = if Self::NEGATION_IS_CHEAP {
                                 msm_bigint_wnaf(bases, &scalars, 256)
                             } else {
                                 msm_bigint(bases, &scalars, 256)
@@ -209,7 +210,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         run_msm(small_indices, MsmType::Small, &mut results);
 
         {
-            let span = tracing::span!(tracing::Level::INFO, "process_medium_indices");
+            let span = tracing::span!(tracing::Level::INFO, "medium_indices");
             let _guard = span.enter();
             medium_indices.chunks(slices_at_a_time).for_each(|chunk| {
                 run_msm(chunk.to_vec(), MsmType::Medium, &mut results);
@@ -218,7 +219,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         }
 
         {
-            let span = tracing::span!(tracing::Level::INFO, "process_large_indices");
+            let span = tracing::span!(tracing::Level::INFO, "large_indices");
             let _guard = span.enter();
             large_indices.chunks(slices_at_a_time).for_each(|chunk| {
                 run_msm(chunk.to_vec(), MsmType::Large, &mut results);

@@ -128,55 +128,36 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     let batch_size = scalar_batches.len();
     assert!(scalar_batches.iter().all(|s| s.len() == len));
 
-    let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(bases.len()).unwrap();
-
-    let span = tracing::span!(tracing::Level::INFO, "copy_scalars");
-    let _guard = span.enter();
-
-    // Scalar slices are non-contiguous in host memory, but need to be contiguous in device memory
-    let mut scalars_alloc= DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::cuda_malloc(len * batch_size).unwrap();
     let stream = CudaStream::create().unwrap();
+    let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(len).unwrap();
+    bases_slice.copy_from_host_async(&HostSlice::from_slice(&bases), &stream).unwrap();
+
+    let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(1).unwrap();
+    let mut msm_host_results = vec![Projective::<V::C>::zero(); batch_size];
+
     for (batch_i, scalars) in scalar_batches.iter().enumerate() {
+        let mut scalars_slice = DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::cuda_malloc_async(len, &stream).unwrap();
         let scalars_mont = unsafe { &*(&scalars[..] as *const _ as *const [<<V as Icicle>::C as Curve>::ScalarField]) };
-        scalars_alloc[batch_i*len .. (batch_i + 1)*len].copy_from_host_async(HostSlice::from_slice(&scalars_mont), &stream).unwrap();
+        scalars_slice.copy_from_host_async(&HostSlice::from_slice(&scalars_mont), &stream).unwrap();
+
+        let mut cfg = MSMConfig::default();
+        cfg.ctx.stream = &stream;
+        cfg.is_async = true;
+        cfg.are_scalars_montgomery_form = true;
+        cfg.are_points_montgomery_form = false;
+        cfg.bitsize = bit_size;
+
+        msm(&scalars_slice[..], &bases_slice[..], &cfg, &mut msm_result[..]).unwrap();
+
+        msm_result
+            .copy_to_host_async(HostSlice::from_mut_slice(&mut msm_host_results[batch_i..(batch_i + 1)]), &stream)
+            .unwrap();
     }
 
-    drop(_guard);
-    drop(span);
-
-    bases_slice.copy_from_host_async(HostSlice::from_slice(&bases), &stream).unwrap();
-    let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(batch_size).unwrap();
-    let mut cfg = MSMConfig::default();
-    // TODO(sragss): Try bit-size cfg
-    cfg.ctx.stream = &stream;
-    cfg.is_async = false;
-    cfg.are_scalars_montgomery_form = true;
-    cfg.bitsize = bit_size;
-    // cfg.batch_size = batch_size; // TODO(sragsss): Should happen automatically?
-
-    let span = tracing::span!(tracing::Level::INFO, "msm");
-    let _guard = span.enter();
-
     stream.synchronize().unwrap();
-    msm(&scalars_alloc[..], &bases_slice[..], &cfg, &mut msm_result[..]).unwrap();
 
-    drop(_guard);
-    drop(span);
-    let mut msm_host_result = vec![Projective::<V::C>::zero(); batch_size];
-
-    let span = tracing::span!(tracing::Level::INFO, "copy_msm_result");
-    let _guard = span.enter();
-
-    msm_result
-        .copy_to_host(HostSlice::from_mut_slice(&mut msm_host_result[..]))
-        .unwrap();
-
-    drop(_guard);
-    drop(span);
-
-    stream.synchronize().unwrap();
     stream.destroy().unwrap();
-    msm_host_result.into_iter().map(|gpu_form| V::to_ark_projective(&gpu_form)).collect()
+    msm_host_results.into_iter().map(|res| V::to_ark_projective(&res)).collect()
 }
 
 #[cfg(test)]

@@ -568,6 +568,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         drop(_guard);
 
         let io_comms = PCS::batch_commit(&[inputs.pc.as_ref()], generators, BatchType::Big);
+        // TODO(sragss): This commitment seems to fail
         let aux_comms = PCS::batch_commit(
             &aux.iter().map(AsRef::as_ref).collect::<Vec<&[F]>>(),
             generators,
