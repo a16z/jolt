@@ -108,6 +108,7 @@ mod test {
             MULInstruction::<WORD_SIZE>(1, 0),
             MULInstruction::<WORD_SIZE>(0, u32_max),
             MULInstruction::<WORD_SIZE>(u32_max, 0),
+            MULInstruction::<WORD_SIZE>(2, u32_max),
             MULInstruction::<WORD_SIZE>(u32_max, u32_max),
             MULInstruction::<WORD_SIZE>(u32_max, 1 << 8),
             MULInstruction::<WORD_SIZE>(1 << 8, u32_max),

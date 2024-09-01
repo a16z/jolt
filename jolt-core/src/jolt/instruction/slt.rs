@@ -84,7 +84,13 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 

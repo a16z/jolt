@@ -51,7 +51,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SHInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        // Lower 16 bits of the rs2 value
+        // Lower 16 bits of the rs2 value, no sign extension
         // Same for both 32-bit and 64-bit word sizes
         self.0 & 0xffff
     }

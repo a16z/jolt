@@ -16,10 +16,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for SWInstruction<WORD_SIZE> {
         (0, self.0)
     }
 
-    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        concatenate_lookups(vals, C, log2(M) as usize)
+        concatenate_lookups(vals, vals.len(), log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -45,7 +45,8 @@ impl<const WORD_SIZE: usize> JoltInstruction for SWInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        // Lower 32 bits of the rs2 value
+        // Lower 32 bits of the rs2 value, no sign extension
+        // Same for both 32-bit and 64-bit word sizes
         self.0 & 0xffffffff
     }
 
@@ -99,33 +100,33 @@ mod test {
     }
 
     // Doesn't work for now
-    // #[test]
-    // fn sw_instruction_64_e2e() {
-    //     let mut rng = test_rng();
-    //     const C: usize = 4;
-    //     const M: usize = 1 << 16;
-    //     const WORD_SIZE: usize = 64;
+    #[test]
+    fn sw_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
-    //     // Random
-    //     for _ in 0..256 {
-    //         let x = rng.next_u64();
-    //         let instruction = SWInstruction::<WORD_SIZE>(x);
-    //         jolt_instruction_test!(instruction);
-    //     }
+        // Random
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let instruction = SWInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
 
-    //     // Edge cases
-    //     let u64_max: u64 = u64::MAX;
-    //     let instructions = vec![
-    //         SWInstruction::<WORD_SIZE>(0),
-    //         SWInstruction::<WORD_SIZE>(1),
-    //         SWInstruction::<WORD_SIZE>(100),
-    //         SWInstruction::<WORD_SIZE>(1 << 8),
-    //         SWInstruction::<WORD_SIZE>(1 << 40),
-    //         SWInstruction::<WORD_SIZE>(u64_max),
-    //         SWInstruction::<WORD_SIZE>(u64_max - 1),
-    //     ];
-    //     for instruction in instructions {
-    //         jolt_instruction_test!(instruction);
-    //     }
-    // }
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            SWInstruction::<WORD_SIZE>(0),
+            SWInstruction::<WORD_SIZE>(1),
+            SWInstruction::<WORD_SIZE>(100),
+            SWInstruction::<WORD_SIZE>(1 << 8),
+            SWInstruction::<WORD_SIZE>(1 << 40),
+            SWInstruction::<WORD_SIZE>(u64_max),
+            SWInstruction::<WORD_SIZE>(u64_max - 1),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
 }

@@ -21,7 +21,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        // 1 - LTS(x, y) =
+        // 1 - SLT(x, y) =
         F::one() - SLTInstruction::<WORD_SIZE>(self.0, self.1).combine_lookups(vals, C, M)
     }
 

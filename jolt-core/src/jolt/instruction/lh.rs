@@ -17,14 +17,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for LHInstruction<WORD_SIZE> {
         (0, self.0)
     }
 
-    fn combine_lookups<F: JoltField>(&self, vals: &[F], _C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
 
         let half = vals[0];
         let sign_extension = vals[1];
 
-        half + F::from_u64(1 << 16).unwrap() * sign_extension
+        let mut result = half;
+        for i in 1..(C / 2) {
+            result += F::from_u64(1 << (16 * i)).unwrap() * sign_extension;
+        }
+        result
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -65,8 +69,13 @@ impl<const WORD_SIZE: usize> JoltInstruction for LHInstruction<WORD_SIZE> {
 
     fn lookup_entry(&self) -> u64 {
         // Sign-extend lower 16 bits of the loaded value
-        // This is the same for both 32-bit and 64-bit word sizes
-        (self.0 & 0xffff) as i16 as i32 as u32 as u64
+        if WORD_SIZE == 32 {
+            (self.0 & 0xffff) as i16 as i32 as u32 as u64
+        } else if WORD_SIZE == 64 {
+            (self.0 & 0xffff) as i16 as i64 as u64
+        } else {
+            panic!("LH is only implemented for 32-bit or 64-bit word sizes");
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {

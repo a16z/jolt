@@ -26,7 +26,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
     for SllSubtable<F, CHUNK_INDEX, WORD_SIZE>
 {
     fn materialize(&self, M: usize) -> Vec<F> {
-        // table[x | y] = (x << (y % WORD_SIZE)) % (1 << (WORD_SIZE - suffix_length))
+        // table[x | y] = (x << (y % WORD_SIZE)) & ((1 << (WORD_SIZE - suffix_length)) - 1)
         // where `suffix_length = operand_chunk_width * CHUNK_INDEX`
         let mut entries: Vec<F> = Vec::with_capacity(M);
 
@@ -37,7 +37,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             let (x, y) = split_bits(idx, operand_chunk_width);
 
             // Need to handle u64::MAX in a special case because of overflow
-            let truncate_mask = if WORD_SIZE - suffix_length == 64 {
+            let truncate_mask = if WORD_SIZE - suffix_length >= 64 {
                 u64::MAX
             } else {
                 (1 << (WORD_SIZE - suffix_length)) - 1

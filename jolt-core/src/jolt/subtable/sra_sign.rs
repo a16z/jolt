@@ -47,7 +47,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // \sum_{k = 0}^{WORD_SIZE - 1} eq(y, bin(k)) * x_sign * \prod_{i = 0}^{k-1} 2^{WORD_SIZE - 1 - k},
+        // \sum_{k = 0}^{WORD_SIZE - 1} eq(y, bin(k)) * x_sign * \prod_{j = 0}^{k-1} 2^{WORD_SIZE - j - 1},
         // where x_sign = x_{b - 1 - (WORD_SIZE - 1) % b}
 
         // first half is chunk X_last
