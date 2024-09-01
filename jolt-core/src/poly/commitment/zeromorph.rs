@@ -270,6 +270,7 @@ where
         assert_eq!(remainder, *eval);
 
         // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
+        // TODO(sragss): Make this a batch MSM
         let q_k_com: Vec<P::G1Affine> = quotients
             .par_iter()
             .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())

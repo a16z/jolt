@@ -31,6 +31,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
                         msm_small(bases, scalars_u64, max_num_bits as usize)
                     }
+                    #[cfg(not(feature = "icicle"))]
                     11..=64 => {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
                         if Self::NEGATION_IS_CHEAP {
@@ -42,7 +43,8 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                     _ => {
                         #[cfg(feature = "icicle")]
                         {
-                            icicle_msm::<Self>(bases, scalars)
+                            let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
+                            icicle_msm::<Self>(&gpu_bases, scalars)
                         }
 
                         #[cfg(not(feature = "icicle"))]
@@ -62,6 +64,146 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
             })
             .ok_or_else(|| bases.len().min(scalars.len()))
     }
+
+    #[tracing::instrument(skip_all)]
+    fn batch_msm(bases: &[Self::MulBase], scalars: &[&[Self::ScalarField]]) -> Vec<Self> {
+        assert!(scalars.iter().all(|s| s.len() == scalars[0].len()));
+        assert_eq!(bases.len(), scalars[0].len());
+
+        #[cfg(feature = "icicle")]
+        let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
+
+        let slice_bit_size = 256 * scalars[0].len() * 3; 
+        let max_gpu_memory_bits = 4 * 1024 * 1024 * 1024 * 8; // 32GB in bits
+        let slices_at_a_time = max_gpu_memory_bits / slice_bit_size;
+
+        #[derive(Debug, Clone, Copy)]
+        enum MsmType {
+            Zero,
+            One,
+            Small,
+            Medium,
+            Large,
+        }
+
+        let mut telemetry = Vec::new();
+
+        for (i, scalar_slice) in scalars.iter().enumerate() {
+            let max_num_bits = scalar_slice
+                .par_iter()
+                .map(|s| s.into_bigint().num_bits())
+                .max()
+                .unwrap();
+
+            let msm_type = match max_num_bits {
+                0 => MsmType::Zero,
+                1 => MsmType::One,
+                2..=10 => MsmType::Small,
+                #[cfg(not(feature = "icicle"))]
+                11..=64 => MsmType::Medium,
+                _ => MsmType::Large,
+            };
+
+            telemetry.push((i, msm_type));
+        }
+
+        let mut results = vec![Self::zero(); scalars.len()];
+
+        let run_msm = |indices: Vec<usize>, msm_type: MsmType, results: &mut Vec<Self>| {
+            let partial_results: Vec<(usize, Self)> = match msm_type {
+                MsmType::Zero => indices.into_par_iter().map(|i| (i, Self::zero())).collect(),
+                MsmType::One => {
+                    indices.into_par_iter().map(|i| {
+                        let scalars = scalars[i];
+                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                        (i, msm_binary(bases, scalars_u64))
+                    }).collect()
+                }
+                MsmType::Small => {
+                    indices.into_par_iter().map(|i| {
+                        let scalars = scalars[i];
+                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                        (i, msm_small(bases, scalars_u64, 10))
+                    }).collect()
+                }
+                MsmType::Medium => {
+                    indices.into_par_iter().map(|i| {
+                        let scalars = scalars[i];
+                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                        let result = if Self::NEGATION_IS_CHEAP {
+                            msm_u64_wnaf(bases, scalars_u64, 64)
+                        } else {
+                            msm_u64(bases, scalars_u64, 64)
+                        };
+                        (i, result)
+                    }).collect()
+                }
+                MsmType::Large => {
+                    #[cfg(feature = "icicle")]
+                    {
+                        
+                        let scalar_batches: Vec<&[Self::ScalarField]> = indices.iter().map(|i| {
+                            scalars[*i]
+                        }).collect();
+
+                        let batch_results = icicle_batch_msm::<Self>(&gpu_bases, &scalar_batches);
+                        batch_results.into_iter().enumerate().map(|(batch_index, result)| (indices[batch_index], result)).collect()
+                    }
+
+                    #[cfg(not(feature = "icicle"))]
+                    {
+                        indices.into_par_iter().map(|i| {
+                            let scalars = scalars[i];
+                            let scalars = scalars
+                                .par_iter()
+                                .map(|s| s.into_bigint())
+                                .collect::<Vec<_>>();
+                            let result = if Self::NEGATION_IS_CHEAP {
+                                msm_bigint_wnaf(bases, &scalars, 256)
+                            } else {
+                                msm_bigint(bases, &scalars, 256)
+                            };
+                            (i, result)
+                        }).collect()
+                    }
+                }
+            };
+
+            for (i, result) in partial_results {
+                results[i] = result;
+            }
+        };
+
+        let mut zero_indices = Vec::new();
+        let mut one_indices = Vec::new();
+        let mut small_indices = Vec::new();
+        let mut medium_indices = Vec::new();
+        let mut large_indices = Vec::new();
+
+        for (i, msm_type) in telemetry {
+            match msm_type {
+                MsmType::Zero => zero_indices.push(i),
+                MsmType::One => one_indices.push(i),
+                MsmType::Small => small_indices.push(i),
+                MsmType::Medium => medium_indices.push(i),
+                MsmType::Large => large_indices.push(i),
+            }
+        }
+
+        run_msm(zero_indices, MsmType::Zero, &mut results);
+        run_msm(one_indices, MsmType::One, &mut results);
+        run_msm(small_indices, MsmType::Small, &mut results);
+
+        medium_indices.chunks(slices_at_a_time).for_each(|chunk| {
+            run_msm(chunk.to_vec(), MsmType::Medium, &mut results);
+        });
+
+        large_indices.chunks(slices_at_a_time).for_each(|chunk| {
+            run_msm(chunk.to_vec(), MsmType::Large, &mut results);
+        });
+
+        results
+    }
 }
 
 fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarField]) -> Vec<u64> {
@@ -77,7 +219,7 @@ fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarFiel
 
 // Compute msm using windowed non-adjacent form
 #[tracing::instrument(skip_all, name = "msm_bigint_wnaf")]
-#[cfg(not(feature = "icicle"))]
+// #[cfg(not(feature = "icicle"))]
 fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -138,7 +280,7 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 }
 
 /// Optimized implementation of multi-scalar multiplication.
-#[cfg(not(feature = "icicle"))]
+// #[cfg(not(feature = "icicle"))]
 fn msm_bigint<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -233,7 +375,7 @@ fn msm_bigint<V: VariableBaseMSM>(
 }
 
 // From: https://github.com/arkworks-rs/gemini/blob/main/src/kzg/msm/variable_base.rs#L20
-#[cfg(not(feature = "icicle"))]
+// #[cfg(not(feature = "icicle"))]
 fn make_digits_bigint(
     a: &impl BigInteger,
     w: usize,

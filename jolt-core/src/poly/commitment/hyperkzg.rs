@@ -325,11 +325,13 @@ where
         // Phase 1  -- create commitments com_1, ..., com_\ell
         // We do not compute final Pi (and its commitment) as it is constant and equals to 'eval'
         // also known to verifier, so can be derived on its side as well
+        let span = trace_span!("phase_1");
+        let _enter = span.enter();
         let mut polys: Vec<Vec<P::ScalarField>> = Vec::new();
         polys.push(poly.Z.to_vec());
         for i in 0..ell - 1 {
             let Pi_len = polys[i].len() / 2;
-            let mut Pi = vec![P::ScalarField::zero(); Pi_len];
+            let mut Pi = unsafe_allocate_zero_vec(Pi_len);
 
             #[allow(clippy::needless_range_loop)]
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
@@ -338,12 +340,15 @@ where
 
             polys.push(Pi);
         }
+        drop(_enter);
+        drop(span);
 
         assert_eq!(polys.len(), ell);
         assert_eq!(polys[ell - 1].len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
         // Compute commitments in parallel
+        // TODO(sragss): This could be done by batch too if it gets progressively smaller.
         let com: Vec<P::G1Affine> = (1..polys.len())
             .into_par_iter()
             .map(|i| {
@@ -524,10 +529,20 @@ where
     fn setup(shapes: &[CommitShape]) -> Self::Setup {
         let max_len = shapes.iter().map(|shape| shape.input_length).max().unwrap();
 
-        HyperKZGSRS(Arc::new(SRS::setup(
+        let srs = SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"HyperKZG_POLY_COMMITMENT_SCHEMEE"),
             max_len,
-        )))
+        );
+        // #[cfg(feature = "icicle")]
+        // {
+            // use icicle_core::traits::ArkConvertible;
+            // use icicle_bn254::curve::G1Projective as GPUG1;
+        // }
+
+        // let gpu_g1s: Vec<_> = srs.g1_powers.par_iter().map(|g1: &P::G1Affine| P::G1::from_ark_affine(g1)).collect();
+        // crate::msm::icicle::ICICLE_BASES.set(gpu_g1s);
+
+        HyperKZGSRS(Arc::new(srs))
         .trim(max_len)
     }
 
@@ -548,22 +563,12 @@ where
         gens: &Self::Setup,
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-        // TODO: assert lengths are valid
-        evals
-            .par_iter()
-            .map(|evals| {
-                assert!(
-                    gens.0.kzg_pk.g1_powers().len() > evals.len(),
-                    "COMMIT KEY LENGTH ERROR {}, {}",
-                    gens.0.kzg_pk.g1_powers().len(),
-                    evals.len()
-                );
-                HyperKZGCommitment(
-                    UnivariateKZG::commit(&gens.0.kzg_pk, &UniPoly::from_coeff(evals.to_vec()))
-                        .unwrap(),
-                )
-            })
-            .collect::<Vec<_>>()
+        assert!(evals.iter().all(|s| s.len() == evals[0].len()));
+
+        <P::G1 as VariableBaseMSM>::batch_msm(
+            &gens.0.kzg_pk.g1_powers()[..evals[0].len()],
+            evals
+        ).into_iter().map(|g1| HyperKZGCommitment(g1.into_affine())).collect()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
