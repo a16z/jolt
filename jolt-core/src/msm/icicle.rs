@@ -129,7 +129,7 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
 
     let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(bases.len()).unwrap();
 
-    let span = tracing::span!(tracing::Level::INFO, "convert_scalars");
+    let span = tracing::span!(tracing::Level::INFO, "copy_scalars");
     let _guard = span.enter();
 
     // Scalar slices are non-contiguous in host memory, but need to be contiguous in device memory
@@ -146,6 +146,7 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     bases_slice.copy_from_host_async(HostSlice::from_slice(&bases), &stream).unwrap();
     let mut msm_result = DeviceVec::<Projective<V::C>>::cuda_malloc(batch_size).unwrap();
     let mut cfg = MSMConfig::default();
+    // TODO(sragss): Try bit-size cfg
     cfg.ctx.stream = &stream;
     cfg.is_async = false;
     cfg.are_scalars_montgomery_form = true;
@@ -154,6 +155,7 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     let span = tracing::span!(tracing::Level::INFO, "msm");
     let _guard = span.enter();
 
+    stream.synchronize().unwrap();
     msm(&scalars_alloc[..], &bases_slice[..], &cfg, &mut msm_result[..]).unwrap();
 
     drop(_guard);

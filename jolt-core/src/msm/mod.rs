@@ -74,7 +74,8 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
 
         let slice_bit_size = 256 * scalars[0].len() * 3; 
-        let max_gpu_memory_bits = 4 * 1024 * 1024 * 1024 * 8; // 32GB in bits
+        let max_gpu_memory_gb = 5;
+        let max_gpu_memory_bits = max_gpu_memory_gb * 1024 * 1024 * 1024 * 8; 
         let slices_at_a_time = max_gpu_memory_bits / slice_bit_size;
 
         #[derive(Debug, Clone, Copy)]
@@ -194,13 +195,23 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         run_msm(one_indices, MsmType::One, &mut results);
         run_msm(small_indices, MsmType::Small, &mut results);
 
-        medium_indices.chunks(slices_at_a_time).for_each(|chunk| {
-            run_msm(chunk.to_vec(), MsmType::Medium, &mut results);
-        });
+        {
+            let span = tracing::span!(tracing::Level::INFO, "process_medium_indices");
+            let _guard = span.enter();
+            medium_indices.chunks(slices_at_a_time).for_each(|chunk| {
+                run_msm(chunk.to_vec(), MsmType::Medium, &mut results);
+            });
+            drop(_guard);
+        }
 
-        large_indices.chunks(slices_at_a_time).for_each(|chunk| {
-            run_msm(chunk.to_vec(), MsmType::Large, &mut results);
-        });
+        {
+            let span = tracing::span!(tracing::Level::INFO, "process_large_indices");
+            let _guard = span.enter();
+            large_indices.chunks(slices_at_a_time).for_each(|chunk| {
+                run_msm(chunk.to_vec(), MsmType::Large, &mut results);
+            });
+            drop(_guard);
+        }
 
         results
     }
