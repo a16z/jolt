@@ -270,12 +270,10 @@ where
         assert_eq!(remainder, *eval);
 
         // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
-        // TODO(sragss): Make this a batch MSM
-        let q_k_com: Vec<P::G1Affine> = quotients
-            .par_iter()
-            .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())
-            .collect();
-        let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
+        let quotient_slices: Vec<&[P::ScalarField]> = quotients.iter().map(|q| q.coeffs.as_slice()).collect();
+        let quotient_max_len = quotient_slices.iter().map(|s| s.len()).max().unwrap();
+        let q_comms: Vec<P::G1> = P::G1::variable_batch_msm(&pp.commit_pp.g1_powers()[..quotient_max_len], &quotient_slices);
+        let q_k_com: Vec<P::G1Affine> = q_comms.iter().map(|q| q.into_affine()).collect();
         q_comms.iter().for_each(|c| transcript.append_point(c));
 
         // Sample challenge y
@@ -509,22 +507,11 @@ where
         gens: &Self::Setup,
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-        // TODO: assert lengths are valid
-        evals
-            .par_iter()
-            .map(|evals| {
-                assert!(
-                    gens.0.commit_pp.g1_powers().len() > evals.len(),
-                    "COMMIT KEY LENGTH ERROR {}, {}",
-                    gens.0.commit_pp.g1_powers().len(),
-                    evals.len()
-                );
-                ZeromorphCommitment(
-                    UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
-                        .unwrap(),
-                )
-            })
-            .collect::<Vec<_>>()
+        let g1_powers_slice = &gens.0.commit_pp.g1_powers()[..evals[0].len()];
+        <P::G1 as VariableBaseMSM>::batch_msm(
+            g1_powers_slice,
+            evals
+        ).into_iter().map(|c| ZeromorphCommitment(c.into_affine())).collect()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {

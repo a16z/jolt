@@ -200,10 +200,11 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> HyraxCommitment<G> {
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
 
-        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
-        let row_commitments: Vec<G> = rows
-            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+        let rows: Vec<&[G::ScalarField]> = batch
+            .par_iter()
+            .flat_map(|poly| poly.par_chunks(R_size))
             .collect();
+        let row_commitments: Vec<G> = G::batch_msm(&gens, &rows);
 
         row_commitments
             .par_chunks(L_size)

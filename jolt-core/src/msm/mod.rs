@@ -12,6 +12,7 @@ impl<G: CurveGroup + Icicle> VariableBaseMSM for G {}
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
 pub trait VariableBaseMSM: ScalarMul + Icicle {
+    #[tracing::instrument(skip_all)]
     fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
         (bases.len() == scalars.len())
             .then(|| {
@@ -31,20 +32,28 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
                         msm_small(bases, scalars_u64, max_num_bits as usize)
                     }
-                    #[cfg(not(feature = "icicle"))]
                     11..=64 => {
-                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        if Self::NEGATION_IS_CHEAP {
-                            msm_u64_wnaf(bases, scalars_u64, max_num_bits as usize)
-                        } else {
-                            msm_u64(bases, scalars_u64, max_num_bits as usize)
+                        #[cfg(feature = "icicle")]
+                        {
+                            let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
+                            icicle_msm::<Self>(&gpu_bases, scalars, 64)
+                        }
+
+                        #[cfg(not(feature = "icicle"))] 
+                        {
+                            let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                            if Self::NEGATION_IS_CHEAP {
+                                msm_u64_wnaf(bases, scalars_u64, max_num_bits as usize)
+                            } else {
+                                msm_u64(bases, scalars_u64, max_num_bits as usize)
+                            }
                         }
                     }
                     _ => {
                         #[cfg(feature = "icicle")]
                         {
                             let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
-                            icicle_msm::<Self>(&gpu_bases, scalars)
+                            icicle_msm::<Self>(&gpu_bases, scalars, 256)
                         }
 
                         #[cfg(not(feature = "icicle"))]
@@ -74,6 +83,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
         let gpu_bases = bases.par_iter().map(|base| <Self as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
 
         let slice_bit_size = 256 * scalars[0].len() * 3; 
+        // TODO(sragss): Get this info from the device.
         let max_gpu_memory_gb = 30;
         let max_gpu_memory_bits = max_gpu_memory_gb * 1024 * 1024 * 1024 * 8; 
         let slices_at_a_time = max_gpu_memory_bits / slice_bit_size;
@@ -255,7 +265,7 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
             scalar_batches
                 .par_iter()
                 .map(|scalars| {
-                    Self::msm(bases, scalars).unwrap()
+                    Self::msm(&bases[0..scalars.len()], scalars).unwrap()
                 })
                 .collect()
         }

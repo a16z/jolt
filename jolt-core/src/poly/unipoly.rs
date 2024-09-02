@@ -76,11 +76,9 @@ impl<F: JoltField> UniPoly<F> {
                 let cur_q_degree = remainder.degree() - divisor.degree();
                 quotient[cur_q_degree] = cur_q_coeff;
 
-                remainder.coeffs.par_iter_mut().enumerate().for_each(|(i, rem_coeff)| {
-                    if i >= cur_q_degree && i < cur_q_degree + divisor.coeffs.len() {
-                        *rem_coeff -= cur_q_coeff * divisor.coeffs[i - cur_q_degree];
-                    }
-                });
+                for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
+                    remainder.coeffs[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
+                }
 
                 while let Some(true) = remainder.coeffs.last().map(|c| c == &F::zero()) {
                     remainder.coeffs.pop();

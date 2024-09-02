@@ -12,8 +12,7 @@ use icicle_cuda_runtime::{
     memory::{DeviceVec, HostSlice},
     stream::CudaStream,
 };
-use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelRefIterator;
+use rayon::prelude::*;
 
 use crate::msm::VariableBaseMSM;
 
@@ -67,14 +66,9 @@ pub trait Icicle: ScalarMul {
 pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     bases: &[Affine<V::C>],
     scalars: &[V::ScalarField],
+    bit_size: i32 
 ) -> V {
-    // let span = tracing::span!(tracing::Level::INFO, "convert_bases");
-    // let _guard = span.enter();
-
-    // let bases = bases.par_iter().map(|base| V::from_ark_affine(base)).collect::<Vec<_>>();
     let mut bases_slice = DeviceVec::<Affine<V::C>>::cuda_malloc(bases.len()).unwrap();
-    // drop(_guard);
-    // drop(span);
 
     let span = tracing::span!(tracing::Level::INFO, "convert_scalars");
     let _guard = span.enter();
@@ -93,6 +87,7 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     cfg.ctx.stream = &stream;
     cfg.is_async = false;
     cfg.are_scalars_montgomery_form = true;
+    cfg.bitsize = bit_size;
 
     let span = tracing::span!(tracing::Level::INFO, "msm");
     let _guard = span.enter();
@@ -136,6 +131,8 @@ pub fn icicle_batch_msm<V: VariableBaseMSM + Icicle>(
     let mut msm_host_results = vec![Projective::<V::C>::zero(); batch_size];
 
     for (batch_i, scalars) in scalar_batches.iter().enumerate() {
+        let span = tracing::span!(tracing::Level::INFO, "msm_gpu");
+        let _guard = span.enter();
         let mut scalars_slice = DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::cuda_malloc_async(len, &stream).unwrap();
         let scalars_mont = unsafe { &*(&scalars[..] as *const _ as *const [<<V as Icicle>::C as Curve>::ScalarField]) };
         scalars_slice.copy_from_host_async(&HostSlice::from_slice(&scalars_mont), &stream).unwrap();
