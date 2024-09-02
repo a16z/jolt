@@ -226,7 +226,7 @@ mod tests {
                     .collect();
 
                 let gpu_bases = bases.par_iter().map(|base| <G1Projective as Icicle>::from_ark_affine(base)).collect::<Vec<_>>();
-                let icicle_res = icicle_msm::<G1Projective>(&gpu_bases, &scalars);
+                let icicle_res = icicle_msm::<G1Projective>(&gpu_bases, &scalars, 256);
                 let arkworks_res: G1Projective =
                     ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
                 let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
