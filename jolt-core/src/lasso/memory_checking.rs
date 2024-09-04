@@ -71,7 +71,7 @@ impl<F: JoltField, PolynomialId: Sync> MemoryCheckingWitness<F, PolynomialId>
     fn get_poly(&self, id: PolynomialId) -> &DensePolynomial<F> {
         match self.get(&id) {
             Some(poly) => poly,
-            None => panic!("Unexpected PolynomialId {:?}", id),
+            None => panic!("Unexpected key {:?}", id),
         }
     }
 }
@@ -114,7 +114,13 @@ where
             r_init_final,
         ) = Self::prove_grand_products(preprocessing, witness, transcript, pcs_setup);
 
-        let openings = Self::openings(opening_accumulator, witness, &r_read_write, &r_init_final);
+        let openings = Self::openings(
+            preprocessing,
+            opening_accumulator,
+            witness,
+            &r_read_write,
+            &r_init_final,
+        );
 
         MemoryCheckingProof {
             multiset_hashes,
@@ -173,10 +179,11 @@ where
         )
     }
 
-    fn read_write_openings() -> Vec<PolynomialId>;
-    fn init_final_openings() -> Vec<PolynomialId>;
+    fn read_write_openings(preprocessing: &Self::Preprocessing) -> Vec<PolynomialId>;
+    fn init_final_openings(preprocessing: &Self::Preprocessing) -> Vec<PolynomialId>;
 
     fn openings<'a>(
+        preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         witness: &'a Self::Witness,
         r_read_write: &[F],
@@ -185,20 +192,24 @@ where
         let mut openings = BTreeMap::new();
 
         let eq_read_write = EqPolynomial::evals(r_read_write);
-        Self::read_write_openings().par_iter().for_each(|poly_id| {
-            let poly = witness.get_poly(poly_id);
-            let claim = poly.evaluate_at_chi(&eq_read_write);
-            opening_accumulator.append(poly, r_read_write.to_vec(), claim);
-            openings.insert(poly_id, claim);
-        });
+        Self::read_write_openings(preprocessing)
+            .par_iter()
+            .for_each(|poly_id| {
+                let poly = witness.get_poly(poly_id);
+                let claim = poly.evaluate_at_chi(&eq_read_write);
+                opening_accumulator.append(poly, r_read_write.to_vec(), claim);
+                openings.insert(poly_id, claim);
+            });
 
         let eq_init_final = EqPolynomial::evals(r_init_final);
-        Self::init_final_openings().par_iter().for_each(|poly_id| {
-            let poly = witness.get_poly(poly_id);
-            let claim = poly.evaluate_at_chi(&eq_init_final);
-            opening_accumulator.append(poly, r_init_final.to_vec(), claim);
-            openings.insert(poly_id, claim);
-        });
+        Self::init_final_openings(preprocessing)
+            .par_iter()
+            .for_each(|poly_id| {
+                let poly = witness.get_poly(poly_id);
+                let claim = poly.evaluate_at_chi(&eq_init_final);
+                opening_accumulator.append(poly, r_init_final.to_vec(), claim);
+                openings.insert(poly_id, claim);
+            });
 
         openings
     }
@@ -320,18 +331,18 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait MemoryCheckingVerifier<F, C, PolynomialId>:
-    MemoryCheckingProver<F, C, PolynomialId>
+pub trait MemoryCheckingVerifier<F, PCS, PolynomialId>:
+    MemoryCheckingProver<F, PCS, PolynomialId>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     PolynomialId: Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
-        generators: &C::Setup,
-        mut proof: MemoryCheckingProof<F, C, PolynomialId>,
+        generators: &PCS::Setup,
+        mut proof: MemoryCheckingProof<F, PCS, PolynomialId>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
@@ -392,7 +403,7 @@ where
     /// instead can be efficiently computed by the verifier by itself. This function populates
     /// any such fields in `self`.
     fn compute_verifier_openings(
-        _proof: &mut MemoryCheckingProof<F, C, PolynomialId>,
+        _proof: &mut MemoryCheckingProof<F, PCS, PolynomialId>,
         _preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
         _r_init_final: &[F],

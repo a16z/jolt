@@ -462,7 +462,7 @@ where
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]
     type MemoryTuple = [F; 8];
 
-    fn read_write_openings() -> Vec<BytecodePolynomialId> {
+    fn read_write_openings(_: &Self::Preprocessing) -> Vec<BytecodePolynomialId> {
         vec![
             BytecodePolynomialId::AReadWrite,
             BytecodePolynomialId::ElfAddressReadWrite,
@@ -474,7 +474,7 @@ where
             BytecodePolynomialId::TRead,
         ]
     }
-    fn init_final_openings() -> Vec<BytecodePolynomialId> {
+    fn init_final_openings(_: &Self::Preprocessing) -> Vec<BytecodePolynomialId> {
         vec![BytecodePolynomialId::TFinal]
     }
 
@@ -491,13 +491,11 @@ where
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]
     fn compute_leaves(
         preprocessing: &BytecodePreprocessing<F>,
-        polynomials: &BTreeMap<BytecodePolynomialId, DensePolynomial<F>>,
+        witness: &Self::Witness,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-        let num_ops = polynomials
-            .get_poly(&BytecodePolynomialId::AReadWrite)
-            .len();
+        let num_ops = witness.get_poly(&BytecodePolynomialId::AReadWrite).len();
         let bytecode_size = preprocessing
             .v_init_final
             .get_poly(&BytecodePolynomialId::ElfAddressInitFinal)
@@ -508,14 +506,14 @@ where
             .map(|i| {
                 Self::fingerprint(
                     &[
-                        polynomials.get_poly(&BytecodePolynomialId::AReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::ElfAddressReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::BitflagsReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::RdReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::Rs1ReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::Rs2ReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::ImmReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::TRead)[i],
+                        witness.get_poly(&BytecodePolynomialId::AReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::ElfAddressReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::BitflagsReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::RdReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::Rs1ReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::Rs2ReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::ImmReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::TRead)[i],
                     ],
                     gamma,
                     tau,
@@ -561,14 +559,14 @@ where
             .map(|i| {
                 Self::fingerprint(
                     &[
-                        polynomials.get_poly(&BytecodePolynomialId::AReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::ElfAddressReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::BitflagsReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::RdReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::Rs1ReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::Rs2ReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::ImmReadWrite)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::TRead)[i] + F::one(),
+                        witness.get_poly(&BytecodePolynomialId::AReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::ElfAddressReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::BitflagsReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::RdReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::Rs1ReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::Rs2ReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::ImmReadWrite)[i],
+                        witness.get_poly(&BytecodePolynomialId::TRead)[i] + F::one(),
                     ],
                     gamma,
                     tau,
@@ -601,7 +599,7 @@ where
                         preprocessing
                             .v_init_final
                             .get_poly(&BytecodePolynomialId::ImmInitFinal)[i],
-                        polynomials.get_poly(&BytecodePolynomialId::TFinal)[i],
+                        witness.get_poly(&BytecodePolynomialId::TFinal)[i],
                     ],
                     gamma,
                     tau,
