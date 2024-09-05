@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use crate::field::JoltField;
 use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -89,7 +89,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &'a JoltPolynomials<F, PCS>,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();

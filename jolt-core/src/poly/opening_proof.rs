@@ -13,17 +13,24 @@ use super::{
     unipoly::{CompressedUniPoly, UniPoly},
 };
 
-pub struct PolynomialOpening<'a, F: JoltField> {
+pub struct ProverOpening<'a, F: JoltField> {
     pub polynomial: &'a DensePolynomial<F>,
     pub opening_point: Vec<F>,
     pub claim: F,
     pub num_sumcheck_rounds: usize,
 }
 
-impl<'a, F: JoltField> PolynomialOpening<'a, F> {
+pub struct VerifierOpening<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    pub commitment: &'a PCS::Commitment,
+    pub opening_point: Vec<F>,
+    pub claim: F,
+    pub num_sumcheck_rounds: usize,
+}
+
+impl<'a, F: JoltField> ProverOpening<'a, F> {
     fn new(polynomial: &'a DensePolynomial<F>, opening_point: Vec<F>, claim: F) -> Self {
         let num_sumcheck_rounds = polynomial.get_num_vars();
-        PolynomialOpening {
+        ProverOpening {
             polynomial,
             opening_point,
             claim,
@@ -32,11 +39,27 @@ impl<'a, F: JoltField> PolynomialOpening<'a, F> {
     }
 }
 
-pub struct PolynomialOpeningAccumulator<'a, F: JoltField> {
-    openings: Vec<PolynomialOpening<'a, F>>,
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<'a, F, PCS> {
+    fn new(commitment: &'a PCS::Commitment, opening_point: Vec<F>, claim: F) -> Self {
+        let num_sumcheck_rounds = opening_point.len();
+        VerifierOpening {
+            commitment,
+            opening_point,
+            claim,
+            num_sumcheck_rounds,
+        }
+    }
 }
 
-impl<'a, F: JoltField> PolynomialOpeningAccumulator<'a, F> {
+pub struct ProverOpeningAccumulator<'a, F: JoltField> {
+    openings: Vec<ProverOpening<'a, F>>,
+}
+
+pub struct VerifierOpeningAccumulator<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    openings: Vec<VerifierOpening<'a, F, PCS>>,
+}
+
+impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
     pub fn new() -> Self {
         Self { openings: vec![] }
     }
@@ -47,17 +70,14 @@ impl<'a, F: JoltField> PolynomialOpeningAccumulator<'a, F> {
 
     pub fn append(&mut self, polynomial: &'a DensePolynomial<F>, opening_point: Vec<F>, claim: F) {
         self.openings
-            .push(PolynomialOpening::new(polynomial, opening_point, claim));
+            .push(ProverOpening::new(polynomial, opening_point, claim));
     }
 
-    pub fn par_extend<I: IntoParallelIterator<Item = PolynomialOpening<'a, F>>>(
-        &mut self,
-        iter: I,
-    ) {
+    pub fn par_extend<I: IntoParallelIterator<Item = ProverOpening<'a, F>>>(&mut self, iter: I) {
         self.openings.par_extend(iter);
     }
 
-    #[tracing::instrument(skip_all, name = "PolynomialOpeningAccumulator::reduce_and_prove")]
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<PCS: CommitmentScheme<Field = F>>(
         &self,
         pcs_setup: &PCS::Setup,
@@ -282,5 +302,37 @@ impl<'a, F: JoltField> PolynomialOpeningAccumulator<'a, F> {
                     };
                 }
             });
+    }
+}
+
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<'a, F, PCS> {
+    pub fn new() -> Self {
+        Self { openings: vec![] }
+    }
+
+    pub fn len(&self) -> usize {
+        self.openings.len()
+    }
+
+    pub fn append(&mut self, commitment: &'a PCS::Commitment, opening_point: Vec<F>, claim: F) {
+        self.openings
+            .push(VerifierOpening::new(commitment, opening_point, claim));
+    }
+
+    pub fn par_extend<I: IntoParallelIterator<Item = VerifierOpening<'a, F, PCS>>>(
+        &mut self,
+        iter: I,
+    ) {
+        self.openings.par_extend(iter);
+    }
+
+    pub fn reduce_and_verify(
+        &self,
+        pcs_setup: &PCS::Setup,
+        reduction_sumcheck_proof: SumcheckInstanceProof<F>,
+        reduced_opening_proof: PCS::Proof,
+        transcript: &mut ProofTranscript,
+    ) {
+        todo!();
     }
 }

@@ -1,7 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -431,8 +431,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         jolt_commitments.append_to_transcript(&mut transcript);
 
-        let mut opening_accumulator: PolynomialOpeningAccumulator<'_, F> =
-            PolynomialOpeningAccumulator::new();
+        let mut opening_accumulator: ProverOpeningAccumulator<'_, F> =
+            ProverOpeningAccumulator::new();
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.generators,
@@ -516,11 +516,15 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         commitments.append_to_transcript(&mut transcript);
 
+        let mut opening_accumulator: VerifierOpeningAccumulator<'_, F, PCS> =
+            VerifierOpeningAccumulator::new();
+
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,
             proof.bytecode,
             &commitments.bytecode,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
         Self::verify_instruction_lookups(
@@ -528,6 +532,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.generators,
             proof.instruction_lookups,
             &commitments.instruction_lookups,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
         Self::verify_memory(
@@ -536,31 +541,34 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             proof.read_write_memory,
             &commitments,
             proof.program_io,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
-        Self::verify_r1cs(proof.r1cs, &mut transcript)?;
+        Self::verify_r1cs(proof.r1cs, &mut opening_accumulator, &mut transcript)?;
 
         todo!("verify batched opening");
         Ok(())
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_instruction_lookups(
+    fn verify_instruction_lookups<'a>(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         generators: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
-        commitment: &InstructionCommitment<PCS>,
+        commitment: &'a InstructionCommitment<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_bytecode(
+    fn verify_bytecode<'a>(
         preprocessing: &BytecodePreprocessing<F>,
         generators: &PCS::Setup,
         proof: BytecodeProof<F, PCS>,
-        commitment: &BytecodeCommitment<PCS>,
+        commitment: &'a BytecodeCommitment<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
@@ -568,17 +576,19 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             generators,
             proof,
             commitment,
+            opening_accumulator,
             transcript,
         )
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_memory(
+    fn verify_memory<'a>(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PCS::Setup,
         proof: ReadWriteMemoryProof<F, PCS>,
-        commitment: &JoltCommitments<PCS>,
+        commitment: &'a JoltCommitments<PCS>,
         program_io: JoltDevice,
+        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
@@ -589,8 +599,9 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_r1cs(
+    fn verify_r1cs<'a>(
         proof: R1CSProof<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof

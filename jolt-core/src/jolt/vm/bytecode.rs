@@ -723,7 +723,7 @@ where
 mod tests {
     use crate::{
         jolt::vm::rv32i_vm::RV32I,
-        poly::{commitment::hyrax::HyraxScheme, opening_proof::PolynomialOpeningAccumulator},
+        poly::{commitment::hyrax::HyraxScheme, opening_proof::ProverOpeningAccumulator},
     };
 
     use super::*;
@@ -833,7 +833,7 @@ mod tests {
 
         let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
         let commitments = polys.commit(&generators);
-        let mut opening_accumulator = PolynomialOpeningAccumulator::new();
+        let mut opening_accumulator = ProverOpeningAccumulator::new();
         let proof = BytecodeProof::prove_memory_checking(
             &generators,
             &preprocessing,
@@ -902,7 +902,7 @@ mod tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
-        let mut opening_accumulator = PolynomialOpeningAccumulator::new();
+        let mut opening_accumulator = ProverOpeningAccumulator::new();
         let proof = BytecodeProof::prove_memory_checking(
             &generators,
             &preprocessing,

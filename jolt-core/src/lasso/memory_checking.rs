@@ -3,7 +3,7 @@
 
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
@@ -103,7 +103,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
         witness: &'a Self::Witness,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, PCS, PolynomialId> {
         let (
@@ -184,7 +184,7 @@ where
 
     fn compute_openings<'a>(
         preprocessing: &Self::Preprocessing,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         witness: &'a Self::Witness,
         r_read_write: &[F],
         r_init_final: &[F],
@@ -339,10 +339,12 @@ where
     PolynomialId: Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
-    fn verify_memory_checking(
+    fn verify_memory_checking<'a>(
         preprocessing: &Self::Preprocessing,
-        generators: &PCS::Setup,
+        pcs_setup: &PCS::Setup,
         mut proof: MemoryCheckingProof<F, PCS, PolynomialId>,
+        commitments: &BTreeMap<PolynomialId, PCS::Commitment>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
@@ -361,14 +363,33 @@ where
             &proof.read_write_grand_product,
             &read_write_hashes,
             transcript,
-            Some(generators),
+            Some(pcs_setup),
         );
         let (claims_init_final, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
             &proof.init_final_grand_product,
             &init_final_hashes,
             transcript,
-            Some(generators),
+            Some(pcs_setup),
         );
+
+        Self::read_write_openings(preprocessing)
+            .par_iter()
+            .for_each(|poly_id| {
+                opening_accumulator.append(
+                    commitments.get(poly_id).unwrap(),
+                    r_read_write.to_vec(),
+                    proof.openings.get(poly_id).unwrap(),
+                );
+            });
+        Self::init_final_openings(preprocessing)
+            .par_iter()
+            .for_each(|poly_id| {
+                opening_accumulator.append(
+                    commitments.get(poly_id).unwrap(),
+                    r_init_final.to_vec(),
+                    proof.openings.get(poly_id).unwrap(),
+                );
+            });
 
         // proof.read_write_openings.verify_openings(
         //     generators,

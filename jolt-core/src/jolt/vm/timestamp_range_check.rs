@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::lasso::memory_checking::MemoryCheckingWitness;
-use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
@@ -228,7 +228,7 @@ where
         _: &PCS::Setup,
         _: &NoPreprocessing,
         _witness: &Self::Witness,
-        _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F>,
         _transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, PCS, TimestampRangeCheckPolynomialId> {
         unimplemented!("Use TimestampValidityProof::prove instead");
@@ -575,7 +575,7 @@ where
         generators: &PCS::Setup,
         witness: &'a TimestampRangeCheckWitness<F>,
         t_read_polynomials: &'a [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =

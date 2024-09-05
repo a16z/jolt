@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use itertools::izip;
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -20,7 +20,6 @@ use crate::{
     },
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
-        structured_poly::StructuredOpeningProof,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
@@ -1255,7 +1254,7 @@ where
     type MemoryTuple = (F, F, F);
 
     fn read_write_openings<'a>(
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         polynomials: &'a JoltPolynomials<F, C>,
         opening_point: &[F],
     ) {
@@ -1285,7 +1284,7 @@ where
     }
 
     fn init_final_openings<'a>(
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         polynomials: &'a JoltPolynomials<F, C>,
         opening_point: &[F],
     ) {
@@ -1560,7 +1559,7 @@ where
         generators: &C::Setup,
         polynomials: &'a ReadWriteMemory<F, C>,
         program_io: &JoltDevice,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let num_rounds = polynomials.memory_size.log_2();
@@ -1748,7 +1747,7 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &'a JoltPolynomials<F, C>,
         program_io: &JoltDevice,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(

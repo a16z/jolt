@@ -1,4 +1,4 @@
-use crate::poly::opening_proof::PolynomialOpeningAccumulator;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
@@ -559,7 +559,7 @@ where
         generators: &PCS::Setup,
         witness: &'a InstructionWitness<F>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
         transcript.append_protocol_name(Self::protocol_name());
