@@ -114,7 +114,7 @@ where
             r_init_final,
         ) = Self::prove_grand_products(preprocessing, witness, transcript, pcs_setup);
 
-        let openings = Self::openings(
+        let openings = Self::compute_openings(
             preprocessing,
             opening_accumulator,
             witness,
@@ -182,7 +182,7 @@ where
     fn read_write_openings(preprocessing: &Self::Preprocessing) -> Vec<PolynomialId>;
     fn init_final_openings(preprocessing: &Self::Preprocessing) -> Vec<PolynomialId>;
 
-    fn openings<'a>(
+    fn compute_openings<'a>(
         preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         witness: &'a Self::Witness,

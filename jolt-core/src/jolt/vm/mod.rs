@@ -23,7 +23,6 @@ use crate::jolt::{
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;

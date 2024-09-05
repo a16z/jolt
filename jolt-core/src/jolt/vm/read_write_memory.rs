@@ -1732,13 +1732,7 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
-    pub memory_checking_proof: MemoryCheckingProof<
-        F,
-        C,
-        JoltPolynomials<F, C>,
-        MemoryReadWriteOpenings<F, C>,
-        MemoryInitFinalOpenings<F>,
-    >,
+    pub memory_checking_proof: MemoryCheckingProof<F, C, JoltPolynomials<F, C>>,
     pub timestamp_validity_proof: TimestampValidityProof<F, C>,
     pub output_proof: OutputSumcheckProof<F, C>,
 }

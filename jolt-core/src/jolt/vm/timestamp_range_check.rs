@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::lasso::memory_checking::MemoryCheckingWitness;
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
@@ -11,9 +12,11 @@ use itertools::interleave;
 use rayon::iter::{
     IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
 };
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
-use std::{iter::zip, marker::PhantomData};
+use std::iter::zip;
+use strum_macros::EnumIter;
 
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
@@ -23,35 +26,38 @@ use crate::{
         NoPreprocessing,
     },
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        structured_poly::{StructuredCommitment, StructuredOpeningProof},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
     utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-use super::read_write_memory::MemoryCommitment;
-
-pub struct RangeCheckPolynomials<F, C>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
-    _group: PhantomData<C>,
-    pub read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
-    pub read_cts_read_timestamp: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-    pub read_cts_global_minus_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-    pub final_cts_read_timestamp: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-    pub final_cts_global_minus_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumIter)]
+pub enum TimestampRangeCheckPolynomialId {
+    ReadCtsReadTimestamp(usize),
+    ReadCtsGlobalMinusRead(usize),
+    FinalCtsReadTimestamp(usize),
+    FinalCtsGlobalMinusRead(usize),
+    Identity,
 }
 
-impl<F, C> RangeCheckPolynomials<F, C>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
+pub struct TimestampRangeCheckWitness<F: JoltField> {
+    pub polynomials: BTreeMap<TimestampRangeCheckPolynomialId, DensePolynomial<F>>,
+    pub read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
+}
+
+impl<F: JoltField> MemoryCheckingWitness<F, TimestampRangeCheckPolynomialId>
+    for TimestampRangeCheckWitness<F>
 {
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::new")]
+    fn get_poly(&self, id: TimestampRangeCheckPolynomialId) -> &DensePolynomial<F> {
+        match self.polynomials.get(&id) {
+            Some(poly) => poly,
+            None => panic!("Unexpected key {:?}", id),
+        }
+    }
+}
+
+impl<F: JoltField> TimestampRangeCheckWitness<F> {
+    #[tracing::instrument(skip_all, name = "TimestampRangeCheckWitness::new")]
     pub fn new(read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) -> Self {
         let M = read_timestamps[0].len();
 
@@ -134,73 +140,51 @@ where
         let read_cts_read_timestamp = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[0]))
-            .collect::<Vec<DensePolynomial<F>>>()
-            .try_into()
-            .unwrap();
+            .collect::<Vec<DensePolynomial<F>>>();
         let read_cts_global_minus_read = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[1]))
-            .collect::<Vec<DensePolynomial<F>>>()
-            .try_into()
-            .unwrap();
+            .collect::<Vec<DensePolynomial<F>>>();
         let final_cts_read_timestamp = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[2]))
-            .collect::<Vec<DensePolynomial<F>>>()
-            .try_into()
-            .unwrap();
+            .collect::<Vec<DensePolynomial<F>>>();
         let final_cts_global_minus_read = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[3]))
-            .collect::<Vec<DensePolynomial<F>>>()
-            .try_into()
-            .unwrap();
+            .collect::<Vec<DensePolynomial<F>>>();
+
+        let mut polynomials = BTreeMap::new();
+        for (i, poly) in read_cts_read_timestamp.iter().enumerate() {
+            polynomials.insert(
+                TimestampRangeCheckPolynomialId::ReadCtsReadTimestamp(i),
+                poly,
+            );
+        }
+        for (i, poly) in read_cts_global_minus_read.iter().enumerate() {
+            polynomials.insert(
+                TimestampRangeCheckPolynomialId::ReadCtsGlobalMinusRead(i),
+                poly,
+            );
+        }
+        for (i, poly) in final_cts_read_timestamp.iter().enumerate() {
+            polynomials.insert(
+                TimestampRangeCheckPolynomialId::FinalCtsReadTimestamp(i),
+                poly,
+            );
+        }
+
+        for (i, poly) in final_cts_global_minus_read.iter().enumerate() {
+            polynomials.insert(
+                TimestampRangeCheckPolynomialId::FinalCtsGlobalMinusRead(i),
+                poly,
+            );
+        }
 
         Self {
-            _group: PhantomData,
             read_timestamps,
-            read_cts_read_timestamp,
-            read_cts_global_minus_read,
-            final_cts_read_timestamp,
-            final_cts_global_minus_read,
+            polynomials,
         }
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct RangeCheckCommitment<C: CommitmentScheme> {
-    pub(super) commitments: Vec<C::Commitment>,
-}
-
-impl<C: CommitmentScheme> AppendToTranscript for RangeCheckCommitment<C> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"RangeCheckCommitment_begin");
-        for commitment in &self.commitments {
-            commitment.append_to_transcript(transcript);
-        }
-        transcript.append_message(b"RangeCheckCommitment_end");
-    }
-}
-
-impl<F, C> StructuredCommitment<C> for RangeCheckPolynomials<F, C>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
-    type Commitment = RangeCheckCommitment<C>;
-
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(&self, generators: &C::Setup) -> Self::Commitment {
-        let polys: Vec<&DensePolynomial<F>> = self
-            .read_cts_read_timestamp
-            .iter()
-            .chain(self.read_cts_global_minus_read.iter())
-            .chain(self.final_cts_read_timestamp.iter())
-            .chain(self.final_cts_global_minus_read.iter())
-            .collect();
-        let commitments = C::batch_commit_polys_ref(&polys, generators, BatchType::Big);
-
-        Self::Commitment { commitments }
     }
 }
 
@@ -218,84 +202,35 @@ where
     identity_poly_opening: Option<F>,
 }
 
-impl<F, C> StructuredOpeningProof<F, C, RangeCheckPolynomials<F, C>> for RangeCheckOpenings<F, C>
+impl<F, PCS> MemoryCheckingProver<F, PCS, TimestampRangeCheckPolynomialId>
+    for TimestampValidityProof<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    type Proof = C::BatchedProof;
-
-    fn open(_polynomials: &RangeCheckPolynomials<F, C>, _opening_point: &[F]) -> Self {
-        unimplemented!("Openings are computed in TimestampValidityProof::prove");
-    }
-
-    fn prove_openings(
-        _generators: &C::Setup,
-        _polynomials: &RangeCheckPolynomials<F, C>,
-        _opening_point: &[F],
-        _openings: &RangeCheckOpenings<F, C>,
-        _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        unimplemented!("Openings are proved in TimestampValidityProof::prove")
-    }
-
-    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &[F]) {
-        self.identity_poly_opening =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-    }
-
-    fn verify_openings(
-        &self,
-        _generators: &C::Setup,
-        _opening_proof: &Self::Proof,
-        _commitment: &RangeCheckCommitment<C>,
-        _opening_point: &[F],
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        unimplemented!("Openings are verified in TimestampValidityProof::verify");
-    }
-}
-
-impl<F, C> MemoryCheckingProver<F, C, RangeCheckPolynomials<F, C>> for TimestampValidityProof<F, C>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
+    type Witness = TimestampRangeCheckWitness<F>;
     // Init/final grand products are batched together with read/write grand products
     type InitFinalGrandProduct = NoopGrandProduct;
 
-    type ReadWriteOpenings = RangeCheckOpenings<F, C>;
-    type InitFinalOpenings = RangeCheckOpenings<F, C>;
-
-    fn init_final_openings(
-        _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
-        _polynomials: &RangeCheckPolynomials<F, C>,
-        _opening_point: &[F],
-    ) {
+    fn read_write_openings(
+        preprocessing: &Self::Preprocessing,
+    ) -> Vec<TimestampRangeCheckPolynomialId> {
         unimplemented!("");
     }
 
-    fn read_write_openings(
-        _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
-        _polynomials: &RangeCheckPolynomials<F, C>,
-        _opening_point: &[F],
-    ) {
+    fn init_final_openings(
+        preprocessing: &Self::Preprocessing,
+    ) -> Vec<TimestampRangeCheckPolynomialId> {
         unimplemented!("");
     }
 
     fn prove_memory_checking(
-        _generators: &C::Setup,
+        _: &PCS::Setup,
         _: &NoPreprocessing,
-        _polynomials: &RangeCheckPolynomials<F, C>,
+        _witness: &Self::Witness,
         _opening_accumulator: &mut PolynomialOpeningAccumulator<F>,
         _transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<
-        F,
-        C,
-        RangeCheckPolynomials<F, C>,
-        Self::ReadWriteOpenings,
-        Self::InitFinalOpenings,
-    > {
+    ) -> MemoryCheckingProof<F, PCS, TimestampRangeCheckPolynomialId> {
         unimplemented!("Use TimestampValidityProof::prove instead");
     }
 
@@ -314,7 +249,7 @@ where
     /// from this `compute_leaves` function.
     fn compute_leaves(
         _: &NoPreprocessing,
-        polynomials: &RangeCheckPolynomials<F, C>,
+        polynomials: &Self::Witness,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, ()) {
@@ -475,23 +410,28 @@ where
     }
 }
 
-impl<F, C> MemoryCheckingVerifier<F, C, RangeCheckPolynomials<F, C>>
-    for TimestampValidityProof<F, C>
+impl<F, PCS> MemoryCheckingVerifier<F, PCS, TimestampRangeCheckPolynomialId>
+    for TimestampValidityProof<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
+    fn compute_verifier_openings(
+        proof: &mut MemoryCheckingProof<F, PCS, TimestampRangeCheckPolynomialId>,
+        _: &NoPreprocessing,
+        r: &[F],
+        _: &[F],
+    ) {
+        proof.openings.insert(
+            TimestampRangeCheckPolynomialId::Identity,
+            IdentityPolynomial::new(r.len()).evaluate(r),
+        );
+    }
+
     fn verify_memory_checking(
         _: &NoPreprocessing,
-        _: &C::Setup,
-        mut _proof: MemoryCheckingProof<
-            F,
-            C,
-            RangeCheckPolynomials<F, C>,
-            Self::ReadWriteOpenings,
-            Self::InitFinalOpenings,
-        >,
-        _commitments: &RangeCheckCommitment<C>,
+        _: &PCS::Setup,
+        mut _proof: MemoryCheckingProof<F, PCS, TimestampRangeCheckPolynomialId>,
         _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Use TimestampValidityProof::verify instead");
@@ -499,7 +439,7 @@ where
 
     fn read_tuples(
         _: &NoPreprocessing,
-        openings: &Self::ReadWriteOpenings,
+        openings: &BTreeMap<TimestampRangeCheckPolynomialId, F>,
     ) -> Vec<Self::MemoryTuple> {
         let t_read_openings = openings.memory_t_read;
 
@@ -523,7 +463,7 @@ where
 
     fn write_tuples(
         _: &NoPreprocessing,
-        openings: &Self::ReadWriteOpenings,
+        openings: &BTreeMap<TimestampRangeCheckPolynomialId, F>,
     ) -> Vec<Self::MemoryTuple> {
         let t_read_openings = openings.memory_t_read;
 
@@ -547,7 +487,7 @@ where
 
     fn init_tuples(
         _: &NoPreprocessing,
-        openings: &Self::InitFinalOpenings,
+        openings: &BTreeMap<TimestampRangeCheckPolynomialId, F>,
     ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.identity_poly_opening.unwrap(),
@@ -558,7 +498,7 @@ where
 
     fn final_tuples(
         _: &NoPreprocessing,
-        openings: &Self::InitFinalOpenings,
+        openings: &BTreeMap<TimestampRangeCheckPolynomialId, F>,
     ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .flat_map(|i| {
@@ -615,39 +555,38 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct TimestampValidityProof<F, C>
+pub struct TimestampValidityProof<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     multiset_hashes: MultisetHashes<F>,
-    openings: RangeCheckOpenings<F, C>,
-    opening_proof: C::BatchedProof,
-    batched_grand_product: BatchedGrandProductProof<C>,
+    openings: BTreeMap<TimestampRangeCheckPolynomialId, F>,
+    batched_grand_product: BatchedGrandProductProof<PCS>,
 }
 
-impl<F, C> TimestampValidityProof<F, C>
+impl<F, PCS> TimestampValidityProof<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove<'a>(
-        generators: &C::Setup,
-        range_check_polys: &'a RangeCheckPolynomials<F, C>,
+        generators: &PCS::Setup,
+        witness: &'a TimestampRangeCheckWitness<F>,
         t_read_polynomials: &'a [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
         opening_accumulator: &mut PolynomialOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
-            TimestampValidityProof::prove_grand_products(range_check_polys, transcript, generators);
+            TimestampValidityProof::prove_grand_products(witness, transcript, generators);
 
-        let polys_iter = range_check_polys
+        let polys_iter = witness
             .read_cts_read_timestamp
             .par_iter()
-            .chain(range_check_polys.read_cts_global_minus_read.par_iter())
-            .chain(range_check_polys.final_cts_read_timestamp.par_iter())
-            .chain(range_check_polys.final_cts_global_minus_read.par_iter())
+            .chain(witness.read_cts_global_minus_read.par_iter())
+            .chain(witness.final_cts_read_timestamp.par_iter())
+            .chain(witness.final_cts_global_minus_read.par_iter())
             .chain(t_read_polynomials.par_iter());
 
         let polys: Vec<_> = polys_iter.clone().collect();
@@ -658,14 +597,14 @@ where
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect::<Vec<F>>();
 
-        let opening_proof = C::batch_prove(
-            generators,
-            &polys,
-            &r_grand_product,
-            &openings,
-            BatchType::Big,
-            transcript,
-        );
+        // let opening_proof = C::batch_prove(
+        //     generators,
+        //     &polys,
+        //     &r_grand_product,
+        //     &openings,
+        //     BatchType::Big,
+        //     transcript,
+        // );
 
         for (poly, claim) in polys.into_iter().zip(openings.iter()) {
             opening_accumulator.append(poly, r_grand_product.clone(), *claim);
@@ -691,17 +630,17 @@ where
         Self {
             multiset_hashes,
             openings,
-            opening_proof,
+            // opening_proof,
             batched_grand_product,
         }
     }
 
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove_grand_products")]
     fn prove_grand_products(
-        polynomials: &RangeCheckPolynomials<F, C>,
+        polynomials: &TimestampRangeCheckWitness<F>,
         transcript: &mut ProofTranscript,
-        setup: &C::Setup,
-    ) -> (BatchedGrandProductProof<C>, MultisetHashes<F>, Vec<F>) {
+        setup: &PCS::Setup,
+    ) -> (BatchedGrandProductProof<PCS>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
@@ -712,18 +651,21 @@ where
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
         let mut batched_circuit =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::construct(leaves);
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::construct(leaves);
 
         let hashes: Vec<F> =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::claims(&batched_circuit);
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claims(&batched_circuit);
         let (read_write_hashes, init_final_hashes) =
             hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
-        let multiset_hashes = TimestampValidityProof::<F, C>::uninterleave_hashes(
+        let multiset_hashes = TimestampValidityProof::<F, PCS>::uninterleave_hashes(
             &NoPreprocessing,
             read_write_hashes.to_vec(),
             init_final_hashes.to_vec(),
         );
-        TimestampValidityProof::<F, C>::check_multiset_equality(&NoPreprocessing, &multiset_hashes);
+        TimestampValidityProof::<F, PCS>::check_multiset_equality(
+            &NoPreprocessing,
+            &multiset_hashes,
+        );
         multiset_hashes.append_to_transcript(transcript);
 
         let (batched_grand_product, r_grand_product) =
@@ -736,9 +678,9 @@ where
 
     pub fn verify(
         &mut self,
-        generators: &C::Setup,
-        range_check_commitment: &RangeCheckCommitment<C>,
-        memory_commitment: &MemoryCommitment<C>,
+        generators: &PCS::Setup,
+        // range_check_commitment: &RangeCheckCommitment<C>,
+        // memory_commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
@@ -748,14 +690,14 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         // Multiset equality checks
-        TimestampValidityProof::<F, C>::check_multiset_equality(
+        TimestampValidityProof::<F, PCS>::check_multiset_equality(
             &NoPreprocessing,
             &self.multiset_hashes,
         );
         self.multiset_hashes.append_to_transcript(transcript);
 
         let (read_write_hashes, init_final_hashes) =
-            TimestampValidityProof::<F, C>::interleave_hashes(
+            TimestampValidityProof::<F, PCS>::interleave_hashes(
                 &NoPreprocessing,
                 &self.multiset_hashes,
             );
@@ -778,23 +720,23 @@ where
             .chain(self.openings.memory_t_read)
             .collect();
 
-        // TODO(moodlezoup): Make indexing less disgusting
-        let t_read_commitments = &memory_commitment.trace_commitments
-            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..1 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
-        let commitments: Vec<_> = range_check_commitment
-            .commitments
-            .iter()
-            .chain(t_read_commitments.iter())
-            .collect();
+        // // TODO(moodlezoup): Make indexing less disgusting
+        // let t_read_commitments = &memory_commitment.trace_commitments
+        //     [1 + MEMORY_OPS_PER_INSTRUCTION + 5..1 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
+        // let commitments: Vec<_> = range_check_commitment
+        //     .commitments
+        //     .iter()
+        //     .chain(t_read_commitments.iter())
+        //     .collect();
 
-        C::batch_verify(
-            &self.opening_proof,
-            generators,
-            &r_grand_product,
-            &openings,
-            &commitments,
-            transcript,
-        )?;
+        // C::batch_verify(
+        //     &self.opening_proof,
+        //     generators,
+        //     &r_grand_product,
+        //     &openings,
+        //     &commitments,
+        //     transcript,
+        // )?;
 
         self.openings
             .compute_verifier_openings(&NoPreprocessing, &r_grand_product);
@@ -802,22 +744,22 @@ where
         let read_hashes: Vec<_> =
             TimestampValidityProof::read_tuples(&NoPreprocessing, &self.openings)
                 .iter()
-                .map(|tuple| TimestampValidityProof::<F, C>::fingerprint(tuple, &gamma, &tau))
+                .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
         let write_hashes: Vec<_> =
             TimestampValidityProof::write_tuples(&NoPreprocessing, &self.openings)
                 .iter()
-                .map(|tuple| TimestampValidityProof::<F, C>::fingerprint(tuple, &gamma, &tau))
+                .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
         let init_hashes: Vec<_> =
             TimestampValidityProof::init_tuples(&NoPreprocessing, &self.openings)
                 .iter()
-                .map(|tuple| TimestampValidityProof::<F, C>::fingerprint(tuple, &gamma, &tau))
+                .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
         let final_hashes: Vec<_> =
             TimestampValidityProof::final_tuples(&NoPreprocessing, &self.openings)
                 .iter()
-                .map(|tuple| TimestampValidityProof::<F, C>::fingerprint(tuple, &gamma, &tau))
+                .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
 
         assert_eq!(
@@ -834,7 +776,7 @@ where
             final_hashes,
         };
         let (read_write_hashes, init_final_hashes) =
-            TimestampValidityProof::<F, C>::interleave_hashes(&NoPreprocessing, &multiset_hashes);
+            TimestampValidityProof::<F, PCS>::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
         for (claim, fingerprint) in zip(read_write_claims, read_write_hashes) {
             assert_eq!(*claim, fingerprint);

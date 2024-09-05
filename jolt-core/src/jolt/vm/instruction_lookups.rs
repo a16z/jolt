@@ -1,7 +1,7 @@
 use crate::poly::opening_proof::PolynomialOpeningAccumulator;
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{interleave, izip, Itertools};
+use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
