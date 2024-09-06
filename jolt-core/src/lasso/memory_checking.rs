@@ -108,10 +108,6 @@ where
 // }
 
 // impl<T> StructuredPolynomialData<T> for TestData<T> {
-//     fn new() -> Self {
-//         todo!();
-//     }
-
 //     fn read_write_values(&self) -> Vec<&T> {
 //         [&self.a]
 //             .into_iter()
@@ -135,7 +131,6 @@ where
 // }
 
 pub trait StructuredPolynomialData<T> {
-    fn new() -> Self;
     fn read_write_values(&self) -> Vec<&T>;
     fn init_final_values(&self) -> Vec<&T>;
     fn read_write_values_mut(&mut self) -> Vec<&mut T>;
@@ -144,12 +139,12 @@ pub trait StructuredPolynomialData<T> {
 
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
+pub struct NoAdditionalWitness;
 
-pub trait MemoryCheckingProver<F, PCS, PolynomialId>
+pub trait MemoryCheckingProver<F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PolynomialId: Sync,
     Self: Sync,
 {
     type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
@@ -157,11 +152,21 @@ where
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
-    type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
-    type Openings: StructuredPolynomialData<F> + Sync;
-    type Commitments: StructuredPolynomialData<PCS::Commitment>;
+    type StructuredData<T>: StructuredPolynomialData<T> + Sync + Default;
+
+    type Polynomials: StructuredPolynomialData<DensePolynomial<F>> =
+        Self::StructuredData<DensePolynomial<F>>;
+    type Openings: StructuredPolynomialData<F> + Sync + Default = Self::StructuredData<F>;
+    type Commitments: StructuredPolynomialData<PCS::Commitment> =
+        Self::StructuredData<PCS::Commitment>;
+
+    // type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
+    // type Openings: StructuredPolynomialData<F> + Sync + Default;
+    // type Commitments: StructuredPolynomialData<PCS::Commitment>;
 
     type Preprocessing = NoPreprocessing;
+    type AdditionalWitnessData = NoAdditionalWitness;
+
     /// The data associated with each memory slot. A triple (a, v, t) by default.
     type MemoryTuple = (F, F, F);
 
@@ -171,6 +176,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
         polynomials: &'a Self::Polynomials,
+        additional_witness: &Self::AdditionalWitnessData,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, PCS, Self::Openings> {
@@ -180,7 +186,13 @@ where
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, polynomials, transcript, pcs_setup);
+        ) = Self::prove_grand_products(
+            preprocessing,
+            polynomials,
+            additional_witness,
+            transcript,
+            pcs_setup,
+        );
 
         let openings = Self::compute_openings(
             preprocessing,
@@ -203,6 +215,7 @@ where
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
+        additional_witness: &Self::AdditionalWitnessData,
         transcript: &mut ProofTranscript,
         pcs_setup: &PCS::Setup,
     ) -> (
@@ -219,7 +232,7 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         let (read_write_leaves, init_final_leaves) =
-            Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
+            Self::compute_leaves(preprocessing, polynomials, additional_witness, &gamma, &tau);
         let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
         let (mut init_final_circuit, init_final_hashes) =
@@ -254,7 +267,7 @@ where
         r_read_write: &[F],
         r_init_final: &[F],
     ) -> Self::Openings {
-        let mut openings = Self::Openings::new();
+        let mut openings = Self::Openings::default();
 
         let eq_read_write = EqPolynomial::evals(r_read_write);
         polynomials
@@ -382,6 +395,7 @@ where
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
+        additional_witness: &Self::AdditionalWitnessData,
         gamma: &F,
         tau: &F,
     ) -> (
@@ -397,19 +411,17 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait MemoryCheckingVerifier<F, PCS, PolynomialId>:
-    MemoryCheckingProver<F, PCS, PolynomialId>
+pub trait MemoryCheckingVerifier<F, PCS>: MemoryCheckingProver<F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PolynomialId: Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking<'a>(
         preprocessing: &Self::Preprocessing,
         pcs_setup: &PCS::Setup,
         mut proof: MemoryCheckingProof<F, PCS, Self::Openings>,
-        commitments: &Self::Commitments,
+        commitments: &'a Self::Commitments,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {

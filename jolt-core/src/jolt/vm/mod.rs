@@ -10,7 +10,7 @@ use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
-use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
+use crate::jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -20,7 +20,9 @@ use crate::jolt::{
     subtable::JoltSubtableSet,
     vm::timestamp_range_check::TimestampValidityProof,
 };
-use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
+use crate::lasso::memory_checking::{
+    MemoryCheckingProver, MemoryCheckingVerifier, NoAdditionalWitness,
+};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof};
@@ -33,17 +35,15 @@ use common::{
 };
 
 use self::bytecode::BytecodePreprocessing;
+use self::bytecode::{BytecodeCommitments, BytecodePolynomials, BytecodeProof, BytecodeRow};
 use self::instruction_lookups::{
-    InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
+    InstructionLookupCommitments, InstructionLookupPolynomials, InstructionLookupsPreprocessing,
+    InstructionLookupsProof,
 };
 use self::read_write_memory::{
     MemoryCommitment, ReadWriteMemory, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
 };
-use self::timestamp_range_check::RangeCheckCommitment;
-use self::{
-    bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, BytecodeRow},
-    instruction_lookups::InstructionPolynomials,
-};
+use self::timestamp_range_check::TimestampRangeCheckCommitments;
 
 use super::instruction::JoltInstructionSet;
 
@@ -114,10 +114,10 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    pub bytecode: BytecodePolynomials<F, PCS>,
+    pub bytecode: BytecodePolynomials<F>,
     pub read_write_memory: ReadWriteMemory<F, PCS>,
-    pub timestamp_range_check: RangeCheckPolynomials<F, PCS>,
-    pub instruction_lookups: InstructionPolynomials<F, PCS>,
+    pub timestamp_range_check: TimestampRangeCheckPolynomials<F>,
+    pub instruction_lookups: InstructionLookupPolynomials<F>,
     pub r1cs: R1CSPolynomials<F>,
 }
 
@@ -134,10 +134,10 @@ where
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltCommitments<PCS: CommitmentScheme> {
-    pub bytecode: BytecodeCommitment<PCS>,
+    pub bytecode: BytecodeCommitments<PCS>,
     pub read_write_memory: MemoryCommitment<PCS>,
-    pub timestamp_range_check: RangeCheckCommitment<PCS>,
-    pub instruction_lookups: InstructionCommitment<PCS>,
+    pub timestamp_range_check: TimestampRangeCheckCommitments<PCS>,
+    pub instruction_lookups: InstructionLookupCommitments<PCS>,
     pub r1cs: Vec<PCS::Commitment>,
 }
 
@@ -255,7 +255,7 @@ where
         );
 
         JoltCommitments {
-            bytecode: BytecodeCommitment {
+            bytecode: BytecodeCommitments {
                 trace_commitments: bytecode_trace_commitment,
                 t_final_commitment: bytecode_t_final_commitment,
             },
@@ -264,10 +264,10 @@ where
                 v_final_commitment: memory_v_final_commitment,
                 t_final_commitment: memory_t_final_commitment,
             },
-            timestamp_range_check: RangeCheckCommitment {
+            timestamp_range_check: TimestampRangeCheckCommitments {
                 commitments: range_check_commitment,
             },
-            instruction_lookups: InstructionCommitment {
+            instruction_lookups: InstructionLookupCommitments {
                 trace_commitment: instruction_trace_commitment,
                 final_commitment: instruction_final_commitment,
             },
@@ -374,15 +374,16 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
 
-        let instruction_polynomials = InstructionLookupsProof::<
+        let (instruction_polynomials, instruction_flag_bitvectors) = InstructionLookupsProof::<
             C,
             M,
             F,
             PCS,
             Self::InstructionSet,
             Self::Subtables,
-        >::polynomialize(
-            &preprocessing.instruction_lookups, &trace
+        >::generate_witness(
+            &preprocessing.instruction_lookups,
+            &trace,
         );
 
         let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
@@ -395,7 +396,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace),
-            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps),
+            || TimestampRangeCheckPolynomials::<F, PCS>::new(read_timestamps),
         );
 
         let r1cs_builder = Self::Constraints::construct_constraints(
@@ -438,6 +439,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.generators,
             &preprocessing.bytecode,
             &jolt_polynomials.bytecode,
+            &NoAdditionalWitness,
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -445,6 +447,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
             &jolt_polynomials.instruction_lookups,
+            instruction_flag_bitvectors,
             &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,
@@ -555,11 +558,18 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         preprocessing: &InstructionLookupsPreprocessing<F>,
         generators: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
-        commitment: &'a InstructionCommitment<PCS>,
+        commitment: &'a InstructionLookupCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
+        InstructionLookupsProof::verify(
+            preprocessing,
+            generators,
+            proof,
+            commitment,
+            opening_accumulator,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all)]
@@ -567,7 +577,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         preprocessing: &BytecodePreprocessing<F>,
         generators: &PCS::Setup,
         proof: BytecodeProof<F, PCS>,
-        commitment: &'a BytecodeCommitment<PCS>,
+        commitment: &'a BytecodeCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
