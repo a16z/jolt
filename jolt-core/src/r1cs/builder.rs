@@ -134,7 +134,7 @@ impl<F: JoltField> AuxComputation<F> {
         }
     }
 
-    fn compute_aux_poly<const C: usize, I: ConstraintInput, PCS: CommitmentScheme<Field = F>>(
+    fn compute_aux_poly<const C: usize, I: ConstraintInput>(
         &self,
         jolt_polynomials: &JoltPolynomials<F>,
         batch_size: usize,
@@ -565,13 +565,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         }
     }
 
-    pub fn compute_aux<PCS: CommitmentScheme<Field = F>>(
-        &self,
-        jolt_polynomials: &mut JoltPolynomials<F>,
-    ) {
+    pub fn compute_aux(&self, jolt_polynomials: &mut JoltPolynomials<F>) {
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
             *I::from_index::<C>(*aux_index).get_poly_ref_mut(jolt_polynomials) =
-                aux_compute.compute_aux_poly::<C, I, PCS>(jolt_polynomials, self.uniform_repeat);
+                aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, self.uniform_repeat);
         }
     }
 

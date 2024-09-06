@@ -61,6 +61,12 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
 #[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
+impl<P: Pairing> Default for HyperKZGCommitment<P> {
+    fn default() -> Self {
+        Self(P::G1Affine::zero())
+    }
+}
+
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());

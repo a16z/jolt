@@ -29,8 +29,8 @@ use common::constants::{
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
 use super::bytecode::BytecodePolynomials;
-use super::JoltTraceStep;
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
+use super::{JoltPolynomials, JoltTraceStep};
 
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
@@ -174,6 +174,25 @@ impl<T> StructuredPolynomialData<T> for ReadWriteMemoryStuff<T> {
 pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
 pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
 pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
+
+impl<T: Default> Default for ReadWriteMemoryStuff<T> {
+    fn default() -> Self {
+        Self {
+            a_ram: T::default(),
+            v_read: std::array::from_fn(|_| T::default()),
+            v_write_rd: T::default(),
+            v_write_ram: std::array::from_fn(|_| T::default()),
+            v_final: T::default(),
+            t_read: std::array::from_fn(|_| T::default()),
+            t_write_ram: std::array::from_fn(|_| T::default()),
+            t_final: T::default(),
+
+            a_init_final: None,
+            v_init: None,
+            identity: None,
+        }
+    }
+}
 
 fn merge_vec_array(
     mut reg_arr: [Vec<u64>; REG_OPS_PER_INSTRUCTION],
@@ -838,9 +857,11 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    type StructuredData<T> = ReadWriteMemoryStuff<T> where T: Sync;
-    type AdditionalWitnessData = BytecodePolynomials<F>;
+    type Polynomials = ReadWriteMemoryPolynomials<F>;
+    type Openings = ReadWriteMemoryOpenings<F>;
+    type Commitments = ReadWriteMemoryCommitments<PCS>;
     type Preprocessing = ReadWriteMemoryPreprocessing;
+    type AdditionalWitnessData = BytecodePolynomials<F>;
 
     // (a, v, t)
     type MemoryTuple = (F, F, F);
@@ -1004,15 +1025,15 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     fn compute_verifier_openings(
-        proof: &mut MemoryCheckingProof<F, PCS, Self::Openings>,
+        openings: &mut Self::Openings,
         preprocessing: &Self::Preprocessing,
         r_read_write: &[F],
         r_init_final: &[F],
     ) {
-        proof.openings.identity =
+        openings.identity =
             Some(IdentityPolynomial::new(r_read_write.len()).evaluate(r_read_write));
 
-        proof.openings.a_init_final =
+        openings.a_init_final =
             Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
 
         let memory_layout = &preprocessing.program_io.as_ref().unwrap().memory_layout;
@@ -1039,7 +1060,7 @@ where
             v_init_index += 1;
         }
 
-        proof.openings.v_init = Some(DensePolynomial::from_u64(&v_init).evaluate(r_init_final));
+        openings.v_init = Some(DensePolynomial::from_u64(&v_init).evaluate(r_init_final));
     }
 
     fn read_tuples(&_: &Self::Preprocessing, openings: &Self::Openings) -> Vec<Self::MemoryTuple> {
@@ -1310,8 +1331,7 @@ where
     pub fn prove<'a>(
         generators: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        polynomials: &'a ReadWriteMemoryPolynomials<F>,
-        bytecode_polynomials: &'a BytecodePolynomials<F>,
+        polynomials: &'a JoltPolynomials<F>,
         program_io: &JoltDevice,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
@@ -1319,15 +1339,15 @@ where
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
             preprocessing,
-            polynomials,
-            bytecode_polynomials,
+            &polynomials.read_write_memory,
+            &polynomials.bytecode,
             opening_accumulator,
             transcript,
         );
 
         let output_proof = OutputSumcheckProof::prove_outputs(
             generators,
-            &polynomials,
+            &polynomials.read_write_memory,
             program_io,
             opening_accumulator,
             transcript,
@@ -1360,7 +1380,7 @@ where
             preprocessing,
             generators,
             self.memory_checking_proof,
-            &commitment.read_write_memory,
+            &commitment.0.read_write_memory,
             opening_accumulator,
             transcript,
         )?;
@@ -1368,7 +1388,7 @@ where
             &self.output_proof,
             preprocessing,
             generators,
-            &commitment.read_write_memory,
+            &commitment.0.read_write_memory,
             transcript,
         )?;
         TimestampValidityProof::verify(

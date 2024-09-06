@@ -67,6 +67,12 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
 #[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
+impl<P: Pairing> Default for ZeromorphCommitment<P> {
+    fn default() -> Self {
+        Self(P::G1Affine::zero())
+    }
+}
+
 impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());

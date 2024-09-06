@@ -18,7 +18,7 @@ pub struct MockCommitScheme<F: JoltField> {
     _marker: PhantomData<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Default)]
 pub struct MockCommitment<F: JoltField> {
     poly: DensePolynomial<F>,
 }

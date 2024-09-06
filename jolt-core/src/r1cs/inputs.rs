@@ -40,6 +40,23 @@ pub struct AuxVariableStuff<T> {
     pub next_pc: T,
 }
 
+impl<T: Default> Default for AuxVariableStuff<T> {
+    fn default() -> Self {
+        Self {
+            left_lookup_operand: T::default(),
+            right_lookup_operand: T::default(),
+            imm_signed: T::default(),
+            product: T::default(),
+            relevant_y_chunks: todo!(),
+            write_lookup_output_to_rd: T::default(),
+            write_pc_to_rd: T::default(),
+            next_pc_jump: T::default(),
+            should_branch: T::default(),
+            next_pc: T::default(),
+        }
+    }
+}
+
 impl<T> StructuredPolynomialData<T> for AuxVariableStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
         let mut values = vec![
@@ -92,6 +109,7 @@ pub struct R1CSStuff<T> {
     pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
     pub aux: Option<AuxVariableStuff<T>>,
 }
+
 impl<T> StructuredPolynomialData<T> for R1CSStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
         let aux = self.aux.as_ref().unwrap();
@@ -125,6 +143,17 @@ impl<T> StructuredPolynomialData<T> for R1CSStuff<T> {
 pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
 pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
 pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
+
+impl<T: Default> Default for R1CSStuff<T> {
+    fn default() -> Self {
+        Self {
+            chunks_x: todo!(),
+            chunks_y: todo!(),
+            circuit_flags: std::array::from_fn(|_| T::default()),
+            aux: Some(AuxVariableStuff::default()),
+        }
+    }
+}
 
 impl<F: JoltField> R1CSPolynomials<F> {
     pub fn new<

@@ -42,10 +42,20 @@ pub struct InstructionLookupStuff<T> {
     a_init_final: Option<T>,
     v_init_final: Option<Vec<T>>,
 }
+
 pub type InstructionLookupPolynomials<F: JoltField> = InstructionLookupStuff<DensePolynomial<F>>;
 pub type InstructionLookupOpenings<F: JoltField> = InstructionLookupStuff<F>;
 pub type InstructionLookupCommitments<PCS: CommitmentScheme> =
     InstructionLookupStuff<PCS::Commitment>;
+
+impl<T: Default> Default for InstructionLookupStuff<T> {
+    fn default() -> Self {
+        todo!()
+        // Self {
+        //     dim: vec![],
+        // }
+    }
+}
 
 impl<T> StructuredPolynomialData<T> for InstructionLookupStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
@@ -98,7 +108,10 @@ where
     Subtables: JoltSubtableSet<F>,
 {
     type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
-    type StructuredData<T> = InstructionLookupStuff<T> where T: Sync;
+
+    type Polynomials = InstructionLookupPolynomials<F>;
+    type Openings = InstructionLookupOpenings<F>;
+    type Commitments = InstructionLookupCommitments<PCS>;
 
     type Preprocessing = InstructionLookupsPreprocessing<F>;
     type AdditionalWitnessData = Vec<Vec<u64>>; // instruction flag bitvectors
@@ -305,14 +318,14 @@ where
     Subtables: JoltSubtableSet<F>,
 {
     fn compute_verifier_openings(
-        proof: &mut MemoryCheckingProof<F, PCS, InstructionLookupStuff<F>>,
+        openings: &mut Self::Openings,
         _preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
         r_init_final: &[F],
     ) {
-        proof.openings.a_init_final =
+        openings.a_init_final =
             Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
-        proof.openings.v_init_final = Some(
+        openings.v_init_final = Some(
             Subtables::iter()
                 .map(|subtable| subtable.evaluate_mle(r_init_final))
                 .collect(),
@@ -394,7 +407,7 @@ pub struct InstructionLookupsProof<
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
     primary_sumcheck: PrimarySumcheck<F>,
-    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupStuff<F>>,
+    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupOpenings<F>>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]

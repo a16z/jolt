@@ -101,7 +101,8 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             .collect::<Vec<F>>();
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
-        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(polynomials);
+        let (mut az, mut bz, mut cz) =
+            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS>(polynomials);
 
         let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)

@@ -38,6 +38,19 @@ pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;
 
+impl<T: Default> Default for BytecodeStuff<T> {
+    fn default() -> Self {
+        Self {
+            a_read_write: T::default(),
+            v_read_write: std::array::from_fn(|_| T::default()),
+            t_read: T::default(),
+            t_final: T::default(),
+            a_init_final: None,
+            v_init_final: None,
+        }
+    }
+}
+
 impl<T> StructuredPolynomialData<T> for BytecodeStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
         let mut values = vec![&self.a_read_write];
@@ -446,7 +459,9 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    type StructuredData<T> = BytecodeStuff<T> where T: Sync;
+    type Polynomials = BytecodePolynomials<F>;
+    type Openings = BytecodeOpenings<F>;
+    type Commitments = BytecodeCommitments<PCS>;
     type Preprocessing = BytecodePreprocessing<F>;
 
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]
@@ -572,16 +587,16 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     fn compute_verifier_openings(
-        proof: &mut MemoryCheckingProof<F, PCS, BytecodeOpenings<F>>,
+        openings: &mut BytecodeOpenings<F>,
         preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
         r_init_final: &[F],
     ) {
-        proof.openings.a_init_final =
+        openings.a_init_final =
             Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
 
         let chis = EqPolynomial::evals(r_init_final);
-        proof.openings.v_init_final = Some(
+        openings.v_init_final = Some(
             preprocessing
                 .v_init_final
                 .par_iter()

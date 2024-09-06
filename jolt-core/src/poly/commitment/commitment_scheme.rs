@@ -35,7 +35,12 @@ pub enum BatchType {
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type Setup: Clone + Sync + Send;
-    type Commitment: Sync + Send + CanonicalSerialize + CanonicalDeserialize + AppendToTranscript;
+    type Commitment: Default
+        + Sync
+        + Send
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + AppendToTranscript;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 

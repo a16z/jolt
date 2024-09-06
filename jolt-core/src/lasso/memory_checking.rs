@@ -6,7 +6,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::grand_product::{
@@ -15,10 +15,11 @@ use crate::{
 };
 
 use crate::field::JoltField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use itertools::interleave;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 use std::iter::zip;
+use std::marker::PhantomData;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MultisetHashes<F: JoltField> {
@@ -46,7 +47,7 @@ pub struct MemoryCheckingProof<F, C, Openings>
 where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
-    Openings: StructuredPolynomialData<F> + Sync,
+    Openings: StructuredPolynomialData<F> + Sync + Default,
 {
     /// Read/write/init/final multiset hashes for each memory
     pub multiset_hashes: MultisetHashes<F>,
@@ -57,7 +58,7 @@ where
     /// so they can be batched.
     pub init_final_grand_product: BatchedGrandProductProof<C>,
     /// The openings associated with the grand products.
-    pub openings: Openings,
+    pub openings: SerializableWrapper<F, Openings>,
 }
 
 pub trait StructuredPolynomialData<T> {
@@ -65,6 +66,85 @@ pub trait StructuredPolynomialData<T> {
     fn init_final_values(&self) -> Vec<&T>;
     fn read_write_values_mut(&mut self) -> Vec<&mut T>;
     fn init_final_values_mut(&mut self) -> Vec<&mut T>;
+}
+
+pub struct SerializableWrapper<T, U>(pub U, pub PhantomData<T>);
+
+impl<T, U> CanonicalSerialize for SerializableWrapper<T, U>
+where
+    U: StructuredPolynomialData<T> + Sync,
+    T: CanonicalSerialize,
+{
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        for value in self
+            .0
+            .read_write_values()
+            .iter()
+            .chain(self.0.init_final_values().iter())
+        {
+            value.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        let mut size = 0;
+        for value in self
+            .0
+            .read_write_values()
+            .iter()
+            .chain(self.0.init_final_values().iter())
+        {
+            size += value.serialized_size(compress);
+        }
+
+        size
+    }
+}
+
+impl<T, U> CanonicalDeserialize for SerializableWrapper<T, U>
+where
+    U: StructuredPolynomialData<T> + Sync + Default,
+    T: CanonicalDeserialize,
+{
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let mut result = U::default();
+        for value in result.read_write_values_mut().into_iter() {
+            *value = T::deserialize_with_mode(&mut reader, compress, validate)?;
+        }
+        for value in result.init_final_values_mut().into_iter() {
+            *value = T::deserialize_with_mode(&mut reader, compress, validate)?;
+        }
+
+        Ok(Self(result, PhantomData))
+    }
+}
+
+impl<T, U> Valid for SerializableWrapper<T, U>
+where
+    U: StructuredPolynomialData<T> + Sync,
+    T: Valid,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        for value in self
+            .0
+            .read_write_values()
+            .iter()
+            .chain(self.0.init_final_values().iter())
+        {
+            value.check()?;
+        }
+
+        Ok(())
+    }
 }
 
 // Empty struct to represent that no preprocessing data is used.
@@ -82,19 +162,9 @@ where
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
-    type StructuredData<T>: StructuredPolynomialData<T> + Sync + Default
-    where
-        T: Sync;
-
-    type Polynomials: StructuredPolynomialData<DensePolynomial<F>> =
-        Self::StructuredData<DensePolynomial<F>>;
-    type Openings: StructuredPolynomialData<F> + Sync + Default = Self::StructuredData<F>;
-    type Commitments: StructuredPolynomialData<PCS::Commitment> =
-        Self::StructuredData<PCS::Commitment>;
-
-    // type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
-    // type Openings: StructuredPolynomialData<F> + Sync + Default;
-    // type Commitments: StructuredPolynomialData<PCS::Commitment>;
+    type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
+    type Openings: StructuredPolynomialData<F> + Sync + Default;
+    type Commitments: StructuredPolynomialData<PCS::Commitment>;
 
     type Preprocessing = NoPreprocessing;
     type AdditionalWitnessData = NoAdditionalWitness;
@@ -138,7 +208,7 @@ where
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
-            openings,
+            openings: SerializableWrapper(openings, PhantomData),
         }
     }
 
@@ -193,7 +263,7 @@ where
     }
 
     fn compute_openings<'a>(
-        preprocessing: &Self::Preprocessing,
+        _preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         polynomials: &'a Self::Polynomials,
         r_read_write: &[F],
@@ -205,23 +275,38 @@ where
         polynomials
             .read_write_values()
             .par_iter()
-            .zip(openings.read_write_values_mut().par_iter())
+            .zip(openings.read_write_values_mut().into_par_iter())
             .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_read_write);
-                opening_accumulator.append(poly, r_read_write.to_vec(), claim);
                 *opening = claim;
             });
+
+        for (poly, claim) in polynomials
+            .read_write_values()
+            .iter()
+            .zip(openings.read_write_values().into_iter())
+        {
+            opening_accumulator.append(poly, r_read_write.to_vec(), *claim);
+        }
 
         let eq_init_final = EqPolynomial::evals(r_init_final);
         polynomials
             .init_final_values()
             .par_iter()
-            .zip(openings.init_final_values_mut().par_iter())
+            .zip(openings.init_final_values_mut().into_par_iter())
             .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_init_final);
-                opening_accumulator.append(poly, r_init_final.to_vec(), claim);
                 *opening = claim;
             });
+
+        for (poly, claim) in polynomials
+            .init_final_values()
+            .iter()
+            .zip(openings.init_final_values().into_iter())
+        {
+            opening_accumulator.append(poly, r_init_final.to_vec(), *claim);
+        }
+
         openings
     }
 
@@ -384,19 +469,21 @@ where
 
         proof
             .openings
+            .0
             .read_write_values()
-            .iter()
+            .into_iter()
             .zip(commitments.read_write_values().iter())
             .for_each(|(opening, commitment)| {
-                opening_accumulator.append(commitment, r_read_write.to_vec(), opening);
+                opening_accumulator.append(commitment, r_read_write.to_vec(), *opening);
             });
         proof
             .openings
+            .0
             .init_final_values()
-            .iter()
+            .into_iter()
             .zip(commitments.init_final_values().iter())
             .for_each(|(opening, commitment)| {
-                opening_accumulator.append(commitment, r_init_final.to_vec(), opening);
+                opening_accumulator.append(commitment, r_init_final.to_vec(), *opening);
             });
 
         // proof.read_write_openings.verify_openings(
@@ -414,13 +501,18 @@ where
         //     transcript,
         // )?;
 
-        Self::compute_verifier_openings(&mut proof, preprocessing, &r_read_write, &r_init_final);
+        Self::compute_verifier_openings(
+            &mut proof.openings.0,
+            preprocessing,
+            &r_read_write,
+            &r_init_final,
+        );
 
         Self::check_fingerprints(
             preprocessing,
             claims_read_write,
             claims_init_final,
-            &proof.openings,
+            &proof.openings.0,
             &gamma,
             &tau,
         );
@@ -432,7 +524,7 @@ where
     /// instead can be efficiently computed by the verifier by itself. This function populates
     /// any such fields in `self`.
     fn compute_verifier_openings(
-        _proof: &mut MemoryCheckingProof<F, PCS, Self::Openings>,
+        _openings: &mut Self::Openings,
         _preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
         _r_init_final: &[F],
