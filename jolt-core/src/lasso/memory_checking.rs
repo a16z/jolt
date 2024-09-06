@@ -18,7 +18,6 @@ use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::collections::BTreeMap;
 use std::iter::zip;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -43,11 +42,11 @@ impl<F: JoltField> MultisetHashes<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, C, PolynomialId>
+pub struct MemoryCheckingProof<F, C, Openings>
 where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
-    PolynomialId: Sync,
+    Openings: StructuredPolynomialData<F> + Sync,
 {
     /// Read/write/init/final multiset hashes for each memory
     pub multiset_hashes: MultisetHashes<F>,
@@ -58,22 +57,89 @@ where
     /// so they can be batched.
     pub init_final_grand_product: BatchedGrandProductProof<C>,
     /// The openings associated with the grand products.
-    pub openings: BTreeMap<PolynomialId, F>,
+    pub openings: Openings,
 }
 
-pub trait MemoryCheckingWitness<F: JoltField, PolynomialId: Sync> {
-    fn get_poly(&self, id: PolynomialId) -> &DensePolynomial<F>;
-}
+// pub trait PolynomialTrait {}
 
-impl<F: JoltField, PolynomialId: Sync> MemoryCheckingWitness<F, PolynomialId>
-    for BTreeMap<PolynomialId, DensePolynomial<F>>
-{
-    fn get_poly(&self, id: PolynomialId) -> &DensePolynomial<F> {
-        match self.get(&id) {
-            Some(poly) => poly,
-            None => panic!("Unexpected key {:?}", id),
-        }
-    }
+// pub struct TestData<T> {
+//     a: T,
+//     b: [T; 4],
+//     c: Vec<T>,
+// }
+
+// impl<T> StructuredPolynomialData for TestData<T> {
+//     // type Item<'a> = &'a Box<dyn PolynomialTrait> where Self: 'a;
+//     type Item<'a> = &'a T where Self: 'a;
+//     type MutableItem<'a> = &'a mut T where Self: 'a;
+
+//     fn read_write_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>> {
+//         [&self.a]
+//             .into_iter()
+//             .chain(self.b.iter())
+//             .chain(self.c.iter())
+//     }
+//     fn init_final_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>> {
+//         std::iter::empty()
+//     }
+//     fn read_write_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>> {
+//         [&mut self.a]
+//             .into_iter()
+//             .chain(self.b.iter_mut())
+//             .chain(self.c.iter_mut())
+//     }
+//     fn init_final_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>> {
+//         std::iter::empty()
+//     }
+// }
+
+// pub trait StructuredPolynomialData<T> {
+//     type Item<'a>
+//     where
+//         Self: 'a;
+//     type MutableItem<'a>
+//     where
+//         Self: 'a;
+
+//     fn read_write_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>>;
+//     fn init_final_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>>;
+//     fn read_write_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>>;
+//     fn init_final_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>>;
+// }
+
+// impl<T> StructuredPolynomialData<T> for TestData<T> {
+//     fn new() -> Self {
+//         todo!();
+//     }
+
+//     fn read_write_values(&self) -> Vec<&T> {
+//         [&self.a]
+//             .into_iter()
+//             .chain(self.b.iter())
+//             .chain(self.c.iter())
+//             .collect()
+//     }
+//     fn init_final_values(&self) -> Vec<&T> {
+//         vec![]
+//     }
+//     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+//         [&mut self.a]
+//             .into_iter()
+//             .chain(self.b.iter_mut())
+//             .chain(self.c.iter_mut())
+//             .collect()
+//     }
+//     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+//         vec![]
+//     }
+// }
+
+pub trait StructuredPolynomialData<T> {
+    fn new() -> Self;
+    fn read_write_values(&self) -> Vec<&T>;
+    fn init_final_values(&self) -> Vec<&T>;
+    fn read_write_values_mut(&mut self) -> Vec<&mut T>;
+    fn init_final_values_mut(&mut self) -> Vec<&mut T>;
 }
 
 // Empty struct to represent that no preprocessing data is used.
@@ -91,8 +157,10 @@ where
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
-    type Witness: MemoryCheckingWitness<F, PolynomialId> =
-        BTreeMap<PolynomialId, DensePolynomial<F>>;
+    type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
+    type Openings: StructuredPolynomialData<F> + Sync;
+    type Commitments: StructuredPolynomialData<PCS::Commitment>;
+
     type Preprocessing = NoPreprocessing;
     /// The data associated with each memory slot. A triple (a, v, t) by default.
     type MemoryTuple = (F, F, F);
@@ -102,22 +170,22 @@ where
     fn prove_memory_checking<'a>(
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
-        witness: &'a Self::Witness,
+        polynomials: &'a Self::Polynomials,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, PCS, PolynomialId> {
+    ) -> MemoryCheckingProof<F, PCS, Self::Openings> {
         let (
             read_write_grand_product,
             init_final_grand_product,
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, witness, transcript, pcs_setup);
+        ) = Self::prove_grand_products(preprocessing, polynomials, transcript, pcs_setup);
 
         let openings = Self::compute_openings(
             preprocessing,
             opening_accumulator,
-            witness,
+            polynomials,
             &r_read_write,
             &r_init_final,
         );
@@ -134,7 +202,7 @@ where
     /// Proves the grand products for the memory checking multisets (init, read, write, final).
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
-        witness: &Self::Witness,
+        polynomials: &Self::Polynomials,
         transcript: &mut ProofTranscript,
         pcs_setup: &PCS::Setup,
     ) -> (
@@ -151,11 +219,11 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         let (read_write_leaves, init_final_leaves) =
-            Self::compute_leaves(preprocessing, witness, &gamma, &tau);
+            Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
         let (mut read_write_circuit, read_write_hashes) =
-            Self::read_write_grand_product(preprocessing, witness, read_write_leaves);
+            Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
         let (mut init_final_circuit, init_final_hashes) =
-            Self::init_final_grand_product(preprocessing, witness, init_final_leaves);
+            Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves);
 
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
@@ -179,38 +247,36 @@ where
         )
     }
 
-    fn read_write_openings(preprocessing: &Self::Preprocessing) -> Vec<PolynomialId>;
-    fn init_final_openings(preprocessing: &Self::Preprocessing) -> Vec<PolynomialId>;
-
     fn compute_openings<'a>(
         preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
-        witness: &'a Self::Witness,
+        polynomials: &'a Self::Polynomials,
         r_read_write: &[F],
         r_init_final: &[F],
-    ) -> BTreeMap<PolynomialId, F> {
-        let mut openings = BTreeMap::new();
+    ) -> Self::Openings {
+        let mut openings = Self::Openings::new();
 
         let eq_read_write = EqPolynomial::evals(r_read_write);
-        Self::read_write_openings(preprocessing)
+        polynomials
+            .read_write_values()
             .par_iter()
-            .for_each(|poly_id| {
-                let poly = witness.get_poly(poly_id);
+            .zip(openings.read_write_values_mut().par_iter())
+            .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_read_write);
                 opening_accumulator.append(poly, r_read_write.to_vec(), claim);
-                openings.insert(poly_id, claim);
+                *opening = claim;
             });
 
         let eq_init_final = EqPolynomial::evals(r_init_final);
-        Self::init_final_openings(preprocessing)
+        polynomials
+            .init_final_values()
             .par_iter()
-            .for_each(|poly_id| {
-                let poly = witness.get_poly(poly_id);
+            .zip(openings.init_final_values_mut().par_iter())
+            .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_init_final);
                 opening_accumulator.append(poly, r_init_final.to_vec(), claim);
-                openings.insert(poly_id, claim);
+                *opening = claim;
             });
-
         openings
     }
 
@@ -219,7 +285,7 @@ where
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
-        _witness: &Self::Witness,
+        _polynomials: &Self::Polynomials,
         read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
@@ -232,7 +298,7 @@ where
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
-        _witness: &Self::Witness,
+        _polynomials: &Self::Polynomials,
         init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
@@ -315,7 +381,7 @@ where
     /// Returns: (interleaved read/write leaves, interleaved init/final leaves)
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
-        witness: &Self::Witness,
+        polynomials: &Self::Polynomials,
         gamma: &F,
         tau: &F,
     ) -> (
@@ -342,8 +408,8 @@ where
     fn verify_memory_checking<'a>(
         preprocessing: &Self::Preprocessing,
         pcs_setup: &PCS::Setup,
-        mut proof: MemoryCheckingProof<F, PCS, PolynomialId>,
-        commitments: &BTreeMap<PolynomialId, PCS::Commitment>,
+        mut proof: MemoryCheckingProof<F, PCS, Self::Openings>,
+        commitments: &Self::Commitments,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -372,23 +438,21 @@ where
             Some(pcs_setup),
         );
 
-        Self::read_write_openings(preprocessing)
-            .par_iter()
-            .for_each(|poly_id| {
-                opening_accumulator.append(
-                    commitments.get(poly_id).unwrap(),
-                    r_read_write.to_vec(),
-                    proof.openings.get(poly_id).unwrap(),
-                );
+        proof
+            .openings
+            .read_write_values()
+            .iter()
+            .zip(commitments.read_write_values().iter())
+            .for_each(|(opening, commitment)| {
+                opening_accumulator.append(commitment, r_read_write.to_vec(), opening);
             });
-        Self::init_final_openings(preprocessing)
-            .par_iter()
-            .for_each(|poly_id| {
-                opening_accumulator.append(
-                    commitments.get(poly_id).unwrap(),
-                    r_init_final.to_vec(),
-                    proof.openings.get(poly_id).unwrap(),
-                );
+        proof
+            .openings
+            .init_final_values()
+            .iter()
+            .zip(commitments.init_final_values().iter())
+            .for_each(|(opening, commitment)| {
+                opening_accumulator.append(commitment, r_init_final.to_vec(), opening);
             });
 
         // proof.read_write_openings.verify_openings(
@@ -424,7 +488,7 @@ where
     /// instead can be efficiently computed by the verifier by itself. This function populates
     /// any such fields in `self`.
     fn compute_verifier_openings(
-        _proof: &mut MemoryCheckingProof<F, PCS, PolynomialId>,
+        _proof: &mut MemoryCheckingProof<F, PCS, Self::Openings>,
         _preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
         _r_init_final: &[F],
@@ -434,22 +498,22 @@ where
     /// Computes "read" memory tuples (one per memory) from the given `openings`.
     fn read_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &BTreeMap<PolynomialId, F>,
+        openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple>;
     /// Computes "write" memory tuples (one per memory) from the given `openings`.
     fn write_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &BTreeMap<PolynomialId, F>,
+        openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple>;
     /// Computes "init" memory tuples (one per memory) from the given `openings`.
     fn init_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &BTreeMap<PolynomialId, F>,
+        openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple>;
     /// Computes "final" memory tuples (one per memory) from the given `openings`.
     fn final_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &BTreeMap<PolynomialId, F>,
+        openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple>;
 
     /// Checks that the claimed multiset hashes (output by grand product) are consistent with the
@@ -458,7 +522,7 @@ where
         preprocessing: &Self::Preprocessing,
         claims_read_write: Vec<F>,
         claims_init_final: Vec<F>,
-        openings: &BTreeMap<PolynomialId, F>,
+        openings: &Self::Openings,
         gamma: &F,
         tau: &F,
     ) {
