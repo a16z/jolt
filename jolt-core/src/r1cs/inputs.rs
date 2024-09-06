@@ -8,6 +8,8 @@ use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::{JoltPolynomials, JoltTraceStep};
+use crate::lasso::memory_checking::StructuredPolynomialData;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
@@ -25,25 +27,104 @@ use std::hash::Hash;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub struct AuxPolynomials<F: JoltField> {
-    pub left_lookup_operand: DensePolynomial<F>,
-    pub right_lookup_operand: DensePolynomial<F>,
-    pub imm_signed: DensePolynomial<F>,
-    pub product: DensePolynomial<F>,
-    pub relevant_y_chunks: Vec<DensePolynomial<F>>,
-    pub write_lookup_output_to_rd: DensePolynomial<F>,
-    pub write_pc_to_rd: DensePolynomial<F>,
-    pub next_pc_jump: DensePolynomial<F>,
-    pub should_branch: DensePolynomial<F>,
-    pub next_pc: DensePolynomial<F>,
+pub struct AuxVariableStuff<T> {
+    pub left_lookup_operand: T,
+    pub right_lookup_operand: T,
+    pub imm_signed: T,
+    pub product: T,
+    pub relevant_y_chunks: Vec<T>,
+    pub write_lookup_output_to_rd: T,
+    pub write_pc_to_rd: T,
+    pub next_pc_jump: T,
+    pub should_branch: T,
+    pub next_pc: T,
 }
 
-pub struct R1CSPolynomials<F: JoltField> {
-    pub chunks_x: Vec<DensePolynomial<F>>,
-    pub chunks_y: Vec<DensePolynomial<F>>,
-    pub circuit_flags: [DensePolynomial<F>; NUM_CIRCUIT_FLAGS],
-    pub aux: Option<AuxPolynomials<F>>,
+impl<T> StructuredPolynomialData<T> for AuxVariableStuff<T> {
+    fn read_write_values(&self) -> Vec<&T> {
+        let mut values = vec![
+            &self.left_lookup_operand,
+            &self.right_lookup_operand,
+            &self.imm_signed,
+            &self.product,
+        ];
+        values.extend(self.relevant_y_chunks.iter());
+        values.extend([
+            &self.write_lookup_output_to_rd,
+            &self.write_pc_to_rd,
+            &self.next_pc_jump,
+            &self.should_branch,
+            &self.next_pc,
+        ]);
+        values
+    }
+
+    fn init_final_values(&self) -> Vec<&T> {
+        vec![]
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        let mut values = vec![
+            &mut self.left_lookup_operand,
+            &mut self.right_lookup_operand,
+            &mut self.imm_signed,
+            &mut self.product,
+        ];
+        values.extend(self.relevant_y_chunks.iter_mut());
+        values.extend([
+            &mut self.write_lookup_output_to_rd,
+            &mut self.write_pc_to_rd,
+            &mut self.next_pc_jump,
+            &mut self.should_branch,
+            &mut self.next_pc,
+        ]);
+        values
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        vec![]
+    }
 }
+
+pub struct R1CSStuff<T> {
+    pub chunks_x: Vec<T>,
+    pub chunks_y: Vec<T>,
+    pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
+    pub aux: Option<AuxVariableStuff<T>>,
+}
+impl<T> StructuredPolynomialData<T> for R1CSStuff<T> {
+    fn read_write_values(&self) -> Vec<&T> {
+        let aux = self.aux.as_ref().unwrap();
+        self.chunks_x
+            .iter()
+            .chain(self.chunks_y.iter())
+            .chain(self.circuit_flags.iter())
+            .chain(aux.read_write_values())
+            .collect()
+    }
+
+    fn init_final_values(&self) -> Vec<&T> {
+        vec![]
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        let aux = self.aux.as_mut().unwrap();
+        self.chunks_x
+            .iter_mut()
+            .chain(self.chunks_y.iter_mut())
+            .chain(self.circuit_flags.iter_mut())
+            .chain(aux.read_write_values_mut())
+            .collect()
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        vec![]
+    }
+}
+
+pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
+pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
+pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
 
 impl<F: JoltField> R1CSPolynomials<F> {
     pub fn new<

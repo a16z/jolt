@@ -29,7 +29,7 @@ pub struct BytecodeStuff<T> {
     a_read_write: T,
     pub(crate) v_read_write: [T; 6],
     t_read: T,
-    t_final: T,
+    pub(crate) t_final: T,
 
     a_init_final: Option<T>,
     v_init_final: Option<[T; 6]>,
@@ -40,16 +40,10 @@ pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitm
 
 impl<T> StructuredPolynomialData<T> for BytecodeStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
-        vec![
-            &self.a_read_write,
-            &self.v_read_write[0],
-            &self.v_read_write[1],
-            &self.v_read_write[2],
-            &self.v_read_write[3],
-            &self.v_read_write[4],
-            &self.v_read_write[5],
-            &self.t_read,
-        ]
+        let mut values = vec![&self.a_read_write];
+        values.extend(self.v_read_write.iter());
+        values.push(&self.t_read);
+        values
     }
 
     fn init_final_values(&self) -> Vec<&T> {
@@ -57,16 +51,10 @@ impl<T> StructuredPolynomialData<T> for BytecodeStuff<T> {
     }
 
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        vec![
-            &mut self.a_read_write,
-            &mut self.v_read_write[0],
-            &mut self.v_read_write[1],
-            &mut self.v_read_write[2],
-            &mut self.v_read_write[3],
-            &mut self.v_read_write[4],
-            &mut self.v_read_write[5],
-            &mut self.t_read,
-        ]
+        let mut values = vec![&mut self.a_read_write];
+        values.extend(self.v_read_write.iter_mut());
+        values.push(&mut self.t_read);
+        values
     }
 
     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
@@ -609,14 +597,14 @@ where
         openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
-            openings.a_read_write_opening,
-            openings.v_read_write_openings[0], // address
-            openings.v_read_write_openings[1], // opcode
-            openings.v_read_write_openings[2], // rd
-            openings.v_read_write_openings[3], // rs1
-            openings.v_read_write_openings[4], // rs2
-            openings.v_read_write_openings[5], // imm
-            openings.t_read_opening,
+            openings.a_read_write,
+            openings.v_read_write[0], // address
+            openings.v_read_write[1], // opcode
+            openings.v_read_write[2], // rd
+            openings.v_read_write[3], // rs1
+            openings.v_read_write[4], // rs2
+            openings.v_read_write[5], // imm
+            openings.t_read,
         ]]
     }
     fn write_tuples(
@@ -624,14 +612,14 @@ where
         openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
-            openings.a_read_write_opening,
-            openings.v_read_write_openings[0], // address
-            openings.v_read_write_openings[1], // opcode
-            openings.v_read_write_openings[2], // rd
-            openings.v_read_write_openings[3], // rs1
-            openings.v_read_write_openings[4], // rs2
-            openings.v_read_write_openings[5], // imm
-            openings.t_read_opening + F::one(),
+            openings.a_read_write,
+            openings.v_read_write[0], // address
+            openings.v_read_write[1], // opcode
+            openings.v_read_write[2], // rd
+            openings.v_read_write[3], // rs1
+            openings.v_read_write[4], // rs2
+            openings.v_read_write[5], // imm
+            openings.t_read + F::one(),
         ]]
     }
     fn init_tuples(

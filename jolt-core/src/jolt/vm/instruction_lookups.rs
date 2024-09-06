@@ -34,9 +34,9 @@ use super::JoltTraceStep;
 pub struct InstructionLookupStuff<T> {
     dim: Vec<T>,
     read_cts: Vec<T>,
-    final_cts: Vec<T>,
+    pub(crate) final_cts: Vec<T>,
     E_polys: Vec<T>,
-    instruction_flags: Vec<T>,
+    pub(crate) instruction_flags: Vec<T>,
     lookup_outputs: T,
 
     a_init_final: Option<T>,
@@ -323,14 +323,14 @@ where
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
     ) -> Vec<Self::MemoryTuple> {
-        let memory_flags = Self::memory_flags(preprocessing, &openings.flag_openings);
+        let memory_flags = Self::memory_flags(preprocessing, &openings.instruction_flags);
         (0..preprocessing.num_memories)
             .map(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                 (
-                    openings.dim_openings[dim_index],
-                    openings.E_poly_openings[memory_index],
-                    openings.read_openings[memory_index],
+                    openings.dim[dim_index],
+                    openings.E_polys[memory_index],
+                    openings.read_cts[memory_index],
                     Some(memory_flags[memory_index]),
                 )
             })
@@ -368,7 +368,7 @@ where
                 (
                     a_init,
                     v_init[preprocessing.memory_to_subtable_index[memory_index]],
-                    openings.final_openings[memory_index],
+                    openings.final_cts[memory_index],
                     None,
                 )
             })

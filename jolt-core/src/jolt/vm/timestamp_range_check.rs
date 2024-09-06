@@ -162,19 +162,27 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> TimestampValidityProof<F, P
         let read_cts_read_timestamp = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[0]))
-            .collect::<Vec<DensePolynomial<F>>>();
+            .collect::<Vec<DensePolynomial<F>>>()
+            .try_into()
+            .unwrap();
         let read_cts_global_minus_read = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[1]))
-            .collect::<Vec<DensePolynomial<F>>>();
+            .collect::<Vec<DensePolynomial<F>>>()
+            .try_into()
+            .unwrap();
         let final_cts_read_timestamp = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[2]))
-            .collect::<Vec<DensePolynomial<F>>>();
+            .collect::<Vec<DensePolynomial<F>>>()
+            .try_into()
+            .unwrap();
         let final_cts_global_minus_read = read_and_final_cts
             .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[3]))
-            .collect::<Vec<DensePolynomial<F>>>();
+            .collect::<Vec<DensePolynomial<F>>>()
+            .try_into()
+            .unwrap();
 
         let polynomials = TimestampRangeCheckPolynomials {
             read_cts_read_timestamp,
@@ -398,7 +406,7 @@ where
         r: &[F],
         _: &[F],
     ) {
-        proof.openings.identity = Some(IdentityPolynomial::new(r.len()).evaluate(r));
+        unimplemented!("")
     }
 
     fn verify_memory_checking(
@@ -675,16 +683,6 @@ where
                 Some(generators),
             );
 
-        let openings: Vec<_> = self
-            .openings
-            .read_cts_read_timestamp
-            .into_iter()
-            .chain(self.openings.read_cts_global_minus_read)
-            .chain(self.openings.final_cts_read_timestamp)
-            .chain(self.openings.final_cts_global_minus_read)
-            .chain(self.openings.memory_t_read)
-            .collect();
-
         // // TODO(moodlezoup): Make indexing less disgusting
         // let t_read_commitments = &memory_commitment.trace_commitments
         //     [1 + MEMORY_OPS_PER_INSTRUCTION + 5..1 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
@@ -703,26 +701,26 @@ where
         //     transcript,
         // )?;
 
-        self.openings
-            .compute_verifier_openings(&NoPreprocessing, &r_grand_product);
+        self.openings.identity =
+            Some(IdentityPolynomial::new(r_grand_product.len()).evaluate(&r_grand_product));
 
         let read_hashes: Vec<_> =
-            TimestampValidityProof::read_tuples(&NoPreprocessing, &self.openings)
+            TimestampValidityProof::<F, PCS>::read_tuples(&NoPreprocessing, &self.openings)
                 .iter()
                 .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
         let write_hashes: Vec<_> =
-            TimestampValidityProof::write_tuples(&NoPreprocessing, &self.openings)
+            TimestampValidityProof::<F, PCS>::write_tuples(&NoPreprocessing, &self.openings)
                 .iter()
                 .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
         let init_hashes: Vec<_> =
-            TimestampValidityProof::init_tuples(&NoPreprocessing, &self.openings)
+            TimestampValidityProof::<F, PCS>::init_tuples(&NoPreprocessing, &self.openings)
                 .iter()
                 .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
         let final_hashes: Vec<_> =
-            TimestampValidityProof::final_tuples(&NoPreprocessing, &self.openings)
+            TimestampValidityProof::<F, PCS>::final_tuples(&NoPreprocessing, &self.openings)
                 .iter()
                 .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
                 .collect();
