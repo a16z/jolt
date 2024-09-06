@@ -60,76 +60,6 @@ where
     pub openings: Openings,
 }
 
-// pub trait PolynomialTrait {}
-
-// pub struct TestData<T> {
-//     a: T,
-//     b: [T; 4],
-//     c: Vec<T>,
-// }
-
-// impl<T> StructuredPolynomialData for TestData<T> {
-//     // type Item<'a> = &'a Box<dyn PolynomialTrait> where Self: 'a;
-//     type Item<'a> = &'a T where Self: 'a;
-//     type MutableItem<'a> = &'a mut T where Self: 'a;
-
-//     fn read_write_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>> {
-//         [&self.a]
-//             .into_iter()
-//             .chain(self.b.iter())
-//             .chain(self.c.iter())
-//     }
-//     fn init_final_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>> {
-//         std::iter::empty()
-//     }
-//     fn read_write_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>> {
-//         [&mut self.a]
-//             .into_iter()
-//             .chain(self.b.iter_mut())
-//             .chain(self.c.iter_mut())
-//     }
-//     fn init_final_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>> {
-//         std::iter::empty()
-//     }
-// }
-
-// pub trait StructuredPolynomialData<T> {
-//     type Item<'a>
-//     where
-//         Self: 'a;
-//     type MutableItem<'a>
-//     where
-//         Self: 'a;
-
-//     fn read_write_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>>;
-//     fn init_final_iter<'a>(&'a self) -> impl Iterator<Item = Self::Item<'a>>;
-//     fn read_write_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>>;
-//     fn init_final_iter_mut<'a>(&'a mut self) -> impl Iterator<Item = Self::MutableItem<'a>>;
-// }
-
-// impl<T> StructuredPolynomialData<T> for TestData<T> {
-//     fn read_write_values(&self) -> Vec<&T> {
-//         [&self.a]
-//             .into_iter()
-//             .chain(self.b.iter())
-//             .chain(self.c.iter())
-//             .collect()
-//     }
-//     fn init_final_values(&self) -> Vec<&T> {
-//         vec![]
-//     }
-//     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-//         [&mut self.a]
-//             .into_iter()
-//             .chain(self.b.iter_mut())
-//             .chain(self.c.iter_mut())
-//             .collect()
-//     }
-//     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
-//         vec![]
-//     }
-// }
-
 pub trait StructuredPolynomialData<T> {
     fn read_write_values(&self) -> Vec<&T>;
     fn init_final_values(&self) -> Vec<&T>;
@@ -152,7 +82,9 @@ where
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
-    type StructuredData<T>: StructuredPolynomialData<T> + Sync + Default;
+    type StructuredData<T>: StructuredPolynomialData<T> + Sync + Default
+    where
+        T: Sync;
 
     type Polynomials: StructuredPolynomialData<DensePolynomial<F>> =
         Self::StructuredData<DensePolynomial<F>>;

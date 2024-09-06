@@ -1,5 +1,6 @@
 use crate::field::JoltField;
-use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::lasso::memory_checking::StructuredPolynomialData;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
@@ -28,7 +29,7 @@ use crate::{
     utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-pub struct TimestampRangeCheckStuff<T> {
+pub struct TimestampRangeCheckStuff<T: Sync> {
     read_cts_read_timestamp: [T; MEMORY_OPS_PER_INSTRUCTION],
     read_cts_global_minus_read: [T; MEMORY_OPS_PER_INSTRUCTION],
     final_cts_read_timestamp: [T; MEMORY_OPS_PER_INSTRUCTION],
@@ -36,6 +37,36 @@ pub struct TimestampRangeCheckStuff<T> {
     read_timestamps: Option<[T; MEMORY_OPS_PER_INSTRUCTION]>,
     identity: Option<T>,
 }
+impl<T: Sync> StructuredPolynomialData<T> for TimestampRangeCheckStuff<T> {
+    fn read_write_values(&self) -> Vec<&T> {
+        self.read_cts_read_timestamp
+            .iter()
+            .chain(self.read_cts_global_minus_read.iter())
+            .collect()
+    }
+
+    fn init_final_values(&self) -> Vec<&T> {
+        self.final_cts_read_timestamp
+            .iter()
+            .chain(self.final_cts_global_minus_read.iter())
+            .collect()
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        self.read_cts_read_timestamp
+            .iter_mut()
+            .chain(self.read_cts_global_minus_read.iter_mut())
+            .collect()
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        self.final_cts_read_timestamp
+            .iter_mut()
+            .chain(self.final_cts_global_minus_read.iter_mut())
+            .collect()
+    }
+}
+
 pub type TimestampRangeCheckPolynomials<F: JoltField> =
     TimestampRangeCheckStuff<DensePolynomial<F>>;
 pub type TimestampRangeCheckOpenings<F: JoltField> = TimestampRangeCheckStuff<F>;
@@ -163,7 +194,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    type StructuredData<T> = TimestampRangeCheckStuff<T>;
+    type StructuredData<T> = TimestampRangeCheckStuff<T> where T: Sync;
     // Read timestamps from read-write memory
     type AdditionalWitnessData = [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION];
     // Init/final grand products are batched together with read/write grand products
@@ -374,6 +405,8 @@ where
         _: &NoPreprocessing,
         _: &PCS::Setup,
         mut _proof: MemoryCheckingProof<F, PCS, Self::Openings>,
+        _commitments: &Self::Commitments,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Use TimestampValidityProof::verify instead");
@@ -610,6 +643,7 @@ where
     pub fn verify(
         &mut self,
         generators: &PCS::Setup,
+        // TODO(moodlezoup)
         // range_check_commitment: &RangeCheckCommitment<C>,
         // memory_commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,

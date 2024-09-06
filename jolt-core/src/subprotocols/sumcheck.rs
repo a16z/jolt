@@ -333,7 +333,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
-        W: &JoltPolynomials<F, PCS>,
+        W: &JoltPolynomials<F>,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);

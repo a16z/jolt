@@ -9,6 +9,7 @@ use common::constants::RAM_START_ADDRESS;
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
+use timestamp_range_check::TimestampRangeCheckStuff;
 
 use crate::jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials;
 use crate::jolt::{
@@ -34,14 +35,17 @@ use common::{
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
 
-use self::bytecode::BytecodePreprocessing;
-use self::bytecode::{BytecodeCommitments, BytecodePolynomials, BytecodeProof, BytecodeRow};
+use self::bytecode::{
+    BytecodeCommitments, BytecodePolynomials, BytecodePreprocessing, BytecodeProof, BytecodeRow,
+    BytecodeStuff,
+};
 use self::instruction_lookups::{
-    InstructionLookupCommitments, InstructionLookupPolynomials, InstructionLookupsPreprocessing,
-    InstructionLookupsProof,
+    InstructionLookupCommitments, InstructionLookupPolynomials, InstructionLookupStuff,
+    InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
 use self::read_write_memory::{
-    MemoryCommitment, ReadWriteMemory, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
+    ReadWriteMemoryCommitments, ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing,
+    ReadWriteMemoryProof, ReadWriteMemoryStuff,
 };
 use self::timestamp_range_check::TimestampRangeCheckCommitments;
 
@@ -109,25 +113,24 @@ where
     pub r1cs: R1CSProof<C, I, F>,
 }
 
-pub struct JoltPolynomials<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
+struct JoltStuff<T: Sync> {
+    bytecode: BytecodeStuff<T>,
+    read_write_memory: ReadWriteMemoryStuff<T>,
+    instruction_lookups: InstructionLookupStuff<T>,
+    timestamp_range_check: TimestampRangeCheckStuff<T>,
+}
+
+pub struct JoltPolynomials<F: JoltField> {
     pub bytecode: BytecodePolynomials<F>,
-    pub read_write_memory: ReadWriteMemory<F, PCS>,
+    pub read_write_memory: ReadWriteMemoryPolynomials<F>,
     pub timestamp_range_check: TimestampRangeCheckPolynomials<F>,
     pub instruction_lookups: InstructionLookupPolynomials<F>,
     pub r1cs: R1CSPolynomials<F>,
 }
 
-impl<F, PCS> JoltPolynomials<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
+impl<F: JoltField> JoltPolynomials<F> {
     pub fn r1cs_witness_value<const C: usize, I: ConstraintInput>(&self, index: usize) -> F {
-        let trace_len = self.bytecode.a_read_write.len();
+        let trace_len = self.bytecode.v_read_write[0].len();
         I::from_index::<C>(index / trace_len).get_poly_ref(self)[index % trace_len]
     }
 }
@@ -135,7 +138,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltCommitments<PCS: CommitmentScheme> {
     pub bytecode: BytecodeCommitments<PCS>,
-    pub read_write_memory: MemoryCommitment<PCS>,
+    pub read_write_memory: ReadWriteMemoryCommitments<PCS>,
     pub timestamp_range_check: TimestampRangeCheckCommitments<PCS>,
     pub instruction_lookups: InstructionLookupCommitments<PCS>,
     pub r1cs: Vec<PCS::Commitment>,
@@ -153,7 +156,7 @@ impl<PCS: CommitmentScheme> JoltCommitments<PCS> {
     }
 }
 
-impl<F, PCS> StructuredCommitment<PCS> for JoltPolynomials<F, PCS>
+impl<F, PCS> StructuredCommitment<PCS> for JoltPolynomials<F>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -259,7 +262,7 @@ where
                 trace_commitments: bytecode_trace_commitment,
                 t_final_commitment: bytecode_t_final_commitment,
             },
-            read_write_memory: MemoryCommitment {
+            read_write_memory: ReadWriteMemoryCommitments {
                 trace_commitments: memory_trace_commitment,
                 v_final_commitment: memory_v_final_commitment,
                 t_final_commitment: memory_t_final_commitment,
@@ -291,8 +294,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     ) -> JoltPreprocessing<F, PCS> {
         let bytecode_commitment_shapes =
             BytecodePolynomials::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
-        let ram_commitment_shapes =
-            ReadWriteMemory::<F, PCS>::commitment_shapes(max_memory_address, max_trace_length);
+        let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F, PCS>::commitment_shapes(
+            max_memory_address,
+            max_trace_length,
+        );
         let timestamp_range_check_commitment_shapes =
             TimestampValidityProof::<F, PCS>::commitment_shapes(max_trace_length);
 
@@ -387,7 +392,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
 
         let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
-        let (memory_polynomials, read_timestamps) = ReadWriteMemory::new(
+        let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::new(
             &program_io,
             load_store_flags,
             &preprocessing.read_write_memory,
@@ -456,7 +461,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.generators,
             &preprocessing.read_write_memory,
-            &jolt_polynomials,
+            &jolt_polynomials.read_write_memory,
+            &jolt_polynomials.bytecode,
             &program_io,
             &mut opening_accumulator,
             &mut transcript,
@@ -605,7 +611,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
         preprocessing.program_io = Some(program_io);
 
-        ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
+        ReadWriteMemoryProof::verify(
+            proof,
+            generators,
+            preprocessing,
+            commitment,
+            opening_accumulator,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all)]

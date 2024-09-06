@@ -106,7 +106,7 @@ impl LC {
         PCS: CommitmentScheme<Field = F>,
     >(
         &self,
-        polynomials: &JoltPolynomials<F, PCS>,
+        polynomials: &JoltPolynomials<F>,
         batch_size: usize,
     ) -> Vec<F> {
         let mut output = unsafe_allocate_zero_vec(batch_size);
@@ -121,7 +121,7 @@ impl LC {
         PCS: CommitmentScheme<Field = F>,
     >(
         &self,
-        polynomials: &JoltPolynomials<F, PCS>,
+        polynomials: &JoltPolynomials<F>,
         output: &mut [F],
     ) {
         output.par_iter_mut().enumerate().for_each(|(i, eval)| {

@@ -88,7 +88,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
     pub fn prove_new<'a, PCS: CommitmentScheme<Field = F>>(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
-        polynomials: &'a JoltPolynomials<F, PCS>,
+        polynomials: &'a JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {

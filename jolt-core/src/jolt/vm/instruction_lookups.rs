@@ -31,7 +31,7 @@ use crate::{
 
 use super::JoltTraceStep;
 
-struct InstructionLookupStuff<T> {
+pub struct InstructionLookupStuff<T> {
     dim: Vec<T>,
     read_cts: Vec<T>,
     final_cts: Vec<T>,
@@ -98,7 +98,7 @@ where
     Subtables: JoltSubtableSet<F>,
 {
     type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
-    type StructuredData<T> = InstructionLookupStuff<T>;
+    type StructuredData<T> = InstructionLookupStuff<T> where T: Sync;
 
     type Preprocessing = InstructionLookupsPreprocessing<F>;
     type AdditionalWitnessData = Vec<Vec<u64>>; // instruction flag bitvectors

@@ -25,10 +25,9 @@ use crate::{
 
 use super::JoltTraceStep;
 
-// #[derive(Default)]
-struct BytecodeStuff<T> {
+pub struct BytecodeStuff<T> {
     a_read_write: T,
-    v_read_write: [T; 6],
+    pub(crate) v_read_write: [T; 6],
     t_read: T,
     t_final: T,
 
@@ -459,7 +458,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    type StructuredData<T> = BytecodeStuff<T>;
+    type StructuredData<T> = BytecodeStuff<T> where T: Sync;
     type Preprocessing = BytecodePreprocessing<F>;
 
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]

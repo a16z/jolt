@@ -136,7 +136,7 @@ impl<F: JoltField> AuxComputation<F> {
 
     fn compute_aux_poly<const C: usize, I: ConstraintInput, PCS: CommitmentScheme<Field = F>>(
         &self,
-        jolt_polynomials: &JoltPolynomials<F, PCS>,
+        jolt_polynomials: &JoltPolynomials<F>,
         batch_size: usize,
     ) -> DensePolynomial<F> {
         let mut aux_poly: Vec<F> = unsafe_allocate_zero_vec(batch_size);
@@ -567,7 +567,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
     pub fn compute_aux<PCS: CommitmentScheme<Field = F>>(
         &self,
-        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
+        jolt_polynomials: &mut JoltPolynomials<F>,
     ) {
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
             *I::from_index::<C>(*aux_index).get_poly_ref_mut(jolt_polynomials) =
@@ -661,7 +661,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
     pub fn compute_spartan_Az_Bz_Cz<PCS: CommitmentScheme<Field = F>>(
         &self,
-        polynomials: &JoltPolynomials<F, PCS>,
+        polynomials: &JoltPolynomials<F>,
     ) -> (
         SparsePolynomial<F>,
         SparsePolynomial<F>,

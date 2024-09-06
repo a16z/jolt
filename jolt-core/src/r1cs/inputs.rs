@@ -8,7 +8,6 @@ use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::{JoltPolynomials, JoltTraceStep};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
@@ -129,14 +128,14 @@ pub trait ConstraintInput:
         }
     }
 
-    fn get_poly_ref<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    fn get_poly_ref<'a, F: JoltField>(
         &self,
-        jolt_polynomials: &'a JoltPolynomials<F, PCS>,
+        jolt_polynomials: &'a JoltPolynomials<F>,
     ) -> &'a DensePolynomial<F>;
 
-    fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    fn get_poly_ref_mut<F: JoltField>(
         &self,
-        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
+        jolt_polynomials: &mut JoltPolynomials<F>,
     ) -> &mut DensePolynomial<F>;
 }
 
@@ -220,16 +219,16 @@ impl ConstraintInput for JoltIn {
             })
             .collect()
     }
-    fn get_poly_ref<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    fn get_poly_ref<'a, F: JoltField>(
         &self,
-        jolt_polynomials: &'a JoltPolynomials<F, PCS>,
+        jolt_polynomials: &'a JoltPolynomials<F>,
     ) -> &'a DensePolynomial<F> {
         todo!()
     }
 
-    fn get_poly_ref_mut<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    fn get_poly_ref_mut<F: JoltField>(
         &self,
-        jolt_polynomials: &mut JoltPolynomials<F, PCS>,
+        jolt_polynomials: &mut JoltPolynomials<F>,
     ) -> &mut DensePolynomial<F> {
         todo!();
     }
