@@ -185,6 +185,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         }).flatten().collect();
         z.resize(z.len().next_power_of_two(), F::zero());
 
+        println!("segment count: {}", segmented_padded_witness.segments.len());
+        println!("wtf is z[88]: {:?}", z[88]);
+
         let mut poly_z = DensePolynomial::new(z.clone());
         println!("r_x_step {r_x_step:?}");
         // poly_z.bound_poly_var_bot(&F::zero());
@@ -197,12 +200,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // NOTE (arasuarun): +1 evals 
         let mut z_plus_one= z[1..].to_vec();
-        z_plus_one.push(F::zero());
+        z_plus_one.push(F::one()); // the constant gets shifted left, too TODO(arasuarun): check
         let mut poly_z_plus_1= DensePolynomial::new(z_plus_one);
         for r_s in r_x_step.iter().rev() {
             poly_z_plus_1.bound_poly_var_bot(r_s);
         }
-        let mut evals_plus_1= poly_z.evals();
+        let mut evals_plus_1= poly_z_plus_1.evals();
         evals_plus_1.push(F::one());
         evals_plus_1.resize(evals_plus_1.len().next_power_of_two(), F::zero());
 

@@ -268,7 +268,10 @@ impl<F: JoltField> UniformSpartanKey<F> {
                               offset: &SparseEqualityItem<F>,
                               non_uni_constraint_index: usize,
                               r: F| {
+            println!("len of offset_vars is {}", offset.offset_vars.len());
+            println!("^ SAM IF YOU'RE SEEING THIS SHOULDN'T THIS VALUE BE 3?"); 
             for (col, is_offset, coeff) in offset.offset_vars.iter() {
+                println!("col, is_offset, coeff: {:?}, {:?}, {:?}", col, is_offset, coeff);
                 let offset = if *is_offset { 1 } else { 0 };
 
                 // Ignores the offset overflow at the last step
@@ -277,10 +280,13 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
                 // let y_index = col + offset;
                 let offset_base_index = self.uniform_r1cs.num_vars.next_power_of_two() * 2; 
-                let y_index = col + offset + { if *is_offset { offset_base_index } else { 0 } };
+                let y_index = col + { if *is_offset { offset_base_index } else { 0 } };
                 println!("COL: {col}");
                 println!("y_index: {y_index}");
-                rlc[y_index] += mul_0_1_optimized(&r, coeff) * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index];
+
+                // NOTE(arasuarun): check that r_x_step is not the last step 
+                let eq_r_x_step_last = EqPolynomial::new(r_step.to_vec()).evaluate(&vec![F::one(); self.num_steps.log_2()]);
+                rlc[y_index] += mul_0_1_optimized(&r, coeff) * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index] * (F::one()-eq_r_x_step_last);
 
                 // rlc[y_index_range]
                 //     .par_iter_mut()
@@ -297,7 +303,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
             let span = tracing::span!(tracing::Level::INFO, "update_non_uniform");
             let _guard = span.enter();
             for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
-                update_non_uni(&mut sm_rlc, &constraint.eq, i, F::one());
+                // update_non_uni(&mut sm_rlc, &constraint.eq, i, F::one());
+                // Arasu: just looking at constraint.condition for now. 
                 update_non_uni(&mut sm_rlc, &constraint.condition, i, r_rlc);
             }
         }
