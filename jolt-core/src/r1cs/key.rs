@@ -199,7 +199,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
             |constraints: &SparseConstraints<F>, non_uni_constants: Option<Vec<F>>| -> Vec<F> {
                 // +1 for constant
                 let mut evals =
-                    unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 2);
+                    unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 4); // NOTE(arasuarun): *4 to handle non-uniformity
                 for (row, col, val) in constraints.vars.iter() {
                     // TODO(sragss): Not sure this is right.
                     evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
@@ -275,7 +275,9 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 // let y_index_range = col * self.num_steps + offset..(col + 1) * self.num_steps;
                 // let steps = (0..self.num_steps).into_par_iter();
 
-                let y_index = col + offset;
+                // let y_index = col + offset;
+                let offset_base_index = self.uniform_r1cs.num_vars.next_power_of_two() * 2; 
+                let y_index = col + offset + { if *is_offset { offset_base_index } else { 0 } };
                 println!("COL: {col}");
                 println!("y_index: {y_index}");
                 rlc[y_index] += mul_0_1_optimized(&r, coeff) * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index];
@@ -301,6 +303,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         }
         //
         // rlc
+        println!("So we get here?"); 
         sm_rlc
     }
 

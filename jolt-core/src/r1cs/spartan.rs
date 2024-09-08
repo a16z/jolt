@@ -185,7 +185,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         }).flatten().collect();
         z.resize(z.len().next_power_of_two(), F::zero());
 
-        let mut poly_z = DensePolynomial::new(z);
+        let mut poly_z = DensePolynomial::new(z.clone());
         println!("r_x_step {r_x_step:?}");
         // poly_z.bound_poly_var_bot(&F::zero());
         for r_s in r_x_step.iter().rev() {
@@ -194,10 +194,23 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut evals = poly_z.evals();
         evals.push(F::one());
         evals.resize(evals.len().next_power_of_two(), F::zero());
-        poly_z = DensePolynomial::new(evals);
 
-        println!("poly_z, {poly_z:?}");
-        assert_eq!(poly_z.len(), num_vars.next_power_of_two() * 2);
+        // NOTE (arasuarun): +1 evals 
+        let mut z_plus_one= z[1..].to_vec();
+        z_plus_one.push(F::zero());
+        let mut poly_z_plus_1= DensePolynomial::new(z_plus_one);
+        for r_s in r_x_step.iter().rev() {
+            poly_z_plus_1.bound_poly_var_bot(r_s);
+        }
+        let mut evals_plus_1= poly_z.evals();
+        evals_plus_1.push(F::one());
+        evals_plus_1.resize(evals_plus_1.len().next_power_of_two(), F::zero());
+
+        // poly_z = DensePolynomial::new(evals);
+        poly_z = DensePolynomial::new([evals, evals_plus_1].concat());
+
+        // assert_eq!(poly_z.len(), num_vars.next_power_of_two() * 2);
+        assert_eq!(poly_z.len(), num_vars.next_power_of_two() * 4); // NOTE(arasuarun): +1 evals
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
         let num_steps_bits = constraint_builder
@@ -222,7 +235,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // TODO(sragss): z could be wrong!!!! EVALUATE ALL OF Z
 
-        let num_rounds = (num_vars.next_power_of_two() * 2).log_2();
+        let num_rounds = (num_vars.next_power_of_two() * 4).log_2(); // NOTE(arasuarun): +1 evals
         let mut polys = vec![poly_ABC, poly_z];
         let comb_func = |stuff: &[F]| -> F {
             assert_eq!(stuff.len(), 2);
