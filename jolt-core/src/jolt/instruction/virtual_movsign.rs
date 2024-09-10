@@ -85,7 +85,13 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -95,7 +101,11 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
+        jolt::instruction::JoltInstruction,
+        jolt_instruction_test,
+    };
 
     use super::MOVSIGNInstruction;
 
@@ -104,11 +114,28 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         // Random
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = MOVSIGNInstruction::<32>(x);
+            let instruction = MOVSIGNInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            MOVSIGNInstruction::<WORD_SIZE>(0),
+            MOVSIGNInstruction::<WORD_SIZE>(1),
+            MOVSIGNInstruction::<WORD_SIZE>(100),
+            MOVSIGNInstruction::<WORD_SIZE>(1 << 8),
+            MOVSIGNInstruction::<WORD_SIZE>(1 << 16),
+            MOVSIGNInstruction::<WORD_SIZE>(SIGN_BIT_32),
+            MOVSIGNInstruction::<WORD_SIZE>(u32_max),
+            MOVSIGNInstruction::<WORD_SIZE>(u32_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }
@@ -118,10 +145,30 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u64();
-            let instruction = MOVSIGNInstruction::<64>(x);
+            let instruction = MOVSIGNInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            MOVSIGNInstruction::<WORD_SIZE>(0),
+            MOVSIGNInstruction::<WORD_SIZE>(1),
+            MOVSIGNInstruction::<WORD_SIZE>(100),
+            MOVSIGNInstruction::<WORD_SIZE>(1 << 8),
+            MOVSIGNInstruction::<WORD_SIZE>(1 << 16),
+            MOVSIGNInstruction::<WORD_SIZE>(1 << 32),
+            MOVSIGNInstruction::<WORD_SIZE>(SIGN_BIT_32),
+            MOVSIGNInstruction::<WORD_SIZE>(SIGN_BIT_64),
+            MOVSIGNInstruction::<WORD_SIZE>(u64_max),
+            MOVSIGNInstruction::<WORD_SIZE>(u64_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }

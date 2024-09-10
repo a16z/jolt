@@ -48,11 +48,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
+        // Same for both 32-bit and 64-bit word sizes
         self.0
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -70,10 +77,59 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = ADVICEInstruction::<32>(x);
+            let instruction = ADVICEInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            ADVICEInstruction::<WORD_SIZE>(0),
+            ADVICEInstruction::<WORD_SIZE>(1),
+            ADVICEInstruction::<WORD_SIZE>(100),
+            ADVICEInstruction::<WORD_SIZE>(1 << 8),
+            ADVICEInstruction::<WORD_SIZE>(1 << 16),
+            ADVICEInstruction::<WORD_SIZE>(u32_max),
+            ADVICEInstruction::<WORD_SIZE>(u32_max - 101),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn advice_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        // Random
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let instruction = ADVICEInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            ADVICEInstruction::<WORD_SIZE>(0),
+            ADVICEInstruction::<WORD_SIZE>(1),
+            ADVICEInstruction::<WORD_SIZE>(100),
+            ADVICEInstruction::<WORD_SIZE>(1 << 8),
+            ADVICEInstruction::<WORD_SIZE>(1 << 16),
+            ADVICEInstruction::<WORD_SIZE>(1 << 32),
+            ADVICEInstruction::<WORD_SIZE>(1 << 48 + 2),
+            ADVICEInstruction::<WORD_SIZE>(u64_max),
+            ADVICEInstruction::<WORD_SIZE>(u64_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }

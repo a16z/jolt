@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct ASSERTLTEInstruction(pub u64, pub u64);
+pub struct ASSERTLTEInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for ASSERTLTEInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for ASSERTLTEInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -56,11 +56,18 @@ impl JoltInstruction for ASSERTLTEInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
+        // Same for both 32-bit and 64-bit word sizes
         (self.0 <= self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -75,17 +82,18 @@ mod test {
     use super::ASSERTLTEInstruction;
 
     #[test]
-    fn assert_lte_instruction_e2e() {
+    fn assert_lte_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         // Random
         for _ in 0..256 {
             let x = rng.next_u32();
             let y = rng.next_u32();
 
-            let instruction = ASSERTLTEInstruction(x as u64, y as u64);
+            let instruction = ASSERTLTEInstruction::<WORD_SIZE>(x as u64, y as u64);
 
             jolt_instruction_test!(instruction);
         }
@@ -93,20 +101,61 @@ mod test {
         // Ones
         for _ in 0..256 {
             let x = rng.next_u32();
-            jolt_instruction_test!(ASSERTLTEInstruction(x as u64, x as u64));
+            jolt_instruction_test!(ASSERTLTEInstruction::<WORD_SIZE>(x as u64, x as u64));
         }
 
         // Edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            ASSERTLTEInstruction(100, 0),
-            ASSERTLTEInstruction(0, 100),
-            ASSERTLTEInstruction(1, 0),
-            ASSERTLTEInstruction(0, u32_max),
-            ASSERTLTEInstruction(u32_max, 0),
-            ASSERTLTEInstruction(u32_max, u32_max),
-            ASSERTLTEInstruction(u32_max, 1 << 8),
-            ASSERTLTEInstruction(1 << 8, u32_max),
+            ASSERTLTEInstruction::<WORD_SIZE>(100, 0),
+            ASSERTLTEInstruction::<WORD_SIZE>(0, 100),
+            ASSERTLTEInstruction::<WORD_SIZE>(1, 0),
+            ASSERTLTEInstruction::<WORD_SIZE>(0, u32_max),
+            ASSERTLTEInstruction::<WORD_SIZE>(u32_max, 0),
+            ASSERTLTEInstruction::<WORD_SIZE>(u32_max, u32_max),
+            ASSERTLTEInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            ASSERTLTEInstruction::<WORD_SIZE>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn assert_lte_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        // Random
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let y = rng.next_u64();
+
+            let instruction = ASSERTLTEInstruction::<WORD_SIZE>(x, y);
+
+            jolt_instruction_test!(instruction);
+        }
+
+        // Ones
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            jolt_instruction_test!(ASSERTLTEInstruction::<WORD_SIZE>(x, x));
+        }
+
+        // Edge-cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            ASSERTLTEInstruction::<WORD_SIZE>(100, 0),
+            ASSERTLTEInstruction::<WORD_SIZE>(0, 100),
+            ASSERTLTEInstruction::<WORD_SIZE>(1, 0),
+            ASSERTLTEInstruction::<WORD_SIZE>(0, u64_max),
+            ASSERTLTEInstruction::<WORD_SIZE>(u64_max, 0),
+            ASSERTLTEInstruction::<WORD_SIZE>(u64_max, u64_max),
+            ASSERTLTEInstruction::<WORD_SIZE>(u64_max, u64_max - 1),
+            ASSERTLTEInstruction::<WORD_SIZE>(u64_max, 1 << 8),
+            ASSERTLTEInstruction::<WORD_SIZE>(1 << 8, u64_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

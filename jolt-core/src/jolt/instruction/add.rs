@@ -59,12 +59,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         } else if WORD_SIZE == 64 {
             self.0.overflowing_add(self.1).0
         } else {
-            panic!("only implemented for u32 / u64")
+            panic!("ADD is only implemented for 32-bit or 64-bit word sizes")
         }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported")
+        }
     }
 }
 
@@ -82,23 +88,26 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            let instruction = ADDInstruction::<32>(x, y);
+            let instruction = ADDInstruction::<WORD_SIZE>(x, y);
             jolt_instruction_test!(instruction);
         }
 
+        // Edge cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            ADDInstruction::<32>(100, 0),
-            ADDInstruction::<32>(0, 100),
-            ADDInstruction::<32>(1, 0),
-            ADDInstruction::<32>(0, u32_max),
-            ADDInstruction::<32>(u32_max, 0),
-            ADDInstruction::<32>(u32_max, u32_max),
-            ADDInstruction::<32>(u32_max, 1 << 8),
-            ADDInstruction::<32>(1 << 8, u32_max),
+            ADDInstruction::<WORD_SIZE>(100, 0),
+            ADDInstruction::<WORD_SIZE>(0, 100),
+            ADDInstruction::<WORD_SIZE>(1, 0),
+            ADDInstruction::<WORD_SIZE>(0, u32_max),
+            ADDInstruction::<WORD_SIZE>(u32_max, 0),
+            ADDInstruction::<WORD_SIZE>(u32_max, u32_max),
+            ADDInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            ADDInstruction::<WORD_SIZE>(1 << 8, u32_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
@@ -110,10 +119,32 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
+        // Random
         for _ in 0..256 {
-            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            let instruction = ADDInstruction::<64>(x, y);
+            let (x, y) = (rng.next_u64(), rng.next_u64());
+            let instruction = ADDInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            ADDInstruction::<WORD_SIZE>(100, 0),
+            ADDInstruction::<WORD_SIZE>(0, 100),
+            ADDInstruction::<WORD_SIZE>(1, 0),
+            ADDInstruction::<WORD_SIZE>(0, u64_max),
+            ADDInstruction::<WORD_SIZE>(u64_max, 0),
+            ADDInstruction::<WORD_SIZE>(u64_max, u64_max),
+            ADDInstruction::<WORD_SIZE>(u64_max, 1 << 32),
+            ADDInstruction::<WORD_SIZE>(1 << 32, u64_max),
+            ADDInstruction::<WORD_SIZE>(1 << 63, 1),
+            ADDInstruction::<WORD_SIZE>(1, 1 << 63),
+            ADDInstruction::<WORD_SIZE>(u64_max - 1, 1),
+            ADDInstruction::<WORD_SIZE>(1, u64_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }

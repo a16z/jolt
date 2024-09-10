@@ -11,14 +11,15 @@ use crate::jolt::subtable::{
 use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct LBInstruction(pub u64);
+pub struct LBInstruction<const WORD_SIZE: usize>(pub u64);
 
-impl JoltInstruction for LBInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for LBInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (0, self.0)
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        // result = byte + \sum_{i=1}^{C-1} 2^{8 * i} * sign_extension
         assert!(M >= 1 << 8);
 
         let byte = vals[0];
@@ -70,11 +71,23 @@ impl JoltInstruction for LBInstruction {
 
     fn lookup_entry(&self) -> u64 {
         // Sign-extend lower 8 bits of the loaded value
-        (self.0 & 0xff) as i8 as i32 as u32 as u64
+        if WORD_SIZE == 32 {
+            (self.0 & 0xff) as i8 as i32 as u32 as u64
+        } else if WORD_SIZE == 64 {
+            (self.0 & 0xff) as i8 as i64 as u64
+        } else {
+            panic!("LB is only implemented for 32-bit or 64-bit word sizes");
+        }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -88,24 +101,57 @@ mod test {
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
-    fn lb_instruction_e2e() {
+    fn lb_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = LBInstruction(x);
+            let instruction = LBInstruction::<WORD_SIZE>(x);
             jolt_instruction_test!(instruction);
         }
 
+        // Edge cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            LBInstruction(0),
-            LBInstruction(1),
-            LBInstruction(100),
-            LBInstruction(u32_max),
-            LBInstruction(1 << 8),
+            LBInstruction::<WORD_SIZE>(0),
+            LBInstruction::<WORD_SIZE>(1),
+            LBInstruction::<WORD_SIZE>(100),
+            LBInstruction::<WORD_SIZE>(u32_max),
+            LBInstruction::<WORD_SIZE>(1 << 8),
+            LBInstruction::<WORD_SIZE>(u32_max - 100),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn lb_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
+
+        // Random
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let instruction = LBInstruction::<WORD_SIZE>(x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            LBInstruction::<WORD_SIZE>(0),
+            LBInstruction::<WORD_SIZE>(1),
+            LBInstruction::<WORD_SIZE>(100),
+            LBInstruction::<WORD_SIZE>(u64_max),
+            LBInstruction::<WORD_SIZE>(1 << 8),
+            LBInstruction::<WORD_SIZE>(1 << 32 - 1),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

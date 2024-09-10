@@ -791,12 +791,14 @@ mod tests {
     use ark_bn254::{Fr, G1Projective};
 
     #[test]
-    fn e2e() {
+    fn surge_32_e2e() {
+        const WORD_SIZE: usize = 32;
+
         let ops = vec![
-            XORInstruction(12, 12),
-            XORInstruction(12, 82),
-            XORInstruction(12, 12),
-            XORInstruction(25, 12),
+            XORInstruction::<WORD_SIZE>(12, 12),
+            XORInstruction::<WORD_SIZE>(12, 82),
+            XORInstruction::<WORD_SIZE>(12, 12),
+            XORInstruction::<WORD_SIZE>(25, 12),
         ];
         const C: usize = 8;
         const M: usize = 1 << 8;
@@ -804,15 +806,16 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(128),
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::num_generators(128),
             b"LassoV1",
         );
-        let proof = SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::prove(
-            &preprocessing,
-            &generators,
-            ops,
-            &mut transcript,
-        );
+        let proof =
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::prove(
+                &preprocessing,
+                &generators,
+                ops,
+                &mut transcript,
+            );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
@@ -820,13 +823,15 @@ mod tests {
     }
 
     #[test]
-    fn e2e_non_pow_2() {
+    fn surge_32_e2e_non_pow_2() {
+        const WORD_SIZE: usize = 32;
+
         let ops = vec![
-            XORInstruction(0, 1),
-            XORInstruction(101, 101),
-            XORInstruction(202, 1),
-            XORInstruction(220, 1),
-            XORInstruction(220, 1),
+            XORInstruction::<WORD_SIZE>(0, 1),
+            XORInstruction::<WORD_SIZE>(101, 101),
+            XORInstruction::<WORD_SIZE>(202, 1),
+            XORInstruction::<WORD_SIZE>(220, 1),
+            XORInstruction::<WORD_SIZE>(220, 1),
         ];
         const C: usize = 2;
         const M: usize = 1 << 8;
@@ -834,15 +839,16 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(128),
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::num_generators(128),
             b"LassoV1",
         );
-        let proof = SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::prove(
-            &preprocessing,
-            &generators,
-            ops,
-            &mut transcript,
-        );
+        let proof =
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::prove(
+                &preprocessing,
+                &generators,
+                ops,
+                &mut transcript,
+            );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)

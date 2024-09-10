@@ -49,12 +49,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
         } else if WORD_SIZE == 64 {
             ((self.0 as u128).wrapping_mul(self.1 as u128) >> 64) as u64
         } else {
-            panic!("only implemented for u32 / u64")
+            panic!("MULHU is only implemented for 32-bit or 64-bit word sizes")
         }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        if WORD_SIZE == 32 {
+            Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        } else if WORD_SIZE == 64 {
+            Self(rng.next_u64(), rng.next_u64())
+        } else {
+            panic!("Only 32-bit and 64-bit word sizes are supported");
+        }
     }
 }
 
@@ -72,10 +78,27 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 32;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            let instruction = MULHUInstruction::<32>(x, y);
+            let instruction = MULHUInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            MULHUInstruction::<WORD_SIZE>(100, 0),
+            MULHUInstruction::<WORD_SIZE>(0, 100),
+            MULHUInstruction::<WORD_SIZE>(1, 0),
+            MULHUInstruction::<WORD_SIZE>(0, u32_max),
+            MULHUInstruction::<WORD_SIZE>(u32_max, 0),
+            MULHUInstruction::<WORD_SIZE>(u32_max, u32_max),
+            MULHUInstruction::<WORD_SIZE>(u32_max, 1 << 8),
+            MULHUInstruction::<WORD_SIZE>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }
@@ -85,10 +108,32 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
+        const WORD_SIZE: usize = 64;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            let instruction = MULHUInstruction::<64>(x, y);
+            let instruction = MULHUInstruction::<WORD_SIZE>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge cases
+        let u64_max: u64 = u64::MAX;
+        let instructions = vec![
+            MULHUInstruction::<WORD_SIZE>(100, 0),
+            MULHUInstruction::<WORD_SIZE>(0, 100),
+            MULHUInstruction::<WORD_SIZE>(1, 0),
+            MULHUInstruction::<WORD_SIZE>(0, u64_max),
+            MULHUInstruction::<WORD_SIZE>(u64_max, 0),
+            MULHUInstruction::<WORD_SIZE>(u64_max, u64_max),
+            MULHUInstruction::<WORD_SIZE>(u64_max, 1 << 32),
+            MULHUInstruction::<WORD_SIZE>(1 << 32, u64_max),
+            MULHUInstruction::<WORD_SIZE>(1 << 63, 1),
+            MULHUInstruction::<WORD_SIZE>(1, 1 << 63),
+            MULHUInstruction::<WORD_SIZE>(u64_max - 1, 1),
+            MULHUInstruction::<WORD_SIZE>(1, u64_max - 1),
+        ];
+        for instruction in instructions {
             jolt_instruction_test!(instruction);
         }
     }

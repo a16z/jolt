@@ -102,7 +102,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
-        let is_valid = AssertValidUnsignedRemainderInstruction(r, y).lookup_entry();
+        let is_valid = AssertValidUnsignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
         assert_eq!(is_valid, 1);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
@@ -123,7 +123,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
-        let lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
+        let lte = ASSERTLTEInstruction::<WORD_SIZE>(q_y, x).lookup_entry();
         assert_eq!(lte, 1);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
@@ -185,7 +185,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
-        let _assert_eq = BEQInstruction(add_0, x).lookup_entry();
+        let _assert_eq = BEQInstruction::<WORD_SIZE>(add_0, x).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
