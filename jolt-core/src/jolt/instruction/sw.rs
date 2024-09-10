@@ -1,12 +1,11 @@
 use crate::field::JoltField;
-use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
-use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
+use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct SWInstruction<const WORD_SIZE: usize>(pub u64);
@@ -19,7 +18,8 @@ impl<const WORD_SIZE: usize> JoltInstruction for SWInstruction<WORD_SIZE> {
     fn combine_lookups<F: JoltField>(&self, vals: &[F], _C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        concatenate_lookups(vals, vals.len(), log2(M) as usize)
+        // Only concatenate the first two lookup results
+        vals[0] * F::from_u64(M as u64).unwrap() + vals[1]
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -34,10 +34,19 @@ impl<const WORD_SIZE: usize> JoltInstruction for SWInstruction<WORD_SIZE> {
         // This assertion ensures that we only need two IdentitySubtables
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        vec![(
-            Box::new(IdentitySubtable::<F>::new()),
-            SubtableIndices::from(C - 2..C),
-        )]
+        vec![
+            (
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(C - 2..C),
+            ),
+            // quang : disabling this right now since it may add overhead for 32-bit word sizes
+            // (
+            //     // Not used for lookup, but this implicitly range-checks
+            //     // the remaining query chunks (only relevant for 64-bit word sizes)
+            //     Box::new(IdentitySubtable::<F>::new()),
+            //     SubtableIndices::from(0..C - 2),
+            // ),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -73,7 +82,8 @@ mod test {
     #[test]
     fn sw_instruction_32_e2e() {
         let mut rng = test_rng();
-        const C: usize = 2;
+        // This works for any `C >= 2`
+        const C: usize = 4;
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
@@ -99,11 +109,11 @@ mod test {
         }
     }
 
-    // Doesn't work for now
     #[test]
     fn sw_instruction_64_e2e() {
         let mut rng = test_rng();
-        const C: usize = 4;
+        // This works for any `C >= 2`
+        const C: usize = 8;
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 64;
 
