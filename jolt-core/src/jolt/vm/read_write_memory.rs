@@ -1,6 +1,8 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::lasso::memory_checking::{StructuredPolynomialData, VerifierComputedOpening};
+use crate::lasso::memory_checking::{
+    ExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -29,7 +31,7 @@ use common::constants::{
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
-use super::{JoltPolynomials, JoltTraceStep};
+use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
@@ -102,7 +104,8 @@ const RAM_2_INDEX: usize = RAM_2 - 3;
 const RAM_3_INDEX: usize = RAM_3 - 3;
 const RAM_4_INDEX: usize = RAM_4 - 3;
 
-pub struct ReadWriteMemoryStuff<T> {
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct ReadWriteMemoryStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     // /// Size of entire address space (i.e. registers + IO + RAM)
     // memory_size: usize,
     /// Read/write addresses. For offline memory checking, each read is paired with a "virtual" write
@@ -128,7 +131,9 @@ pub struct ReadWriteMemoryStuff<T> {
     identity: VerifierComputedOpening<T>,
 }
 
-impl<T> StructuredPolynomialData<T> for ReadWriteMemoryStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for ReadWriteMemoryStuff<T>
+{
     fn read_write_values(&self) -> Vec<&T> {
         [&self.a_ram]
             .into_iter()
@@ -160,7 +165,7 @@ impl<T> StructuredPolynomialData<T> for ReadWriteMemoryStuff<T> {
     }
 }
 
-impl<T: Default> Default for ReadWriteMemoryStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for ReadWriteMemoryStuff<T> {
     fn default() -> Self {
         Self {
             a_ram: T::default(),
@@ -183,29 +188,30 @@ pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePo
 pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
 pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
 
-pub struct RegisterAddresses<T> {
-    pub a_rd: T,
-    pub a_rs1: T,
-    pub a_rs2: T,
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct RegisterAddressOpenings<F: JoltField> {
+    pub a_rd: F,
+    pub a_rs1: F,
+    pub a_rs2: F,
 }
 
-impl<T> StructuredPolynomialData<T> for RegisterAddresses<T> {
-    fn read_write_values(&self) -> Vec<&T> {
+impl<F: JoltField> ExogenousOpenings<F> for RegisterAddressOpenings<F> {
+    fn openings(&self) -> Vec<&F> {
         vec![&self.a_rd, &self.a_rs1, &self.a_rs2]
     }
 
-    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+    fn openings_mut(&mut self) -> Vec<&mut F> {
         vec![&mut self.a_rd, &mut self.a_rs1, &mut self.a_rs2]
     }
-}
 
-impl<T: Default> Default for RegisterAddresses<T> {
-    fn default() -> Self {
-        Self {
-            a_rd: T::default(),
-            a_rs1: T::default(),
-            a_rs2: T::default(),
-        }
+    fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        polys_or_commitments: &JoltStuff<T>,
+    ) -> Vec<&T> {
+        vec![
+            &polys_or_commitments.bytecode.v_read_write[RD],
+            &polys_or_commitments.bytecode.v_read_write[RS1],
+            &polys_or_commitments.bytecode.v_read_write[RS2],
+        ]
     }
 }
 
@@ -877,9 +883,7 @@ where
     type Commitments = ReadWriteMemoryCommitments<PCS>;
     type Preprocessing = ReadWriteMemoryPreprocessing;
 
-    type ExogenousOpenings = RegisterAddresses<F>;
-    type ExogenousPolynomials<'a> = RegisterAddresses<&'a DensePolynomial<F>>;
-    type ExogenousCommitments<'a> = RegisterAddresses<&'a PCS::Commitment>;
+    type ExogenousOpenings = RegisterAddressOpenings<F>;
 
     // (a, v, t)
     type MemoryTuple = (F, F, F);
@@ -893,13 +897,17 @@ where
     fn compute_leaves<'a>(
         _: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
-        register_addresses: &RegisterAddresses<&'a DensePolynomial<F>>,
+        jolt_polynomials: &'a JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
         let gamma_squared = gamma.square();
         let num_ops = polynomials.a_ram.len();
         let memory_size = polynomials.v_final.len();
+
+        let a_rd = &jolt_polynomials.bytecode.v_read_write[RD];
+        let a_rs1 = &jolt_polynomials.bytecode.v_read_write[RS1];
+        let a_rs2 = &jolt_polynomials.bytecode.v_read_write[RS2];
 
         let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
@@ -908,9 +916,9 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let a = match i {
-                            RS1 => register_addresses.a_rs1[j],
-                            RS2 => register_addresses.a_rs2[j],
-                            RD => register_addresses.a_rd[j],
+                            RS1 => a_rs1[j],
+                            RS2 => a_rs2[j],
+                            RD => a_rd[j],
                             _ => polynomials.a_ram[j] + F::from_u64((i - RAM_1) as u64).unwrap(),
                         };
                         polynomials.t_read[i][j] * gamma_squared
@@ -931,19 +939,19 @@ where
                         RS1 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + register_addresses.a_rs1[j]
+                                + a_rs1[j]
                                 - *tau
                         }
                         RS2 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + register_addresses.a_rs2[j]
+                                + a_rs2[j]
                                 - *tau
                         }
                         RD => {
                             F::from_u64(j as u64 + 1).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + register_addresses.a_rd[j]
+                                + a_rd[j]
                                 - *tau
                         }
                         _ => {
@@ -1084,7 +1092,7 @@ where
     fn read_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        register_address_openings: &RegisterAddresses<F>,
+        register_address_openings: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
@@ -1101,7 +1109,7 @@ where
     fn write_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        register_address_openings: &RegisterAddresses<F>,
+        register_address_openings: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
@@ -1133,7 +1141,7 @@ where
     fn init_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        _: &RegisterAddresses<F>,
+        _: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_init_final.unwrap(),
@@ -1144,7 +1152,7 @@ where
     fn final_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        _: &RegisterAddresses<F>,
+        _: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_init_final.unwrap(),
@@ -1352,7 +1360,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub memory_checking_proof:
-        MemoryCheckingProof<F, PCS, ReadWriteMemoryOpenings<F>, RegisterAddresses<F>>,
+        MemoryCheckingProof<F, PCS, ReadWriteMemoryOpenings<F>, RegisterAddressOpenings<F>>,
     pub timestamp_validity_proof: TimestampValidityProof<F, PCS>,
     pub output_proof: OutputSumcheckProof<F, PCS>,
 }
@@ -1371,16 +1379,11 @@ where
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let registers = RegisterAddresses {
-            a_rd: &polynomials.bytecode.v_read_write[RD],
-            a_rs1: &polynomials.bytecode.v_read_write[RS1],
-            a_rs2: &polynomials.bytecode.v_read_write[RS2],
-        };
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
             preprocessing,
             &polynomials.read_write_memory,
-            &registers,
+            polynomials,
             opening_accumulator,
             transcript,
         );
@@ -1396,7 +1399,7 @@ where
         let timestamp_validity_proof = TimestampValidityProof::prove(
             generators,
             &polynomials.timestamp_range_check,
-            &polynomials.read_write_memory.t_read,
+            polynomials,
             opening_accumulator,
             transcript,
         );
@@ -1412,21 +1415,16 @@ where
         mut self,
         generators: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        commitment: &'a JoltCommitments<PCS>,
+        commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let registers = RegisterAddresses {
-            a_rd: &commitment.0.bytecode.v_read_write[RD],
-            a_rs1: &commitment.0.bytecode.v_read_write[RS1],
-            a_rs2: &commitment.0.bytecode.v_read_write[RS2],
-        };
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
             generators,
             self.memory_checking_proof,
-            &commitment.0.read_write_memory,
-            &registers,
+            &commitments.read_write_memory,
+            &commitments,
             opening_accumulator,
             transcript,
         )?;
@@ -1434,7 +1432,7 @@ where
             &self.output_proof,
             preprocessing,
             generators,
-            &commitment.0.read_write_memory,
+            &commitments.read_write_memory,
             transcript,
         )?;
         TimestampValidityProof::verify(

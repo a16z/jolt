@@ -11,7 +11,7 @@ use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::{
-    MultisetHashes, NoExogenousData, StructuredPolynomialData, VerifierComputedOpening,
+    MultisetHashes, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::mul_0_1_optimized;
@@ -31,15 +31,16 @@ use crate::{
     },
 };
 
-use super::JoltTraceStep;
+use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
-pub struct InstructionLookupStuff<T> {
-    dim: Vec<T>,
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    pub(crate) dim: Vec<T>,
     read_cts: Vec<T>,
     pub(crate) final_cts: Vec<T>,
-    E_polys: Vec<T>,
+    pub(crate) E_polys: Vec<T>,
     pub(crate) instruction_flags: Vec<T>,
-    lookup_outputs: T,
+    pub(crate) lookup_outputs: T,
 
     /// Hack: This is only populated for `InstructionLookupPolynomials`, where
     /// the instruction flags are kept in u64 representation for efficient conversion
@@ -55,7 +56,7 @@ pub type InstructionLookupOpenings<F: JoltField> = InstructionLookupStuff<F>;
 pub type InstructionLookupCommitments<PCS: CommitmentScheme> =
     InstructionLookupStuff<PCS::Commitment>;
 
-impl<T: Default> Default for InstructionLookupStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for InstructionLookupStuff<T> {
     fn default() -> Self {
         todo!()
         // Self {
@@ -64,7 +65,9 @@ impl<T: Default> Default for InstructionLookupStuff<T> {
     }
 }
 
-impl<T> StructuredPolynomialData<T> for InstructionLookupStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for InstructionLookupStuff<T>
+{
     fn read_write_values(&self) -> Vec<&T> {
         self.dim
             .iter()
@@ -136,7 +139,7 @@ where
     fn compute_leaves(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         polynomials: &Self::Polynomials,
-        _: &NoExogenousData,
+        _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (
@@ -344,7 +347,7 @@ where
     fn read_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let memory_flags = Self::memory_flags(preprocessing, &openings.instruction_flags);
         (0..preprocessing.num_memories)
@@ -362,9 +365,9 @@ where
     fn write_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        Self::read_tuples(preprocessing, openings, &NoExogenousData)
+        Self::read_tuples(preprocessing, openings, &NoExogenousOpenings)
             .iter()
             .map(|(a, v, t, flag)| (*a, *v, *t + F::one(), *flag))
             .collect()
@@ -372,7 +375,7 @@ where
     fn init_tuples(
         _preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -384,7 +387,7 @@ where
     fn final_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -420,7 +423,7 @@ pub struct InstructionLookupsProof<
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
     primary_sumcheck: PrimarySumcheck<F>,
-    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupOpenings<F>, NoExogenousData>,
+    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupOpenings<F>, NoExogenousOpenings>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -526,14 +529,14 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
     pub fn prove<'a>(
         generators: &PCS::Setup,
-        polynomials: &'a InstructionLookupPolynomials<F>,
+        polynomials: &'a JoltPolynomials<F>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
         transcript.append_protocol_name(Self::protocol_name());
 
-        let trace_length = polynomials.dim[0].len();
+        let trace_length = polynomials.instruction_lookups.dim[0].len();
         let r_eq = transcript.challenge_vector(trace_length.log_2());
 
         let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq);
@@ -546,9 +549,9 @@ where
                 preprocessing,
                 num_rounds,
                 &mut eq_poly,
-                &polynomials.E_polys,
-                &polynomials.instruction_flags,
-                &mut polynomials.lookup_outputs.clone(),
+                &polynomials.instruction_lookups.E_polys,
+                &polynomials.instruction_lookups.instruction_flags,
+                &mut polynomials.instruction_lookups.lookup_outputs.clone(),
                 Self::sumcheck_poly_degree(),
                 transcript,
             );
@@ -561,10 +564,11 @@ where
         };
 
         let primary_sumcheck_polys = polynomials
+            .instruction_lookups
             .E_polys
             .iter()
-            .chain(polynomials.instruction_flags.iter())
-            .chain([&polynomials.lookup_outputs].into_iter())
+            .chain(polynomials.instruction_lookups.instruction_flags.iter())
+            .chain([&polynomials.instruction_lookups.lookup_outputs].into_iter())
             .collect::<Vec<_>>();
 
         let mut primary_sumcheck_openings: Vec<F> = [
@@ -599,8 +603,8 @@ where
         let memory_checking = Self::prove_memory_checking(
             generators,
             preprocessing,
+            &polynomials.instruction_lookups,
             polynomials,
-            &NoExogenousData,
             opening_accumulator,
             transcript,
         );
@@ -617,7 +621,7 @@ where
         preprocessing: &InstructionLookupsPreprocessing<F>,
         pcs_setup: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-        commitments: &'a InstructionLookupStuff<PCS::Commitment>,
+        commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -658,8 +662,8 @@ where
             preprocessing,
             pcs_setup,
             proof.memory_checking,
+            &commitments.instruction_lookups,
             commitments,
-            &NoExogenousData,
             opening_accumulator,
             transcript,
         )?;

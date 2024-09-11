@@ -1,7 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-use std::marker::PhantomData;
-
 use crate::field::JoltField;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::constraints::{JoltRV32IMConstraints, R1CSConstraints};
@@ -23,8 +21,7 @@ use crate::jolt::{
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{
-    MemoryCheckingProver, MemoryCheckingVerifier, NoExogenousData, SerializableWrapper,
-    StructuredPolynomialData,
+    MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -113,15 +110,18 @@ where
     pub r1cs: R1CSProof<C, I, F>,
 }
 
-pub struct JoltStuff<T: Sync> {
-    bytecode: BytecodeStuff<T>,
-    read_write_memory: ReadWriteMemoryStuff<T>,
-    instruction_lookups: InstructionLookupStuff<T>,
-    timestamp_range_check: TimestampRangeCheckStuff<T>,
-    r1cs: R1CSStuff<T>,
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
+    pub(crate) bytecode: BytecodeStuff<T>,
+    pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
+    pub(crate) instruction_lookups: InstructionLookupStuff<T>,
+    pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
+    pub(crate) r1cs: R1CSStuff<T>,
 }
 
-impl<T: Sync> StructuredPolynomialData<T> for JoltStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
+    for JoltStuff<T>
+{
     fn read_write_values(&self) -> Vec<&T> {
         self.bytecode
             .read_write_values()
@@ -168,20 +168,19 @@ impl<T: Sync> StructuredPolynomialData<T> for JoltStuff<T> {
 }
 
 pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
-pub type JoltCommitments<PCS: CommitmentScheme> =
-    SerializableWrapper<PCS::Commitment, JoltStuff<PCS::Commitment>>;
+pub type JoltCommitments<PCS: CommitmentScheme> = JoltStuff<PCS::Commitment>;
 
-impl<T: Default + Sync> Default for JoltStuff<T> {
-    fn default() -> Self {
-        Self {
-            bytecode: BytecodeStuff::default(),
-            read_write_memory: ReadWriteMemoryStuff::default(),
-            instruction_lookups: InstructionLookupStuff::default(),
-            timestamp_range_check: TimestampRangeCheckStuff::default(),
-            r1cs: R1CSStuff::default(),
-        }
-    }
-}
+// impl<T: CanonicalSerialize + CanonicalDeserialize + Default + Sync> Default for JoltStuff<T> {
+//     fn default() -> Self {
+//         Self {
+//             bytecode: BytecodeStuff::default(),
+//             read_write_memory: ReadWriteMemoryStuff::default(),
+//             instruction_lookups: InstructionLookupStuff::default(),
+//             timestamp_range_check: TimestampRangeCheckStuff::default(),
+//             r1cs: R1CSStuff::default(),
+//         }
+//     }
+// }
 
 impl<F: JoltField> JoltPolynomials<F> {
     pub fn r1cs_witness_value<const C: usize, I: ConstraintInput>(&self, index: usize) -> F {
@@ -191,33 +190,35 @@ impl<F: JoltField> JoltPolynomials<F> {
 
     pub fn commit<PCS: CommitmentScheme<Field = F>>(
         &self,
-        pcs_setup: &PCS::Setup,
+        preprocessing: &JoltPreprocessing<F, PCS>,
     ) -> JoltCommitments<PCS> {
         let mut commitments: JoltStuff<PCS::Commitment> = Default::default();
 
         let trace_polys = self.read_write_values();
-        let trace_comitments = PCS::batch_commit_polys_ref(&trace_polys, pcs_setup, BatchType::Big);
+        let trace_comitments =
+            PCS::batch_commit_polys_ref(&trace_polys, &preprocessing.generators, BatchType::Big);
         commitments
             .read_write_values_mut()
             .into_iter()
             .zip(trace_comitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
 
-        commitments.bytecode.t_final = PCS::commit(&self.bytecode.t_final, pcs_setup);
+        commitments.bytecode.t_final =
+            PCS::commit(&self.bytecode.t_final, &preprocessing.generators);
         (
             commitments.read_write_memory.v_final,
             commitments.read_write_memory.t_final,
         ) = rayon::join(
-            || PCS::commit(&self.read_write_memory.v_final, pcs_setup),
-            || PCS::commit(&self.read_write_memory.t_final, pcs_setup),
+            || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
+            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators),
         );
         commitments.instruction_lookups.final_cts = PCS::batch_commit_polys(
             &self.instruction_lookups.final_cts,
-            pcs_setup,
+            &preprocessing.generators,
             BatchType::Big,
         );
 
-        SerializableWrapper(commitments, PhantomData)
+        commitments
     }
 }
 
@@ -372,17 +373,15 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
-        let jolt_commitments = jolt_polynomials.commit::<PCS>(&preprocessing.generators);
+        let jolt_commitments = jolt_polynomials.commit::<PCS>(&preprocessing);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 
         jolt_commitments
-            .0
             .read_write_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
         jolt_commitments
-            .0
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
@@ -394,14 +393,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.generators,
             &preprocessing.bytecode,
             &jolt_polynomials.bytecode,
-            &NoExogenousData,
+            &jolt_polynomials,
             &mut opening_accumulator,
             &mut transcript,
         );
 
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
-            &jolt_polynomials.instruction_lookups,
+            &jolt_polynomials,
             &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,
@@ -472,12 +471,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         transcript.append_scalar(&proof.r1cs.key.vk_digest);
 
         commitments
-            .0
             .read_write_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
         commitments
-            .0
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
@@ -489,7 +486,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.bytecode,
             &preprocessing.generators,
             proof.bytecode,
-            &commitments.0.bytecode,
+            &commitments,
             &mut opening_accumulator,
             &mut transcript,
         )?;
@@ -497,7 +494,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.instruction_lookups,
             &preprocessing.generators,
             proof.instruction_lookups,
-            &commitments.0.instruction_lookups,
+            &commitments,
             &mut opening_accumulator,
             &mut transcript,
         )?;
@@ -521,7 +518,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         preprocessing: &InstructionLookupsPreprocessing<F>,
         generators: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
-        commitment: &'a InstructionLookupCommitments<PCS>,
+        commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -529,7 +526,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             preprocessing,
             generators,
             proof,
-            commitment,
+            commitments,
             opening_accumulator,
             transcript,
         )
@@ -540,7 +537,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         preprocessing: &BytecodePreprocessing<F>,
         generators: &PCS::Setup,
         proof: BytecodeProof<F, PCS>,
-        commitment: &'a BytecodeCommitments<PCS>,
+        commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -548,8 +545,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             preprocessing,
             generators,
             proof,
-            commitment,
-            &NoExogenousData,
+            &commitments.bytecode,
+            commitments,
             opening_accumulator,
             transcript,
         )

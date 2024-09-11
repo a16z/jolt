@@ -4,8 +4,7 @@ use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertVal
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
-use crate::lasso::memory_checking::SerializableWrapper;
-use crate::poly::commitment::hyrax::{HyraxCommitment, HyraxScheme};
+use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
 use crate::r1cs::inputs::JoltIn;
 use ark_bn254::{Fr, G1Projective};

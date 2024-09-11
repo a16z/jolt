@@ -27,7 +27,8 @@ use std::hash::Hash;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub struct AuxVariableStuff<T> {
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub left_lookup_operand: T,
     pub right_lookup_operand: T,
     pub imm_signed: T,
@@ -40,7 +41,7 @@ pub struct AuxVariableStuff<T> {
     pub next_pc: T,
 }
 
-impl<T: Default> Default for AuxVariableStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for AuxVariableStuff<T> {
     fn default() -> Self {
         Self {
             left_lookup_operand: T::default(),
@@ -57,7 +58,9 @@ impl<T: Default> Default for AuxVariableStuff<T> {
     }
 }
 
-impl<T> StructuredPolynomialData<T> for AuxVariableStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for AuxVariableStuff<T>
+{
     fn read_write_values(&self) -> Vec<&T> {
         let mut values = vec![
             &self.left_lookup_operand,
@@ -103,14 +106,15 @@ impl<T> StructuredPolynomialData<T> for AuxVariableStuff<T> {
     }
 }
 
-pub struct R1CSStuff<T> {
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub chunks_x: Vec<T>,
     pub chunks_y: Vec<T>,
     pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
     pub aux: Option<AuxVariableStuff<T>>,
 }
 
-impl<T> StructuredPolynomialData<T> for R1CSStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
         let aux = self.aux.as_ref().unwrap();
         self.chunks_x
@@ -144,7 +148,7 @@ pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
 pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
 pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
 
-impl<T: Default> Default for R1CSStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for R1CSStuff<T> {
     fn default() -> Self {
         Self {
             chunks_x: todo!(),
@@ -243,10 +247,10 @@ pub trait ConstraintInput:
         jolt_polynomials: &'a JoltPolynomials<F>,
     ) -> &'a DensePolynomial<F>;
 
-    fn get_poly_ref_mut<F: JoltField>(
+    fn get_poly_ref_mut<'a, F: JoltField>(
         &self,
-        jolt_polynomials: &mut JoltPolynomials<F>,
-    ) -> &mut DensePolynomial<F>;
+        jolt_polynomials: &'a mut JoltPolynomials<F>,
+    ) -> &'a mut DensePolynomial<F>;
 }
 
 #[allow(non_camel_case_types)]
@@ -329,17 +333,71 @@ impl ConstraintInput for JoltIn {
             })
             .collect()
     }
+
     fn get_poly_ref<'a, F: JoltField>(
         &self,
         jolt_polynomials: &'a JoltPolynomials<F>,
     ) -> &'a DensePolynomial<F> {
-        todo!()
+        let aux_polynomials = jolt_polynomials.r1cs.aux.as_ref().unwrap();
+        match self {
+            JoltIn::Bytecode_A => &jolt_polynomials.bytecode.a_read_write,
+            JoltIn::Bytecode_ELFAddress => &jolt_polynomials.bytecode.v_read_write[0],
+            JoltIn::Bytecode_Bitflags => &jolt_polynomials.bytecode.v_read_write[1],
+            JoltIn::Bytecode_RD => &jolt_polynomials.bytecode.v_read_write[2],
+            JoltIn::Bytecode_RS1 => &jolt_polynomials.bytecode.v_read_write[3],
+            JoltIn::Bytecode_RS2 => &jolt_polynomials.bytecode.v_read_write[4],
+            JoltIn::Bytecode_Imm => &jolt_polynomials.bytecode.v_read_write[5],
+            JoltIn::RAM_A => &jolt_polynomials.read_write_memory.a_ram,
+            JoltIn::RS1_Read => &jolt_polynomials.read_write_memory.v_read[0],
+            JoltIn::RS2_Read => &jolt_polynomials.read_write_memory.v_read[1],
+            JoltIn::RD_Read => &jolt_polynomials.read_write_memory.v_read[2],
+            JoltIn::RAM_Read(i) => &jolt_polynomials.read_write_memory.v_read[2 + i],
+            JoltIn::RD_Write => &jolt_polynomials.read_write_memory.v_write_rd,
+            JoltIn::RAM_Write(i) => &jolt_polynomials.read_write_memory.v_write_ram[*i],
+            JoltIn::ChunksQuery(i) => &jolt_polynomials.instruction_lookups.dim[*i],
+            JoltIn::LookupOutput => &jolt_polynomials.instruction_lookups.lookup_outputs,
+            JoltIn::ChunksX(i) => &jolt_polynomials.r1cs.chunks_x[*i],
+            JoltIn::ChunksY(i) => &jolt_polynomials.r1cs.chunks_y[*i],
+            JoltIn::OpFlags(i) => &jolt_polynomials.r1cs.circuit_flags[*i as usize],
+            JoltIn::InstructionFlags(i) => {
+                &jolt_polynomials.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
+            }
+            Self::Aux(aux) => match aux {
+                AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,
+                AuxVariable::RightLookupOperand => &aux_polynomials.right_lookup_operand,
+                AuxVariable::ImmSigned => &aux_polynomials.imm_signed,
+                AuxVariable::Product => &aux_polynomials.product,
+                AuxVariable::RelevantYChunk(i) => &aux_polynomials.relevant_y_chunks[*i],
+                AuxVariable::WriteLookupOutputToRD => &aux_polynomials.write_lookup_output_to_rd,
+                AuxVariable::WritePCtoRD => &aux_polynomials.write_pc_to_rd,
+                AuxVariable::NextPCJump => &aux_polynomials.next_pc_jump,
+                AuxVariable::ShouldBranch => &aux_polynomials.should_branch,
+                AuxVariable::NextPC => &aux_polynomials.next_pc,
+            },
+        }
     }
 
-    fn get_poly_ref_mut<F: JoltField>(
+    fn get_poly_ref_mut<'a, F: JoltField>(
         &self,
-        jolt_polynomials: &mut JoltPolynomials<F>,
-    ) -> &mut DensePolynomial<F> {
-        todo!();
+        jolt_polynomials: &'a mut JoltPolynomials<F>,
+    ) -> &'a mut DensePolynomial<F> {
+        let aux_polynomials = jolt_polynomials.r1cs.aux.as_mut().unwrap();
+        match self {
+            Self::Aux(aux) => match aux {
+                AuxVariable::LeftLookupOperand => &mut aux_polynomials.left_lookup_operand,
+                AuxVariable::RightLookupOperand => &mut aux_polynomials.right_lookup_operand,
+                AuxVariable::ImmSigned => &mut aux_polynomials.imm_signed,
+                AuxVariable::Product => &mut aux_polynomials.product,
+                AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
+                AuxVariable::WriteLookupOutputToRD => {
+                    &mut aux_polynomials.write_lookup_output_to_rd
+                }
+                AuxVariable::WritePCtoRD => &mut aux_polynomials.write_pc_to_rd,
+                AuxVariable::NextPCJump => &mut aux_polynomials.next_pc_jump,
+                AuxVariable::ShouldBranch => &mut aux_polynomials.should_branch,
+                AuxVariable::NextPC => &mut aux_polynomials.next_pc,
+            },
+            _ => panic!("get_poly_ref_mut should only be invoked when computing aux polynomials"),
+        }
     }
 }

@@ -1,4 +1,5 @@
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use std::collections::HashSet;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
-    NoExogenousData, StructuredPolynomialData, VerifierComputedOpening,
+    NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
@@ -25,12 +26,13 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 
-use super::JoltTraceStep;
+use super::{JoltPolynomials, JoltTraceStep};
 
-pub struct BytecodeStuff<T> {
-    a_read_write: T,
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    pub(crate) a_read_write: T,
     pub(crate) v_read_write: [T; 6],
-    t_read: T,
+    pub(crate) t_read: T,
     pub(crate) t_final: T,
 
     a_init_final: VerifierComputedOpening<T>,
@@ -40,7 +42,7 @@ pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;
 
-impl<T: Default> Default for BytecodeStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for BytecodeStuff<T> {
     fn default() -> Self {
         Self {
             a_read_write: T::default(),
@@ -53,7 +55,9 @@ impl<T: Default> Default for BytecodeStuff<T> {
     }
 }
 
-impl<T> StructuredPolynomialData<T> for BytecodeStuff<T> {
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for BytecodeStuff<T>
+{
     fn read_write_values(&self) -> Vec<&T> {
         let mut values = vec![&self.a_read_write];
         values.extend(self.v_read_write.iter());
@@ -77,7 +81,8 @@ impl<T> StructuredPolynomialData<T> for BytecodeStuff<T> {
     }
 }
 
-pub type BytecodeProof<F, PCS> = MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousData>;
+pub type BytecodeProof<F, PCS> =
+    MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -483,7 +488,7 @@ where
     fn compute_leaves(
         preprocessing: &BytecodePreprocessing<F>,
         polynomials: &Self::Polynomials,
-        _: &NoExogenousData,
+        _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
@@ -612,7 +617,7 @@ where
     fn read_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write,
@@ -628,7 +633,7 @@ where
     fn write_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write,
@@ -644,7 +649,7 @@ where
     fn init_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
@@ -661,7 +666,7 @@ where
     fn final_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousData,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[

@@ -1,10 +1,7 @@
-use std::marker::PhantomData;
-
 use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
-use crate::lasso::memory_checking::SerializableWrapper;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;

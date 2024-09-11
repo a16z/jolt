@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -15,11 +16,10 @@ use crate::{
 };
 
 use crate::field::JoltField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::prelude::*;
 use std::iter::zip;
-use std::marker::PhantomData;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MultisetHashes<F: JoltField> {
@@ -43,12 +43,12 @@ impl<F: JoltField> MultisetHashes<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, C, Openings, ExogenousOpenings>
+pub struct MemoryCheckingProof<F, C, Openings, OtherOpenings>
 where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
-    Openings: StructuredPolynomialData<F> + Sync + Default,
-    ExogenousOpenings: StructuredPolynomialData<F> + Sync + Default,
+    Openings: StructuredPolynomialData<F> + Sync + CanonicalSerialize + CanonicalDeserialize,
+    OtherOpenings: ExogenousOpenings<F> + Sync,
 {
     /// Read/write/init/final multiset hashes for each memory
     pub multiset_hashes: MultisetHashes<F>,
@@ -59,8 +59,8 @@ where
     /// so they can be batched.
     pub init_final_grand_product: BatchedGrandProductProof<C>,
     /// The openings associated with the grand products.
-    pub openings: SerializableWrapper<F, Openings>,
-    pub exogenous_openings: SerializableWrapper<F, ExogenousOpenings>,
+    pub openings: Openings,
+    pub exogenous_openings: OtherOpenings,
 }
 
 pub type VerifierComputedOpening<T> = Option<T>;
@@ -83,83 +83,29 @@ pub trait StructuredPolynomialData<T> {
     }
 }
 
-#[derive(Default)]
-pub struct NoExogenousData;
-impl<T> StructuredPolynomialData<T> for NoExogenousData {}
-
-pub struct SerializableWrapper<T, U>(pub U, pub PhantomData<T>);
-
-impl<T, U> CanonicalSerialize for SerializableWrapper<T, U>
-where
-    U: StructuredPolynomialData<T> + Sync,
-    T: CanonicalSerialize,
-{
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        for value in self
-            .0
-            .read_write_values()
-            .iter()
-            .chain(self.0.init_final_values().iter())
-        {
-            value.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        let mut size = 0;
-        for value in self
-            .0
-            .read_write_values()
-            .iter()
-            .chain(self.0.init_final_values().iter())
-        {
-            size += value.serialized_size(compress);
-        }
-        size
-    }
+pub trait ExogenousOpenings<F: JoltField>: CanonicalSerialize + CanonicalDeserialize {
+    fn openings(&self) -> Vec<&F>;
+    fn openings_mut(&mut self) -> Vec<&mut F>;
+    fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        polys_or_commitments: &JoltStuff<T>,
+    ) -> Vec<&T>;
 }
 
-impl<T, U> CanonicalDeserialize for SerializableWrapper<T, U>
-where
-    U: StructuredPolynomialData<T> + Sync + Default,
-    T: CanonicalDeserialize,
-{
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let mut result = U::default();
-        for value in result.read_write_values_mut().into_iter() {
-            *value = T::deserialize_with_mode(&mut reader, compress, validate)?;
-        }
-        for value in result.init_final_values_mut().into_iter() {
-            *value = T::deserialize_with_mode(&mut reader, compress, validate)?;
-        }
-        Ok(Self(result, PhantomData))
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct NoExogenousOpenings;
+impl<F: JoltField> ExogenousOpenings<F> for NoExogenousOpenings {
+    fn openings(&self) -> Vec<&F> {
+        vec![]
     }
-}
 
-impl<T, U> Valid for SerializableWrapper<T, U>
-where
-    U: StructuredPolynomialData<T> + Sync,
-    T: Valid,
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        for value in self
-            .0
-            .read_write_values()
-            .iter()
-            .chain(self.0.init_final_values().iter())
-        {
-            value.check()?;
-        }
-        Ok(())
+    fn openings_mut(&mut self) -> Vec<&mut F> {
+        vec![]
+    }
+
+    fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        _: &JoltStuff<T>,
+    ) -> Vec<&T> {
+        vec![]
     }
 }
 
@@ -178,13 +124,13 @@ where
         BatchedDenseGrandProduct<F>;
 
     type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
-    type Openings: StructuredPolynomialData<F> + Sync + Default;
+    type Openings: StructuredPolynomialData<F>
+        + Sync
+        + Default
+        + CanonicalSerialize
+        + CanonicalDeserialize;
     type Commitments: StructuredPolynomialData<PCS::Commitment>;
-
-    type ExogenousPolynomials<'a>: StructuredPolynomialData<&'a DensePolynomial<F>> =
-        NoExogenousData;
-    type ExogenousOpenings: StructuredPolynomialData<F> + Sync + Default = NoExogenousData;
-    type ExogenousCommitments<'a>: StructuredPolynomialData<&'a PCS::Commitment> = NoExogenousData;
+    type ExogenousOpenings: ExogenousOpenings<F> + Sync + Default = NoExogenousOpenings;
 
     type Preprocessing = NoPreprocessing;
 
@@ -197,7 +143,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
         polynomials: &'a Self::Polynomials,
-        exogenous_polynomials: &Self::ExogenousPolynomials<'a>,
+        jolt_polynomials: &'a JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
@@ -210,7 +156,7 @@ where
         ) = Self::prove_grand_products(
             preprocessing,
             polynomials,
-            exogenous_polynomials,
+            jolt_polynomials,
             transcript,
             pcs_setup,
         );
@@ -219,7 +165,7 @@ where
             preprocessing,
             opening_accumulator,
             polynomials,
-            exogenous_polynomials,
+            jolt_polynomials,
             &r_read_write,
             &r_init_final,
         );
@@ -228,8 +174,8 @@ where
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
-            openings: SerializableWrapper(openings, PhantomData),
-            exogenous_openings: SerializableWrapper(exogenous_openings, PhantomData),
+            openings,
+            exogenous_openings,
         }
     }
 
@@ -238,7 +184,7 @@ where
     fn prove_grand_products<'a>(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
-        exogenous_polynomials: &Self::ExogenousPolynomials<'a>,
+        jolt_polynomials: &'a JoltPolynomials<F>,
         transcript: &mut ProofTranscript,
         pcs_setup: &PCS::Setup,
     ) -> (
@@ -254,13 +200,8 @@ where
 
         transcript.append_protocol_name(Self::protocol_name());
 
-        let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
-            preprocessing,
-            polynomials,
-            exogenous_polynomials,
-            &gamma,
-            &tau,
-        );
+        let (read_write_leaves, init_final_leaves) =
+            Self::compute_leaves(preprocessing, polynomials, jolt_polynomials, &gamma, &tau);
         let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
         let (mut init_final_circuit, init_final_hashes) =
@@ -292,7 +233,7 @@ where
         _preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         polynomials: &'a Self::Polynomials,
-        exogenous_polynomials: &Self::ExogenousPolynomials<'a>,
+        jolt_polynomials: &'a JoltPolynomials<F>,
         r_read_write: &[F],
         r_init_final: &[F],
     ) -> (Self::Openings, Self::ExogenousOpenings) {
@@ -305,10 +246,9 @@ where
             .par_iter()
             .zip(openings.read_write_values_mut().into_par_iter())
             .chain(
-                exogenous_polynomials
-                    .read_write_values()
-                    .into_par_iter()
-                    .zip(exogenous_openings.read_write_values_mut().into_par_iter()),
+                Self::ExogenousOpenings::exogenous_data(jolt_polynomials)
+                    .par_iter()
+                    .zip(exogenous_openings.openings_mut().into_par_iter()),
             )
             .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_read_write);
@@ -320,10 +260,9 @@ where
             .iter()
             .zip(openings.read_write_values().into_iter())
             .chain(
-                exogenous_polynomials
-                    .read_write_values()
-                    .into_iter()
-                    .zip(exogenous_openings.read_write_values().into_iter()),
+                Self::ExogenousOpenings::exogenous_data(jolt_polynomials)
+                    .iter()
+                    .zip(exogenous_openings.openings().into_iter()),
             )
         {
             opening_accumulator.append(poly, r_read_write.to_vec(), *claim);
@@ -334,12 +273,6 @@ where
             .init_final_values()
             .par_iter()
             .zip(openings.init_final_values_mut().into_par_iter())
-            .chain(
-                exogenous_polynomials
-                    .init_final_values()
-                    .into_par_iter()
-                    .zip(exogenous_openings.init_final_values_mut().into_par_iter()),
-            )
             .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_init_final);
                 *opening = claim;
@@ -349,12 +282,6 @@ where
             .init_final_values()
             .iter()
             .zip(openings.init_final_values().into_iter())
-            .chain(
-                exogenous_polynomials
-                    .init_final_values()
-                    .into_iter()
-                    .zip(exogenous_openings.init_final_values().into_iter()),
-            )
         {
             opening_accumulator.append(poly, r_init_final.to_vec(), *claim);
         }
@@ -464,7 +391,7 @@ where
     fn compute_leaves<'a>(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
-        exogenous_polynomials: &Self::ExogenousPolynomials<'a>,
+        exogenous_polynomials: &'a JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (
@@ -491,7 +418,7 @@ where
         pcs_setup: &PCS::Setup,
         mut proof: MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings>,
         commitments: &'a Self::Commitments,
-        exogenous_commitments: &Self::ExogenousCommitments<'a>,
+        exogenous_commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -522,35 +449,24 @@ where
 
         proof
             .openings
-            .0
             .read_write_values()
             .into_iter()
             .zip(commitments.read_write_values().iter())
             .chain(
                 proof
                     .exogenous_openings
-                    .0
-                    .read_write_values()
+                    .openings()
                     .into_iter()
-                    .zip(exogenous_commitments.read_write_values().into_iter()),
+                    .zip(exogenous_commitments.read_write_values().iter()),
             )
             .for_each(|(opening, commitment)| {
                 opening_accumulator.append(commitment, r_read_write.to_vec(), *opening);
             });
         proof
             .openings
-            .0
             .init_final_values()
             .into_iter()
             .zip(commitments.init_final_values().iter())
-            .chain(
-                proof
-                    .exogenous_openings
-                    .0
-                    .init_final_values()
-                    .into_iter()
-                    .zip(exogenous_commitments.init_final_values().into_iter()),
-            )
             .for_each(|(opening, commitment)| {
                 opening_accumulator.append(commitment, r_init_final.to_vec(), *opening);
             });
@@ -571,7 +487,7 @@ where
         // )?;
 
         Self::compute_verifier_openings(
-            &mut proof.openings.0,
+            &mut proof.openings,
             preprocessing,
             &r_read_write,
             &r_init_final,
@@ -581,8 +497,8 @@ where
             preprocessing,
             claims_read_write,
             claims_init_final,
-            &proof.openings.0,
-            &proof.exogenous_openings.0,
+            &proof.openings,
+            &proof.exogenous_openings,
             &gamma,
             &tau,
         );
