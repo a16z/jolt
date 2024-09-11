@@ -23,7 +23,7 @@ use crate::jolt::{
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{
-    MemoryCheckingProver, MemoryCheckingVerifier, NoAdditionalWitness, SerializableWrapper,
+    MemoryCheckingProver, MemoryCheckingVerifier, NoExogenousData, SerializableWrapper,
     StructuredPolynomialData,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
@@ -113,7 +113,7 @@ where
     pub r1cs: R1CSProof<C, I, F>,
 }
 
-struct JoltStuff<T: Sync> {
+pub struct JoltStuff<T: Sync> {
     bytecode: BytecodeStuff<T>,
     read_write_memory: ReadWriteMemoryStuff<T>,
     instruction_lookups: InstructionLookupStuff<T>,
@@ -321,7 +321,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
 
-        let (instruction_polynomials, instruction_flag_bitvectors) = InstructionLookupsProof::<
+        let instruction_polynomials = InstructionLookupsProof::<
             C,
             M,
             F,
@@ -329,8 +329,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::InstructionSet,
             Self::Subtables,
         >::generate_witness(
-            &preprocessing.instruction_lookups,
-            &trace,
+            &preprocessing.instruction_lookups, &trace
         );
 
         let load_store_flags = &instruction_polynomials.instruction_flags[5..10];
@@ -395,7 +394,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.generators,
             &preprocessing.bytecode,
             &jolt_polynomials.bytecode,
-            &NoAdditionalWitness,
+            &NoExogenousData,
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -403,7 +402,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
             &jolt_polynomials.instruction_lookups,
-            instruction_flag_bitvectors,
             &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,
@@ -551,6 +549,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             generators,
             proof,
             commitment,
+            &NoExogenousData,
             opening_accumulator,
             transcript,
         )

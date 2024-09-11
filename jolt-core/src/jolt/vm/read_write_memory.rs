@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::lasso::memory_checking::StructuredPolynomialData;
+use crate::lasso::memory_checking::{StructuredPolynomialData, VerifierComputedOpening};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -28,7 +28,6 @@ use common::constants::{
 };
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
-use super::bytecode::BytecodePolynomials;
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
 use super::{JoltPolynomials, JoltTraceStep};
 
@@ -123,57 +122,43 @@ pub struct ReadWriteMemoryStuff<T> {
     /// Final timestamps.
     pub t_final: T,
 
-    a_init_final: Option<T>,
+    a_init_final: VerifierComputedOpening<T>,
     /// Initial memory values. RAM is initialized to contain the program bytecode and inputs.
-    v_init: Option<T>,
-    // v_init: Option<T>,
-    identity: Option<T>,
+    v_init: VerifierComputedOpening<T>,
+    identity: VerifierComputedOpening<T>,
 }
+
 impl<T> StructuredPolynomialData<T> for ReadWriteMemoryStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
-        [
-            // &self.bytecode.v_read_write[2], // rd
-            // &self.bytecode.v_read_write[3], // rs1
-            // &self.bytecode.v_read_write[4], // rs2
-            &self.a_ram,
-        ]
-        .into_iter()
-        .chain(self.v_read.iter())
-        .chain([&self.v_write_rd].into_iter())
-        .chain(self.v_write_ram.iter())
-        .chain(self.t_read.iter())
-        .chain(self.t_write_ram.iter())
-        .collect()
+        [&self.a_ram]
+            .into_iter()
+            .chain(self.v_read.iter())
+            .chain([&self.v_write_rd].into_iter())
+            .chain(self.v_write_ram.iter())
+            .chain(self.t_read.iter())
+            .chain(self.t_write_ram.iter())
+            .collect()
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        [&mut self.a_ram]
+            .into_iter()
+            .chain(self.v_read.iter_mut())
+            .chain([&mut self.v_write_rd].into_iter())
+            .chain(self.v_write_ram.iter_mut())
+            .chain(self.t_read.iter_mut())
+            .chain(self.t_write_ram.iter_mut())
+            .collect()
     }
 
     fn init_final_values(&self) -> Vec<&T> {
         vec![&self.v_final, &self.t_final]
     }
 
-    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        [
-            // &mut self.bytecode.v_read_write[2], // rd
-            // &mut self.bytecode.v_read_write[3], // rs1
-            // &mut self.bytecode.v_read_write[4], // rs2
-            &mut self.a_ram,
-        ]
-        .into_iter()
-        .chain(self.v_read.iter_mut())
-        .chain([&mut self.v_write_rd].into_iter())
-        .chain(self.v_write_ram.iter_mut())
-        .chain(self.t_read.iter_mut())
-        .chain(self.t_write_ram.iter_mut())
-        .collect()
-    }
-
     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
         vec![&mut self.v_final, &mut self.t_final]
     }
 }
-
-pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
-pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
-pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
 
 impl<T: Default> Default for ReadWriteMemoryStuff<T> {
     fn default() -> Self {
@@ -190,6 +175,36 @@ impl<T: Default> Default for ReadWriteMemoryStuff<T> {
             a_init_final: None,
             v_init: None,
             identity: None,
+        }
+    }
+}
+
+pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
+pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
+pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
+
+pub struct RegisterAddresses<T> {
+    pub a_rd: T,
+    pub a_rs1: T,
+    pub a_rs2: T,
+}
+
+impl<T> StructuredPolynomialData<T> for RegisterAddresses<T> {
+    fn read_write_values(&self) -> Vec<&T> {
+        vec![&self.a_rd, &self.a_rs1, &self.a_rs2]
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        vec![&mut self.a_rd, &mut self.a_rs1, &mut self.a_rs2]
+    }
+}
+
+impl<T: Default> Default for RegisterAddresses<T> {
+    fn default() -> Self {
+        Self {
+            a_rd: T::default(),
+            a_rs1: T::default(),
+            a_rs2: T::default(),
         }
     }
 }
@@ -861,7 +876,10 @@ where
     type Openings = ReadWriteMemoryOpenings<F>;
     type Commitments = ReadWriteMemoryCommitments<PCS>;
     type Preprocessing = ReadWriteMemoryPreprocessing;
-    type AdditionalWitnessData = BytecodePolynomials<F>;
+
+    type ExogenousOpenings = RegisterAddresses<F>;
+    type ExogenousPolynomials<'a> = RegisterAddresses<&'a DensePolynomial<F>>;
+    type ExogenousCommitments<'a> = RegisterAddresses<&'a PCS::Commitment>;
 
     // (a, v, t)
     type MemoryTuple = (F, F, F);
@@ -872,10 +890,10 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
-    fn compute_leaves(
+    fn compute_leaves<'a>(
         _: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
-        bytecode_polys: &BytecodePolynomials<F>,
+        register_addresses: &RegisterAddresses<&'a DensePolynomial<F>>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
@@ -890,9 +908,9 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let a = match i {
-                            RS1 => bytecode_polys.v_read_write[3][j],
-                            RS2 => bytecode_polys.v_read_write[4][j],
-                            RD => bytecode_polys.v_read_write[2][j],
+                            RS1 => register_addresses.a_rs1[j],
+                            RS2 => register_addresses.a_rs2[j],
+                            RD => register_addresses.a_rd[j],
                             _ => polynomials.a_ram[j] + F::from_u64((i - RAM_1) as u64).unwrap(),
                         };
                         polynomials.t_read[i][j] * gamma_squared
@@ -913,19 +931,19 @@ where
                         RS1 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + bytecode_polys.v_read_write[3][j]
+                                + register_addresses.a_rs1[j]
                                 - *tau
                         }
                         RS2 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + bytecode_polys.v_read_write[4][j]
+                                + register_addresses.a_rs2[j]
                                 - *tau
                         }
                         RD => {
                             F::from_u64(j as u64 + 1).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + bytecode_polys.v_read_write[2][j]
+                                + register_addresses.a_rd[j]
                                 - *tau
                         }
                         _ => {
@@ -1063,26 +1081,34 @@ where
         openings.v_init = Some(DensePolynomial::from_u64(&v_init).evaluate(r_init_final));
     }
 
-    fn read_tuples(&_: &Self::Preprocessing, openings: &Self::Openings) -> Vec<Self::MemoryTuple> {
+    fn read_tuples(
+        &_: &Self::Preprocessing,
+        openings: &Self::Openings,
+        register_address_openings: &RegisterAddresses<F>,
+    ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
                 let a = match i {
-                    RD => openings.a_read_write[0],
-                    RS1 => openings.a_read_write[1],
-                    RS2 => openings.a_read_write[2],
+                    RD => register_address_openings.a_rd,
+                    RS1 => register_address_openings.a_rs1,
+                    RS2 => register_address_openings.a_rs2,
                     _ => openings.a_ram + F::from_u64((i - RAM_1) as u64).unwrap(),
                 };
                 (a, openings.v_read[i], openings.t_read[i])
             })
             .collect()
     }
-    fn write_tuples(&_: &Self::Preprocessing, openings: &Self::Openings) -> Vec<Self::MemoryTuple> {
+    fn write_tuples(
+        &_: &Self::Preprocessing,
+        openings: &Self::Openings,
+        register_address_openings: &RegisterAddresses<F>,
+    ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
                 let a = match i {
-                    RD => openings.a_read_write_opening[0],
-                    RS1 => openings.a_read_write_opening[1],
-                    RS2 => openings.a_read_write_opening[2],
+                    RD => register_address_openings.a_rd,
+                    RS1 => register_address_openings.a_rs1,
+                    RS2 => register_address_openings.a_rs2,
                     _ => openings.a_ram + F::from_u64((i - RAM_1) as u64).unwrap(),
                 };
                 let v = if i == RS1 || i == RS2 {
@@ -1104,14 +1130,22 @@ where
             })
             .collect()
     }
-    fn init_tuples(&_: &Self::Preprocessing, openings: &Self::Openings) -> Vec<Self::MemoryTuple> {
+    fn init_tuples(
+        &_: &Self::Preprocessing,
+        openings: &Self::Openings,
+        _: &RegisterAddresses<F>,
+    ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_init_final.unwrap(),
             openings.v_init.unwrap(),
             F::zero(),
         )]
     }
-    fn final_tuples(&_: &Self::Preprocessing, openings: &Self::Openings) -> Vec<Self::MemoryTuple> {
+    fn final_tuples(
+        &_: &Self::Preprocessing,
+        openings: &Self::Openings,
+        _: &RegisterAddresses<F>,
+    ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_init_final.unwrap(),
             openings.v_final,
@@ -1317,7 +1351,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    pub memory_checking_proof: MemoryCheckingProof<F, PCS, ReadWriteMemoryOpenings<F>>,
+    pub memory_checking_proof:
+        MemoryCheckingProof<F, PCS, ReadWriteMemoryOpenings<F>, RegisterAddresses<F>>,
     pub timestamp_validity_proof: TimestampValidityProof<F, PCS>,
     pub output_proof: OutputSumcheckProof<F, PCS>,
 }
@@ -1336,11 +1371,16 @@ where
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
+        let registers = RegisterAddresses {
+            a_rd: &polynomials.bytecode.v_read_write[RD],
+            a_rs1: &polynomials.bytecode.v_read_write[RS1],
+            a_rs2: &polynomials.bytecode.v_read_write[RS2],
+        };
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
             preprocessing,
             &polynomials.read_write_memory,
-            &polynomials.bytecode,
+            &registers,
             opening_accumulator,
             transcript,
         );
@@ -1376,11 +1416,17 @@ where
         opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        let registers = RegisterAddresses {
+            a_rd: &commitment.0.bytecode.v_read_write[RD],
+            a_rs1: &commitment.0.bytecode.v_read_write[RS1],
+            a_rs2: &commitment.0.bytecode.v_read_write[RS2],
+        };
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
             generators,
             self.memory_checking_proof,
             &commitment.0.read_write_memory,
+            &registers,
             opening_accumulator,
             transcript,
         )?;

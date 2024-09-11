@@ -10,7 +10,9 @@ use tracing::trace_span;
 use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
-use crate::lasso::memory_checking::{MultisetHashes, StructuredPolynomialData};
+use crate::lasso::memory_checking::{
+    MultisetHashes, NoExogenousData, StructuredPolynomialData, VerifierComputedOpening,
+};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::mul_0_1_optimized;
 use crate::{
@@ -39,8 +41,13 @@ pub struct InstructionLookupStuff<T> {
     pub(crate) instruction_flags: Vec<T>,
     lookup_outputs: T,
 
-    a_init_final: Option<T>,
-    v_init_final: Option<Vec<T>>,
+    /// Hack: This is only populated for `InstructionLookupPolynomials`, where
+    /// the instruction flags are kept in u64 representation for efficient conversion
+    /// to memory flags.
+    instruction_flag_bitvectors: Option<Vec<Vec<u64>>>,
+
+    a_init_final: VerifierComputedOpening<T>,
+    v_init_final: VerifierComputedOpening<Vec<T>>,
 }
 
 pub type InstructionLookupPolynomials<F: JoltField> = InstructionLookupStuff<DensePolynomial<F>>;
@@ -114,7 +121,6 @@ where
     type Commitments = InstructionLookupCommitments<PCS>;
 
     type Preprocessing = InstructionLookupsPreprocessing<F>;
-    type AdditionalWitnessData = Vec<Vec<u64>>; // instruction flag bitvectors
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
@@ -130,7 +136,7 @@ where
     fn compute_leaves(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         polynomials: &Self::Polynomials,
-        instruction_flag_bitvectors: &Vec<Vec<u64>>,
+        _: &NoExogenousData,
         gamma: &F,
         tau: &F,
     ) -> (
@@ -197,7 +203,10 @@ where
             })
             .collect();
 
-        let memory_flags = Self::memory_flag_indices(preprocessing, instruction_flag_bitvectors);
+        let memory_flags = Self::memory_flag_indices(
+            preprocessing,
+            polynomials.instruction_flag_bitvectors.as_ref().unwrap(),
+        );
 
         ((memory_flags, read_write_leaves), init_final_leaves)
     }
@@ -335,6 +344,7 @@ where
     fn read_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         let memory_flags = Self::memory_flags(preprocessing, &openings.instruction_flags);
         (0..preprocessing.num_memories)
@@ -352,8 +362,9 @@ where
     fn write_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
-        Self::read_tuples(preprocessing, openings)
+        Self::read_tuples(preprocessing, openings, &NoExogenousData)
             .iter()
             .map(|(a, v, t, flag)| (*a, *v, *t + F::one(), *flag))
             .collect()
@@ -361,6 +372,7 @@ where
     fn init_tuples(
         _preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -372,6 +384,7 @@ where
     fn final_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -407,7 +420,7 @@ pub struct InstructionLookupsProof<
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
     primary_sumcheck: PrimarySumcheck<F>,
-    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupOpenings<F>>,
+    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupOpenings<F>, NoExogenousData>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -514,7 +527,6 @@ where
     pub fn prove<'a>(
         generators: &PCS::Setup,
         polynomials: &'a InstructionLookupPolynomials<F>,
-        instruction_flag_bitvectors: Vec<Vec<u64>>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
@@ -588,7 +600,7 @@ where
             generators,
             preprocessing,
             polynomials,
-            &instruction_flag_bitvectors,
+            &NoExogenousData,
             opening_accumulator,
             transcript,
         );
@@ -647,6 +659,7 @@ where
             pcs_setup,
             proof.memory_checking,
             commitments,
+            &NoExogenousData,
             opening_accumulator,
             transcript,
         )?;
@@ -659,7 +672,7 @@ where
     pub fn generate_witness(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<JoltTraceStep<InstructionSet>>,
-    ) -> (InstructionLookupPolynomials<F>, Vec<Vec<u64>>) {
+    ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
@@ -750,9 +763,10 @@ where
             lookup_outputs,
             a_init_final: None,
             v_init_final: None,
+            instruction_flag_bitvectors: Some(instruction_flag_bitvectors),
         };
 
-        (polynomials, instruction_flag_bitvectors)
+        polynomials
     }
 
     /// Prove Jolt primary sumcheck including instruction collation.

@@ -1112,6 +1112,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                 debug_assert!(self.layer_len % 2 == 0);
                 let n = self.layer_len / 2;
                 for i in 0..n {
+                    // TODO(moodlezoup): Try mul_0_optimized here
                     layer[i] = layer[2 * i] + *r * (layer[2 * i + 1] - layer[2 * i]);
                 }
             });

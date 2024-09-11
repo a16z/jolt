@@ -8,7 +8,9 @@ use std::collections::HashSet;
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::lasso::memory_checking::{NoAdditionalWitness, StructuredPolynomialData};
+use crate::lasso::memory_checking::{
+    NoExogenousData, StructuredPolynomialData, VerifierComputedOpening,
+};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -31,8 +33,8 @@ pub struct BytecodeStuff<T> {
     t_read: T,
     pub(crate) t_final: T,
 
-    a_init_final: Option<T>,
-    v_init_final: Option<[T; 6]>,
+    a_init_final: VerifierComputedOpening<T>,
+    v_init_final: VerifierComputedOpening<[T; 6]>,
 }
 pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
@@ -75,7 +77,7 @@ impl<T> StructuredPolynomialData<T> for BytecodeStuff<T> {
     }
 }
 
-pub type BytecodeProof<F, PCS> = MemoryCheckingProof<F, PCS, BytecodeOpenings<F>>;
+pub type BytecodeProof<F, PCS> = MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousData>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -481,7 +483,7 @@ where
     fn compute_leaves(
         preprocessing: &BytecodePreprocessing<F>,
         polynomials: &Self::Polynomials,
-        _: &NoAdditionalWitness,
+        _: &NoExogenousData,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
@@ -610,6 +612,7 @@ where
     fn read_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write,
@@ -625,6 +628,7 @@ where
     fn write_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write,
@@ -640,6 +644,7 @@ where
     fn init_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
@@ -656,6 +661,7 @@ where
     fn final_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
+        _: &NoExogenousData,
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
