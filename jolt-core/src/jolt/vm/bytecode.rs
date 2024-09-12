@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
-    NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
@@ -28,7 +28,7 @@ use crate::{
 
 use super::{JoltPolynomials, JoltTraceStep};
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub(crate) a_read_write: T,
     pub(crate) v_read_write: [T; 6],
@@ -42,17 +42,9 @@ pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for BytecodeStuff<T> {
-    fn default() -> Self {
-        Self {
-            a_read_write: T::default(),
-            v_read_write: std::array::from_fn(|_| T::default()),
-            t_read: T::default(),
-            t_final: T::default(),
-            a_init_final: None,
-            v_init_final: None,
-        }
-    }
+impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+    Initializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
+{
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>

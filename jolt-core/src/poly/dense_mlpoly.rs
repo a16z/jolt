@@ -11,7 +11,7 @@ use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::ops::{AddAssign, Mul};
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,

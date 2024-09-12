@@ -565,6 +565,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn compute_aux(&self, jolt_polynomials: &mut JoltPolynomials<F>) {
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
             *I::from_index::<C>(*aux_index).get_poly_ref_mut(jolt_polynomials) =
@@ -658,7 +659,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
     pub fn compute_spartan_Az_Bz_Cz<PCS: CommitmentScheme<Field = F>>(
         &self,
-        polynomials: &JoltPolynomials<F>,
+        flattened_polynomials: &[&DensePolynomial<F>],
     ) -> (
         SparsePolynomial<F>,
         SparsePolynomial<F>,
@@ -680,7 +681,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                 let mut evaluate_lc_chunk = |lc: &LC| {
                     if !lc.terms().is_empty() {
                         lc.evaluate_batch_mut::<C, I, F, PCS>(
-                            polynomials,
+                            flattened_polynomials,
                             &mut dense_output_buffer,
                         );
 
@@ -723,15 +724,15 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             let condition_evals = constr
                 .cond
                 .1
-                .evaluate_batch::<C, I, F, PCS>(polynomials, self.uniform_repeat);
+                .evaluate_batch::<C, I, F, PCS>(flattened_polynomials, self.uniform_repeat);
             let eq_a_evals = constr
                 .a
                 .1
-                .evaluate_batch::<C, I, F, PCS>(polynomials, self.uniform_repeat);
+                .evaluate_batch::<C, I, F, PCS>(flattened_polynomials, self.uniform_repeat);
             let eq_b_evals = constr
                 .b
                 .1
-                .evaluate_batch::<C, I, F, PCS>(polynomials, self.uniform_repeat);
+                .evaluate_batch::<C, I, F, PCS>(flattened_polynomials, self.uniform_repeat);
 
             (0..self.uniform_repeat).for_each(|step_index| {
                 // Write corresponding values, if outside the step range, only include the constant.

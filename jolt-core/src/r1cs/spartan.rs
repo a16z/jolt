@@ -92,6 +92,11 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
+        let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
+            .iter()
+            .map(|var| I::get_poly_ref(var, polynomials))
+            .collect();
+
         let num_rounds_x = key.num_rows_total().log_2();
         let num_rounds_y = key.num_cols_total().log_2();
 
@@ -102,7 +107,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         let (mut az, mut bz, mut cz) =
-            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS>(polynomials);
+            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS>(&flattened_polys);
 
         let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
@@ -162,11 +167,11 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<C, PCS, I>(
+            SumcheckInstanceProof::prove_spartan_quadratic(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                polynomials,
+                &flattened_polys,
                 transcript,
             );
         drop_in_background_thread(poly_ABC);

@@ -8,7 +8,7 @@ use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::{JoltPolynomials, JoltTraceStep};
-use crate::lasso::memory_checking::StructuredPolynomialData;
+use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -27,7 +27,7 @@ use std::hash::Hash;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub left_lookup_operand: T,
     pub right_lookup_operand: T,
@@ -41,20 +41,13 @@ pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub next_pc: T,
 }
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for AuxVariableStuff<T> {
-    fn default() -> Self {
-        Self {
-            left_lookup_operand: T::default(),
-            right_lookup_operand: T::default(),
-            imm_signed: T::default(),
-            product: T::default(),
-            relevant_y_chunks: todo!(),
-            write_lookup_output_to_rd: T::default(),
-            write_pc_to_rd: T::default(),
-            next_pc_jump: T::default(),
-            should_branch: T::default(),
-            next_pc: T::default(),
-        }
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
+    for AuxVariableStuff<T>
+{
+    fn initialize(C: &usize) -> Self {
+        let mut result = Self::default();
+        result.relevant_y_chunks = std::iter::repeat_with(|| T::default()).take(*C).collect();
+        result
     }
 }
 
@@ -106,22 +99,34 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub chunks_x: Vec<T>,
     pub chunks_y: Vec<T>,
     pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
-    pub aux: Option<AuxVariableStuff<T>>,
+    pub aux: AuxVariableStuff<T>,
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
+    for R1CSStuff<T>
+{
+    fn initialize(C: &usize) -> Self {
+        Self {
+            chunks_x: std::iter::repeat_with(|| T::default()).take(*C).collect(),
+            chunks_y: std::iter::repeat_with(|| T::default()).take(*C).collect(),
+            circuit_flags: std::array::from_fn(|_| T::default()),
+            aux: AuxVariableStuff::initialize(C),
+        }
+    }
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
-        let aux = self.aux.as_ref().unwrap();
         self.chunks_x
             .iter()
             .chain(self.chunks_y.iter())
             .chain(self.circuit_flags.iter())
-            .chain(aux.read_write_values())
+            .chain(self.aux.read_write_values())
             .collect()
     }
 
@@ -130,12 +135,11 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
     }
 
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        let aux = self.aux.as_mut().unwrap();
         self.chunks_x
             .iter_mut()
             .chain(self.chunks_y.iter_mut())
             .chain(self.circuit_flags.iter_mut())
-            .chain(aux.read_write_values_mut())
+            .chain(self.aux.read_write_values_mut())
             .collect()
     }
 
@@ -147,17 +151,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
 pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
 pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
 pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
-
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for R1CSStuff<T> {
-    fn default() -> Self {
-        Self {
-            chunks_x: todo!(),
-            chunks_y: todo!(),
-            circuit_flags: std::array::from_fn(|_| T::default()),
-            aux: Some(AuxVariableStuff::default()),
-        }
-    }
-}
 
 impl<F: JoltField> R1CSPolynomials<F> {
     pub fn new<
@@ -206,7 +199,8 @@ impl<F: JoltField> R1CSPolynomials<F> {
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap(),
-            aux: None,
+            // Actual aux variable polynomials will be computed afterwards
+            aux: AuxVariableStuff::initialize(&C),
         }
     }
 }
@@ -338,7 +332,7 @@ impl ConstraintInput for JoltIn {
         &self,
         jolt_polynomials: &'a JoltPolynomials<F>,
     ) -> &'a DensePolynomial<F> {
-        let aux_polynomials = jolt_polynomials.r1cs.aux.as_ref().unwrap();
+        let aux_polynomials = &jolt_polynomials.r1cs.aux;
         match self {
             JoltIn::Bytecode_A => &jolt_polynomials.bytecode.a_read_write,
             JoltIn::Bytecode_ELFAddress => &jolt_polynomials.bytecode.v_read_write[0],
@@ -381,7 +375,7 @@ impl ConstraintInput for JoltIn {
         &self,
         jolt_polynomials: &'a mut JoltPolynomials<F>,
     ) -> &'a mut DensePolynomial<F> {
-        let aux_polynomials = jolt_polynomials.r1cs.aux.as_mut().unwrap();
+        let aux_polynomials = &mut jolt_polynomials.r1cs.aux;
         match self {
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &mut aux_polynomials.left_lookup_operand,

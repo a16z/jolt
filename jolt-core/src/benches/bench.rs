@@ -109,7 +109,7 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) =
@@ -159,7 +159,7 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) =

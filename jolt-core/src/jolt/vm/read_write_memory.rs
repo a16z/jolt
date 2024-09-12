@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
-    ExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+    ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use rand::rngs::StdRng;
@@ -104,7 +104,7 @@ const RAM_2_INDEX: usize = RAM_2 - 3;
 const RAM_3_INDEX: usize = RAM_3 - 3;
 const RAM_4_INDEX: usize = RAM_4 - 3;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     // /// Size of entire address space (i.e. registers + IO + RAM)
     // memory_size: usize,
@@ -165,28 +165,14 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for ReadWriteMemoryStuff<T> {
-    fn default() -> Self {
-        Self {
-            a_ram: T::default(),
-            v_read: std::array::from_fn(|_| T::default()),
-            v_write_rd: T::default(),
-            v_write_ram: std::array::from_fn(|_| T::default()),
-            v_final: T::default(),
-            t_read: std::array::from_fn(|_| T::default()),
-            t_write_ram: std::array::from_fn(|_| T::default()),
-            t_final: T::default(),
-
-            a_init_final: None,
-            v_init: None,
-            identity: None,
-        }
-    }
-}
-
 pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
 pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
 pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
+    Initializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
+{
+}
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RegisterAddressOpenings<F: JoltField> {
@@ -208,9 +194,9 @@ impl<F: JoltField> ExogenousOpenings<F> for RegisterAddressOpenings<F> {
         polys_or_commitments: &JoltStuff<T>,
     ) -> Vec<&T> {
         vec![
-            &polys_or_commitments.bytecode.v_read_write[RD],
-            &polys_or_commitments.bytecode.v_read_write[RS1],
-            &polys_or_commitments.bytecode.v_read_write[RS2],
+            &polys_or_commitments.bytecode.v_read_write[2],
+            &polys_or_commitments.bytecode.v_read_write[3],
+            &polys_or_commitments.bytecode.v_read_write[4],
         ]
     }
 }
@@ -905,9 +891,9 @@ where
         let num_ops = polynomials.a_ram.len();
         let memory_size = polynomials.v_final.len();
 
-        let a_rd = &jolt_polynomials.bytecode.v_read_write[RD];
-        let a_rs1 = &jolt_polynomials.bytecode.v_read_write[RS1];
-        let a_rs2 = &jolt_polynomials.bytecode.v_read_write[RS2];
+        let a_rd = &jolt_polynomials.bytecode.v_read_write[2];
+        let a_rs1 = &jolt_polynomials.bytecode.v_read_write[3];
+        let a_rs2 = &jolt_polynomials.bytecode.v_read_write[4];
 
         let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()

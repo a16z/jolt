@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::lasso::memory_checking::{
-    ExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+    ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::{
@@ -74,8 +74,12 @@ pub type TimestampRangeCheckOpenings<F: JoltField> = TimestampRangeCheckStuff<F>
 pub type TimestampRangeCheckCommitments<PCS: CommitmentScheme> =
     TimestampRangeCheckStuff<PCS::Commitment>;
 
-pub type ReadTimestampOpenings<F> = [F; MEMORY_OPS_PER_INSTRUCTION];
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, NoPreprocessing>
+    for TimestampRangeCheckStuff<T>
+{
+}
 
+pub type ReadTimestampOpenings<F> = [F; MEMORY_OPS_PER_INSTRUCTION];
 impl<F: JoltField> ExogenousOpenings<F> for ReadTimestampOpenings<F> {
     fn openings(&self) -> Vec<&F> {
         self.iter().collect()

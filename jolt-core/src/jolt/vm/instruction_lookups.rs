@@ -11,7 +11,8 @@ use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::{
-    MultisetHashes, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+    Initializable, MultisetHashes, NoExogenousOpenings, StructuredPolynomialData,
+    VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::mul_0_1_optimized;
@@ -33,7 +34,7 @@ use crate::{
 
 use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub(crate) dim: Vec<T>,
     read_cts: Vec<T>,
@@ -56,12 +57,29 @@ pub type InstructionLookupOpenings<F: JoltField> = InstructionLookupStuff<F>;
 pub type InstructionLookupCommitments<PCS: CommitmentScheme> =
     InstructionLookupStuff<PCS::Commitment>;
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Default for InstructionLookupStuff<T> {
-    fn default() -> Self {
-        todo!()
-        // Self {
-        //     dim: vec![],
-        // }
+impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+    Initializable<T, InstructionLookupsPreprocessing<C, F>> for InstructionLookupStuff<T>
+{
+    fn initialize(preprocessing: &InstructionLookupsPreprocessing<C, F>) -> Self {
+        Self {
+            dim: std::iter::repeat_with(|| T::default()).take(C).collect(),
+            read_cts: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.num_memories)
+                .collect(),
+            final_cts: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.num_memories)
+                .collect(),
+            E_polys: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.num_memories)
+                .collect(),
+            instruction_flags: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.instruction_to_memory_indices.len())
+                .collect(),
+            instruction_flag_bitvectors: None,
+            lookup_outputs: T::default(),
+            a_init_final: None,
+            v_init_final: None,
+        }
     }
 }
 
@@ -123,7 +141,7 @@ where
     type Openings = InstructionLookupOpenings<F>;
     type Commitments = InstructionLookupCommitments<PCS>;
 
-    type Preprocessing = InstructionLookupsPreprocessing<F>;
+    type Preprocessing = InstructionLookupsPreprocessing<C, F>;
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
@@ -137,7 +155,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
     fn compute_leaves(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         polynomials: &Self::Polynomials,
         _: &JoltPolynomials<F>,
         gamma: &F,
@@ -215,7 +233,7 @@ where
     }
 
     fn interleave_hashes(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         multiset_hashes: &MultisetHashes<F>,
     ) -> (Vec<F>, Vec<F>) {
         // R W R W R W ...
@@ -241,7 +259,7 @@ where
     }
 
     fn uninterleave_hashes(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
@@ -280,7 +298,7 @@ where
     }
 
     fn check_multiset_equality(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
         assert_eq!(multiset_hashes.init_hashes.len(), Self::NUM_SUBTABLES);
@@ -345,7 +363,7 @@ where
     }
 
     fn read_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
@@ -363,7 +381,7 @@ where
             .collect()
     }
     fn write_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
@@ -373,7 +391,7 @@ where
             .collect()
     }
     fn init_tuples(
-        _preprocessing: &InstructionLookupsPreprocessing<F>,
+        _preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
@@ -385,7 +403,7 @@ where
             .collect()
     }
     fn final_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
@@ -435,7 +453,7 @@ pub struct PrimarySumcheck<F: JoltField> {
 }
 
 #[derive(Clone)]
-pub struct InstructionLookupsPreprocessing<F: JoltField> {
+pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
     instruction_to_memory_indices: Vec<Vec<usize>>,
     memory_to_subtable_index: Vec<usize>,
@@ -444,9 +462,9 @@ pub struct InstructionLookupsPreprocessing<F: JoltField> {
     num_memories: usize,
 }
 
-impl<F: JoltField> InstructionLookupsPreprocessing<F> {
+impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
-    pub fn preprocess<const C: usize, const M: usize, InstructionSet, Subtables>() -> Self
+    pub fn preprocess<const M: usize, InstructionSet, Subtables>() -> Self
     where
         InstructionSet: JoltInstructionSet,
         Subtables: JoltSubtableSet<F>,
@@ -530,7 +548,7 @@ where
     pub fn prove<'a>(
         generators: &PCS::Setup,
         polynomials: &'a JoltPolynomials<F>,
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
         transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
@@ -618,7 +636,7 @@ where
     }
 
     pub fn verify<'a>(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         pcs_setup: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
         commitments: &'a JoltCommitments<PCS>,
@@ -674,7 +692,7 @@ where
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
     pub fn generate_witness(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         ops: &Vec<JoltTraceStep<InstructionSet>>,
     ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
@@ -791,7 +809,7 @@ where
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
         eq_poly: &mut DensePolynomial<F>,
         memory_polys: &[DensePolynomial<F>],
@@ -895,7 +913,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop")]
     fn primary_sumcheck_inner_loop(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &DensePolynomial<F>,
         flag_polys: &[DensePolynomial<F>],
         memory_polys: &[DensePolynomial<F>],
@@ -1028,7 +1046,7 @@ where
     /// where `vals` corresponds to E_1, ..., E_\alpha,
     /// and `flags` corresponds to the flag_i's
     fn combine_lookups(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         vals: &[F],
         flags: &[F],
     ) -> F {
@@ -1050,7 +1068,7 @@ where
     /// can be computed by summing over the instructions that use that memory: if a given execution step
     /// accesses the memory, it must be executing exactly one of those instructions.
     fn memory_flags(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flags: &[F],
     ) -> Vec<F> {
         let mut memory_flags = vec![F::zero(); preprocessing.num_memories];
@@ -1066,7 +1084,7 @@ where
     /// A memory flag polynomial can be computed by summing over the instructions that use that memory: if a
     /// given execution step accesses the memory, it must be executing exactly one of those instructions.
     fn memory_flag_indices(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flag_bitvectors: &[Vec<u64>],
     ) -> Vec<Vec<usize>> {
         let m = instruction_flag_bitvectors[0].len();
@@ -1133,7 +1151,7 @@ where
 
     /// Computes the shape of all commitments.
     pub fn commitment_shapes(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         max_trace_length: usize,
     ) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();

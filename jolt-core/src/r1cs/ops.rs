@@ -106,11 +106,11 @@ impl LC {
         PCS: CommitmentScheme<Field = F>,
     >(
         &self,
-        polynomials: &JoltPolynomials<F>,
+        flattened_polynomials: &[&DensePolynomial<F>],
         batch_size: usize,
     ) -> Vec<F> {
         let mut output = unsafe_allocate_zero_vec(batch_size);
-        self.evaluate_batch_mut::<C, I, F, PCS>(polynomials, &mut output);
+        self.evaluate_batch_mut::<C, I, F, PCS>(flattened_polynomials, &mut output);
         output
     }
 
@@ -121,7 +121,7 @@ impl LC {
         PCS: CommitmentScheme<Field = F>,
     >(
         &self,
-        polynomials: &JoltPolynomials<F>,
+        flattened_polynomials: &[&DensePolynomial<F>],
         output: &mut [F],
     ) {
         output.par_iter_mut().enumerate().for_each(|(i, eval)| {
@@ -129,10 +129,9 @@ impl LC {
                 .terms()
                 .iter()
                 .map(|term| match term.0 {
-                    Variable::Input(var_index) | Variable::Auxiliary(var_index) => F::from_i64(
-                        term.1,
-                    )
-                    .mul_01_optimized(I::from_index::<C>(var_index).get_poly_ref(polynomials)[i]),
+                    Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                        F::from_i64(term.1).mul_01_optimized(flattened_polynomials[var_index][i])
+                    }
                     Variable::Constant => F::from_i64(term.1),
                 })
                 .sum()

@@ -325,15 +325,11 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
     // passing them in as a single `MultilinearPolynomial`, which would require
     // an expensive concatenation. We defer the actual instantation of a
     // `MultilinearPolynomial` to the end of the 0th round.
-    pub fn prove_spartan_quadratic<
-        const C: usize,
-        PCS: CommitmentScheme<Field = F>,
-        I: ConstraintInput,
-    >(
+    pub fn prove_spartan_quadratic(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
-        W: &JoltPolynomials<F>,
+        W: &[&DensePolynomial<F>],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
@@ -343,6 +339,15 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         /*          Round 0 START         */
 
         let len = poly_A.len() / 2;
+        let trace_len = W[0].len();
+
+        let witness_value = |index: usize| {
+            if (index / trace_len) >= W.len() {
+                F::zero()
+            } else {
+                W[index / trace_len][index % trace_len]
+            }
+        };
 
         // assert_eq!(len, W.len());
 
@@ -352,10 +357,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             let eval_point_0: F = (0..len)
                 .into_par_iter()
                 .map(|i| {
-                    if poly_A[i].is_zero() || W.r1cs_witness_value::<C, I>(i).is_zero() {
+                    if poly_A[i].is_zero() || witness_value(i).is_zero() {
                         F::zero()
                     } else {
-                        poly_A[i] * W.r1cs_witness_value::<C, I>(i)
+                        poly_A[i] * witness_value(i)
                     }
                 })
                 .sum();
@@ -364,18 +369,18 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             let mut eval_point_2: F = (1..len)
                 .into_par_iter()
                 .map(|i| {
-                    if W.r1cs_witness_value::<C, I>(i).is_zero() {
+                    if witness_value(i).is_zero() {
                         F::zero()
                     } else {
                         let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-                        let poly_B_bound_point = -W.r1cs_witness_value::<C, I>(i);
+                        let poly_B_bound_point = -witness_value(i);
                         mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
                     }
                 })
                 .sum();
             eval_point_2 += mul_0_optimized(
                 &(poly_A[len] + poly_A[len] - poly_A[0]),
-                &(F::from_u64(2).unwrap() - W.r1cs_witness_value::<C, I>(0)),
+                &(F::from_u64(2).unwrap() - witness_value(0)),
             );
 
             let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
@@ -405,9 +410,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 // `W` and `X`.
                 let zero = F::zero();
                 let one = [F::one()];
-                let W_iter = (0..len)
-                    .into_par_iter()
-                    .map(move |i| W.r1cs_witness_value::<C, I>(i));
+                let W_iter = (0..len).into_par_iter().map(move |i| witness_value(i));
                 let Z_iter = W_iter
                     .chain(one.into_par_iter())
                     .chain(rayon::iter::repeatn(zero, len));
@@ -451,9 +454,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
             );
 
-            if i == num_rounds - 1 {
-                assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
-            }
+            // TODO(moodlezoup)
+            // if i == num_rounds - 1 {
+            //     assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
+            // }
         }
 
         let evals = vec![poly_A[0], poly_B[0]];

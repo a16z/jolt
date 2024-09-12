@@ -65,7 +65,7 @@ where
 
 pub type VerifierComputedOpening<T> = Option<T>;
 
-pub trait StructuredPolynomialData<T> {
+pub trait StructuredPolynomialData<T>: CanonicalSerialize + CanonicalDeserialize {
     fn read_write_values(&self) -> Vec<&T> {
         vec![]
     }
@@ -83,7 +83,9 @@ pub trait StructuredPolynomialData<T> {
     }
 }
 
-pub trait ExogenousOpenings<F: JoltField>: CanonicalSerialize + CanonicalDeserialize {
+pub trait ExogenousOpenings<F: JoltField>:
+    Default + CanonicalSerialize + CanonicalDeserialize
+{
     fn openings(&self) -> Vec<&F>;
     fn openings_mut(&mut self) -> Vec<&mut F>;
     fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
@@ -109,6 +111,12 @@ impl<F: JoltField> ExogenousOpenings<F> for NoExogenousOpenings {
     }
 }
 
+pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default {
+    fn initialize(_preprocessing: &Preprocessing) -> Self {
+        Default::default()
+    }
+}
+
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
@@ -124,13 +132,9 @@ where
         BatchedDenseGrandProduct<F>;
 
     type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
-    type Openings: StructuredPolynomialData<F>
-        + Sync
-        + Default
-        + CanonicalSerialize
-        + CanonicalDeserialize;
+    type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
     type Commitments: StructuredPolynomialData<PCS::Commitment>;
-    type ExogenousOpenings: ExogenousOpenings<F> + Sync + Default = NoExogenousOpenings;
+    type ExogenousOpenings: ExogenousOpenings<F> + Sync = NoExogenousOpenings;
 
     type Preprocessing = NoPreprocessing;
 
