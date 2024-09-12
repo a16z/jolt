@@ -99,27 +99,17 @@ impl LC {
         result
     }
 
-    pub fn evaluate_batch<
-        const C: usize,
-        I: ConstraintInput,
-        F: JoltField,
-        PCS: CommitmentScheme<Field = F>,
-    >(
+    pub fn evaluate_batch<F: JoltField>(
         &self,
         flattened_polynomials: &[&DensePolynomial<F>],
         batch_size: usize,
     ) -> Vec<F> {
         let mut output = unsafe_allocate_zero_vec(batch_size);
-        self.evaluate_batch_mut::<C, I, F, PCS>(flattened_polynomials, &mut output);
+        self.evaluate_batch_mut::<F>(flattened_polynomials, &mut output);
         output
     }
 
-    pub fn evaluate_batch_mut<
-        const C: usize,
-        I: ConstraintInput,
-        F: JoltField,
-        PCS: CommitmentScheme<Field = F>,
-    >(
+    pub fn evaluate_batch_mut<F: JoltField>(
         &self,
         flattened_polynomials: &[&DensePolynomial<F>],
         output: &mut [F],

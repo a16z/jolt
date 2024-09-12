@@ -2,11 +2,8 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::jolt::vm::JoltPolynomials;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::r1cs::inputs::ConstraintInput;
 use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;

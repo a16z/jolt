@@ -85,7 +85,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         UniformSpartanKey::from_builder(constraint_builder)
     }
 
-    pub fn prove_new<'a, PCS: CommitmentScheme<Field = F>>(
+    pub fn prove<'a, PCS: CommitmentScheme<Field = F>>(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &'a JoltPolynomials<F>,

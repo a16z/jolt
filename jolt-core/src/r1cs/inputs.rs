@@ -221,7 +221,6 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
 pub trait ConstraintInput:
     Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Sync + Send + 'static
 {
-    // TODO(moodlezoup): Move flattened version to r1cs preprocesing
     fn flatten<const C: usize>() -> Vec<Self>;
     fn num_inputs<const C: usize>() -> usize {
         Self::flatten::<C>().len()

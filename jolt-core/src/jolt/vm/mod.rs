@@ -198,6 +198,7 @@ impl<F: JoltField> JoltPolynomials<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
     pub fn commit<const C: usize, PCS: CommitmentScheme<Field = F>>(
         &self,
         preprocessing: &JoltPreprocessing<C, F, PCS>,
@@ -428,7 +429,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
-        >::prove_new::<PCS>(
+        >::prove::<PCS>(
             &r1cs_builder,
             &spartan_key,
             &jolt_polynomials,

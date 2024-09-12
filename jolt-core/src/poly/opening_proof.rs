@@ -3,7 +3,10 @@ use rayon::prelude::*;
 use crate::{
     field::{JoltField, OptimizedMul},
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::transcript::{AppendToTranscript, ProofTranscript},
+    utils::{
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        transcript::{AppendToTranscript, ProofTranscript},
+    },
 };
 
 use super::{
@@ -90,7 +93,7 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
-        // TODO(moodlezoup): Unnecessary, already EQ evals are already computed to compute claims
+        // TODO(moodlezoup): Unnecessary, EQ evals are already computed to compute claims
         let eq_polys: Vec<_> = self
             .openings
             .par_iter()
@@ -120,7 +123,7 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
         let joint_poly: Vec<F> = (0..num_chunks)
             .into_par_iter()
             .flat_map_iter(|chunk_index| {
-                let mut chunk = vec![F::zero(); chunk_size];
+                let mut chunk = unsafe_allocate_zero_vec(chunk_size);
                 for (coeff, opening) in gamma_powers.iter().zip(self.openings.iter()) {
                     if chunk_index * chunk_size >= opening.polynomial.len() {
                         continue;
@@ -212,6 +215,8 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
                 poly[0]
             })
             .collect();
+
+        drop_in_background_thread(eq_polys);
 
         (SumcheckInstanceProof::new(compressed_polys), r, claims)
     }

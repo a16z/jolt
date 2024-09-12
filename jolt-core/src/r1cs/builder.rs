@@ -139,6 +139,11 @@ impl<F: JoltField> AuxComputation<F> {
         jolt_polynomials: &JoltPolynomials<F>,
         batch_size: usize,
     ) -> DensePolynomial<F> {
+        let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
+            .iter()
+            .map(|var| I::get_poly_ref(var, jolt_polynomials))
+            .collect();
+
         let mut aux_poly: Vec<F> = unsafe_allocate_zero_vec(batch_size);
         let num_threads = rayon::current_num_threads();
         let chunk_size = (batch_size + num_threads - 1) / num_threads;
@@ -157,8 +162,7 @@ impl<F: JoltField> AuxComputation<F> {
                             for term in lc.terms().iter() {
                                 match term.0 {
                                     Variable::Input(index) | Variable::Auxiliary(index) => {
-                                        input += I::from_index::<C>(index)
-                                            .get_poly_ref(jolt_polynomials)[global_index]
+                                        input += flattened_polys[index][global_index]
                                             * F::from_i64(term.1);
                                     }
                                     Variable::Constant => input += F::from_i64(term.1),
@@ -240,10 +244,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         symbolic_inputs: Vec<LC>,
         compute: Box<AuxComputationFunction<F>>,
     ) -> Variable {
-        let new_aux = Variable::Auxiliary(aux_symbol.to_index::<C>());
+        let aux_index = aux_symbol.to_index::<C>();
+        let new_aux = Variable::Auxiliary(aux_index);
         let computation = AuxComputation::new(new_aux, symbolic_inputs, compute);
-        self.aux_computations
-            .insert(aux_symbol.to_index::<C>(), computation);
+        self.aux_computations.insert(aux_index, computation);
 
         new_aux
     }
@@ -567,8 +571,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
     #[tracing::instrument(skip_all)]
     pub fn compute_aux(&self, jolt_polynomials: &mut JoltPolynomials<F>) {
+        let flattened_vars = I::flatten::<C>();
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
-            *I::from_index::<C>(*aux_index).get_poly_ref_mut(jolt_polynomials) =
+            *flattened_vars[*aux_index].get_poly_ref_mut(jolt_polynomials) =
                 aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, self.uniform_repeat);
         }
     }
@@ -680,10 +685,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
                 let mut evaluate_lc_chunk = |lc: &LC| {
                     if !lc.terms().is_empty() {
-                        lc.evaluate_batch_mut::<C, I, F, PCS>(
-                            flattened_polynomials,
-                            &mut dense_output_buffer,
-                        );
+                        lc.evaluate_batch_mut(flattened_polynomials, &mut dense_output_buffer);
 
                         // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
                         let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
@@ -724,15 +726,15 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             let condition_evals = constr
                 .cond
                 .1
-                .evaluate_batch::<C, I, F, PCS>(flattened_polynomials, self.uniform_repeat);
+                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
             let eq_a_evals = constr
                 .a
                 .1
-                .evaluate_batch::<C, I, F, PCS>(flattened_polynomials, self.uniform_repeat);
+                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
             let eq_b_evals = constr
                 .b
                 .1
-                .evaluate_batch::<C, I, F, PCS>(flattened_polynomials, self.uniform_repeat);
+                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
 
             (0..self.uniform_repeat).for_each(|step_index| {
                 // Write corresponding values, if outside the step range, only include the constant.
