@@ -24,12 +24,12 @@ host = [
     "dep:eyre",
     "postcard/use-std",
 ]
-
 guest-std = [
     "postcard/use-std",
     "serde/std",
     "jolt-sdk-macros/guest-std",
 ]
+icicle = []
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }

@@ -7,7 +7,7 @@ use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
+use rayon::prelude::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -79,6 +79,7 @@ impl<F: JoltField> UniPoly<F> {
                 for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
                     remainder.coeffs[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
                 }
+
                 while let Some(true) = remainder.coeffs.last().map(|c| c == &F::zero()) {
                     remainder.coeffs.pop();
                 }
@@ -117,13 +118,19 @@ impl<F: JoltField> UniPoly<F> {
 
     #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
     pub fn evaluate(&self, r: &F) -> F {
-        let mut eval = self.coeffs[0];
-        let mut power = *r;
-        for i in 1..self.coeffs.len() {
-            eval += power * self.coeffs[i];
-            power *= *r;
+        let mut powers: Vec<F> = Vec::with_capacity(self.coeffs.len());
+        let mut current_power = F::one();
+        for _ in 0..self.coeffs.len() {
+            powers.push(current_power);
+            current_power *= *r;
         }
-        eval
+
+        // Compute the inner product of coefficients and powers
+        self.coeffs
+            .par_iter()
+            .zip(powers.par_iter())
+            .map(|(coeff, power)| *coeff * *power)
+            .sum()
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {

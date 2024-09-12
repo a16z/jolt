@@ -15,10 +15,10 @@ use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-use crate::msm::VariableBaseMSM;
+use crate::msm::{icicle::Icicle, VariableBaseMSM};
 
 #[derive(Clone)]
-pub struct HyraxScheme<G: CurveGroup> {
+pub struct HyraxScheme<G: CurveGroup + Icicle> {
     marker: PhantomData<G>,
 }
 
@@ -47,7 +47,7 @@ pub fn matrix_dimensions(num_vars: usize, ratio: usize) -> (usize, usize) {
     (col_size, row_size)
 }
 
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> CommitmentScheme for HyraxScheme<G> {
     type Field = G::ScalarField;
     type Setup = PedersenGenerators<G>;
     type Commitment = HyraxCommitment<G>;
@@ -149,16 +149,16 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyraxGenerators<G: CurveGroup> {
+pub struct HyraxGenerators<G: CurveGroup + Icicle> {
     pub gens: PedersenGenerators<G>,
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyraxCommitment<G: CurveGroup> {
+pub struct HyraxCommitment<G: CurveGroup + Icicle> {
     pub row_commitments: Vec<G>,
 }
 
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> HyraxCommitment<G> {
     #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
     pub fn commit(
         poly: &DensePolynomial<G::ScalarField>,
@@ -200,10 +200,11 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
 
-        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
-        let row_commitments: Vec<G> = rows
-            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+        let rows: Vec<&[G::ScalarField]> = batch
+            .par_iter()
+            .flat_map(|poly| poly.par_chunks(R_size))
             .collect();
+        let row_commitments: Vec<G> = G::batch_msm(&gens, &rows);
 
         row_commitments
             .par_chunks(L_size)
@@ -214,7 +215,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
     }
 }
 
-impl<G: CurveGroup> AppendToTranscript for HyraxCommitment<G> {
+impl<G: CurveGroup + Icicle> AppendToTranscript for HyraxCommitment<G> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_message(b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
@@ -225,12 +226,12 @@ impl<G: CurveGroup> AppendToTranscript for HyraxCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyraxOpeningProof<G: CurveGroup> {
+pub struct HyraxOpeningProof<G: CurveGroup + Icicle> {
     pub vector_matrix_product: Vec<G::ScalarField>,
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> HyraxOpeningProof<G> {
     fn protocol_name() -> &'static [u8] {
         b"Hyrax opening proof"
     }
@@ -322,13 +323,13 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedHyraxOpeningProof<G: CurveGroup> {
+pub struct BatchedHyraxOpeningProof<G: CurveGroup + Icicle> {
     pub joint_proof: HyraxOpeningProof<G>,
     pub ratio: usize,
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> BatchedHyraxOpeningProof<G> {
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
     pub fn prove(
         polynomials: &[&DensePolynomial<G::ScalarField>],
@@ -482,7 +483,7 @@ mod tests {
 
     fn check_polynomial_commit_helper<
         F: JoltField,
-        G: CurveGroup<ScalarField = F>,
+        G: CurveGroup<ScalarField = F> + Icicle,
         const RATIO: usize,
     >() {
         let Z = vec![
