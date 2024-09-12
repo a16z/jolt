@@ -12,6 +12,6 @@ Precompile support plan:
 6. Use [circom-scotia](https://github.com/lurk-lab/circom-scotia) to convert $A, B, C$ matrices into static files in the Jolt codebase
 7. Write a converter to uniformly repeat the constraints `trace_length` steps
 
-See the documentation on Jolt's use/handling of [sparse constraint systems](./how/sparse-constraint-systems.md) for a detailed overview of how the Jolt proof machinery will incorporate these pre-compiled constraint systems.
+See the documentation on Jolt's use/handling of [sparse constraint systems](https://jolt.a16zcrypto.com/how/sparse-constraint-systems.html) for a detailed overview of how the Jolt proof machinery will incorporate these pre-compiled constraint systems.
 
 *TODO(sragss): How do we deal with memory and loading more than 64-bits of inputs to precompiles.*
