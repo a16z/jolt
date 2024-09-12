@@ -16,11 +16,13 @@ pub mod benches;
 #[cfg(feature = "host")]
 pub mod host;
 
+pub mod circuits;
 pub mod field;
 pub mod jolt;
 pub mod lasso;
 pub mod msm;
 pub mod poly;
 pub mod r1cs;
+pub mod snark;
 pub mod subprotocols;
 pub mod utils;
