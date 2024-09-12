@@ -549,9 +549,16 @@ impl Mmu {
                     address: effective_address,
                     post_value: value,
                 });
+            } else if effective_address > self.jolt_device.memory_layout.panic {
+                // address is in the area or zero padding region => stack overflow as stack grows downwards
+                panic!("Stack overflow: Attempted to write to 0x{:X}, which is in the area or zero padding region.",
+                       effective_address);
             } else {
                 panic!("Unknown memory mapping {:X}.", effective_address);
             }
+        } else if !self.memory.validate_address(effective_address) {
+            // address is > DRAM_BASE + memory.len() => heap overflow
+            panic!("Heap overflow: Attempted to write to 0x{:X}, which is beyond the allocated memory.", effective_address);
         } else {
             self.tracer.push_memory(MemoryState::Write {
                 address: effective_address,
