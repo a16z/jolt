@@ -1133,7 +1133,6 @@ mod test_mmu {
     use crate::emulator::terminal::DummyTerminal;
     use std::rc::Rc;
 
-    // 1mb
     const MEM_CAPACITY: u64 = 1024 * 1024;
 
     fn setup_mmu(capacity: u64) -> Mmu {
@@ -1152,7 +1151,7 @@ mod test_mmu {
         let mut mmu = setup_mmu(MEM_CAPACITY);
 
         // Try to write beyond the allocated memory
-        let overflow_address = DRAM_BASE + MEM_CAPACITY + 1; // 2 MB (beyond the 1 MB allocated)
+        let overflow_address = DRAM_BASE + MEM_CAPACITY + 1;
         mmu.trace_store(overflow_address, 0xc50513);
     }
 
@@ -1171,7 +1170,6 @@ mod test_mmu {
     fn test_unknown_memory_mapping() {
         let mut mmu = setup_mmu(MEM_CAPACITY);
 
-        // Try to write to an address below DRAM_BASE
         let invalid_address = 1234;
         mmu.trace_store(invalid_address, 0xc50513);
     }
