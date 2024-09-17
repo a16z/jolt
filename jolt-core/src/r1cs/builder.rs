@@ -32,11 +32,10 @@ struct Constraint {
 
 impl Constraint {
     fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
-        write!(f, "(")?;
         self.a.pretty_fmt::<C, I>(f)?;
-        write!(f, ") ⋅ (")?;
+        write!(f, " ⋅ ")?;
         self.b.pretty_fmt::<C, I>(f)?;
-        write!(f, ") == ")?;
+        write!(f, " == ")?;
         self.c.pretty_fmt::<C, I>(f)
     }
 

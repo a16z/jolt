@@ -57,9 +57,9 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             cs.constrain_binary(JoltIn::OpFlags(flag));
         }
 
-        let flags = RV32I::iter()
-            .map(|flag| JoltIn::InstructionFlags(flag).into())
-            .chain(CircuitFlags::iter().map(|flag| JoltIn::OpFlags(flag).into()))
+        let flags = CircuitFlags::iter()
+            .map(|flag| JoltIn::OpFlags(flag).into())
+            .chain(RV32I::iter().map(|flag| JoltIn::InstructionFlags(flag).into()))
             .collect();
         cs.constrain_pack_be(flags, JoltIn::Bytecode_Bitflags, 1);
 

@@ -25,9 +25,10 @@ pub struct Term(pub Variable, pub i64);
 impl Term {
     fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
         match self.0 {
-            Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
-                write!(f, "{}⋅{:?}", self.1, I::from_index::<C>(var_index))
-            }
+            Variable::Input(var_index) | Variable::Auxiliary(var_index) => match self.1.abs() {
+                1 => write!(f, "{:?}", I::from_index::<C>(var_index)),
+                _ => write!(f, "{}⋅{:?}", self.1, I::from_index::<C>(var_index)),
+            },
             Variable::Constant => write!(f, "{}", self.1),
         }
     }
@@ -145,13 +146,26 @@ impl LC {
         if self.0.is_empty() {
             write!(f, "0")
         } else {
+            if self.0.len() > 1 {
+                write!(f, "(")?;
+            }
             for (index, term) in self.0.iter().enumerate() {
+                if term.1 == 0 {
+                    continue;
+                }
                 if index > 0 {
-                    write!(f, " + ")?;
+                    if term.1 < 0 {
+                        write!(f, " - ")?;
+                    } else {
+                        write!(f, " + ")?;
+                    }
                 }
                 term.pretty_fmt::<C, I>(f)?;
             }
-            write!(f, "")
+            if self.0.len() > 1 {
+                write!(f, ")")?;
+            }
+            Ok(())
         }
     }
 
