@@ -20,6 +20,7 @@ impl<F: JoltField> XorSubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x | y] = x ^ y (bit-wise XOR)
         let mut entries: Vec<F> = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
 
@@ -33,7 +34,7 @@ impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // (1-x)*y + x*(1-y)
+        // \sum_i 2^i * ((1 - x_{b - i - 1}) * y_{b - i - 1} + x_{b - i - 1} * (1 - y_{b - i - 1}))
         debug_assert!(point.len() % 2 == 0);
         let b = point.len() / 2;
         let (x, y) = point.split_at(b);

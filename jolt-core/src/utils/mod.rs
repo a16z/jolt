@@ -88,8 +88,21 @@ pub fn is_power_of_two(num: usize) -> bool {
     num != 0 && (num & (num - 1)) == 0
 }
 
-/// Splits `item` into two chunks of `num_bits` size where each is less than 2^num_bits.
-/// Ex: split_bits(0b101_000, 3) -> (101, 000)
+/// Take the first two `num_bits` chunks of `item` (from the right / LSB) and return them as a tuple `(high_chunk, low_chunk)`.
+///
+/// If `item` is shorter than `2 * num_bits`, the remaining bits are zero-padded.
+///
+/// If `item` is longer than `2 * num_bits`, the remaining bits are discarded.
+///
+/// # Examples
+///
+/// ```
+/// use jolt_core::utils::split_bits;
+///
+/// assert_eq!(split_bits(0b101000, 2), (0b10, 0b00));
+/// assert_eq!(split_bits(0b101000, 3), (0b101, 0b000));
+/// assert_eq!(split_bits(0b101000, 4), (0b0010, 0b1000));
+/// ```
 pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
     let max_value = (1 << num_bits) - 1; // Calculate the maximum value that can be represented with num_bits
 
@@ -99,6 +112,7 @@ pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
     (high_chunk, low_chunk)
 }
 
+/// Generate a random point with `memory_bits` field elements.
 pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
     let mut rng = test_rng();
     let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);

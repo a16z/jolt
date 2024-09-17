@@ -5,7 +5,7 @@ The Binius paper also gives a number of sum-check-based polynomial IOPs for to b
 
 Here is a brief summary of changes that will occur in Jolt in order to incorporate the Binius commitment scheme:
 
-*Addition and multiplication instructions will be handled via gadgets/constraint-systems instead of lookups. We may want to handle XOR and LT via gadgets too for performance reasons. 
+*Addition and multiplication instructions will be handled via [gadgets/constraint-systems](https://www.irreducible.com/posts/integer-multiplication-in-binius) instead of lookups. We may want to handle XOR and LT via gadgets too for performance reasons. 
 
 *Booleanity constraints in the R1CS can be omitted as that is guaranteed by the binding properties of the Binius commitment scheme.
 

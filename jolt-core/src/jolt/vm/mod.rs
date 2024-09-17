@@ -104,7 +104,7 @@ where
     pub bytecode: BytecodeProof<F, PCS>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-    pub r1cs: R1CSProof<C, I, F>,
+    pub r1cs: UniformSpartanProof<C, I, F>,
 }
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -437,11 +437,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         )
         .expect("r1cs proof failed");
 
-        let r1cs_proof = R1CSProof {
-            key: spartan_key,
-            proof: spartan_proof,
-        };
-
         // TODO(moodlezoup): Add to proof
         opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
 
@@ -453,7 +448,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
-            r1cs: r1cs_proof,
+            r1cs: spartan_proof,
         };
 
         (jolt_proof, jolt_commitments)
@@ -476,8 +471,18 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
-        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
-        transcript.append_scalar(&proof.r1cs.key.vk_digest);
+        // Regenerate the uniform Spartan key
+        let padded_trace_length = proof.trace_length.next_power_of_two();
+        let memory_start = RAM_START_ADDRESS - proof.program_io.memory_layout.ram_witness_offset;
+        let r1cs_builder =
+            Self::Constraints::construct_constraints(padded_trace_length, memory_start);
+        let spartan_key =
+            spartan::UniformSpartanProof::setup_precommitted(&r1cs_builder, padded_trace_length);
+
+        let r1cs_proof = R1CSProof {
+            key: spartan_key,
+            proof: proof.r1cs,
+        };
 
         commitments
             .read_write_values()
@@ -516,7 +521,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        Self::verify_r1cs(proof.r1cs, &mut opening_accumulator, &mut transcript)?;
+
+        Self::verify_r1cs(r1cs_proof, &mut opening_accumulator, &mut transcript)?;
 
         todo!("verify batched opening");
         Ok(())

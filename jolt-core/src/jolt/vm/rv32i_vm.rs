@@ -108,20 +108,20 @@ instruction_set!(
   RV32I,
   ADD: ADDInstruction<WORD_SIZE>,
   SUB: SUBInstruction<WORD_SIZE>,
-  AND: ANDInstruction,
-  OR: ORInstruction,
-  XOR: XORInstruction,
-  LB: LBInstruction,
-  LH: LHInstruction,
-  SB: SBInstruction,
-  SH: SHInstruction,
-  SW: SWInstruction,
-  BEQ: BEQInstruction,
-  BGE: BGEInstruction,
-  BGEU: BGEUInstruction,
-  BNE: BNEInstruction,
-  SLT: SLTInstruction,
-  SLTU: SLTUInstruction,
+  AND: ANDInstruction<WORD_SIZE>,
+  OR: ORInstruction<WORD_SIZE>,
+  XOR: XORInstruction<WORD_SIZE>,
+  LB: LBInstruction<WORD_SIZE>,
+  LH: LHInstruction<WORD_SIZE>,
+  SB: SBInstruction<WORD_SIZE>,
+  SH: SHInstruction<WORD_SIZE>,
+  SW: SWInstruction<WORD_SIZE>,
+  BEQ: BEQInstruction<WORD_SIZE>,
+  BGE: BGEInstruction<WORD_SIZE>,
+  BGEU: BGEUInstruction<WORD_SIZE>,
+  BNE: BNEInstruction<WORD_SIZE>,
+  SLT: SLTInstruction<WORD_SIZE>,
+  SLTU: SLTUInstruction<WORD_SIZE>,
   SLL: SLLInstruction<WORD_SIZE>,
   SRA: SRAInstruction<WORD_SIZE>,
   SRL: SRLInstruction<WORD_SIZE>,
@@ -131,9 +131,9 @@ instruction_set!(
   MULHU: MULHUInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
   VIRTUAL_MOVE: MOVEInstruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
+  VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction,
+  VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>
 );
 subtable_enum!(
@@ -187,9 +187,44 @@ pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltIn, F, PCS, RV32I, RV32ISu
 
 use eyre::Result;
 use std::fs::File;
+use std::io::Cursor;
 use std::path::PathBuf;
 
 pub type PCS = HyraxScheme<G1Projective>;
+pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
+    /// Gets the byte size of the serialized data
+    fn size(&self) -> Result<usize> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer.len())
+    }
+
+    /// Saves the data to a file
+    fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
+        let file = File::create(path.into())?;
+        self.serialize_compressed(file)?;
+        Ok(())
+    }
+
+    /// Reads data from a file
+    fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
+        let file = File::open(path.into())?;
+        Ok(Self::deserialize_compressed(file)?)
+    }
+
+    /// Serializes the data to a byte vector
+    fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Deserializes data from a byte vector
+    fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
+        let cursor = Cursor::new(bytes);
+        Ok(Self::deserialize_compressed(cursor)?)
+    }
+}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RV32IHyraxProof {
@@ -197,40 +232,7 @@ pub struct RV32IHyraxProof {
     pub commitments: JoltCommitments<PCS>,
 }
 
-impl RV32IHyraxProof {
-    /// Gets the byte size of the full proof
-    pub fn size(&self) -> Result<usize> {
-        let mut buffer = Vec::new();
-        self.serialize_compressed(&mut buffer)?;
-        Ok(buffer.len())
-    }
-
-    /// Saves the proof to a file
-    pub fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
-        let file = File::create(path.into())?;
-        self.serialize_compressed(file)?;
-        Ok(())
-    }
-
-    /// Reads a proof from a file
-    pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        let file = File::open(path.into())?;
-        Ok(RV32IHyraxProof::deserialize_compressed(file)?)
-    }
-
-    /// Serializes the proof to a byte vector
-    pub fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
-        self.serialize_compressed(&mut buffer)?;
-        Ok(buffer)
-    }
-
-    /// Deserializes a proof from a byte vector
-    pub fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
-        let cursor = std::io::Cursor::new(bytes);
-        Ok(RV32IHyraxProof::deserialize_compressed(cursor)?)
-    }
-}
+impl Serializable for RV32IHyraxProof {}
 
 // ==================== TEST ====================
 

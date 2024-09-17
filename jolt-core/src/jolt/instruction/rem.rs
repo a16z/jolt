@@ -161,7 +161,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             advice_value: None,
         });
 
-        let _assert_eq = BEQInstruction(add_0, x).lookup_entry();
+        let _assert_eq = BEQInstruction::<WORD_SIZE>(add_0, x).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,

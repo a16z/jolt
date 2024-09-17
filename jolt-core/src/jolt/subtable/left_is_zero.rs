@@ -19,6 +19,7 @@ impl<F: JoltField> LeftIsZeroSubtable<F> {
 
 impl<F: JoltField> LassoSubtable<F> for LeftIsZeroSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x | y] = (x == 0)
         let mut entries: Vec<F> = vec![F::zero(); M];
 
         for idx in 0..(1 << (log2(M) / 2)) {

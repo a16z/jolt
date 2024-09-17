@@ -26,6 +26,8 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
     for SllSubtable<F, CHUNK_INDEX, WORD_SIZE>
 {
     fn materialize(&self, M: usize) -> Vec<F> {
+        // table[x | y] = (x << (y % WORD_SIZE)) & ((1 << (WORD_SIZE - suffix_length)) - 1)
+        // where `suffix_length = operand_chunk_width * CHUNK_INDEX`
         let mut entries: Vec<F> = Vec::with_capacity(M);
 
         let operand_chunk_width: usize = (log2(M) / 2) as usize;
@@ -33,23 +35,27 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
 
         for idx in 0..M {
             let (x, y) = split_bits(idx, operand_chunk_width);
-            let x = x as u64;
 
-            let row = x
-                .checked_shl((y % WORD_SIZE + suffix_length) as u32)
-                .unwrap_or(0)
-                .rem_euclid(1 << WORD_SIZE)
-                .checked_shr(suffix_length as u32)
-                .unwrap_or(0);
+            // Need to handle u64::MAX in a special case because of overflow
+            let truncate_mask = if WORD_SIZE - suffix_length >= 64 {
+                u64::MAX
+            } else {
+                (1 << (WORD_SIZE - suffix_length)) - 1
+            };
 
-            entries.push(F::from_u64(row as u64).unwrap());
+            let row = (x as u64).checked_shl((y % WORD_SIZE) as u32).unwrap_or(0) & truncate_mask;
+
+            entries.push(F::from_u64(row).unwrap());
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // first half is chunk X_i
-        // and second half is always chunk Y_0
+        // \sum_{k = 0}^{2^b - 1} eq(y, bin(k)) * (\sum_{j = 0}^{m'-1} 2^{k + j} * x_{b - j - 1}),
+        // where m = min(b, max( 0, (k + b * (CHUNK_INDEX + 1)) - WORD_SIZE))
+        // and m' = b - m
+
+        // We assume the first half is chunk(X_i) and the second half is always chunk(Y_0)
         debug_assert!(point.len() % 2 == 0);
 
         let log_WORD_SIZE = log2(WORD_SIZE) as usize;
@@ -61,12 +67,14 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
 
         // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
         for k in 0..min(WORD_SIZE, 1 << b) {
+            // bit-decompose k
             let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
                 .map(|bit| F::from_u64(*bit as u64).unwrap())
                 .collect::<Vec<F>>(); // big-endian
 
+            // Compute eq(y, bin(k))
             let mut eq_term = F::one();
             // again, min with b is included when subtables of bit-length less than 6 are used
             for i in 0..min(log_WORD_SIZE, b) {
@@ -79,8 +87,9 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             } else {
                 0
             };
-
             let m_prime = b - m;
+
+            // Compute \sum_{j = 0}^{m'-1} 2^{k + j} * x_{b - j - 1}
             let shift_x_by_k = (0..m_prime)
                 .enumerate()
                 .map(|(j, _)| F::from_u64(1_u64 << (j + k)).unwrap() * x[b - 1 - j])
@@ -103,15 +112,31 @@ mod test {
         subtable_materialize_mle_parity_test,
     };
 
-    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity0, SllSubtable<Fr, 0, 32>, Fr, 1 << 10);
-    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity1, SllSubtable<Fr, 1, 32>, Fr, 1 << 10);
-    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity2, SllSubtable<Fr, 2, 32>, Fr, 1 << 10);
-    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity3, SllSubtable<Fr, 3, 32>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity0_32, SllSubtable<Fr, 0, 32>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity1_32, SllSubtable<Fr, 1, 32>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity2_32, SllSubtable<Fr, 2, 32>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity3_32, SllSubtable<Fr, 3, 32>, Fr, 1 << 10);
+
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity0_64, SllSubtable<Fr, 0, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity1_64, SllSubtable<Fr, 1, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity2_64, SllSubtable<Fr, 2, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity3_64, SllSubtable<Fr, 3, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity4_64, SllSubtable<Fr, 4, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity5_64, SllSubtable<Fr, 5, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity6_64, SllSubtable<Fr, 6, 64>, Fr, 1 << 10);
+    subtable_materialize_mle_parity_test!(sll_materialize_mle_parity7_64, SllSubtable<Fr, 7, 64>, Fr, 1 << 10);
 
     subtable_materialize_mle_parity_test!(
-        sll_binius_materialize_mle_parity3,
+        sll_binius_materialize_mle_parity3_32,
         SllSubtable<BiniusField<BinaryField128b>, 3, 32>,
         BiniusField<BinaryField128b>,
-        1 << 16
+        1 << 10
+    );
+
+    subtable_materialize_mle_parity_test!(
+        sll_binius_materialize_mle_parity3_64,
+        SllSubtable<BiniusField<BinaryField128b>, 0, 64>,
+        BiniusField<BinaryField128b>,
+        1 << 10
     );
 }
