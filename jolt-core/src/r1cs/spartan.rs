@@ -89,7 +89,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &'a JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
@@ -194,9 +194,13 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             })
             .collect();
 
-        for (poly, claim) in witness_polys.iter().zip(claimed_witness_evals.iter()) {
-            opening_accumulator.append(poly, r_col_step.to_vec(), *claim);
-        }
+        opening_accumulator.append(
+            &witness_polys,
+            DensePolynomial::new(chi),
+            r_col_step.to_vec(),
+            &claimed_witness_evals.iter().collect::<Vec<_>>(),
+            transcript,
+        );
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (

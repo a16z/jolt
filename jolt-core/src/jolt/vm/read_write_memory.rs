@@ -9,6 +9,7 @@ use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(test)]
 use std::collections::HashSet;
+use std::marker::PhantomData;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
@@ -1154,13 +1155,12 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    _pcs: PhantomData<PCS>,
     num_rounds: usize,
     /// Sumcheck proof that v_final is equal to the program outputs at the relevant indices.
     sumcheck_proof: SumcheckInstanceProof<F>,
     /// Opening of v_final at the random point chosen over the course of sumcheck
     opening: F,
-    /// Hyrax opening proof of the v_final opening
-    opening_proof: PCS::Proof,
 }
 
 impl<F, PCS> OutputSumcheckProof<F, PCS>
@@ -1169,10 +1169,9 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     fn prove_outputs<'a>(
-        generators: &PCS::Setup,
         polynomials: &'a ReadWriteMemoryPolynomials<F>,
         program_io: &JoltDevice,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_size = polynomials.v_final.len();
@@ -1238,27 +1237,26 @@ where
             );
 
         opening_accumulator.append(
-            &polynomials.v_final,
+            &[&polynomials.v_final],
+            DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
-            sumcheck_openings[2],
+            &[&sumcheck_openings[2]],
+            transcript,
         );
-
-        let sumcheck_opening_proof =
-            PCS::prove(generators, &polynomials.v_final, &r_sumcheck, transcript);
 
         Self {
             num_rounds,
             sumcheck_proof,
             opening: sumcheck_openings[2], // only need v_final; verifier computes the rest on its own
-            opening_proof: sumcheck_opening_proof,
+            _pcs: PhantomData,
         }
     }
 
     fn verify(
         proof: &Self,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        generators: &PCS::Setup,
         commitment: &ReadWriteMemoryCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_eq = transcript.challenge_vector(proof.num_rounds);
@@ -1328,14 +1326,9 @@ where
             "Output sumcheck check failed."
         );
 
-        PCS::verify(
-            &proof.opening_proof,
-            generators,
-            transcript,
-            &r_sumcheck,
-            &proof.opening,
-            &commitment.v_final,
-        )
+        opening_accumulator.append(&[&commitment.v_final], r_sumcheck, &[&proof.opening]);
+
+        Ok(())
     }
 }
 
@@ -1362,7 +1355,7 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &'a JoltPolynomials<F>,
         program_io: &JoltDevice,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
@@ -1375,7 +1368,6 @@ where
         );
 
         let output_proof = OutputSumcheckProof::prove_outputs(
-            generators,
             &polynomials.read_write_memory,
             program_io,
             opening_accumulator,
@@ -1402,7 +1394,7 @@ where
         generators: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
@@ -1417,8 +1409,8 @@ where
         OutputSumcheckProof::verify(
             &self.output_proof,
             preprocessing,
-            generators,
             &commitments.read_write_memory,
+            opening_accumulator,
             transcript,
         )?;
         TimestampValidityProof::verify(

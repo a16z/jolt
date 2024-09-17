@@ -396,8 +396,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        let mut opening_accumulator: ProverOpeningAccumulator<'_, F> =
-            ProverOpeningAccumulator::new();
+        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.generators,
@@ -443,7 +442,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             proof: spartan_proof,
         };
 
-        println!("{} openings accumulated", opening_accumulator.len());
+        // TODO(moodlezoup): Add to proof
         opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
 
         drop_in_background_thread(jolt_polynomials);
@@ -489,7 +488,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        let mut opening_accumulator: VerifierOpeningAccumulator<'_, F, PCS> =
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
             VerifierOpeningAccumulator::new();
 
         Self::verify_bytecode(
@@ -529,7 +528,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         generators: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
         commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookupsProof::verify(
@@ -548,7 +547,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         generators: &PCS::Setup,
         proof: BytecodeProof<F, PCS>,
         commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
@@ -569,7 +568,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         proof: ReadWriteMemoryProof<F, PCS>,
         commitment: &'a JoltCommitments<PCS>,
         program_io: JoltDevice,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
@@ -589,7 +588,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     #[tracing::instrument(skip_all)]
     fn verify_r1cs<'a>(
         proof: R1CSProof<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof

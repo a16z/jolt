@@ -4,7 +4,7 @@ use crate::{
     field::{JoltField, OptimizedMul},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, ProofTranscript},
     },
 };
@@ -12,29 +12,35 @@ use crate::{
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
-    eq_poly::EqPolynomial,
     unipoly::{CompressedUniPoly, UniPoly},
 };
 
-pub struct ProverOpening<'a, F: JoltField> {
-    pub polynomial: &'a DensePolynomial<F>,
+pub struct ProverOpening<F: JoltField> {
+    pub polynomial: DensePolynomial<F>,
+    pub eq_poly: DensePolynomial<F>,
     pub opening_point: Vec<F>,
     pub claim: F,
     pub num_sumcheck_rounds: usize,
 }
 
-pub struct VerifierOpening<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
-    pub commitment: &'a PCS::Commitment,
+pub struct VerifierOpening<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    pub commitment: PCS::Commitment,
     pub opening_point: Vec<F>,
     pub claim: F,
     pub num_sumcheck_rounds: usize,
 }
 
-impl<'a, F: JoltField> ProverOpening<'a, F> {
-    fn new(polynomial: &'a DensePolynomial<F>, opening_point: Vec<F>, claim: F) -> Self {
+impl<F: JoltField> ProverOpening<F> {
+    fn new(
+        polynomial: DensePolynomial<F>,
+        eq_poly: DensePolynomial<F>,
+        opening_point: Vec<F>,
+        claim: F,
+    ) -> Self {
         let num_sumcheck_rounds = polynomial.get_num_vars();
         ProverOpening {
             polynomial,
+            eq_poly,
             opening_point,
             claim,
             num_sumcheck_rounds,
@@ -42,8 +48,8 @@ impl<'a, F: JoltField> ProverOpening<'a, F> {
     }
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<'a, F, PCS> {
-    fn new(commitment: &'a PCS::Commitment, opening_point: Vec<F>, claim: F) -> Self {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<F, PCS> {
+    fn new(commitment: PCS::Commitment, opening_point: Vec<F>, claim: F) -> Self {
         let num_sumcheck_rounds = opening_point.len();
         VerifierOpening {
             commitment,
@@ -54,15 +60,15 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<'a, F, 
     }
 }
 
-pub struct ProverOpeningAccumulator<'a, F: JoltField> {
-    openings: Vec<ProverOpening<'a, F>>,
+pub struct ProverOpeningAccumulator<F: JoltField> {
+    openings: Vec<ProverOpening<F>>,
 }
 
-pub struct VerifierOpeningAccumulator<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
-    openings: Vec<VerifierOpening<'a, F, PCS>>,
+pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    openings: Vec<VerifierOpening<F, PCS>>,
 }
 
-impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
+impl<F: JoltField> ProverOpeningAccumulator<F> {
     pub fn new() -> Self {
         Self { openings: vec![] }
     }
@@ -71,18 +77,62 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
         self.openings.len()
     }
 
-    pub fn append(&mut self, polynomial: &'a DensePolynomial<F>, opening_point: Vec<F>, claim: F) {
-        self.openings
-            .push(ProverOpening::new(polynomial, opening_point, claim));
+    pub fn append(
+        &mut self,
+        polynomials: &[&DensePolynomial<F>],
+        eq_poly: DensePolynomial<F>,
+        opening_point: Vec<F>,
+        claims: &[&F],
+        transcript: &mut ProofTranscript,
+    ) {
+        // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
+        let rho: F = transcript.challenge_scalar();
+        let mut rho_powers = vec![F::one()];
+        for i in 1..polynomials.len() {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
+        let batched_claim = rho_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(scalar, eval)| *scalar * *eval)
+            .sum();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (1 << opening_point.len()) / num_chunks;
+        let f_batched = (0..num_chunks)
+            .into_par_iter()
+            .flat_map_iter(|chunk_index| {
+                let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
+                for (coeff, poly) in rho_powers.iter().zip(polynomials.iter()) {
+                    for (rlc, poly_eval) in chunk
+                        .iter_mut()
+                        .zip(poly.evals_ref()[chunk_index * chunk_size..].iter())
+                    {
+                        *rlc += poly_eval.mul_01_optimized(*coeff);
+                    }
+                }
+                chunk
+            })
+            .collect::<Vec<_>>();
+
+        let batched_poly = DensePolynomial::new(f_batched);
+
+        self.openings.push(ProverOpening::new(
+            batched_poly,
+            eq_poly,
+            opening_point,
+            batched_claim,
+        ));
     }
 
-    pub fn par_extend<I: IntoParallelIterator<Item = ProverOpening<'a, F>>>(&mut self, iter: I) {
+    pub fn par_extend<I: IntoParallelIterator<Item = ProverOpening<F>>>(&mut self, iter: I) {
         self.openings.par_extend(iter);
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<PCS: CommitmentScheme<Field = F>>(
-        &self,
+        &mut self,
         pcs_setup: &PCS::Setup,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, PCS::Proof) {
@@ -93,15 +143,8 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
-        // TODO(moodlezoup): Unnecessary, EQ evals are already computed to compute claims
-        let eq_polys: Vec<_> = self
-            .openings
-            .par_iter()
-            .map(|opening| DensePolynomial::new(EqPolynomial::evals(&opening.opening_point)))
-            .collect();
-
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.prove_batch_opening_reduction(eq_polys, &rho_powers, transcript);
+            self.prove_batch_opening_reduction(&rho_powers, transcript);
 
         transcript.append_scalars(&sumcheck_claims);
         let gamma: F = transcript.challenge_scalar();
@@ -155,8 +198,7 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
 
     #[tracing::instrument(skip_all, name = "prove_batch_opening_reduction")]
     pub fn prove_batch_opening_reduction(
-        &self,
-        mut eq_polys: Vec<DensePolynomial<F>>,
+        &mut self,
         coeffs: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>) {
@@ -187,13 +229,7 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
-            let uni_poly = self.compute_quadratic(
-                coeffs,
-                remaining_rounds,
-                &mut eq_polys,
-                &mut bound_polys,
-                e,
-            );
+            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, &mut bound_polys, e);
             let compressed_poly = uni_poly.compress();
 
             // append the prover's message to the transcript
@@ -201,7 +237,7 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
-            self.bind(remaining_rounds, &mut eq_polys, &mut bound_polys, r_j);
+            self.bind(remaining_rounds, &mut bound_polys, r_j);
 
             e = uni_poly.evaluate(&r_j);
             compressed_polys.push(compressed_poly);
@@ -216,8 +252,6 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
             })
             .collect();
 
-        drop_in_background_thread(eq_polys);
-
         (SumcheckInstanceProof::new(compressed_polys), r, claims)
     }
 
@@ -226,30 +260,29 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
-        eq_polys: &mut Vec<DensePolynomial<F>>,
         bound_polys: &mut Vec<Option<DensePolynomial<F>>>,
         previous_round_claim: F,
     ) -> UniPoly<F> {
         let evals: Vec<(F, F)> = self
             .openings
             .par_iter()
-            .zip(eq_polys.par_iter())
             .zip(bound_polys.par_iter())
-            .map(|((opening, eq_poly), bound_poly)| {
+            .map(|(opening, bound_poly)| {
                 if remaining_sumcheck_rounds <= opening.num_sumcheck_rounds {
-                    let poly = bound_poly.as_ref().unwrap_or(opening.polynomial);
+                    let poly = bound_poly.as_ref().unwrap_or(&opening.polynomial);
                     let mle_half = poly.len() / 2;
                     let eval_0: F = (0..mle_half)
                         .into_iter()
-                        .map(|i| poly[i].mul_01_optimized(eq_poly[i]))
+                        .map(|i| poly[i].mul_01_optimized(opening.eq_poly[i]))
                         .sum();
                     let eval_2: F = (0..mle_half)
                         .into_iter()
                         .map(|i| {
                             let poly_bound_point =
                                 poly[i + mle_half] + poly[i + mle_half] - poly[i];
-                            let eq_bound_point =
-                                eq_poly[i + mle_half] + eq_poly[i + mle_half] - eq_poly[i];
+                            let eq_bound_point = opening.eq_poly[i + mle_half]
+                                + opening.eq_poly[i + mle_half]
+                                - opening.eq_poly[i];
                             poly_bound_point.mul_01_optimized(eq_bound_point)
                         })
                         .sum();
@@ -278,28 +311,26 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
 
     #[tracing::instrument(skip_all, name = "bind")]
     fn bind(
-        &self,
+        &mut self,
         remaining_sumcheck_rounds: usize,
-        eq_polys: &mut Vec<DensePolynomial<F>>,
         bound_polys: &mut Vec<Option<DensePolynomial<F>>>,
         r_j: F,
     ) {
-        eq_polys
+        self.openings
             .par_iter_mut()
-            .zip(self.openings.par_iter())
             .zip(bound_polys.par_iter_mut())
-            .for_each(|((eq_poly, opening), bound_poly)| {
+            .for_each(|(opening, bound_poly)| {
                 if remaining_sumcheck_rounds <= opening.num_sumcheck_rounds {
                     match bound_poly {
                         Some(bound_poly) => {
                             rayon::join(
-                                || eq_poly.bound_poly_var_top(&r_j),
+                                || opening.eq_poly.bound_poly_var_top(&r_j),
                                 || bound_poly.bound_poly_var_top(&r_j),
                             );
                         }
                         None => {
                             *bound_poly = rayon::join(
-                                || eq_poly.bound_poly_var_top(&r_j),
+                                || opening.eq_poly.bound_poly_var_top(&r_j),
                                 || Some(opening.polynomial.new_poly_from_bound_poly_var_top(&r_j)),
                             )
                             .1;
@@ -310,7 +341,7 @@ impl<'a, F: JoltField> ProverOpeningAccumulator<'a, F> {
     }
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<'a, F, PCS> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<F, PCS> {
     pub fn new() -> Self {
         Self { openings: vec![] }
     }
@@ -319,15 +350,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumula
         self.openings.len()
     }
 
-    pub fn append(&mut self, commitment: &'a PCS::Commitment, opening_point: Vec<F>, claim: F) {
-        self.openings
-            .push(VerifierOpening::new(commitment, opening_point, claim));
+    pub fn append(
+        &mut self,
+        commitments: &[&PCS::Commitment],
+        opening_point: Vec<F>,
+        claims: &[&F],
+    ) {
+        todo!("Compute RLC commitment/claim");
+        // self.openings
+        //     .push(VerifierOpening::new(commitment, opening_point, claim));
     }
 
-    pub fn par_extend<I: IntoParallelIterator<Item = VerifierOpening<'a, F, PCS>>>(
-        &mut self,
-        iter: I,
-    ) {
+    pub fn par_extend<I: IntoParallelIterator<Item = VerifierOpening<F, PCS>>>(&mut self, iter: I) {
         self.openings.par_extend(iter);
     }
 

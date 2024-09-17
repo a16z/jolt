@@ -549,7 +549,7 @@ where
         generators: &PCS::Setup,
         polynomials: &'a JoltPolynomials<F>,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
         transcript.append_protocol_name(Self::protocol_name());
@@ -596,12 +596,13 @@ where
         .concat();
         primary_sumcheck_openings.push(outputs_eval);
 
-        for (poly, claim) in primary_sumcheck_polys
-            .iter()
-            .zip(primary_sumcheck_openings.iter())
-        {
-            opening_accumulator.append(poly, r_primary_sumcheck.clone(), *claim);
-        }
+        opening_accumulator.append(
+            &primary_sumcheck_polys,
+            DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck)),
+            r_primary_sumcheck.clone(),
+            &primary_sumcheck_openings.iter().collect::<Vec<_>>(),
+            transcript,
+        );
 
         // let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
         //     generators,
@@ -640,7 +641,7 @@ where
         pcs_setup: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
         commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());

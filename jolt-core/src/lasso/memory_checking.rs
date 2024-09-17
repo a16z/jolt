@@ -143,12 +143,12 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
-    fn prove_memory_checking<'a>(
+    fn prove_memory_checking(
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
-        polynomials: &'a Self::Polynomials,
-        jolt_polynomials: &'a JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
+        polynomials: &Self::Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
         let (
@@ -172,6 +172,7 @@ where
             jolt_polynomials,
             &r_read_write,
             &r_init_final,
+            transcript,
         );
 
         MemoryCheckingProof {
@@ -185,10 +186,10 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_grand_products")]
     /// Proves the grand products for the memory checking multisets (init, read, write, final).
-    fn prove_grand_products<'a>(
+    fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
-        jolt_polynomials: &'a JoltPolynomials<F>,
+        jolt_polynomials: &JoltPolynomials<F>,
         transcript: &mut ProofTranscript,
         pcs_setup: &PCS::Setup,
     ) -> (
@@ -233,13 +234,14 @@ where
         )
     }
 
-    fn compute_openings<'a>(
+    fn compute_openings(
         _preprocessing: &Self::Preprocessing,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
-        polynomials: &'a Self::Polynomials,
-        jolt_polynomials: &'a JoltPolynomials<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        polynomials: &Self::Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
         r_read_write: &[F],
         r_init_final: &[F],
+        transcript: &mut ProofTranscript,
     ) -> (Self::Openings, Self::ExogenousOpenings) {
         let mut openings = Self::Openings::default();
         let mut exogenous_openings = Self::ExogenousOpenings::default();
@@ -259,18 +261,20 @@ where
                 *opening = claim;
             });
 
-        for (poly, claim) in polynomials
-            .read_write_values()
-            .iter()
-            .zip(openings.read_write_values().into_iter())
-            .chain(
-                Self::ExogenousOpenings::exogenous_data(jolt_polynomials)
-                    .iter()
-                    .zip(exogenous_openings.openings().into_iter()),
-            )
-        {
-            opening_accumulator.append(poly, r_read_write.to_vec(), *claim);
-        }
+        let read_write_polys: Vec<_> = [
+            polynomials.read_write_values(),
+            Self::ExogenousOpenings::exogenous_data(jolt_polynomials),
+        ]
+        .concat();
+        let read_write_claims: Vec<_> =
+            [openings.read_write_values(), exogenous_openings.openings()].concat();
+        opening_accumulator.append(
+            &read_write_polys,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            &read_write_claims,
+            transcript,
+        );
 
         let eq_init_final = EqPolynomial::evals(r_init_final);
         polynomials
@@ -282,13 +286,13 @@ where
                 *opening = claim;
             });
 
-        for (poly, claim) in polynomials
-            .init_final_values()
-            .iter()
-            .zip(openings.init_final_values().into_iter())
-        {
-            opening_accumulator.append(poly, r_init_final.to_vec(), *claim);
-        }
+        opening_accumulator.append(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            &openings.init_final_values(),
+            transcript,
+        );
 
         (openings, exogenous_openings)
     }
@@ -392,10 +396,10 @@ where
     /// Computes the MLE of the leaves of the read, write, init, and final grand product circuits,
     /// one of each type per memory.
     /// Returns: (interleaved read/write leaves, interleaved init/final leaves)
-    fn compute_leaves<'a>(
+    fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
-        exogenous_polynomials: &'a JoltPolynomials<F>,
+        exogenous_polynomials: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (
@@ -417,13 +421,13 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
-    fn verify_memory_checking<'a>(
+    fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
         pcs_setup: &PCS::Setup,
         mut proof: MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings>,
-        commitments: &'a Self::Commitments,
-        exogenous_commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<'a, F, PCS>,
+        commitments: &Self::Commitments,
+        exogenous_commitments: &JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
@@ -451,29 +455,27 @@ where
             Some(pcs_setup),
         );
 
-        proof
-            .openings
-            .read_write_values()
-            .into_iter()
-            .zip(commitments.read_write_values().iter())
-            .chain(
-                proof
-                    .exogenous_openings
-                    .openings()
-                    .into_iter()
-                    .zip(exogenous_commitments.read_write_values().iter()),
-            )
-            .for_each(|(opening, commitment)| {
-                opening_accumulator.append(commitment, r_read_write.to_vec(), *opening);
-            });
-        proof
-            .openings
-            .init_final_values()
-            .into_iter()
-            .zip(commitments.init_final_values().iter())
-            .for_each(|(opening, commitment)| {
-                opening_accumulator.append(commitment, r_init_final.to_vec(), *opening);
-            });
+        let read_write_commits: Vec<_> = [
+            commitments.read_write_values(),
+            exogenous_commitments.read_write_values(),
+        ]
+        .concat();
+        let read_write_claims: Vec<_> = [
+            proof.openings.read_write_values(),
+            proof.exogenous_openings.openings(),
+        ]
+        .concat();
+        opening_accumulator.append(
+            &read_write_commits,
+            r_read_write.to_vec(),
+            &read_write_claims,
+        );
+
+        opening_accumulator.append(
+            &commitments.init_final_values(),
+            r_read_write.to_vec(),
+            &proof.openings.init_final_values(),
+        );
 
         // proof.read_write_openings.verify_openings(
         //     generators,

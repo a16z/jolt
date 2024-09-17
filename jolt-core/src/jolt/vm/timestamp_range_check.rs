@@ -580,7 +580,7 @@ where
         generators: &PCS::Setup,
         polynomials: &'a TimestampRangeCheckPolynomials<F>,
         jolt_polynomials: &'a JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<'a, F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
@@ -610,18 +610,13 @@ where
                 *opening = claim;
             });
 
-        for (poly, claim) in polynomials
-            .read_write_values()
-            .into_iter()
-            .zip(openings.read_write_values().into_iter())
-            .chain(
-                ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials)
-                    .into_iter()
-                    .zip(timestamp_openings.openings().into_iter()),
-            )
-        {
-            opening_accumulator.append(poly, r_grand_product.clone(), *claim);
-        }
+        opening_accumulator.append(
+            &polynomials.read_write_values(),
+            DensePolynomial::new(chis),
+            r_grand_product.clone(),
+            &openings.read_write_values().into_iter().collect::<Vec<_>>(),
+            transcript,
+        );
 
         Self {
             multiset_hashes,
