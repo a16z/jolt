@@ -190,7 +190,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
-                jolt::JoltPreprocessing<jolt::F, jolt::PCS>
+                jolt::JoltPreprocessing<4, jolt::F, jolt::PCS>
             ) {
                 #imports
 
@@ -201,7 +201,7 @@ impl MacroBuilder {
                 let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<jolt::F, jolt::PCS> =
+                let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         memory_init,
@@ -242,7 +242,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::PCS>,
+                preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports

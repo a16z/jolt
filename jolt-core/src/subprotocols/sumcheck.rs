@@ -451,10 +451,9 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
             );
 
-            // TODO(moodlezoup)
-            // if i == num_rounds - 1 {
-            //     assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
-            // }
+            if i == num_rounds - 1 {
+                assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
+            }
         }
 
         let evals = vec![poly_A[0], poly_B[0]];

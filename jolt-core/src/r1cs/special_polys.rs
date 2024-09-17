@@ -1,8 +1,7 @@
 use crate::{
     field::JoltField,
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    poly::dense_mlpoly::DensePolynomial,
     utils::{
-        compute_dotproduct_low_optimized,
         math::Math,
         mul_0_1_optimized,
         thread::{drop_in_background_thread, unsafe_allocate_sparse_zero_vec},
@@ -429,6 +428,8 @@ pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
 
 #[cfg(test)]
 mod tests {
+    use crate::poly::dense_mlpoly::DensePolynomial;
+
     use super::*;
     use ark_bn254::Fr;
     use ark_std::Zero;

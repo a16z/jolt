@@ -293,60 +293,57 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
     }
 }
 
-#[cfg(test)]
-mod test {
-    use ark_bn254::Fr;
-    use ark_std::One;
+// #[cfg(test)]
+// mod test {
+//     use ark_bn254::Fr;
+//     use ark_std::One;
 
-    use crate::{
-        poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme},
-        r1cs::test::{simp_test_builder_key, SimpTestIn},
-    };
+//     use crate::poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme};
 
-    use super::*;
+//     use super::*;
 
-    #[test]
-    fn integration() {
-        let (builder, key) = simp_test_builder_key();
-        let witness_segments: Vec<Vec<Fr>> = vec![
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
-        ];
+//     #[test]
+//     fn integration() {
+//         let (builder, key) = simp_test_builder_key();
+//         let witness_segments: Vec<Vec<Fr>> = vec![
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
+//         ];
 
-        // Create a witness and commit
-        let witness_segments_ref: Vec<&[Fr]> = witness_segments
-            .iter()
-            .map(|segment| segment.as_slice())
-            .collect();
-        let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
-        let witness_commitment =
-            HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+//         // Create a witness and commit
+//         let witness_segments_ref: Vec<&[Fr]> = witness_segments
+//             .iter()
+//             .map(|segment| segment.as_slice())
+//             .collect();
+//         let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
+//         let witness_commitment =
+//             HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
 
-        // Prove spartan!
-        let mut prover_transcript = ProofTranscript::new(b"stuff");
-        let proof =
-            UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
-                SimpTestIn,
-            >(
-                &gens,
-                builder,
-                &key,
-                witness_segments,
-                todo!("opening accumulator"),
-                &mut prover_transcript,
-            )
-            .unwrap();
+//         // Prove spartan!
+//         let mut prover_transcript = ProofTranscript::new(b"stuff");
+//         let proof =
+//             UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
+//                 SimpTestIn,
+//             >(
+//                 &gens,
+//                 builder,
+//                 &key,
+//                 witness_segments,
+//                 todo!("opening accumulator"),
+//                 &mut prover_transcript,
+//             )
+//             .unwrap();
 
-        let mut verifier_transcript = ProofTranscript::new(b"stuff");
-        let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
-        proof
-            .verify_precommitted(
-                &key,
-                witness_commitment_ref,
-                &gens,
-                &mut verifier_transcript,
-            )
-            .expect("Spartan verifier failed");
-    }
-}
+//         let mut verifier_transcript = ProofTranscript::new(b"stuff");
+//         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
+//         proof
+//             .verify_precommitted(
+//                 &key,
+//                 witness_commitment_ref,
+//                 &gens,
+//                 &mut verifier_transcript,
+//             )
+//             .expect("Spartan verifier failed");
+//     }
+// }

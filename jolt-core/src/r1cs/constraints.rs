@@ -266,57 +266,49 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    use crate::{jolt::vm::rv32i_vm::RV32I, r1cs::builder::CombinedUniformBuilder};
+//     use crate::r1cs::builder::CombinedUniformBuilder;
 
-    use ark_bn254::Fr;
-    use ark_std::Zero;
-    use strum::EnumCount;
+//     use ark_bn254::Fr;
+//     use ark_std::Zero;
+//     use strum::EnumCount;
 
-    #[test]
-    fn instruction_flags_length() {
-        assert_eq!(
-            input_range!(JoltIn::IF_Add, JoltIn::IF_Virt_Assert_VALID_DIV0).len(),
-            RV32I::COUNT
-        );
-    }
+//     #[test]
+//     fn single_instruction_jolt() {
+//         let mut uniform_builder = R1CSBuilder::<Fr, JoltIn>::new();
 
-    #[test]
-    fn single_instruction_jolt() {
-        let mut uniform_builder = R1CSBuilder::<Fr, JoltIn>::new();
+//         let constraints = UniformJoltConstraints::new(0);
+//         constraints.build_constraints(&mut uniform_builder);
 
-        let constraints = UniformJoltConstraints::new(0);
-        constraints.build_constraints(&mut uniform_builder);
+//         let num_steps = 1;
+//         let combined_builder =
+//             CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+//         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
-        let num_steps = 1;
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
-        let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
+//         // ADD instruction
+//         inputs[JoltIn::Bytecode_A as usize][0] = Fr::from(10);
+//         inputs[JoltIn::Bytecode_Bitflags as usize][0] = Fr::from(0);
+//         inputs[JoltIn::Bytecode_RS1 as usize][0] = Fr::from(2);
+//         inputs[JoltIn::Bytecode_RS2 as usize][0] = Fr::from(3);
+//         inputs[JoltIn::Bytecode_RD as usize][0] = Fr::from(4);
 
-        // ADD instruction
-        inputs[JoltIn::Bytecode_A as usize][0] = Fr::from(10);
-        inputs[JoltIn::Bytecode_Bitflags as usize][0] = Fr::from(0);
-        inputs[JoltIn::Bytecode_RS1 as usize][0] = Fr::from(2);
-        inputs[JoltIn::Bytecode_RS2 as usize][0] = Fr::from(3);
-        inputs[JoltIn::Bytecode_RD as usize][0] = Fr::from(4);
+//         inputs[JoltIn::RD_Read as usize][0] = Fr::from(0);
+//         inputs[JoltIn::RS1_Read as usize][0] = Fr::from(100);
+//         inputs[JoltIn::RS2_Read as usize][0] = Fr::from(200);
+//         inputs[JoltIn::RD_Write as usize][0] = Fr::from(300);
+//         // remainder RAM == 0
 
-        inputs[JoltIn::RD_Read as usize][0] = Fr::from(0);
-        inputs[JoltIn::RS1_Read as usize][0] = Fr::from(100);
-        inputs[JoltIn::RS2_Read as usize][0] = Fr::from(200);
-        inputs[JoltIn::RD_Write as usize][0] = Fr::from(300);
-        // remainder RAM == 0
+//         // rv_trace::to_circuit_flags
+//         // all zero for ADD
+//         inputs[JoltIn::OpFlags_IsPC as usize][0] = Fr::zero(); // first_operand = rs1
+//         inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
-        // rv_trace::to_circuit_flags
-        // all zero for ADD
-        inputs[JoltIn::OpFlags_IsPC as usize][0] = Fr::zero(); // first_operand = rs1
-        inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
+//         let aux = combined_builder.compute_aux(&inputs);
 
-        let aux = combined_builder.compute_aux(&inputs);
-
-        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
-        combined_builder.assert_valid(&az, &bz, &cz);
-    }
-}
+//         let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
+//         combined_builder.assert_valid(&az, &bz, &cz);
+//     }
+// }

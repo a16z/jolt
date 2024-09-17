@@ -22,7 +22,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_OPS_PER_INSTRUCTION;
 use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;

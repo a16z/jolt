@@ -3,12 +3,12 @@
 
 use crate::{
     field::{JoltField, OptimizedMul},
-    jolt::vm::JoltPolynomials,
-    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
+    poly::dense_mlpoly::DensePolynomial,
     utils::thread::unsafe_allocate_zero_vec,
 };
 use rayon::prelude::*;
 use std::fmt::Debug;
+use std::fmt::Write as _;
 use std::hash::Hash;
 
 use super::inputs::ConstraintInput;
@@ -22,9 +22,19 @@ pub enum Variable {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Term(pub Variable, pub i64);
+impl Term {
+    fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
+        match self.0 {
+            Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                write!(f, "{}⋅{:?}", self.1, I::from_index::<C>(var_index))
+            }
+            Variable::Constant => write!(f, "{}", self.1),
+        }
+    }
+}
 
 /// Linear Combination of terms.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LC(Vec<Term>);
 
 impl LC {
@@ -128,6 +138,23 @@ impl LC {
         });
     }
 
+    pub fn pretty_fmt<const C: usize, I: ConstraintInput>(
+        &self,
+        f: &mut String,
+    ) -> std::fmt::Result {
+        if self.0.is_empty() {
+            write!(f, "0")
+        } else {
+            for (index, term) in self.0.iter().enumerate() {
+                if index > 0 {
+                    write!(f, " + ")?;
+                }
+                term.pretty_fmt::<C, I>(f)?;
+            }
+            write!(f, "")
+        }
+    }
+
     #[cfg(test)]
     fn assert_no_duplicate_terms(terms: &[Term]) {
         let mut term_vec = Vec::new();
@@ -138,25 +165,6 @@ impl LC {
                 term_vec.push(term.0);
             }
         }
-    }
-}
-
-// impl std::fmt::Debug for LC {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "LC(")?;
-//         for (index, term) in self.0.iter().enumerate() {
-//             if index > 0 {
-//                 write!(f, " + ")?;
-//             }
-//             write!(f, "{:?}", term)?;
-//         }
-//         write!(f, ")")
-//     }
-// }
-
-impl std::fmt::Debug for Term {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}*{:?}", self.1, self.0)
     }
 }
 
