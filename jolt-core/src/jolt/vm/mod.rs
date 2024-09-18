@@ -478,6 +478,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::Constraints::construct_constraints(padded_trace_length, memory_start);
         let spartan_key =
             spartan::UniformSpartanProof::setup_precommitted(&r1cs_builder, padded_trace_length);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {
             key: spartan_key,

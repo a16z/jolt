@@ -273,3 +273,9 @@ impl<F: BiniusSpecific> ark_serialize::Valid for BiniusField<F> {
         todo!()
     }
 }
+
+impl<F: BiniusSpecific> std::fmt::Display for BiniusField<F> {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}

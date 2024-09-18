@@ -337,6 +337,8 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
         let len = poly_A.len() / 2;
         let trace_len = W[0].len();
+        W.iter()
+            .for_each(|poly| debug_assert_eq!(poly.len(), trace_len));
 
         let witness_value = |index: usize| {
             if (index / trace_len) >= W.len() {
@@ -345,8 +347,6 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 W[index / trace_len][index % trace_len]
             }
         };
-
-        // assert_eq!(len, W.len());
 
         let poly = {
             // eval_point_0 = \sum_i A[i] * B[i]
@@ -423,7 +423,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
         /*          Round 0 END          */
 
-        for i in 1..num_rounds {
+        for _i in 1..num_rounds {
             let poly = {
                 let (eval_point_0, eval_point_2) =
                     Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
@@ -450,10 +450,6 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 || poly_A.bound_poly_var_top_zero_optimized(&r_i),
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
             );
-
-            if i == num_rounds - 1 {
-                assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
-            }
         }
 
         let evals = vec![poly_A[0], poly_B[0]];

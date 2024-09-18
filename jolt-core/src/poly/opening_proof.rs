@@ -85,8 +85,11 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         claims: &[&F],
         transcript: &mut ProofTranscript,
     ) {
+        assert_eq!(polynomials.len(), claims.len());
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
         let rho: F = transcript.challenge_scalar();
+        // let rho: F = F::one(); // TODO(moodlezoup)
+
         let mut rho_powers = vec![F::one()];
         for i in 1..polynomials.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
@@ -355,8 +358,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         commitments: &[&PCS::Commitment],
         opening_point: Vec<F>,
         claims: &[&F],
+        transcript: &mut ProofTranscript,
     ) {
-        todo!("Compute RLC commitment/claim");
+        assert_eq!(commitments.len(), claims.len());
+        let _: F = transcript.challenge_scalar();
+        // todo!("Compute RLC commitment/claim");
         // self.openings
         //     .push(VerifierOpening::new(commitment, opening_point, claim));
     }

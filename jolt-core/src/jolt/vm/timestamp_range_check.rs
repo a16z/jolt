@@ -676,6 +676,7 @@ where
     pub fn verify(
         &mut self,
         generators: &PCS::Setup,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         // TODO(moodlezoup)
         // range_check_commitment: &RangeCheckCommitment<C>,
         // memory_commitment: &MemoryCommitment<C>,
@@ -707,6 +708,9 @@ where
                 transcript,
                 Some(generators),
             );
+
+        // TODO(moodleozoup)
+        opening_accumulator.append(&vec![], r_grand_product.clone(), &vec![], transcript);
 
         // // TODO(moodlezoup): Make indexing less disgusting
         // let t_read_commitments = &memory_commitment.trace_commitments

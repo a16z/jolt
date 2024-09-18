@@ -31,62 +31,48 @@ struct Constraint {
 }
 
 impl Constraint {
-    fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
+    #[cfg(test)]
+    fn pretty_fmt<const C: usize, I: ConstraintInput, F: JoltField>(
+        &self,
+        f: &mut String,
+        flattened_polynomials: &[&DensePolynomial<F>],
+        step_index: usize,
+    ) -> std::fmt::Result {
         self.a.pretty_fmt::<C, I>(f)?;
         write!(f, " ⋅ ")?;
         self.b.pretty_fmt::<C, I>(f)?;
         write!(f, " == ")?;
-        self.c.pretty_fmt::<C, I>(f)
-    }
+        self.c.pretty_fmt::<C, I>(f)?;
+        writeln!(f, "")?;
 
-    #[cfg(test)]
-    fn is_sat(&self, inputs: &[i64]) -> bool {
-        todo!("fix")
-        // // Find the number of variables and the number of aux. Inputs should be equal to this combined length
-        // let num_inputs = I::COUNT;
+        let mut terms = Vec::new();
+        for term in self
+            .a
+            .terms()
+            .iter()
+            .chain(self.b.terms().iter())
+            .chain(self.c.terms().iter())
+        {
+            if !terms.contains(term) {
+                terms.push(*term);
+            }
+        }
 
-        // let mut aux_set = std::collections::HashSet::new();
-        // for constraint in [&self.a, &self.b, &self.c] {
-        //     for Term(var, _value) in constraint.terms() {
-        //         if let Variable::Auxiliary(aux) = var {
-        //             aux_set.insert(aux);
-        //         }
-        //     }
-        // }
-        // let num_aux = aux_set.len();
-        // if !aux_set.is_empty() {
-        //     assert_eq!(num_aux, *aux_set.iter().max().unwrap() + 1); // Ensure there are no gaps
-        // }
-        // let aux_index = |aux_index: usize| num_inputs + aux_index;
+        for term in terms {
+            match term.0 {
+                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                    writeln!(
+                        f,
+                        "    {:?} = {}",
+                        I::from_index::<C>(var_index),
+                        flattened_polynomials[var_index][step_index]
+                    )?;
+                }
+                Variable::Constant => {}
+            }
+        }
 
-        // let num_vars = num_inputs + num_aux;
-        // assert_eq!(num_vars, inputs.len());
-
-        // let mut a = 0;
-        // let mut b = 0;
-        // let mut c = 0;
-        // let mut buckets = [&mut a, &mut b, &mut c];
-        // let constraints = [&self.a, &self.b, &self.c];
-        // for (bucket, constraint) in buckets.iter_mut().zip(constraints.iter()) {
-        //     for Term(var, coefficient) in constraint.terms() {
-        //         match var {
-        //             Variable::Input(input) => {
-        //                 let in_u: usize = (*input).into();
-        //                 **bucket += inputs[in_u] * *coefficient;
-        //             }
-        //             Variable::Auxiliary(aux) => {
-        //                 **bucket += inputs[aux_index(*aux)] * *coefficient;
-        //             }
-        //             Variable::Constant => {
-        //                 **bucket += *coefficient;
-        //             }
-        //         }
-        //     }
-        // }
-
-        // println!("a * b == c      {a} * {b} == {c}");
-
-        // a * b == c
+        Ok(())
     }
 }
 
@@ -255,18 +241,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         self.aux_computations.insert(aux_index, computation);
 
         new_aux
-    }
-
-    /// Index of variable within z.
-    #[cfg(test)]
-    pub fn witness_index(&self, var: impl Into<Variable>) -> usize {
-        todo!("fix");
-        // let var: Variable<I> = var.into();
-        // match var {
-        //     Variable::Input(inner) => inner.into(),
-        //     Variable::Auxiliary(aux_index) => I::COUNT + aux_index,
-        //     Variable::Constant => I::COUNT + self.next_aux,
-        // }
     }
 
     pub fn constrain_eq(&mut self, left: impl Into<LC>, right: impl Into<LC>) {
@@ -465,14 +439,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         self.allocate_aux(aux_symbol, symbolic_inputs, compute)
     }
 
-    // fn variable_to_column(&self, var: Variable<I>) -> usize {
-    //     match var {
-    //         Variable::Input(inner) => inner.into(),
-    //         Variable::Auxiliary(aux) => I::COUNT + aux,
-    //         Variable::Constant => (I::COUNT + self.num_aux()).next_power_of_two(),
-    //     }
-    // }
-
     fn materialize(&self) -> UniformR1CS<F> {
         let a_len: usize = self.constraints.iter().map(|c| c.a.num_vars()).sum();
         let b_len: usize = self.constraints.iter().map(|c| c.b.num_vars()).sum();
@@ -521,6 +487,7 @@ pub type OffsetLC = (bool, LC);
 
 /// A conditional constraint that Linear Combinations a, b are equal where a and b need not be in the same step an a
 /// uniform constraint system.
+#[derive(Debug)]
 pub struct OffsetEqConstraint {
     cond: OffsetLC,
     a: OffsetLC,
@@ -638,15 +605,17 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             let rhs = -constraint.b.1.clone();
 
             lhs.terms().iter().for_each(|term| match term.0 {
-                Variable::Input(inner) | Variable::Auxiliary(inner) => condition
-                    .offset_vars
-                    .push((inner, constraint.cond.0, F::from_i64(term.1))),
+                Variable::Input(inner) | Variable::Auxiliary(inner) => {
+                    eq.offset_vars
+                        .push((inner, constraint.a.0, F::from_i64(term.1)))
+                }
                 Variable::Constant => {}
             });
             rhs.terms().iter().for_each(|term| match term.0 {
-                Variable::Input(inner) | Variable::Auxiliary(inner) => condition
-                    .offset_vars
-                    .push((inner, constraint.cond.0, F::from_i64(term.1))),
+                Variable::Input(inner) | Variable::Auxiliary(inner) => {
+                    eq.offset_vars
+                        .push((inner, constraint.b.0, F::from_i64(term.1)))
+                }
                 Variable::Constant => {}
             });
 
@@ -779,7 +748,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);
 
         #[cfg(test)]
-        self.assert_valid(&az_poly, &bz_poly, &cz_poly);
+        self.assert_valid(flattened_polynomials, &az_poly, &bz_poly, &cz_poly);
 
         (az_poly, bz_poly, cz_poly)
     }
@@ -787,6 +756,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     #[cfg(test)]
     pub fn assert_valid(
         &self,
+        flattened_polynomials: &[&DensePolynomial<F>],
         az: &SparsePolynomial<F>,
         bz: &SparsePolynomial<F>,
         cz: &SparsePolynomial<F>,
@@ -805,19 +775,20 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                 let step_index = constraint_index % self.uniform_repeat;
                 if uniform_constraint_index >= self.uniform_builder.constraints.len() {
                     panic!(
-                        "Mismatch at non-uniform constraint: {}\n\
-                        step: {step_index}",
+                        "Non-uniform constraint {} violated at step {step_index}",
                         uniform_constraint_index - self.uniform_builder.constraints.len()
                     )
                 } else {
                     let mut constraint_string = String::new();
                     let _ = self.uniform_builder.constraints[uniform_constraint_index]
-                        .pretty_fmt::<C, I>(&mut constraint_string);
+                        .pretty_fmt::<C, I, F>(
+                            &mut constraint_string,
+                            flattened_polynomials,
+                            step_index,
+                        );
+                    println!("{constraint_string}");
                     panic!(
-                        "Mismatch at global constraint {constraint_index} => {:?}\n\
-                        uniform constraint: {uniform_constraint_index}\n\
-                        step: {step_index}",
-                        constraint_string
+                        "Uniform constraint {uniform_constraint_index} violated at step {step_index}",
                     );
                 }
             }

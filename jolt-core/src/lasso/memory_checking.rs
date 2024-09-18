@@ -235,7 +235,7 @@ where
     }
 
     fn compute_openings(
-        _preprocessing: &Self::Preprocessing,
+        preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         polynomials: &Self::Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
@@ -243,18 +243,18 @@ where
         r_init_final: &[F],
         transcript: &mut ProofTranscript,
     ) -> (Self::Openings, Self::ExogenousOpenings) {
-        let mut openings = Self::Openings::default();
+        let mut openings = Self::Openings::initialize(preprocessing);
         let mut exogenous_openings = Self::ExogenousOpenings::default();
 
         let eq_read_write = EqPolynomial::evals(r_read_write);
         polynomials
             .read_write_values()
             .par_iter()
-            .zip(openings.read_write_values_mut().into_par_iter())
+            .zip_eq(openings.read_write_values_mut().into_par_iter())
             .chain(
                 Self::ExogenousOpenings::exogenous_data(jolt_polynomials)
                     .par_iter()
-                    .zip(exogenous_openings.openings_mut().into_par_iter()),
+                    .zip_eq(exogenous_openings.openings_mut().into_par_iter()),
             )
             .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_read_write);
@@ -280,7 +280,7 @@ where
         polynomials
             .init_final_values()
             .par_iter()
-            .zip(openings.init_final_values_mut().into_par_iter())
+            .zip_eq(openings.init_final_values_mut().into_par_iter())
             .for_each(|(poly, opening)| {
                 let claim = poly.evaluate_at_chi(&eq_init_final);
                 *opening = claim;
@@ -426,7 +426,7 @@ where
         pcs_setup: &PCS::Setup,
         mut proof: MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings>,
         commitments: &Self::Commitments,
-        exogenous_commitments: &JoltCommitments<PCS>,
+        jolt_commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -457,7 +457,7 @@ where
 
         let read_write_commits: Vec<_> = [
             commitments.read_write_values(),
-            exogenous_commitments.read_write_values(),
+            Self::ExogenousOpenings::exogenous_data(jolt_commitments),
         ]
         .concat();
         let read_write_claims: Vec<_> = [
@@ -469,12 +469,14 @@ where
             &read_write_commits,
             r_read_write.to_vec(),
             &read_write_claims,
+            transcript,
         );
 
         opening_accumulator.append(
             &commitments.init_final_values(),
             r_read_write.to_vec(),
             &proof.openings.init_final_values(),
+            transcript,
         );
 
         // proof.read_write_openings.verify_openings(

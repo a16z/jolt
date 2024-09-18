@@ -37,6 +37,7 @@ pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     a_init_final: VerifierComputedOpening<T>,
     v_init_final: VerifierComputedOpening<[T; 6]>,
 }
+
 pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;

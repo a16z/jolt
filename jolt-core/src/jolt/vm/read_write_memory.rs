@@ -1326,7 +1326,12 @@ where
             "Output sumcheck check failed."
         );
 
-        opening_accumulator.append(&[&commitment.v_final], r_sumcheck, &[&proof.opening]);
+        opening_accumulator.append(
+            &[&commitment.v_final],
+            r_sumcheck,
+            &[&proof.opening],
+            transcript,
+        );
 
         Ok(())
     }
@@ -1416,6 +1421,7 @@ where
         TimestampValidityProof::verify(
             &mut self.timestamp_validity_proof,
             generators,
+            opening_accumulator,
             // &commitment.timestamp_range_check,
             // &commitment.read_write_memory,
             transcript,

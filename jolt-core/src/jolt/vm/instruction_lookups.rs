@@ -34,7 +34,7 @@ use crate::{
 
 use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub(crate) dim: Vec<T>,
     read_cts: Vec<T>,
@@ -604,19 +604,10 @@ where
             transcript,
         );
 
-        // let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
-        //     generators,
-        //     witness,
-        //     &r_primary_sumcheck,
-        //     &sumcheck_openings,
-        //     transcript,
-        // );
-
         let primary_sumcheck = PrimarySumcheck {
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
             openings: sumcheck_openings,
-            // opening_proof: sumcheck_opening_proof,
         };
 
         let memory_checking = Self::prove_memory_checking(
@@ -668,6 +659,9 @@ where
             claim_last,
             "Primary sumcheck check failed."
         );
+
+        // TODO(moodlezoup)
+        opening_accumulator.append(&vec![], r_primary_sumcheck.clone(), &vec![], transcript);
 
         // proof.primary_sumcheck.openings.verify_openings(
         //     generators,
@@ -1072,6 +1066,7 @@ where
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flags: &[F],
     ) -> Vec<F> {
+        debug_assert_eq!(instruction_flags.len(), Self::NUM_INSTRUCTIONS);
         let mut memory_flags = vec![F::zero(); preprocessing.num_memories];
         for instruction_index in 0..Self::NUM_INSTRUCTIONS {
             for memory_index in &preprocessing.instruction_to_memory_indices[instruction_index] {

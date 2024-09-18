@@ -74,7 +74,7 @@ pub struct UniformR1CS<F: JoltField> {
 /// NonUniformR1CSConstraint only supports a single additional equality constraint. 'a' holds the equality (something minus something),
 /// 'b' holds the condition. 'a' * 'b' == 0. Each SparseEqualityItem stores a uniform_column (pointing to a variable) and an offset
 /// suggesting which other step to point to.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct NonUniformR1CSConstraint<F: JoltField> {
     pub eq: SparseEqualityItem<F>,
     pub condition: SparseEqualityItem<F>,

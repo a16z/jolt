@@ -215,7 +215,7 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             JoltIn::Bytecode_RD,
             JoltIn::OpFlags(CircuitFlags::Jump),
         );
-        let lhs = JoltIn::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let lhs = 4 * JoltIn::Bytecode_ELFAddress + PC_START_ADDRESS; // TODO(moodlezoup): is this right?
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 

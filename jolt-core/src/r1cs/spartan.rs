@@ -110,7 +110,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             constraint_builder.compute_spartan_Az_Bz_Cz::<PCS>(&flattened_polys);
 
         let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
-            // Below is an optimized form of: *A * (*B * *C - *D)
+            // Below is an optimized form of: eq * (Az * Bz - Cz)
             if az.is_zero() || bz.is_zero() {
                 if cz.is_zero() {
                     F::zero()
@@ -181,21 +181,13 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
 
         let chi = EqPolynomial::evals(r_col_step);
-        let witness_polys: Vec<_> = I::flatten::<C>()
-            .iter()
-            .map(|witness| witness.get_poly_ref(polynomials))
-            .collect();
-        let claimed_witness_evals: Vec<_> = I::flatten::<C>()
+        let claimed_witness_evals: Vec<_> = flattened_polys
             .par_iter()
-            .map(|witness| {
-                witness
-                    .get_poly_ref(polynomials)
-                    .evaluate_at_chi_low_optimized(&chi)
-            })
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chi))
             .collect();
 
         opening_accumulator.append(
-            &witness_polys,
+            &flattened_polys,
             DensePolynomial::new(chi),
             r_col_step.to_vec(),
             &claimed_witness_evals.iter().collect::<Vec<_>>(),

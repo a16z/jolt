@@ -344,7 +344,7 @@ impl ConstraintInput for JoltIn {
             JoltIn::RS1_Read => &jolt_polynomials.read_write_memory.v_read[0],
             JoltIn::RS2_Read => &jolt_polynomials.read_write_memory.v_read[1],
             JoltIn::RD_Read => &jolt_polynomials.read_write_memory.v_read[2],
-            JoltIn::RAM_Read(i) => &jolt_polynomials.read_write_memory.v_read[2 + i],
+            JoltIn::RAM_Read(i) => &jolt_polynomials.read_write_memory.v_read[3 + i],
             JoltIn::RD_Write => &jolt_polynomials.read_write_memory.v_write_rd,
             JoltIn::RAM_Write(i) => &jolt_polynomials.read_write_memory.v_write_ram[*i],
             JoltIn::ChunksQuery(i) => &jolt_polynomials.instruction_lookups.dim[*i],

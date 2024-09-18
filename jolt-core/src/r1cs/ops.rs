@@ -20,7 +20,7 @@ pub enum Variable {
     Constant,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Term(pub Variable, pub i64);
 impl Term {
     fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
@@ -35,7 +35,7 @@ impl Term {
 }
 
 /// Linear Combination of terms.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LC(Vec<Term>);
 
 impl LC {
