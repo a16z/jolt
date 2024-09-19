@@ -676,10 +676,8 @@ where
     pub fn verify(
         &mut self,
         generators: &PCS::Setup,
+        commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        // TODO(moodlezoup)
-        // range_check_commitment: &RangeCheckCommitment<C>,
-        // memory_commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
@@ -709,26 +707,22 @@ where
                 Some(generators),
             );
 
-        // TODO(moodleozoup)
-        opening_accumulator.append(&vec![], r_grand_product.clone(), &vec![], transcript);
-
-        // // TODO(moodlezoup): Make indexing less disgusting
-        // let t_read_commitments = &memory_commitment.trace_commitments
-        //     [1 + MEMORY_OPS_PER_INSTRUCTION + 5..1 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
-        // let commitments: Vec<_> = range_check_commitment
-        //     .commitments
-        //     .iter()
-        //     .chain(t_read_commitments.iter())
-        //     .collect();
-
-        // C::batch_verify(
-        //     &self.opening_proof,
-        //     generators,
-        //     &r_grand_product,
-        //     &openings,
-        //     &commitments,
-        //     transcript,
-        // )?;
+        opening_accumulator.append(
+            &commitments
+                .timestamp_range_check
+                .read_write_values()
+                .into_iter()
+                .chain(commitments.read_write_memory.t_read.iter())
+                .collect::<Vec<_>>(),
+            r_grand_product.clone(),
+            &self
+                .openings
+                .read_write_values()
+                .into_iter()
+                .chain(self.exogenous_openings.iter())
+                .collect::<Vec<_>>(),
+            transcript,
+        );
 
         self.openings.identity =
             Some(IdentityPolynomial::new(r_grand_product.len()).evaluate(&r_grand_product));

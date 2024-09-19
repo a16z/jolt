@@ -68,6 +68,14 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
         Self::batch_commit(&slices, setup, batch_type)
     }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
+    }
+
     fn prove(
         setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,

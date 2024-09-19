@@ -660,16 +660,28 @@ where
             "Primary sumcheck check failed."
         );
 
-        // TODO(moodlezoup)
-        opening_accumulator.append(&vec![], r_primary_sumcheck.clone(), &vec![], transcript);
+        let primary_sumcheck_commitments = commitments
+            .instruction_lookups
+            .E_polys
+            .iter()
+            .chain(commitments.instruction_lookups.instruction_flags.iter())
+            .chain([&commitments.instruction_lookups.lookup_outputs].into_iter())
+            .collect::<Vec<_>>();
+        let primary_sumcheck_openings = proof
+            .primary_sumcheck
+            .openings
+            .E_poly_openings
+            .iter()
+            .chain(proof.primary_sumcheck.openings.flag_openings.iter())
+            .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening].into_iter())
+            .collect::<Vec<_>>();
 
-        // proof.primary_sumcheck.openings.verify_openings(
-        //     generators,
-        //     &proof.primary_sumcheck.opening_proof,
-        //     commitment,
-        //     &r_primary_sumcheck,
-        //     transcript,
-        // )?;
+        opening_accumulator.append(
+            &primary_sumcheck_commitments,
+            r_primary_sumcheck.clone(),
+            &primary_sumcheck_openings,
+            transcript,
+        );
 
         Self::verify_memory_checking(
             preprocessing,

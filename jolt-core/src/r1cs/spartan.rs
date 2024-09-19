@@ -3,9 +3,11 @@
 use std::marker::PhantomData;
 
 use crate::field::JoltField;
+use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -94,7 +96,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
     ) -> Result<Self, SpartanError> {
         let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
             .iter()
-            .map(|var| I::get_poly_ref(var, polynomials))
+            .map(|var| var.get_ref(polynomials))
             .collect();
 
         let num_rounds_x = key.num_rows_total().log_2();
@@ -211,9 +213,11 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
 
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
-    pub fn verify_precommitted(
+    pub fn verify_precommitted<PCS: CommitmentScheme<Field = F>>(
         &self,
         key: &UniformSpartanKey<C, I, F>,
+        commitments: &JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
@@ -278,8 +282,17 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        // TODO(moodlezoup)
+        let flattened_commitments: Vec<_> = I::flatten::<C>()
+            .iter()
+            .map(|var| var.get_ref(commitments))
+            .collect();
         let r_y_point = &inner_sumcheck_r[n_prefix..];
+        opening_accumulator.append(
+            &flattened_commitments,
+            r_y_point.to_vec(),
+            &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
+            transcript,
+        );
 
         Ok(())
     }

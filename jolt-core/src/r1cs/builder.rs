@@ -132,7 +132,7 @@ impl<F: JoltField> AuxComputation<F> {
     ) -> DensePolynomial<F> {
         let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
             .iter()
-            .map(|var| I::get_poly_ref(var, jolt_polynomials))
+            .map(|var| var.get_ref(jolt_polynomials))
             .collect();
 
         let mut aux_poly: Vec<F> = unsafe_allocate_zero_vec(batch_size);
@@ -545,7 +545,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     pub fn compute_aux(&self, jolt_polynomials: &mut JoltPolynomials<F>) {
         let flattened_vars = I::flatten::<C>();
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
-            *flattened_vars[*aux_index].get_poly_ref_mut(jolt_polynomials) =
+            *flattened_vars[*aux_index].get_ref_mut(jolt_polynomials) =
                 aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, self.uniform_repeat);
         }
     }

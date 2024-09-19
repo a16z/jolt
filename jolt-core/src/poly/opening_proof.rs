@@ -1,9 +1,11 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use crate::{
     field::{JoltField, OptimizedMul},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
+        errors::ProofVerifyError,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, ProofTranscript},
     },
@@ -12,6 +14,7 @@ use crate::{
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
+    eq_poly::EqPolynomial,
     unipoly::{CompressedUniPoly, UniPoly},
 };
 
@@ -68,6 +71,13 @@ pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field 
     openings: Vec<VerifierOpening<F, PCS>>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct ReducedOpeningProof<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    sumcheck_proof: SumcheckInstanceProof<F>,
+    sumcheck_claims: Vec<F>,
+    joint_opening_proof: PCS::Proof,
+}
+
 impl<F: JoltField> ProverOpeningAccumulator<F> {
     pub fn new() -> Self {
         Self { openings: vec![] }
@@ -88,7 +98,6 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         assert_eq!(polynomials.len(), claims.len());
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
         let rho: F = transcript.challenge_scalar();
-        // let rho: F = F::one(); // TODO(moodlezoup)
 
         let mut rho_powers = vec![F::one()];
         for i in 1..polynomials.len() {
@@ -138,7 +147,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         &mut self,
         pcs_setup: &PCS::Setup,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, PCS::Proof) {
+    ) -> ReducedOpeningProof<F, PCS> {
         // Generate coefficients for random linear combination
         let rho: F = transcript.challenge_scalar();
         let mut rho_powers = vec![F::one()];
@@ -150,6 +159,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             self.prove_batch_opening_reduction(&rho_powers, transcript);
 
         transcript.append_scalars(&sumcheck_claims);
+
         let gamma: F = transcript.challenge_scalar();
         let mut gamma_powers = vec![F::one()];
         for i in 1..self.openings.len() {
@@ -186,17 +196,13 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .collect();
         let joint_poly = DensePolynomial::new(joint_poly);
 
-        // // todo!("scale opening claims");
-        // // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
-        // let joint_claim: F = gamma_powers
-        //     .iter()
-        //     .zip(self.openings.iter())
-        //     .map(|(scalar, opening)| *scalar * opening.claim)
-        //     .sum();
-
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
-        (sumcheck_proof, sumcheck_claims, joint_opening_proof)
+        ReducedOpeningProof {
+            sumcheck_proof,
+            sumcheck_claims,
+            joint_opening_proof,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "prove_batch_opening_reduction")]
@@ -361,10 +367,25 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(commitments.len(), claims.len());
-        let _: F = transcript.challenge_scalar();
-        // todo!("Compute RLC commitment/claim");
-        // self.openings
-        //     .push(VerifierOpening::new(commitment, opening_point, claim));
+        let rho: F = transcript.challenge_scalar();
+        let mut rho_powers = vec![F::one()];
+        for i in 1..commitments.len() {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
+        let batched_claim = rho_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(scalar, eval)| *scalar * *eval)
+            .sum();
+
+        let joint_commitment = PCS::combine_commitments(commitments, &rho_powers);
+
+        self.openings.push(VerifierOpening::new(
+            joint_commitment,
+            opening_point,
+            batched_claim,
+        ));
     }
 
     pub fn par_extend<I: IntoParallelIterator<Item = VerifierOpening<F, PCS>>>(&mut self, iter: I) {
@@ -374,10 +395,118 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
     pub fn reduce_and_verify(
         &self,
         pcs_setup: &PCS::Setup,
-        reduction_sumcheck_proof: SumcheckInstanceProof<F>,
-        reduced_opening_proof: PCS::Proof,
+        reduced_opening_proof: ReducedOpeningProof<F, PCS>,
         transcript: &mut ProofTranscript,
-    ) {
-        todo!();
+    ) -> Result<(), ProofVerifyError> {
+        let num_sumcheck_rounds = self
+            .openings
+            .iter()
+            .map(|opening| opening.num_sumcheck_rounds)
+            .max()
+            .unwrap();
+
+        // Generate coefficients for random linear combination
+        let rho: F = transcript.challenge_scalar();
+        let mut rho_powers = vec![F::one()];
+        for i in 1..self.openings.len() {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
+        let (sumcheck_claim, sumcheck_r) = self.verify_batch_opening_reduction(
+            &rho_powers,
+            num_sumcheck_rounds,
+            &reduced_opening_proof,
+            transcript,
+        )?;
+
+        let expected_sumcheck_claim: F = self
+            .openings
+            .iter()
+            .zip(rho_powers.iter())
+            .zip(reduced_opening_proof.sumcheck_claims.iter())
+            .map(|((opening, coeff), claim)| {
+                let (_, r_hi) =
+                    sumcheck_r.split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
+                let eq_eval = EqPolynomial::new(r_hi.to_vec()).evaluate(&opening.opening_point);
+                eq_eval * claim * coeff
+            })
+            .sum();
+
+        // if sumcheck_claim != expected_sumcheck_claim {
+        //     return Err(ProofVerifyError::InternalError);
+        // }
+
+        transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
+
+        let gamma: F = transcript.challenge_scalar();
+        let mut gamma_powers = vec![F::one()];
+        for i in 1..self.openings.len() {
+            gamma_powers.push(gamma_powers[i - 1] * gamma);
+        }
+
+        // Compute joint commitment = ∑ᵢ γⁱ⋅ commitmentᵢ
+        let joint_commitment = PCS::combine_commitments(
+            &self
+                .openings
+                .iter()
+                .map(|opening| &opening.commitment)
+                .collect::<Vec<_>>(),
+            &gamma_powers,
+        );
+        // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
+        let joint_claim: F = gamma_powers
+            .iter()
+            .zip(reduced_opening_proof.sumcheck_claims.iter())
+            .zip(self.openings.iter())
+            .map(|((coeff, claim), opening)| {
+                let (r_lo, _) = opening
+                    .opening_point
+                    .split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
+                let lagrange_eval: F = r_lo.iter().map(|r| F::one() - r).product();
+
+                *coeff * claim * lagrange_eval
+            })
+            .sum();
+
+        println!("Verifier claim: {}", joint_claim);
+
+        PCS::verify(
+            &reduced_opening_proof.joint_opening_proof,
+            pcs_setup,
+            transcript,
+            &sumcheck_r,
+            &joint_claim,
+            &joint_commitment,
+        )
+    }
+
+    fn verify_batch_opening_reduction(
+        &self,
+        coeffs: &[F],
+        num_sumcheck_rounds: usize,
+        reduced_opening_proof: &ReducedOpeningProof<F, PCS>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(F, Vec<F>), ProofVerifyError> {
+        let combined_claim: F = coeffs
+            .par_iter()
+            .zip(reduced_opening_proof.sumcheck_claims.par_iter())
+            .zip(self.openings.par_iter())
+            .map(|((coeff, claim), opening)| {
+                let scaled_claim = if opening.num_sumcheck_rounds != num_sumcheck_rounds {
+                    F::from_u64(1 << (num_sumcheck_rounds - opening.num_sumcheck_rounds)).unwrap()
+                        * claim
+                } else {
+                    *claim
+                };
+                scaled_claim * coeff
+            })
+            .sum();
+
+        reduced_opening_proof.sumcheck_proof.verify(
+            combined_claim,
+            num_sumcheck_rounds,
+            2,
+            transcript,
+        )
     }
 }

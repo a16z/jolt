@@ -1421,9 +1421,8 @@ where
         TimestampValidityProof::verify(
             &mut self.timestamp_validity_proof,
             generators,
+            &commitments,
             opening_accumulator,
-            // &commitment.timestamp_range_check,
-            // &commitment.read_write_memory,
             transcript,
         )
     }

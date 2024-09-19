@@ -1,7 +1,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::{
+    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
+};
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -105,6 +107,7 @@ where
     pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
     pub r1cs: UniformSpartanProof<C, I, F>,
+    pub opening_proof: ReducedOpeningProof<F, PCS>,
 }
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -194,7 +197,7 @@ impl<F: JoltField> JoltPolynomials<F> {
         if (index / trace_len) >= I::num_inputs::<C>() {
             F::zero()
         } else {
-            I::from_index::<C>(index / trace_len).get_poly_ref(self)[index % trace_len]
+            I::from_index::<C>(index / trace_len).get_ref(self)[index % trace_len]
         }
     }
 
@@ -437,8 +440,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         )
         .expect("r1cs proof failed");
 
-        // TODO(moodlezoup): Add to proof
-        opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+        let opening_proof =
+            opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
 
         drop_in_background_thread(jolt_polynomials);
 
@@ -449,6 +452,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
             r1cs: spartan_proof,
+            opening_proof,
         };
 
         (jolt_proof, jolt_commitments)
@@ -523,9 +527,19 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         )?;
 
-        Self::verify_r1cs(r1cs_proof, &mut opening_accumulator, &mut transcript)?;
+        Self::verify_r1cs(
+            r1cs_proof,
+            &commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
 
-        todo!("verify batched opening");
+        opening_accumulator.reduce_and_verify(
+            &preprocessing.generators,
+            proof.opening_proof,
+            &mut transcript,
+        )?;
+
         Ok(())
     }
 
@@ -595,11 +609,12 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     #[tracing::instrument(skip_all)]
     fn verify_r1cs<'a>(
         proof: R1CSProof<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
+        commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
-            .verify(transcript)
+            .verify(commitments, opening_accumulator, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 

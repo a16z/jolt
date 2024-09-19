@@ -578,6 +578,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
+        println!("prover claim: {}", eval);
         HyperKZG::<P>::open(&setup.0, poly, opening_point, &eval, transcript).unwrap()
     }
 
@@ -590,6 +591,21 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         HyperKZG::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment = commitments.iter().zip(coeffs.iter()).fold(
+            P::G1::zero(),
+            |mut batched_commitment, (commitment, coeff)| {
+                batched_commitment += commitment.0 * coeff;
+                batched_commitment
+            },
+        );
+
+        HyperKZGCommitment(combined_commitment.into_affine())
     }
 
     fn verify(
