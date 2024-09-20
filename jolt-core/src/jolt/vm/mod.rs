@@ -68,9 +68,9 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
 }
 
-pub struct JoltDebugInfo<F: JoltField> {
-    transcript: ProofTranscript,
-    opening_accumulator: ProverOpeningAccumulator<F>,
+pub struct ProverDebugInfo<F: JoltField> {
+    pub(crate) transcript: ProofTranscript,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
@@ -331,7 +331,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::Subtables,
         >,
         JoltCommitments<PCS>,
-        Option<JoltDebugInfo<F>>,
+        Option<ProverDebugInfo<F>>,
     ) {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -463,7 +463,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         };
 
         #[cfg(test)]
-        let debug_info = Some(JoltDebugInfo {
+        let debug_info = Some(ProverDebugInfo {
             transcript,
             opening_accumulator,
         });
@@ -485,7 +485,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::Subtables,
         >,
         commitments: JoltCommitments<PCS>,
-        _debug_info: Option<JoltDebugInfo<F>>,
+        _debug_info: Option<ProverDebugInfo<F>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
