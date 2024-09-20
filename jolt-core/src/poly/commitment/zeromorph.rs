@@ -558,6 +558,18 @@ where
         Zeromorph::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
     }
 
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: P::G1 = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.0 * coeff)
+            .sum();
+        ZeromorphCommitment(combined_commitment.into_affine())
+    }
+
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,

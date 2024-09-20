@@ -92,6 +92,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             .chain(self.read_cts.iter())
             .chain(self.E_polys.iter())
             .chain(self.instruction_flags.iter())
+            .chain([&self.lookup_outputs].into_iter())
             .collect()
     }
 
@@ -105,6 +106,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             .chain(self.read_cts.iter_mut())
             .chain(self.E_polys.iter_mut())
             .chain(self.instruction_flags.iter_mut())
+            .chain([&mut self.lookup_outputs].into_iter())
             .collect()
     }
 
@@ -667,6 +669,7 @@ where
             .chain(commitments.instruction_lookups.instruction_flags.iter())
             .chain([&commitments.instruction_lookups.lookup_outputs].into_iter())
             .collect::<Vec<_>>();
+
         let primary_sumcheck_openings = proof
             .primary_sumcheck
             .openings

@@ -474,25 +474,10 @@ where
 
         opening_accumulator.append(
             &commitments.init_final_values(),
-            r_read_write.to_vec(),
+            r_init_final.to_vec(),
             &proof.openings.init_final_values(),
             transcript,
         );
-
-        // proof.read_write_openings.verify_openings(
-        //     generators,
-        //     &proof.read_write_opening_proof,
-        //     commitments,
-        //     &r_read_write,
-        //     transcript,
-        // )?;
-        // proof.init_final_openings.verify_openings(
-        //     generators,
-        //     &proof.init_final_opening_proof,
-        //     commitments,
-        //     &r_init_final,
-        //     transcript,
-        // )?;
 
         Self::compute_verifier_openings(
             &mut proof.openings,

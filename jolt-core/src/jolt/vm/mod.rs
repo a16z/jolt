@@ -67,6 +67,11 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
 }
 
+pub struct JoltDebugInfo<F: JoltField> {
+    transcript: ProofTranscript,
+    opening_accumulator: ProverOpeningAccumulator<F>,
+}
+
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
     fn no_op() -> Self {
         JoltTraceStep {
@@ -314,7 +319,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         preprocessing: JoltPreprocessing<C, F, PCS>,
-        mut transcript: Option<&mut ProofTranscript>,
     ) -> (
         JoltProof<
             C,
@@ -326,6 +330,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::Subtables,
         >,
         JoltCommitments<PCS>,
+        Option<JoltDebugInfo<F>>,
     ) {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -333,8 +338,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         JoltTraceStep::pad(&mut trace);
 
-        let mut default_transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut transcript = transcript.as_deref_mut().unwrap_or(&mut default_transcript);
+        let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
 
         let instruction_polynomials = InstructionLookupsProof::<
@@ -457,7 +461,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             opening_proof,
         };
 
-        (jolt_proof, jolt_commitments)
+        #[cfg(test)]
+        let debug_info = Some(JoltDebugInfo {
+            transcript,
+            opening_accumulator,
+        });
+        #[cfg(not(test))]
+        let debug_info = None;
+        (jolt_proof, jolt_commitments, debug_info)
     }
 
     #[tracing::instrument(skip_all)]
@@ -473,10 +484,18 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::Subtables,
         >,
         commitments: JoltCommitments<PCS>,
-        mut transcript: Option<&mut ProofTranscript>,
+        _debug_info: Option<JoltDebugInfo<F>>,
     ) -> Result<(), ProofVerifyError> {
-        let mut default_transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut transcript = transcript.as_deref_mut().unwrap_or(&mut default_transcript);
+        let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+            VerifierOpeningAccumulator::new();
+
+        #[cfg(test)]
+        if let Some(debug_info) = _debug_info {
+            transcript.compare_to(debug_info.transcript);
+            opening_accumulator
+                .compare_to(debug_info.opening_accumulator, &preprocessing.generators);
+        }
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
         // Regenerate the uniform Spartan key
@@ -501,9 +520,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
-
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
-            VerifierOpeningAccumulator::new();
 
         Self::verify_bytecode(
             &preprocessing.bytecode,

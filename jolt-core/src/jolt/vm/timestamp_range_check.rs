@@ -611,10 +611,18 @@ where
             });
 
         opening_accumulator.append(
-            &polynomials.read_write_values(),
+            &polynomials
+                .read_write_values()
+                .into_iter()
+                .chain(ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials).into_iter())
+                .collect::<Vec<_>>(),
             DensePolynomial::new(chis),
             r_grand_product.clone(),
-            &openings.read_write_values().into_iter().collect::<Vec<_>>(),
+            &openings
+                .read_write_values()
+                .into_iter()
+                .chain(timestamp_openings.openings())
+                .collect::<Vec<_>>(),
             transcript,
         );
 

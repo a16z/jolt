@@ -1,4 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(test)]
+use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::{
@@ -24,6 +26,8 @@ pub struct ProverOpening<F: JoltField> {
     pub opening_point: Vec<F>,
     pub claim: F,
     pub num_sumcheck_rounds: usize,
+    #[cfg(test)]
+    batch: Vec<DensePolynomial<F>>,
 }
 
 pub struct VerifierOpening<F: JoltField, PCS: CommitmentScheme<Field = F>> {
@@ -47,6 +51,8 @@ impl<F: JoltField> ProverOpening<F> {
             opening_point,
             claim,
             num_sumcheck_rounds,
+            #[cfg(test)]
+            batch: vec![],
         }
     }
 }
@@ -69,6 +75,10 @@ pub struct ProverOpeningAccumulator<F: JoltField> {
 
 pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     openings: Vec<VerifierOpening<F, PCS>>,
+    #[cfg(test)]
+    prover_openings: Vec<ProverOpening<F>>,
+    #[cfg(test)]
+    pcs_setup: Option<PCS::Setup>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -96,6 +106,23 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(polynomials.len(), claims.len());
+        #[cfg(test)]
+        {
+            let expected_eq_poly = EqPolynomial::evals(&opening_point);
+            assert_eq!(
+                eq_poly.Z, expected_eq_poly,
+                "eq_poly and opening point are inconsistent"
+            );
+
+            let expected_claims: Vec<F> = polynomials
+                .iter()
+                .map(|poly| poly.evaluate_at_chi(&expected_eq_poly))
+                .collect();
+            for (claim, expected_claim) in claims.iter().zip(expected_claims.iter()) {
+                assert_eq!(*claim, expected_claim, "Unexpected claim");
+            }
+        }
+
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
         let rho: F = transcript.challenge_scalar();
 
@@ -130,12 +157,20 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
 
         let batched_poly = DensePolynomial::new(f_batched);
 
-        self.openings.push(ProverOpening::new(
-            batched_poly,
-            eq_poly,
-            opening_point,
-            batched_claim,
-        ));
+        #[cfg(test)]
+        {
+            let mut opening =
+                ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim);
+            for poly in polynomials.into_iter() {
+                opening.batch.push(DensePolynomial::clone(poly));
+            }
+            self.openings.push(opening);
+        }
+        #[cfg(not(test))]
+        {
+            let opening = ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim);
+            self.openings.push(opening);
+        }
     }
 
     pub fn par_extend<I: IntoParallelIterator<Item = ProverOpening<F>>>(&mut self, iter: I) {
@@ -352,7 +387,23 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<F, PCS> {
     pub fn new() -> Self {
-        Self { openings: vec![] }
+        Self {
+            openings: vec![],
+            #[cfg(test)]
+            prover_openings: vec![],
+            #[cfg(test)]
+            pcs_setup: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn compare_to(
+        &mut self,
+        prover_openings: ProverOpeningAccumulator<F>,
+        pcs_setup: &PCS::Setup,
+    ) {
+        self.prover_openings = prover_openings.openings;
+        self.pcs_setup = Some(pcs_setup.clone());
     }
 
     pub fn len(&self) -> usize {
@@ -380,6 +431,39 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             .sum();
 
         let joint_commitment = PCS::combine_commitments(commitments, &rho_powers);
+
+        #[cfg(test)]
+        {
+            let prover_opening = &self.prover_openings[self.openings.len()];
+            assert_eq!(
+                opening_point, prover_opening.opening_point,
+                "opening point mismatch"
+            );
+            assert_eq!(
+                batched_claim, prover_opening.claim,
+                "batched claim mismatch"
+            );
+            for (i, (poly, commitment)) in prover_opening
+                .batch
+                .iter()
+                .zip_eq(commitments.into_iter())
+                .enumerate()
+            {
+                let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
+                assert_eq!(
+                    prover_commitment, **commitment,
+                    "commitment mismatch at index {}",
+                    i
+                );
+            }
+
+            let prover_joint_commitment =
+                PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
+            assert_eq!(
+                prover_joint_commitment, joint_commitment,
+                "joint commitment mismatch"
+            );
+        }
 
         self.openings.push(VerifierOpening::new(
             joint_commitment,
@@ -412,10 +496,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
-        let (sumcheck_claim, sumcheck_r) = self.verify_batch_opening_reduction(
+        let (sumcheck_claim, r_sumcheck) = self.verify_batch_opening_reduction(
             &rho_powers,
             num_sumcheck_rounds,
-            &reduced_opening_proof,
+            &reduced_opening_proof.sumcheck_proof,
             transcript,
         )?;
 
@@ -426,15 +510,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .map(|((opening, coeff), claim)| {
                 let (_, r_hi) =
-                    sumcheck_r.split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
+                    r_sumcheck.split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
                 let eq_eval = EqPolynomial::new(r_hi.to_vec()).evaluate(&opening.opening_point);
                 eq_eval * claim * coeff
             })
             .sum();
 
-        // if sumcheck_claim != expected_sumcheck_claim {
-        //     return Err(ProofVerifyError::InternalError);
-        // }
+        if sumcheck_claim != expected_sumcheck_claim {
+            return Err(ProofVerifyError::InternalError);
+        }
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
@@ -459,22 +543,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .zip(self.openings.iter())
             .map(|((coeff, claim), opening)| {
-                let (r_lo, _) = opening
-                    .opening_point
-                    .split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
+                let (r_lo, _) =
+                    r_sumcheck.split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
                 let lagrange_eval: F = r_lo.iter().map(|r| F::one() - r).product();
 
                 *coeff * claim * lagrange_eval
             })
             .sum();
 
-        println!("Verifier claim: {}", joint_claim);
-
         PCS::verify(
             &reduced_opening_proof.joint_opening_proof,
             pcs_setup,
             transcript,
-            &sumcheck_r,
+            &r_sumcheck,
             &joint_claim,
             &joint_commitment,
         )
@@ -484,29 +565,23 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         &self,
         coeffs: &[F],
         num_sumcheck_rounds: usize,
-        reduced_opening_proof: &ReducedOpeningProof<F, PCS>,
+        sumcheck_proof: &SumcheckInstanceProof<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<(F, Vec<F>), ProofVerifyError> {
         let combined_claim: F = coeffs
             .par_iter()
-            .zip(reduced_opening_proof.sumcheck_claims.par_iter())
             .zip(self.openings.par_iter())
-            .map(|((coeff, claim), opening)| {
+            .map(|(coeff, opening)| {
                 let scaled_claim = if opening.num_sumcheck_rounds != num_sumcheck_rounds {
                     F::from_u64(1 << (num_sumcheck_rounds - opening.num_sumcheck_rounds)).unwrap()
-                        * claim
+                        * opening.claim
                 } else {
-                    *claim
+                    opening.claim
                 };
                 scaled_claim * coeff
             })
             .sum();
 
-        reduced_opening_proof.sumcheck_proof.verify(
-            combined_claim,
-            num_sumcheck_rounds,
-            2,
-            transcript,
-        )
+        sumcheck_proof.verify(combined_claim, num_sumcheck_rounds, 2, transcript)
     }
 }

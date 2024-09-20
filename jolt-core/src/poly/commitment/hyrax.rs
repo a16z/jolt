@@ -186,7 +186,7 @@ pub struct HyraxGenerators<G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
 
-#[derive(Default, Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxCommitment<G: CurveGroup> {
     pub row_commitments: Vec<G>,
 }

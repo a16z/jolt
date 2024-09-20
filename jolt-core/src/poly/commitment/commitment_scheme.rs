@@ -1,4 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::fmt::Debug;
 
 use crate::{
     field::JoltField,
@@ -36,8 +37,10 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type Setup: Clone + Sync + Send;
     type Commitment: Default
+        + Debug
         + Sync
         + Send
+        + PartialEq
         + CanonicalSerialize
         + CanonicalDeserialize
         + AppendToTranscript;
