@@ -112,8 +112,12 @@ where
         let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+            None,
+        );
 
         println!("Proof sizing:");
         serialize_and_print_size("jolt_commitments", &jolt_commitments);
@@ -129,7 +133,8 @@ where
             &jolt_proof.instruction_lookups,
         );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -162,9 +167,14 @@ where
         let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+            None,
+        );
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

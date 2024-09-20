@@ -251,6 +251,7 @@ mod tests {
     use crate::poly::commitment::hyrax::HyraxScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
+    use crate::utils::transcript::ProofTranscript;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -294,9 +295,21 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) =
-            <RV32IJoltVM as Jolt<F, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
-        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
+        let mut prover_transcript = ProofTranscript::new(b"Jolt transcript");
+        let (proof, commitments) = <RV32IJoltVM as Jolt<F, PCS, C, M>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+            Some(&mut prover_transcript),
+        );
+        let mut verifier_transcript = ProofTranscript::new(b"Jolt transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing,
+            proof,
+            commitments,
+            Some(&mut verifier_transcript),
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -342,14 +355,23 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let mut prover_transcript = ProofTranscript::new(b"Jolt transcript");
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
+                Some(&mut prover_transcript),
             );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let mut verifier_transcript = ProofTranscript::new(b"Jolt transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing,
+            jolt_proof,
+            jolt_commitments,
+            Some(&mut verifier_transcript),
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -368,14 +390,23 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let mut prover_transcript = ProofTranscript::new(b"Jolt transcript");
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
+                Some(&mut prover_transcript),
             );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let mut verifier_transcript = ProofTranscript::new(b"Jolt transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing,
+            jolt_proof,
+            jolt_commitments,
+            Some(&mut verifier_transcript),
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -394,14 +425,23 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let mut prover_transcript = ProofTranscript::new(b"Jolt transcript");
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, Zeromorph<Bn254>, C, M>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
+                Some(&mut prover_transcript),
             );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let mut verifier_transcript = ProofTranscript::new(b"Jolt transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing,
+            jolt_proof,
+            jolt_commitments,
+            Some(&mut verifier_transcript),
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -420,13 +460,22 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let mut prover_transcript = ProofTranscript::new(b"Jolt transcript");
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, HyperKZG<Bn254>, C, M>>::prove(
             io_device,
             trace,
             preprocessing.clone(),
+            Some(&mut prover_transcript),
         );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let mut verifier_transcript = ProofTranscript::new(b"Jolt transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing,
+            jolt_proof,
+            jolt_commitments,
+            Some(&mut verifier_transcript),
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

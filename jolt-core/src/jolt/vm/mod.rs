@@ -314,6 +314,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         preprocessing: JoltPreprocessing<C, F, PCS>,
+        mut transcript: Option<&mut ProofTranscript>,
     ) -> (
         JoltProof<
             C,
@@ -332,7 +333,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         JoltTraceStep::pad(&mut trace);
 
-        let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut default_transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut transcript = transcript.as_deref_mut().unwrap_or(&mut default_transcript);
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
 
         let instruction_polynomials = InstructionLookupsProof::<
@@ -471,8 +473,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::Subtables,
         >,
         commitments: JoltCommitments<PCS>,
+        mut transcript: Option<&mut ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
-        let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut default_transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut transcript = transcript.as_deref_mut().unwrap_or(&mut default_transcript);
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
         // Regenerate the uniform Spartan key
