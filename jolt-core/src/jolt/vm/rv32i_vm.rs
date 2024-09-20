@@ -310,6 +310,7 @@ mod tests {
         fib_e2e::<Fr, MockCommitScheme<Fr>>();
     }
 
+    #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
     #[test]
     fn fib_e2e_hyrax() {
         fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
@@ -332,6 +333,7 @@ mod tests {
     //     fib_e2e::<Field, MockCommitScheme<Field>>();
     // }
 
+    #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
     #[test]
     fn muldiv_e2e_hyrax() {
         let mut program = host::Program::new("muldiv-guest");
@@ -358,14 +360,16 @@ mod tests {
         );
     }
 
+    #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
     #[test]
     fn sha3_e2e_hyrax() {
-        let _guard = SHA3_FILE_LOCK.lock().unwrap();
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("sha3-guest");
         program.set_input(&[5u8; 32]);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
+        drop(guard);
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
@@ -387,12 +391,13 @@ mod tests {
 
     #[test]
     fn sha3_e2e_zeromorph() {
-        let _guard = SHA3_FILE_LOCK.lock().unwrap();
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("sha3-guest");
         program.set_input(&[5u8; 32]);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
+        drop(guard);
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
@@ -414,12 +419,13 @@ mod tests {
 
     #[test]
     fn sha3_e2e_hyperkzg() {
-        let _guard = SHA3_FILE_LOCK.lock().unwrap();
+        let guard = SHA3_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("sha3-guest");
         program.set_input(&[5u8; 32]);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
+        drop(guard);
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);

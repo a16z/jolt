@@ -1,4 +1,5 @@
 #![allow(clippy::type_complexity)]
+#![allow(dead_code)]
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{

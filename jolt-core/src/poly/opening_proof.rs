@@ -1,6 +1,4 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-#[cfg(test)]
-use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::{
@@ -436,6 +434,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         {
             let prover_opening = &self.prover_openings[self.openings.len()];
             assert_eq!(
+                prover_opening.batch.len(),
+                commitments.len(),
+                "batch size mismatch"
+            );
+            assert_eq!(
                 opening_point, prover_opening.opening_point,
                 "opening point mismatch"
             );
@@ -446,7 +449,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             for (i, (poly, commitment)) in prover_opening
                 .batch
                 .iter()
-                .zip_eq(commitments.into_iter())
+                .zip(commitments.into_iter())
                 .enumerate()
             {
                 let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
@@ -456,7 +459,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
                     i
                 );
             }
-
             let prover_joint_commitment =
                 PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
             assert_eq!(
