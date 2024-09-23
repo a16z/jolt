@@ -24,7 +24,6 @@ use ark_std::log2;
 use common::constants::RAM_OPS_PER_INSTRUCTION;
 use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use std::fmt::Debug;
-use std::hash::Hash;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -222,9 +221,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
     }
 }
 
-pub trait ConstraintInput:
-    Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Sync + Send + 'static
-{
+pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'static {
     fn flatten<const C: usize>() -> Vec<Self>;
     fn num_inputs<const C: usize>() -> usize {
         Self::flatten::<C>().len()
@@ -251,7 +248,7 @@ pub trait ConstraintInput:
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, EnumIter)]
 pub enum JoltR1CSInputs {
     Bytecode_A, // Virtual address
     // Bytecode_V
@@ -280,7 +277,7 @@ pub enum JoltR1CSInputs {
     InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, Default, EnumIter)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, EnumIter)]
 pub enum AuxVariable {
     #[default] // Need a default so that we can derive EnumIter on `JoltIn`
     LeftLookupOperand,

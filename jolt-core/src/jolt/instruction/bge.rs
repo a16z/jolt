@@ -12,9 +12,7 @@ use crate::{
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
-#[derive(
-    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
-)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BGEInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for BGEInstruction<WORD_SIZE> {

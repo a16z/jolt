@@ -7,9 +7,7 @@ use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(
-    Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Ord,
-)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SWInstruction<const WORD_SIZE: usize>(pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SWInstruction<WORD_SIZE> {
