@@ -279,7 +279,7 @@ pub enum JoltR1CSInputs {
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, EnumIter)]
 pub enum AuxVariable {
-    #[default] // Need a default so that we can derive EnumIter on `JoltIn`
+    #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
     LeftLookupOperand,
     RightLookupOperand,
     ImmSigned,

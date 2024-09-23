@@ -235,9 +235,9 @@ pub struct ELFInstruction {
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumCountMacro, EnumIter, Default,
 )]
 pub enum CircuitFlags {
-    #[default] // Need a default so that we can derive EnumIter on `JoltIn`
-    RS1IsPC,
-    RS2IsImm,
+    #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
+    LeftOperandIsPC,
+    RightOperandIsImm,
     Load,
     Store,
     Jump,
@@ -270,12 +270,12 @@ impl ELFInstruction {
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
-        flags[CircuitFlags::RS1IsPC as usize] = matches!(
+        flags[CircuitFlags::LeftOperandIsPC as usize] = matches!(
             self.opcode,
             RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
         );
 
-        flags[CircuitFlags::RS2IsImm as usize] = matches!(
+        flags[CircuitFlags::RightOperandIsImm as usize] = matches!(
             self.opcode,
             RV32IM::ADDI
             | RV32IM::XORI

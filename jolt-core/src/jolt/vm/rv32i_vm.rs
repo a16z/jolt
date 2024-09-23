@@ -62,7 +62,7 @@ macro_rules! instruction_set {
                 instruction.random(rng)
             }
         }
-        // Need a default so that we can derive EnumIter on `JoltIn`
+        // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
         impl Default for $enum_name {
             fn default() -> Self {
                 $enum_name::iter().collect::<Vec<_>>()[0]

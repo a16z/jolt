@@ -67,13 +67,13 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             4i64 * JoltR1CSInputs::Bytecode_ELFAddress + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(
             JoltR1CSInputs::Aux(AuxVariable::LeftLookupOperand),
-            JoltR1CSInputs::OpFlags(CircuitFlags::RS1IsPC),
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
             real_pc,
             JoltR1CSInputs::RS1_Read,
         );
         let y = cs.allocate_if_else(
             JoltR1CSInputs::Aux(AuxVariable::RightLookupOperand),
-            JoltR1CSInputs::OpFlags(CircuitFlags::RS2IsImm),
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
             JoltR1CSInputs::Bytecode_Imm,
             JoltR1CSInputs::RS2_Read,
         );
