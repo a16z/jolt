@@ -41,7 +41,16 @@ pub trait R1CSConstraints<const C: usize, F: JoltField> {
             non_uniform_constraints,
         )
     }
+    /// Constructs Jolt's uniform constraints.
+    /// Uniform constraints are constraints that hold for each step of
+    /// the execution trace.
     fn uniform_constraints(builder: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64);
+    /// Construct's Jolt's non-uniform constraints.
+    /// Non-uniform constraints are constraints whose inputs involve witness
+    /// values from multiple steps of the execution trace.
+    /// Currently, all of Jolt's non-uniform constraints are of the form
+    ///     if condition { some constraint on steps i and i+1 }
+    /// This structure is captured in `OffsetEqConstraint`.
     fn non_uniform_constraints() -> Vec<OffsetEqConstraint>;
 }
 

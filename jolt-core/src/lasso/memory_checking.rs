@@ -43,10 +43,10 @@ impl<F: JoltField> MultisetHashes<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, C, Openings, OtherOpenings>
+pub struct MemoryCheckingProof<F, PCS, Openings, OtherOpenings>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     Openings: StructuredPolynomialData<F> + Sync + CanonicalSerialize + CanonicalDeserialize,
     OtherOpenings: ExogenousOpenings<F> + Sync,
 {
@@ -54,40 +54,73 @@ where
     pub multiset_hashes: MultisetHashes<F>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductProof<C>,
+    pub read_write_grand_product: BatchedGrandProductProof<PCS>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductProof<C>,
+    pub init_final_grand_product: BatchedGrandProductProof<PCS>,
     /// The openings associated with the grand products.
     pub openings: Openings,
     pub exogenous_openings: OtherOpenings,
 }
 
+/// This type, used within a `StructuredPolynomialData` struct, indicates that the
+/// field has a corresponding opening but no corrresponding polynomial or commitment ––
+/// the prover doesn't need to compute a witness polynomial or commitment because
+/// the verifier can compute the opening on its own.
 pub type VerifierComputedOpening<T> = Option<T>;
 
+/// This trait is used to capture the relationship between polynomials, commitments, and
+/// openings in offline memory-checking. For a given offline memory-checking instance,
+/// the "shape" of its polynomials, commitments, and openings is the same. We can define a
+/// a single struct with this "shape", parametrized by a generic type `T` (see e.g. `BytecodeStuff`).
+/// To avoid manually mapping between the respective polynomials/commitments/openings
+/// (which introduces footguns), we implement this trait to define a canonical ordering
+/// over the generic struct's fields.
 pub trait StructuredPolynomialData<T>: CanonicalSerialize + CanonicalDeserialize {
+    /// Returns a `Vec` of references to the read/write values of `self`.
+    /// Ordering should mirror `read_write_values_mut`.
     fn read_write_values(&self) -> Vec<&T> {
         vec![]
     }
 
+    /// Returns a `Vec` of references to the init/final values of `self`.
+    /// Ordering should mirror `init_final_values_mut`.
     fn init_final_values(&self) -> Vec<&T> {
         vec![]
     }
 
+    /// Returns a `Vec` of mutable references to the read/write values of `self`.
+    /// Ordering should mirror `read_write_values`.
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
         vec![]
     }
 
+    /// Returns a `Vec` of mutable references to the init/final values of `self`.
+    /// Ordering should mirror `init_final_values`.
     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
         vec![]
     }
 }
 
+/// Sometimes, an offline memory-checking instance "reuses" polynomials/commitments
+/// from a different instance. For example, in `read_write_memory.rs` we use some of
+/// the polynomials/commitments defined in `bytecode.rs`, specifically the ones corresponding
+/// to the RISC-V registers. We need openings from these polynomials, but we shouldn't
+/// recompute or recommit to the polynomials.
+/// This trait is used to cherry-pick the "exogenous" polynomials/commitments needed
+/// by an offline-memory checking instance.
 pub trait ExogenousOpenings<F: JoltField>:
     Default + CanonicalSerialize + CanonicalDeserialize
 {
+    /// Returns a `Vec` of references to the openings contained in `self`.
+    /// Ordering should mirror `openings_mut`.
     fn openings(&self) -> Vec<&F>;
+    /// Returns a `Vec` of mutable references to the openings contained in `self`.
+    /// Ordering should mirror `openings`.
     fn openings_mut(&mut self) -> Vec<&mut F>;
+    /// Cherry-picks the "exogenous" polynomials/commitments needed by an offline-memory
+    /// checking instance. The ordering of the returned polynoials/commitments should
+    /// mirror `openings`/`openings_mut`.
     fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
         polys_or_commitments: &JoltStuff<T>,
     ) -> Vec<&T>;
@@ -111,7 +144,16 @@ impl<F: JoltField> ExogenousOpenings<F> for NoExogenousOpenings {
     }
 }
 
+/// This trait (specifically, the `initialize` function) is used in lieu of `Default`
+/// to initialize a `StructuredPolynomialData` struct, which may contain `Vec` fields
+/// whose lengths depend on some preprocessing.
 pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default {
+    /// This function is used in lieu of `Default::default()` to initialize a
+    /// `StructuredPolynomialData` struct, which may contain `Vec` fields
+    /// whose lengths depend on some preprocessing.
+    ///
+    /// Note that the default implementation of initialize, however, does
+    /// just return `Default::default()`.
     fn initialize(_preprocessing: &Preprocessing) -> Self {
         Default::default()
     }

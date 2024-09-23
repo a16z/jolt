@@ -536,7 +536,9 @@ where
 }
 
 pub struct NoopGrandProduct;
-impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for NoopGrandProduct {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
+    for NoopGrandProduct
+{
     type Leaves = ();
 
     fn construct(_leaves: Self::Leaves) -> Self {
@@ -556,15 +558,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for
     fn prove_grand_product(
         &mut self,
         _transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>,
-    ) -> (BatchedGrandProductProof<C>, Vec<F>) {
+        _setup: Option<&PCS::Setup>,
+    ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
     fn verify_grand_product(
-        _proof: &BatchedGrandProductProof<C>,
+        _proof: &BatchedGrandProductProof<PCS>,
         _claims: &Vec<F>,
         _transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>,
+        _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }

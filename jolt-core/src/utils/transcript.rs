@@ -3,15 +3,21 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use sha3::{Digest, Keccak256};
 
+/// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Clone)]
 pub struct ProofTranscript {
-    // Ethereum compatible 256 bit running state
+    /// Ethereum-compatible 256-bit running state
     pub state: [u8; 32],
-    // We append an ordinal to each invoke of the hash
+    /// We append an ordinal to each invocation of the hash
     n_rounds: u32,
     #[cfg(test)]
+    /// A complete history of the transcript's `state`; used for testing.
     state_history: Vec<[u8; 32]>,
     #[cfg(test)]
+    /// For a proof to be valid, the verifier's `state_history` should always match
+    /// the prover's. In testing, the Jolt verifier may be provided the prover's
+    /// `state_history` so that we can detect any deviations and the backtrace can
+    /// tell us where it happened.
     expected_state_history: Option<Vec<[u8; 32]>>,
 }
 
@@ -38,6 +44,8 @@ impl ProofTranscript {
     }
 
     #[cfg(test)]
+    /// Compare this transcript to `other` and panic if/when they deviate.
+    /// Typically used to compare the verifier's transcript to the prover's.
     pub fn compare_to(&mut self, other: Self) {
         self.expected_state_history = Some(other.state_history);
     }

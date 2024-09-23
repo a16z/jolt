@@ -34,12 +34,12 @@ impl<F: JoltField> BatchedGrandProductLayerProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductProof<C: CommitmentScheme> {
-    pub layers: Vec<BatchedGrandProductLayerProof<C::Field>>,
-    pub quark_proof: Option<QuarkGrandProductProof<C>>,
+pub struct BatchedGrandProductProof<PCS: CommitmentScheme> {
+    pub layers: Vec<BatchedGrandProductLayerProof<PCS::Field>>,
+    pub quark_proof: Option<QuarkGrandProductProof<PCS>>,
 }
 
-pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Sized {
+pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: Sized {
     /// The bottom/input layer of the grand products
     type Leaves;
 
@@ -59,8 +59,8 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
     fn prove_grand_product(
         &mut self,
         transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>,
-    ) -> (BatchedGrandProductProof<C>, Vec<F>) {
+        _setup: Option<&PCS::Setup>,
+    ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
         let mut claims_to_verify = self.claims();
         let mut r_grand_product = Vec::new();
@@ -181,10 +181,10 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
 
     /// Verifies the given grand product proof.
     fn verify_grand_product(
-        proof: &BatchedGrandProductProof<C>,
+        proof: &BatchedGrandProductProof<PCS>,
         claims: &Vec<F>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>,
+        _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
         // Pass the inputs to the layer verification function, by default we have no quarks and so we do not
         // use the quark proof fields.
@@ -412,7 +412,7 @@ pub struct BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<BatchedDenseGrandProductLayer<F>>,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     for BatchedDenseGrandProduct<F>
 {
     type Leaves = Vec<Vec<F>>;
@@ -448,7 +448,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
 
     fn claims(&self) -> Vec<F> {
         let num_layers =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::num_layers(self);
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::num_layers(self);
         let last_layers = &self.layers[num_layers - 1];
         assert_eq!(last_layers.layer_len, 2);
         last_layers
@@ -1421,8 +1421,8 @@ pub struct ToggledBatchedGrandProduct<F: JoltField> {
     sparse_layers: Vec<BatchedSparseGrandProductLayer<F>>,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
-    for ToggledBatchedGrandProduct<C::Field>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
+    for ToggledBatchedGrandProduct<PCS::Field>
 {
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
 

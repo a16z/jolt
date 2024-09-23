@@ -27,6 +27,7 @@ use std::fmt::Debug;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+/// Auxiliary variables defined in Jolt's R1CS constraints.
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub left_lookup_operand: T,
@@ -133,16 +134,25 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
     }
 }
 
+/// Witness polynomials specific to Jolt's R1CS constraints (i.e. not used
+/// for any offline memory-checking instances).
+///
 /// Note –– F: JoltField bound is not enforced.
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
+/// Openings specific to Jolt's R1CS constraints (i.e. not used
+/// for any offline memory-checking instances).
+///
 /// Note –– F: JoltField bound is not enforced.
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
+/// Commitments specific to Jolt's R1CS constraints (i.e. not used
+/// for any offline memory-checking instances).
+///
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
@@ -217,30 +227,49 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         self.proof
-            .verify_precommitted(&self.key, commitments, opening_accumulator, transcript)
+            .verify(&self.key, commitments, opening_accumulator, transcript)
     }
 }
 
+/// Jolt's R1CS constraint inputs are typically represneted as an enum.
+/// This trait serves two main purposes:
+/// - Defines a canonical ordering over inputs (and thus indices for each input).
+/// This is needed for sumcheck.
+/// - Defines a mapping between inputs and Jolt's polynomial/commitment/opening types
+/// (i.e. `JoltStuff<T>`).
 pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'static {
+    /// Returns a flat vector of all unique constraint inputs.
+    /// This also serves as a canonical ordering over the inputs.
     fn flatten<const C: usize>() -> Vec<Self>;
+
+    /// The total number of unique constraint inputs
     fn num_inputs<const C: usize>() -> usize {
         Self::flatten::<C>().len()
     }
+
+    /// Converts an index to the corresponding constraint input.
     fn from_index<const C: usize>(index: usize) -> Self {
         Self::flatten::<C>()[index]
     }
+
+    /// Converts a constraint input to its index in the canonical
+    /// ordering over inputs given by `ConstraintInput::flatten`.
     fn to_index<const C: usize>(&self) -> usize {
         match Self::flatten::<C>().iter().position(|x| x == self) {
             Some(index) => index,
-            None => panic!("Invalid JoltIn variant {:?}", self),
+            None => panic!("Invalid variant {:?}", self),
         }
     }
 
+    /// Gets an immutable reference to a Jolt polynomial/commitment/opening
+    /// corresponding to the given constraint input.
     fn get_ref<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
         &self,
         jolt_stuff: &'a JoltStuff<T>,
     ) -> &'a T;
 
+    /// Gets a mutable reference to a Jolt polynomial/commitment/opening
+    /// corresponding to the given constraint input.
     fn get_ref_mut<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
         &self,
         jolt_stuff: &'a mut JoltStuff<T>,
@@ -277,6 +306,7 @@ pub enum JoltR1CSInputs {
     InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, EnumIter)]
 pub enum AuxVariable {
     #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`

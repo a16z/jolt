@@ -72,6 +72,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         Self::batch_commit(&slices, setup, batch_type)
     }
 
+    /// Homomorphically combines multiple commitments into a single commitment, computed as a
+    /// linear combination with the given coefficients.
     fn combine_commitments(
         _commitments: &[&Self::Commitment],
         _coeffs: &[Self::Field],

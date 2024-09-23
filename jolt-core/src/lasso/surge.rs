@@ -29,9 +29,13 @@ use super::memory_checking::{
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    /// C-sized vector of `dim_i` polynomials/commitments/openings
     pub(crate) dim: Vec<T>,
+    /// C-sized vector of `read_cts_i` polynomials/commitments/openings
     pub(crate) read_cts: Vec<T>,
+    /// C-sized vector of `E_i` polynomials/commitments/openings
     pub(crate) E_polys: Vec<T>,
+    /// `num_memories`-sized vector of `final_cts_i` polynomials/commitments/openings
     pub(crate) final_cts: Vec<T>,
 
     a_init_final: VerifierComputedOpening<T>,
@@ -449,7 +453,7 @@ where
             generators,
             preprocessing,
             &polynomials,
-            &JoltPolynomials::default(),
+            &JoltPolynomials::default(), // Hack: required by the memory-checking trait, but unused in Surge
             &mut opening_accumulator,
             &mut transcript,
         );

@@ -107,15 +107,14 @@ const RAM_4_INDEX: usize = RAM_4 - 3;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryStuff<T: CanonicalSerialize + CanonicalDeserialize> {
-    // /// Size of entire address space (i.e. registers + IO + RAM)
-    // memory_size: usize,
     /// Read/write addresses. For offline memory checking, each read is paired with a "virtual" write
     /// and vice versa, so the read addresses and write addresses are the same.
     pub a_ram: T,
-    /// Read values.
+    /// Read values (RD, RS1, RS2, 4 bytes of RAM)
     pub v_read: [T; MEMORY_OPS_PER_INSTRUCTION],
-    /// Write values.
+    /// RD write value
     pub v_write_rd: T,
+    /// RAM write values
     pub v_write_ram: [T; 4],
     /// Final memory state.
     pub v_final: T,

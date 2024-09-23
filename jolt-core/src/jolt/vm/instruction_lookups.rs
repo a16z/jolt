@@ -36,11 +36,24 @@ use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    /// `C`-sized vector of polynomials/commitments/openings corresponding to the
+    /// indices at which subtables are queried.
     pub(crate) dim: Vec<T>,
+    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
+    /// the read access counts for each memory.
     read_cts: Vec<T>,
+    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
+    /// the final access counts for each memory.
     pub(crate) final_cts: Vec<T>,
+    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
+    /// the values read from each memory.
     pub(crate) E_polys: Vec<T>,
+    /// `NUM_INSTRUCTIONS`-sized vector of polynomials/commitments/openings corresponding
+    /// to the indicator bitvectors designating which lookup to perform at each step of
+    /// the execution trace.
     pub(crate) instruction_flags: Vec<T>,
+    /// The polynomial/commitment/opening corresponding to the lookup output for each
+    /// step of the execution trace.
     pub(crate) lookup_outputs: T,
 
     /// Hack: This is only populated for `InstructionLookupPolynomials`, where

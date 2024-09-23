@@ -29,11 +29,19 @@ use super::{JoltPolynomials, JoltTraceStep};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    /// Read/write addresses for offline memory-checking.
+    /// For offline memory-checking, each read is paired with a "virtual" write,
+    /// so the read addresses and write addresses are the same.
     pub(crate) a_read_write: T,
+    /// Read/write values for offline memory-checking.
+    /// For offline memory-checking, each read is paired with a "virtual" write,
+    /// so the read values and write values are the same. There are six values
+    /// (address, bitflags, rd, rs1, rs2, imm) associated with each memory address.
     pub(crate) v_read_write: [T; 6],
+    /// Read timestamps for offline memory-checking
     pub(crate) t_read: T,
+    /// Final timestamps for offline memory-checking
     pub(crate) t_final: T,
-
     a_init_final: VerifierComputedOpening<T>,
     v_init_final: VerifierComputedOpening<[T; 6]>,
 }

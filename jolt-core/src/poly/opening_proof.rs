@@ -23,21 +23,45 @@ use super::{
     unipoly::{CompressedUniPoly, UniPoly},
 };
 
+/// An opening computed by the prover.
+/// May be a batched opening, where multiple polynomials opened
+/// at the *same* point are reduced to a single polynomial opened
+/// at the (same) point.
+/// Multiple `ProverOpening`s can be accumulated and further
+/// batched/reduced using a `ProverOpeningAccumulator`.
 pub struct ProverOpening<F: JoltField> {
+    /// The polynomial being opened. May be a random linear combination
+    /// of multiple polynomials all being opened at the same point.
     pub polynomial: DensePolynomial<F>,
+    /// The multilinear extension EQ(x, opening_point). This is typically
+    /// an intermediate value used to compute `claim`, but is also used in
+    /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
     pub eq_poly: DensePolynomial<F>,
+    /// The point at which the `polynomial` is being evaluated.
     pub opening_point: Vec<F>,
+    /// The claimed opening.
     pub claim: F,
-    pub num_sumcheck_rounds: usize,
     #[cfg(test)]
+    /// If this is a batched opening, this `Vec` contains the individual
+    /// polynomials in the batch.
     batch: Vec<DensePolynomial<F>>,
 }
 
+/// An opening that the verifier must verify.
+/// May be a batched opening, where multiple polynomials opened
+/// at the *same* point are reduced to a single polynomial opened
+/// at the (same) point.
+/// Multiple `VerifierOpening`s can be accumulated and further
+/// batched/reduced using a `VerifierOpeningAccumulator`.
 pub struct VerifierOpening<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+    /// The commitments to the opened polynomial. May be a random linear combination
+    /// of multiple (additively homomorphic) polynomials, all being opened at the
+    /// same point.
     pub commitment: PCS::Commitment,
+    /// The point at which the polynomial is being evaluated.
     pub opening_point: Vec<F>,
+    /// The claimed opening.
     pub claim: F,
-    pub num_sumcheck_rounds: usize,
 }
 
 impl<F: JoltField> ProverOpening<F> {
@@ -47,13 +71,11 @@ impl<F: JoltField> ProverOpening<F> {
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
-        let num_sumcheck_rounds = polynomial.get_num_vars();
         ProverOpening {
             polynomial,
             eq_poly,
             opening_point,
             claim,
-            num_sumcheck_rounds,
             #[cfg(test)]
             batch: vec![],
         }
@@ -62,23 +84,27 @@ impl<F: JoltField> ProverOpening<F> {
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<F, PCS> {
     fn new(commitment: PCS::Commitment, opening_point: Vec<F>, claim: F) -> Self {
-        let num_sumcheck_rounds = opening_point.len();
         VerifierOpening {
             commitment,
             opening_point,
             claim,
-            num_sumcheck_rounds,
         }
     }
 }
 
+/// Accumulates openings computed by the prover over the course of Jolt,
+/// so that they can all be reduced to a single opening proof using sumcheck.
 pub struct ProverOpeningAccumulator<F: JoltField> {
     openings: Vec<ProverOpening<F>>,
 }
 
+/// Accumulates openings encountered by the verifier over the course of Jolt,
+/// so that they can all be reduced to a single opening proof verification using sumcheck.
 pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     openings: Vec<VerifierOpening<F, PCS>>,
     #[cfg(test)]
+    /// In testing, the Jolt verifier may be provided the prover's openings so that we
+    /// can detect any places where the openings don't match up.
     prover_openings: Vec<ProverOpening<F>>,
     #[cfg(test)]
     pcs_setup: Option<PCS::Setup>,
@@ -106,6 +132,13 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         self.openings.len()
     }
 
+    /// Adds openings to the accumulator. The given `polynomials` are opened at
+    /// `opening_point`, yielding the claimed evaluations `claims`. `eq_poly` is
+    /// the multilinear extension EQ(x, opening_point), which is typically an
+    /// intermediate value in computing `claims`. Multiple polynomials opened at
+    /// a single point can be batched into a single polynomial opened at the same
+    /// point. This function performs this batching before appending to `self.openings`.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
     pub fn append(
         &mut self,
         polynomials: &[&DensePolynomial<F>],
@@ -134,18 +167,19 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
 
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
         let rho: F = transcript.challenge_scalar();
-
         let mut rho_powers = vec![F::one()];
         for i in 1..polynomials.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        // Compute the random linear combination of the claims
         let batched_claim = rho_powers
             .iter()
             .zip(claims.iter())
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
+        // Compute the random linear combination of the polynomials
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (1 << opening_point.len()) / num_chunks;
         let f_batched = (0..num_chunks)
@@ -163,7 +197,6 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
                 chunk
             })
             .collect::<Vec<_>>();
-
         let batched_poly = DensePolynomial::new(f_batched);
 
         #[cfg(test)]
@@ -182,10 +215,8 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         }
     }
 
-    pub fn par_extend<I: IntoParallelIterator<Item = ProverOpening<F>>>(&mut self, iter: I) {
-        self.openings.par_extend(iter);
-    }
-
+    /// Reduces the multiple openings accumulated into a single opening proof,
+    /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<PCS: CommitmentScheme<Field = F>>(
         &mut self,
@@ -199,6 +230,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(&rho_powers, transcript);
 
@@ -220,6 +252,8 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         let chunk_size = max_len / num_chunks;
         assert!(chunk_size > 0);
 
+        // Compute random linear combination of the polynomials, accounting for the fact
+        // that they may be of different sizes
         let joint_poly: Vec<F> = (0..num_chunks)
             .into_par_iter()
             .flat_map_iter(|chunk_index| {
@@ -240,6 +274,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .collect();
         let joint_poly = DensePolynomial::new(joint_poly);
 
+        // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
 
         ReducedOpeningProof {
@@ -249,6 +284,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         }
     }
 
+    /// Proves the sumcheck used to prove the reduction of many openings into one.
     #[tracing::instrument(skip_all, name = "prove_batch_opening_reduction")]
     pub fn prove_batch_opening_reduction(
         &mut self,
@@ -262,6 +298,8 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .max()
             .unwrap();
 
+        // Compute random linear combination of the claims, accounting for the fact that the
+        // polynomials may be of different sizes
         let mut e: F = coeffs
             .par_iter()
             .zip(self.openings.par_iter())
@@ -308,6 +346,8 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         (SumcheckInstanceProof::new(compressed_polys), r, claims)
     }
 
+    /// Computes the univariate (quadratic) polynomial that serves as the
+    /// prover's message in each round of the sumchecj in `prove_batch_opening_reduction`.
     #[tracing::instrument(skip_all, name = "compute_quadratic")]
     fn compute_quadratic(
         &self,
@@ -321,7 +361,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .par_iter()
             .zip(bound_polys.par_iter())
             .map(|(opening, bound_poly)| {
-                if remaining_sumcheck_rounds <= opening.num_sumcheck_rounds {
+                if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     let poly = bound_poly.as_ref().unwrap_or(&opening.polynomial);
                     let mle_half = poly.len() / 2;
                     let eval_0: F = (0..mle_half)
@@ -341,7 +381,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
                 } else {
                     debug_assert!(bound_poly.is_none());
                     let remaining_variables =
-                        remaining_sumcheck_rounds - opening.num_sumcheck_rounds - 1;
+                        remaining_sumcheck_rounds - opening.opening_point.len() - 1;
                     let scaled_claim =
                         F::from_u64(1 << remaining_variables).unwrap() * opening.claim;
                     (scaled_claim, scaled_claim)
@@ -360,6 +400,10 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         UniPoly::from_evals(&evals)
     }
 
+    /// Binds the top variable of the accumulated polynomials to `r_j`.
+    /// In the 0th round, `bound_polys` is all `None`, and is overwritten
+    /// with the results of binding the polynomials in `self.openings`.
+    /// In subsequent rounds, `bound_polys` is itself bound to `r_j`.
     #[tracing::instrument(skip_all, name = "bind")]
     fn bind(
         &mut self,
@@ -371,7 +415,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .par_iter_mut()
             .zip(bound_polys.par_iter_mut())
             .for_each(|(opening, bound_poly)| {
-                if remaining_sumcheck_rounds <= opening.num_sumcheck_rounds {
+                if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     match bound_poly {
                         Some(bound_poly) => {
                             rayon::join(
@@ -411,6 +455,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         }
     }
 
+    /// Compare this accumulator to the corresponding `ProverOpeningAccumulator` and panic
+    /// if the openings appended differ from the prover's openings.
     #[cfg(test)]
     pub fn compare_to(
         &mut self,
@@ -425,6 +471,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         self.openings.len()
     }
 
+    /// Adds openings to the accumulator. The polynomials underlying the given
+    /// `commitments` are opened at `opening_point`, yielding the claimed evaluations
+    /// `claims`.
+    /// Multiple polynomials opened at a single point can be batched into a single
+    /// polynomial opened at the same point. This function performs the verifier side
+    /// of this batching by homomorphically combining the commitments before appending
+    /// to `self.openings`.
     pub fn append(
         &mut self,
         commitments: &[&PCS::Commitment],
@@ -491,10 +544,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         ));
     }
 
-    pub fn par_extend<I: IntoParallelIterator<Item = VerifierOpening<F, PCS>>>(&mut self, iter: I) {
-        self.openings.par_extend(iter);
-    }
-
+    /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
+    /// and a single opening proof) indeed proves the openings accumulated.
     pub fn reduce_and_verify(
         &self,
         pcs_setup: &PCS::Setup,
@@ -504,7 +555,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         let num_sumcheck_rounds = self
             .openings
             .iter()
-            .map(|opening| opening.num_sumcheck_rounds)
+            .map(|opening| opening.opening_point.len())
             .max()
             .unwrap();
 
@@ -515,6 +566,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        // Verify the sumcheck
         let (sumcheck_claim, r_sumcheck) = self.verify_batch_opening_reduction(
             &rho_powers,
             num_sumcheck_rounds,
@@ -522,6 +574,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             transcript,
         )?;
 
+        // Compute random linear combination of the claims, accounting for the fact that the
+        // polynomials may be of different sizes
         let expected_sumcheck_claim: F = self
             .openings
             .iter()
@@ -529,7 +583,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             .zip(reduced_opening_proof.sumcheck_claims.iter())
             .map(|((opening, coeff), claim)| {
                 let (_, r_hi) =
-                    r_sumcheck.split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
+                    r_sumcheck.split_at(num_sumcheck_rounds - opening.opening_point.len());
                 let eq_eval = EqPolynomial::new(r_hi.to_vec()).evaluate(&opening.opening_point);
                 eq_eval * claim * coeff
             })
@@ -563,13 +617,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             .zip(self.openings.iter())
             .map(|((coeff, claim), opening)| {
                 let (r_lo, _) =
-                    r_sumcheck.split_at(num_sumcheck_rounds - opening.num_sumcheck_rounds);
+                    r_sumcheck.split_at(num_sumcheck_rounds - opening.opening_point.len());
                 let lagrange_eval: F = r_lo.iter().map(|r| F::one() - r).product();
 
                 *coeff * claim * lagrange_eval
             })
             .sum();
 
+        // Verify the reduced opening proof
         PCS::verify(
             &reduced_opening_proof.joint_opening_proof,
             pcs_setup,
@@ -580,6 +635,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         )
     }
 
+    /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.
     fn verify_batch_opening_reduction(
         &self,
         coeffs: &[F],
@@ -591,8 +647,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
             .par_iter()
             .zip(self.openings.par_iter())
             .map(|(coeff, opening)| {
-                let scaled_claim = if opening.num_sumcheck_rounds != num_sumcheck_rounds {
-                    F::from_u64(1 << (num_sumcheck_rounds - opening.num_sumcheck_rounds)).unwrap()
+                let scaled_claim = if opening.opening_point.len() != num_sumcheck_rounds {
+                    F::from_u64(1 << (num_sumcheck_rounds - opening.opening_point.len())).unwrap()
                         * opening.claim
                 } else {
                     opening.claim

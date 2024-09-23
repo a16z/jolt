@@ -75,8 +75,8 @@ pub struct UniformSpartanProof<const C: usize, I: ConstraintInput, F: JoltField>
 }
 
 impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I, F> {
-    #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
-    pub fn setup_precommitted(
+    #[tracing::instrument(skip_all, name = "Spartan::setup")]
+    pub fn setup(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         padded_num_steps: usize,
     ) -> UniformSpartanKey<C, I, F> {
@@ -87,6 +87,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         UniformSpartanKey::from_builder(constraint_builder)
     }
 
+    #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS: CommitmentScheme<Field = F>>(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
@@ -211,9 +212,8 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         })
     }
 
-    #[tracing::instrument(skip_all, name = "SNARK::verify")]
-    /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
-    pub fn verify_precommitted<PCS: CommitmentScheme<Field = F>>(
+    #[tracing::instrument(skip_all, name = "Spartan::verify")]
+    pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
         key: &UniformSpartanKey<C, I, F>,
         commitments: &JoltCommitments<PCS>,
