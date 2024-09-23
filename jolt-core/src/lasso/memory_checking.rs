@@ -115,6 +115,42 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
     fn initialize(_preprocessing: &Preprocessing) -> Self {
         Default::default()
     }
+
+    #[cfg(test)]
+    fn test_ordering_consistency(preprocessing: &Preprocessing) {
+        use itertools::zip_eq;
+
+        let mut data = Self::initialize(preprocessing);
+        let read_write_pointers: Vec<_> = data
+            .read_write_values()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        let read_write_pointers_mut: Vec<_> = data
+            .read_write_values_mut()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        for (i, (ptr, ptr_mut)) in zip_eq(read_write_pointers, read_write_pointers_mut).enumerate()
+        {
+            assert!(ptr == ptr_mut, "Read-write pointer mismatch at index {}", i);
+        }
+
+        let init_final_pointers: Vec<_> = data
+            .init_final_values()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        let init_final_pointers_mut: Vec<_> = data
+            .init_final_values_mut()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        for (i, (ptr, ptr_mut)) in zip_eq(init_final_pointers, init_final_pointers_mut).enumerate()
+        {
+            assert!(ptr == ptr_mut, "Init-final pointer mismatch at index {}", i);
+        }
+    }
 }
 
 // Empty struct to represent that no preprocessing data is used.

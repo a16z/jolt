@@ -12,7 +12,6 @@ use crate::{
 #[allow(unused_imports)] // clippy thinks these aren't needed lol
 use ark_std::{One, Zero};
 use rayon::prelude::*;
-use std::fmt::Write as _;
 use std::{collections::BTreeMap, marker::PhantomData};
 
 use super::{
@@ -38,6 +37,8 @@ impl Constraint {
         flattened_polynomials: &[&DensePolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+
         self.a.pretty_fmt::<C, I>(f)?;
         write!(f, " ⋅ ")?;
         self.b.pretty_fmt::<C, I>(f)?;

@@ -7,7 +7,7 @@
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::rv32i_vm::RV32I;
-use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep};
+use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -23,7 +23,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_OPS_PER_INSTRUCTION;
 use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::hash::Hash;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -73,10 +73,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
         values
     }
 
-    fn init_final_values(&self) -> Vec<&T> {
-        vec![]
-    }
-
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
         let mut values = vec![
             &mut self.left_lookup_operand,
@@ -93,10 +89,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             &mut self.next_pc,
         ]);
         values
-    }
-
-    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
-        vec![]
     }
 }
 
@@ -131,10 +123,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
             .collect()
     }
 
-    fn init_final_values(&self) -> Vec<&T> {
-        vec![]
-    }
-
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
         self.chunks_x
             .iter_mut()
@@ -142,10 +130,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
             .chain(self.circuit_flags.iter_mut())
             .chain(self.aux.read_write_values_mut())
             .collect()
-    }
-
-    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
-        vec![]
     }
 }
 
@@ -255,7 +239,7 @@ pub trait ConstraintInput:
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumIter)]
-pub enum JoltIn {
+pub enum JoltR1CSInputs {
     Bytecode_A, // Virtual address
     // Bytecode_V
     Bytecode_ELFAddress,
@@ -298,10 +282,10 @@ pub enum AuxVariable {
     NextPC,
 }
 
-impl_r1cs_input_lc_conversions!(JoltIn, 4);
-impl ConstraintInput for JoltIn {
+impl_r1cs_input_lc_conversions!(JoltR1CSInputs, 4);
+impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
-        JoltIn::iter()
+        JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
                 Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION)
                     .into_iter()
@@ -340,26 +324,26 @@ impl ConstraintInput for JoltIn {
     ) -> &'a T {
         let aux_polynomials = &jolt.r1cs.aux;
         match self {
-            JoltIn::Bytecode_A => &jolt.bytecode.a_read_write,
-            JoltIn::Bytecode_ELFAddress => &jolt.bytecode.v_read_write[0],
-            JoltIn::Bytecode_Bitflags => &jolt.bytecode.v_read_write[1],
-            JoltIn::Bytecode_RD => &jolt.bytecode.v_read_write[2],
-            JoltIn::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
-            JoltIn::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
-            JoltIn::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
-            JoltIn::RAM_A => &jolt.read_write_memory.a_ram,
-            JoltIn::RS1_Read => &jolt.read_write_memory.v_read[0],
-            JoltIn::RS2_Read => &jolt.read_write_memory.v_read[1],
-            JoltIn::RD_Read => &jolt.read_write_memory.v_read[2],
-            JoltIn::RAM_Read(i) => &jolt.read_write_memory.v_read[3 + i],
-            JoltIn::RD_Write => &jolt.read_write_memory.v_write_rd,
-            JoltIn::RAM_Write(i) => &jolt.read_write_memory.v_write_ram[*i],
-            JoltIn::ChunksQuery(i) => &jolt.instruction_lookups.dim[*i],
-            JoltIn::LookupOutput => &jolt.instruction_lookups.lookup_outputs,
-            JoltIn::ChunksX(i) => &jolt.r1cs.chunks_x[*i],
-            JoltIn::ChunksY(i) => &jolt.r1cs.chunks_y[*i],
-            JoltIn::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
-            JoltIn::InstructionFlags(i) => {
+            JoltR1CSInputs::Bytecode_A => &jolt.bytecode.a_read_write,
+            JoltR1CSInputs::Bytecode_ELFAddress => &jolt.bytecode.v_read_write[0],
+            JoltR1CSInputs::Bytecode_Bitflags => &jolt.bytecode.v_read_write[1],
+            JoltR1CSInputs::Bytecode_RD => &jolt.bytecode.v_read_write[2],
+            JoltR1CSInputs::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
+            JoltR1CSInputs::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
+            JoltR1CSInputs::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
+            JoltR1CSInputs::RAM_A => &jolt.read_write_memory.a_ram,
+            JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read[0],
+            JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read[1],
+            JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read[2],
+            JoltR1CSInputs::RAM_Read(i) => &jolt.read_write_memory.v_read[3 + i],
+            JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
+            JoltR1CSInputs::RAM_Write(i) => &jolt.read_write_memory.v_write_ram[*i],
+            JoltR1CSInputs::ChunksQuery(i) => &jolt.instruction_lookups.dim[*i],
+            JoltR1CSInputs::LookupOutput => &jolt.instruction_lookups.lookup_outputs,
+            JoltR1CSInputs::ChunksX(i) => &jolt.r1cs.chunks_x[*i],
+            JoltR1CSInputs::ChunksY(i) => &jolt.r1cs.chunks_y[*i],
+            JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
+            JoltR1CSInputs::InstructionFlags(i) => {
                 &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
             }
             Self::Aux(aux) => match aux {
@@ -399,5 +383,53 @@ impl ConstraintInput for JoltIn {
             },
             _ => panic!("get_ref_mut should only be invoked when computing aux polynomials"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use crate::jolt::vm::JoltPolynomials;
+
+    use super::*;
+
+    #[test]
+    fn from_index_to_index() {
+        const C: usize = 4;
+        for i in 0..JoltR1CSInputs::num_inputs::<C>() {
+            assert_eq!(i, JoltR1CSInputs::from_index::<C>(i).to_index::<C>());
+        }
+        for var in JoltR1CSInputs::flatten::<C>() {
+            assert_eq!(
+                var,
+                JoltR1CSInputs::from_index::<C>(JoltR1CSInputs::to_index::<C>(&var))
+            );
+        }
+    }
+
+    #[test]
+    fn get_ref() {
+        const C: usize = 4;
+        let mut jolt_polys: JoltPolynomials<Fr> = JoltPolynomials::default();
+        jolt_polys.r1cs = R1CSPolynomials::initialize(&C);
+
+        for aux in AuxVariable::iter().flat_map(|aux| match aux {
+            AuxVariable::RelevantYChunk(_) => (0..C)
+                .into_iter()
+                .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
+                .collect(),
+            _ => vec![JoltR1CSInputs::Aux(aux)],
+        }) {
+            let ref_ptr = aux.get_ref(&jolt_polys) as *const DensePolynomial<Fr>;
+            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const DensePolynomial<Fr>;
+            assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
+        }
+    }
+
+    #[test]
+    fn r1cs_stuff_ordering() {
+        const C: usize = 4;
+        R1CSOpenings::<Fr>::test_ordering_consistency(&C);
     }
 }

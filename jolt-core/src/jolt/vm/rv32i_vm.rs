@@ -6,7 +6,7 @@ use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
-use crate::r1cs::inputs::JoltIn;
+use crate::r1cs::inputs::JoltR1CSInputs;
 use ark_bn254::{Fr, G1Projective};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
@@ -183,7 +183,7 @@ where
     type Constraints = JoltRV32IMConstraints;
 }
 
-pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltIn, F, PCS, RV32I, RV32ISubtables<F>>;
+pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltR1CSInputs, F, PCS, RV32I, RV32ISubtables<F>>;
 
 use eyre::Result;
 use std::fs::File;

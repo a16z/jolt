@@ -96,11 +96,7 @@ impl LC {
         let mut result = F::zero();
         for term in self.terms().iter() {
             match term.0 {
-                Variable::Input(_) => {
-                    result += values[var_index] * F::from_i64(term.1);
-                    var_index += 1;
-                }
-                Variable::Auxiliary(_) => {
+                Variable::Input(_) | Variable::Auxiliary(_) => {
                     result += values[var_index] * F::from_i64(term.1);
                     var_index += 1;
                 }
@@ -333,11 +329,6 @@ impl std::ops::Mul<Variable> for i64 {
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
     ($ConcreteInput:ty, $C:expr) => {
-        // impl Into<usize> for $ConcreteInput {
-        //     fn into(self) -> usize {
-        //         self as usize
-        //     }
-        // }
         impl Into<$crate::r1cs::ops::Variable> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Variable {
                 $crate::r1cs::ops::Variable::Input(self.to_index::<$C>())
@@ -426,89 +417,3 @@ macro_rules! impl_r1cs_input_lc_conversions {
         }
     };
 }
-
-// #[cfg(test)]
-// mod test {
-//     use strum_macros::{EnumCount, EnumIter};
-
-//     use super::*;
-
-//     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter, Hash)]
-//     #[repr(usize)]
-//     enum Inputs {
-//         A,
-//         B,
-//         C,
-//         D,
-//     }
-
-//     impl From<Inputs> for usize {
-//         fn from(val: Inputs) -> Self {
-//             val as usize
-//         }
-//     }
-//     impl ConstraintInput for Inputs {
-//         fn from_index(index: usize) -> Self {
-//             match index {
-//                 0 => Inputs::A,
-//                 1 => Inputs::B,
-//                 2 => Inputs::C,
-//                 3 => Inputs::D,
-//                 _ => panic!("Unexpected index"),
-//             }
-//         }
-//         fn to_index(&self) -> usize {
-//             self as usize
-//         }
-//     }
-
-//     #[test]
-//     fn variable_ordering() {
-//         let mut variables: Vec<Variable<Inputs>> = vec![
-//             Variable::Auxiliary(10),
-//             Variable::Auxiliary(5),
-//             Variable::Constant,
-//             Variable::Input(Inputs::C),
-//             Variable::Input(Inputs::B),
-//         ];
-//         let expected_sort: Vec<Variable<Inputs>> = vec![
-//             Variable::Input(Inputs::B),
-//             Variable::Input(Inputs::C),
-//             Variable::Auxiliary(5),
-//             Variable::Auxiliary(10),
-//             Variable::Constant,
-//         ];
-//         variables.sort();
-//         assert_eq!(variables, expected_sort);
-//     }
-
-//     #[test]
-//     fn lc_sorting() {
-//         let variables: Vec<Variable<Inputs>> = vec![
-//             Variable::Auxiliary(10),
-//             Variable::Auxiliary(5),
-//             Variable::Constant,
-//             Variable::Input(Inputs::C),
-//             Variable::Input(Inputs::B),
-//         ];
-
-//         let expected_sort: Vec<Variable<Inputs>> = vec![
-//             Variable::Input(Inputs::B),
-//             Variable::Input(Inputs::C),
-//             Variable::Auxiliary(5),
-//             Variable::Auxiliary(10),
-//             Variable::Constant,
-//         ];
-//         let expected_sorted_terms: Vec<Term<Inputs>> = expected_sort
-//             .into_iter()
-//             .map(|variable| variable.into())
-//             .collect();
-
-//         let terms = variables
-//             .into_iter()
-//             .map(|variable| variable.into())
-//             .collect();
-//         let lc = LC::new(terms);
-//         assert_eq!(lc.terms(), expected_sorted_terms);
-//     }
-// }

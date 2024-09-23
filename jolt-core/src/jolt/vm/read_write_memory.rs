@@ -1567,3 +1567,16 @@ pub fn random_memory_trace<F: JoltField>(
             .unwrap(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use super::*;
+
+    #[test]
+    fn read_write_memory_stuff_ordering() {
+        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(vec![]);
+        ReadWriteMemoryOpenings::<Fr>::test_ordering_consistency(&preprocessing);
+    }
+}

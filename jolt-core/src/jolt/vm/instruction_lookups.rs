@@ -1194,3 +1194,21 @@ where
         b"Jolt instruction lookups"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use crate::jolt::vm::rv32i_vm::{RV32ISubtables, RV32I};
+
+    use super::*;
+
+    #[test]
+    fn instruction_lookup_stuff_ordering() {
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+        let preprocessing =
+            InstructionLookupsPreprocessing::<C, Fr>::preprocess::<M, RV32I, RV32ISubtables<Fr>>();
+        InstructionLookupOpenings::<Fr>::test_ordering_consistency(&preprocessing);
+    }
+}

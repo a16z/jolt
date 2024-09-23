@@ -676,11 +676,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        jolt::vm::rv32i_vm::RV32I,
-        poly::{commitment::hyrax::HyraxScheme, opening_proof::ProverOpeningAccumulator},
-        utils::transcript::ProofTranscript,
-    };
+    use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
@@ -703,6 +699,18 @@ mod tests {
             bytecode_row,
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
+    }
+
+    #[test]
+    fn bytecode_stuff_ordering() {
+        let program = vec![
+            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+        ];
+        let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
+        BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
     }
 
     #[test]
@@ -758,138 +766,6 @@ mod tests {
         let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
         assert_eq!(difference.len(), 0);
     }
-
-    // #[test]
-    // fn e2e_memchecking() {
-    //     let program = vec![
-    //         BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-    //         BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-    //         BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-    //         BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-    //     ];
-    //     let mut trace = vec![
-    //         trace_step(BytecodeRow::new(
-    //             to_ram_address(3),
-    //             16u64,
-    //             16u64,
-    //             16u64,
-    //             16u64,
-    //             16u64,
-    //         )),
-    //         trace_step(BytecodeRow::new(
-    //             to_ram_address(2),
-    //             8u64,
-    //             8u64,
-    //             8u64,
-    //             8u64,
-    //             8u64,
-    //         )),
-    //     ];
-    //     let commitment_shapes = BytecodeProof::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
-    //         program.len(),
-    //         trace.len(),
-    //     );
-
-    //     let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-    //     let mut jolt_polys = JoltPolynomials::default();
-    //     jolt_polys.bytecode = BytecodeProof::<Fr, HyraxScheme<G1Projective>>::generate_witness(
-    //         &preprocessing,
-    //         &mut trace,
-    //     );
-
-    //     let mut transcript = ProofTranscript::new(b"test_transcript");
-
-    //     let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
-
-    //     let commitments = jolt_polys.commit(&generators);
-    //     let mut opening_accumulator = ProverOpeningAccumulator::new();
-    //     let proof = BytecodeProof::prove_memory_checking(
-    //         &generators,
-    //         &preprocessing,
-    //         &polys,
-    //         &mut opening_accumulator,
-    //         &mut transcript,
-    //     );
-
-    //     let mut transcript = ProofTranscript::new(b"test_transcript");
-    //     BytecodeProof::verify_memory_checking(
-    //         &preprocessing,
-    //         &generators,
-    //         proof,
-    //         &commitments,
-    //         &mut transcript,
-    //     )
-    //     .expect("proof should verify");
-    // }
-
-    // #[test]
-    // fn e2e_mem_checking_non_pow_2() {
-    //     let program = vec![
-    //         BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-    //         BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-    //         BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-    //         BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-    //         BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
-    //     ];
-    //     let mut trace = vec![
-    //         trace_step(BytecodeRow::new(
-    //             to_ram_address(3),
-    //             16u64,
-    //             16u64,
-    //             16u64,
-    //             16u64,
-    //             16u64,
-    //         )),
-    //         trace_step(BytecodeRow::new(
-    //             to_ram_address(2),
-    //             8u64,
-    //             8u64,
-    //             8u64,
-    //             8u64,
-    //             8u64,
-    //         )),
-    //         trace_step(BytecodeRow::new(
-    //             to_ram_address(4),
-    //             32u64,
-    //             32u64,
-    //             32u64,
-    //             32u64,
-    //             32u64,
-    //         )),
-    //     ];
-    //     JoltTraceStep::pad(&mut trace);
-
-    //     let commit_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
-    //         program.len(),
-    //         trace.len(),
-    //     );
-    //     let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-    //     let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-    //         BytecodePolynomials::new(&preprocessing, &mut trace);
-    //     let generators = HyraxScheme::<G1Projective>::setup(&commit_shapes);
-    //     let commitments = polys.commit(&generators);
-
-    //     let mut transcript = ProofTranscript::new(b"test_transcript");
-
-    //     let mut opening_accumulator = ProverOpeningAccumulator::new();
-    //     let proof = BytecodeProof::prove_memory_checking(
-    //         &generators,
-    //         &preprocessing,
-    //         &polys,
-    //         &mut opening_accumulator,
-    //         &mut transcript,
-    //     );
-
-    //     let mut transcript = ProofTranscript::new(b"test_transcript");
-    //     BytecodeProof::verify_memory_checking(
-    //         &preprocessing,
-    //         &generators,
-    //         proof,
-    //         &commitments,
-    //         &mut transcript,
-    //     )
-    //     .expect("should verify");
-    // }
 
     #[test]
     #[should_panic]

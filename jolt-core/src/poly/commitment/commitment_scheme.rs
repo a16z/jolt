@@ -73,8 +73,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     }
 
     fn combine_commitments(
-        commitments: &[&Self::Commitment],
-        coeffs: &[Self::Field],
+        _commitments: &[&Self::Commitment],
+        _coeffs: &[Self::Field],
     ) -> Self::Commitment {
         todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
     }

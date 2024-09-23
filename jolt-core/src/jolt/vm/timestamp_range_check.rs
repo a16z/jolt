@@ -805,3 +805,15 @@ where
         b"Timestamp Validity Proof"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use super::*;
+
+    #[test]
+    fn timestamp_range_check_stuff_ordering() {
+        TimestampRangeCheckOpenings::<Fr>::test_ordering_consistency(&NoPreprocessing);
+    }
+}

@@ -1,6 +1,5 @@
 use crate::{
     field::JoltField,
-    poly::dense_mlpoly::DensePolynomial,
     utils::{
         math::Math,
         mul_0_1_optimized,
