@@ -139,7 +139,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
         [&self.a_ram]
             .into_iter()
             .chain(self.v_read.iter())
-            .chain([&self.v_write_rd].into_iter())
+            .chain([&self.v_write_rd])
             .chain(self.v_write_ram.iter())
             .chain(self.t_read.iter())
             .chain(self.t_write_ram.iter())
@@ -150,7 +150,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
         [&mut self.a_ram]
             .into_iter()
             .chain(self.v_read.iter_mut())
-            .chain([&mut self.v_write_rd].into_iter())
+            .chain([&mut self.v_write_rd])
             .chain(self.v_write_ram.iter_mut())
             .chain(self.t_read.iter_mut())
             .chain(self.t_write_ram.iter_mut())
@@ -166,8 +166,20 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
@@ -1168,8 +1180,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn prove_outputs<'a>(
-        polynomials: &'a ReadWriteMemoryPolynomials<F>,
+    fn prove_outputs(
+        polynomials: &ReadWriteMemoryPolynomials<F>,
         program_io: &JoltDevice,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
@@ -1394,11 +1406,11 @@ where
         }
     }
 
-    pub fn verify<'a>(
+    pub fn verify(
         mut self,
         generators: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        commitments: &'a JoltCommitments<PCS>,
+        commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -1407,7 +1419,7 @@ where
             generators,
             self.memory_checking_proof,
             &commitments.read_write_memory,
-            &commitments,
+            commitments,
             opening_accumulator,
             transcript,
         )?;
@@ -1421,7 +1433,7 @@ where
         TimestampValidityProof::verify(
             &mut self.timestamp_validity_proof,
             generators,
-            &commitments,
+            commitments,
             opening_accumulator,
             transcript,
         )

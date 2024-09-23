@@ -385,7 +385,7 @@ where
         let mut commitments = SurgeCommitments::<PCS>::initialize(preprocessing);
         let trace_polys = polynomials.read_write_values();
         let trace_comitments =
-            PCS::batch_commit_polys_ref(&trace_polys, &generators, BatchType::SurgeReadWrite);
+            PCS::batch_commit_polys_ref(&trace_polys, generators, BatchType::SurgeReadWrite);
         commitments
             .read_write_values_mut()
             .into_iter()
@@ -393,7 +393,7 @@ where
             .for_each(|(dest, src)| *dest = src);
         commitments.final_cts = PCS::batch_commit_polys(
             &polynomials.final_cts,
-            &generators,
+            generators,
             BatchType::SurgeInitFinal,
         );
 

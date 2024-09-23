@@ -52,8 +52,20 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
     v_init_final: VerifierComputedOpening<Vec<T>>,
 }
 
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type InstructionLookupPolynomials<F: JoltField> = InstructionLookupStuff<DensePolynomial<F>>;
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type InstructionLookupOpenings<F: JoltField> = InstructionLookupStuff<F>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type InstructionLookupCommitments<PCS: CommitmentScheme> =
     InstructionLookupStuff<PCS::Commitment>;
 
@@ -92,7 +104,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             .chain(self.read_cts.iter())
             .chain(self.E_polys.iter())
             .chain(self.instruction_flags.iter())
-            .chain([&self.lookup_outputs].into_iter())
+            .chain([&self.lookup_outputs])
             .collect()
     }
 
@@ -106,7 +118,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             .chain(self.read_cts.iter_mut())
             .chain(self.E_polys.iter_mut())
             .chain(self.instruction_flags.iter_mut())
-            .chain([&mut self.lookup_outputs].into_iter())
+            .chain([&mut self.lookup_outputs])
             .collect()
     }
 
@@ -629,11 +641,11 @@ where
         }
     }
 
-    pub fn verify<'a>(
+    pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         pcs_setup: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-        commitments: &'a JoltCommitments<PCS>,
+        commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -667,7 +679,7 @@ where
             .E_polys
             .iter()
             .chain(commitments.instruction_lookups.instruction_flags.iter())
-            .chain([&commitments.instruction_lookups.lookup_outputs].into_iter())
+            .chain([&commitments.instruction_lookups.lookup_outputs])
             .collect::<Vec<_>>();
 
         let primary_sumcheck_openings = proof
@@ -676,7 +688,7 @@ where
             .E_poly_openings
             .iter()
             .chain(proof.primary_sumcheck.openings.flag_openings.iter())
-            .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening].into_iter())
+            .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
             .collect::<Vec<_>>();
 
         opening_accumulator.append(
@@ -786,7 +798,7 @@ where
         lookup_outputs.resize(m, F::zero());
         let lookup_outputs = DensePolynomial::new(lookup_outputs);
 
-        let polynomials = InstructionLookupPolynomials {
+        InstructionLookupPolynomials {
             dim,
             read_cts,
             final_cts,
@@ -796,9 +808,7 @@ where
             a_init_final: None,
             v_init_final: None,
             instruction_flag_bitvectors: Some(instruction_flag_bitvectors),
-        };
-
-        polynomials
+        }
     }
 
     /// Prove Jolt primary sumcheck including instruction collation.

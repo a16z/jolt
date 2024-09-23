@@ -91,6 +91,12 @@ pub struct ReducedOpeningProof<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     joint_opening_proof: PCS::Proof,
 }
 
+impl<F: JoltField> Default for ProverOpeningAccumulator<F> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F: JoltField> ProverOpeningAccumulator<F> {
     pub fn new() -> Self {
         Self { openings: vec![] }
@@ -319,11 +325,9 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
                     let poly = bound_poly.as_ref().unwrap_or(&opening.polynomial);
                     let mle_half = poly.len() / 2;
                     let eval_0: F = (0..mle_half)
-                        .into_iter()
                         .map(|i| poly[i].mul_01_optimized(opening.eq_poly[i]))
                         .sum();
                     let eval_2: F = (0..mle_half)
-                        .into_iter()
                         .map(|i| {
                             let poly_bound_point =
                                 poly[i + mle_half] + poly[i + mle_half] - poly[i];
@@ -385,6 +389,14 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
                     };
                 }
             });
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Default
+    for VerifierOpeningAccumulator<F, PCS>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

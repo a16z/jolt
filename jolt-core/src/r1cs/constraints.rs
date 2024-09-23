@@ -105,7 +105,6 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         }
 
         let ram_writes = (0..RAM_OPS_PER_INSTRUCTION)
-            .into_iter()
             .map(|i| Variable::Input(JoltR1CSInputs::RAM_Write(i).to_index::<C>()))
             .collect();
         let packed_load_store = R1CSBuilder::<C, F, JoltR1CSInputs>::pack_le(ram_writes, 8);
@@ -116,7 +115,6 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
 
         let query_chunks: Vec<Variable> = (0..C)
-            .into_iter()
             .map(|i| Variable::Input(JoltR1CSInputs::ChunksQuery(i).to_index::<C>()))
             .collect();
         let packed_query =
@@ -162,11 +160,9 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
 
         let x_chunks: Vec<Variable> = (0..C)
-            .into_iter()
             .map(|i| Variable::Input(JoltR1CSInputs::ChunksX(i).to_index::<C>()))
             .collect();
         let y_chunks: Vec<Variable> = (0..C)
-            .into_iter()
             .map(|i| Variable::Input(JoltR1CSInputs::ChunksY(i).to_index::<C>()))
             .collect();
         let x_concat = R1CSBuilder::<C, F, JoltR1CSInputs>::pack_be(x_chunks.clone(), OPERAND_SIZE);

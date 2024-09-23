@@ -407,7 +407,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 // `W` and `X`.
                 let zero = F::zero();
                 let one = [F::one()];
-                let W_iter = (0..len).into_par_iter().map(move |i| witness_value(i));
+                let W_iter = (0..len).into_par_iter().map(witness_value);
                 let Z_iter = W_iter
                     .chain(one.into_par_iter())
                     .chain(rayon::iter::repeatn(zero, len));

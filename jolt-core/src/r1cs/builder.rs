@@ -9,8 +9,6 @@ use crate::{
         thread::{par_flatten_triple, unsafe_allocate_sparse_zero_vec, unsafe_allocate_zero_vec},
     },
 };
-#[allow(unused_imports)] // clippy thinks these aren't needed lol
-use ark_std::{One, Zero};
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -637,6 +635,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         NonUniformR1CS { constraints }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn compute_spartan_Az_Bz_Cz<PCS: CommitmentScheme<Field = F>>(
         &self,
         flattened_polynomials: &[&DensePolynomial<F>],
@@ -648,8 +647,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
 
         // uniform_constraints: Xz[0..uniform_constraint_rows]
-        let span = tracing::span!(tracing::Level::DEBUG, "uniform_evals");
+        let span = tracing::span!(tracing::Level::DEBUG, "uniform constraints");
         let _enter = span.enter();
+        #[allow(clippy::type_complexity)]
         let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> = self
             .uniform_builder
             .constraints
@@ -694,7 +694,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
         // (a - b) * condition == 0
         // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-        let span = tracing::span!(tracing::Level::DEBUG, "offset_eq");
+        let span = tracing::span!(tracing::Level::DEBUG, "non-uniform constraints");
         let _enter = span.enter();
 
         for (constr_i, constr) in self.offset_equality_constraints.iter().enumerate() {

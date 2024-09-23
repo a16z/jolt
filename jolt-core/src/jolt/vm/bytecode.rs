@@ -38,8 +38,19 @@ pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     v_init_final: VerifierComputedOpening<[T; 6]>,
 }
 
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;
 
 impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>

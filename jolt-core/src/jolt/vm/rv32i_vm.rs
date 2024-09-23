@@ -4,10 +4,10 @@ use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertVal
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
-use crate::poly::commitment::hyrax::HyraxScheme;
+use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
-use ark_bn254::{Fr, G1Projective};
+use ark_bn254::{Bn254, Fr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
@@ -190,7 +190,6 @@ use std::fs::File;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-pub type PCS = HyraxScheme<G1Projective>;
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Gets the byte size of the serialized data
     fn size(&self) -> Result<usize> {
@@ -226,13 +225,14 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
+pub type PCS = HyperKZG<Bn254>;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct RV32IHyraxProof {
+pub struct JoltHyperKZGProof {
     pub proof: RV32IJoltProof<Fr, PCS>,
     pub commitments: JoltCommitments<PCS>,
 }
 
-impl Serializable for RV32IHyraxProof {}
+impl Serializable for JoltHyperKZGProof {}
 
 // ==================== TEST ====================
 

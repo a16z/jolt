@@ -45,6 +45,7 @@ pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
 impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
     for AuxVariableStuff<T>
 {
+    #[allow(clippy::field_reassign_with_default)]
     fn initialize(C: &usize) -> Self {
         let mut result = Self::default();
         result.relevant_y_chunks = std::iter::repeat_with(|| T::default()).take(*C).collect();
@@ -133,8 +134,20 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
     }
 }
 
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
 pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
 
 impl<F: JoltField> R1CSPolynomials<F> {
@@ -287,27 +300,16 @@ impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
-                Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION)
-                    .into_iter()
-                    .map(|i| Self::RAM_Read(i))
-                    .collect(),
-                Self::RAM_Write(_) => (0..RAM_OPS_PER_INSTRUCTION)
-                    .into_iter()
-                    .map(|i| Self::RAM_Write(i))
-                    .collect(),
-                Self::ChunksQuery(_) => (0..C).into_iter().map(|i| Self::ChunksQuery(i)).collect(),
-                Self::ChunksX(_) => (0..C).into_iter().map(|i| Self::ChunksX(i)).collect(),
-                Self::ChunksY(_) => (0..C).into_iter().map(|i| Self::ChunksY(i)).collect(),
-                Self::OpFlags(_) => CircuitFlags::iter()
-                    .map(|flag| Self::OpFlags(flag))
-                    .collect(),
-                Self::InstructionFlags(_) => RV32I::iter()
-                    .map(|flag| Self::InstructionFlags(flag))
-                    .collect(),
+                Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION).map(Self::RAM_Read).collect(),
+                Self::RAM_Write(_) => (0..RAM_OPS_PER_INSTRUCTION).map(Self::RAM_Write).collect(),
+                Self::ChunksQuery(_) => (0..C).map(Self::ChunksQuery).collect(),
+                Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
+                Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
+                Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
+                Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
                         AuxVariable::RelevantYChunk(_) => (0..C)
-                            .into_iter()
                             .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
                             .collect(),
                         _ => vec![Self::Aux(aux)],
