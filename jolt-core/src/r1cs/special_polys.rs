@@ -215,7 +215,7 @@ impl<F: JoltField> SparsePolynomial<F> {
 
     #[cfg(test)]
     #[tracing::instrument(skip_all)]
-    pub fn to_dense(self) -> DensePolynomial<F> {
+    pub fn to_dense(self) -> crate::poly::dense_mlpoly::DensePolynomial<F> {
         use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
         let mut evals = unsafe_allocate_zero_vec(self.num_vars.pow2());
@@ -224,7 +224,7 @@ impl<F: JoltField> SparsePolynomial<F> {
             evals[index] = value;
         }
 
-        DensePolynomial::new(evals)
+        crate::poly::dense_mlpoly::DensePolynomial::new(evals)
     }
 }
 

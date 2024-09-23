@@ -799,9 +799,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
-    use ark_bn254::Fr;
+    // use ark_bn254::Fr;
 
     // fn aux_compute_single<F: JoltField>(
     //     aux_compute: &AuxComputation<F>,
