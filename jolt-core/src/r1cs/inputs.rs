@@ -234,9 +234,9 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
 /// Jolt's R1CS constraint inputs are typically represneted as an enum.
 /// This trait serves two main purposes:
 /// - Defines a canonical ordering over inputs (and thus indices for each input).
-/// This is needed for sumcheck.
+///   This is needed for sumcheck.
 /// - Defines a mapping between inputs and Jolt's polynomial/commitment/opening types
-/// (i.e. `JoltStuff<T>`).
+///   (i.e. `JoltStuff<T>`).
 pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'static {
     /// Returns a flat vector of all unique constraint inputs.
     /// This also serves as a canonical ordering over the inputs.
