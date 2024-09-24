@@ -1,8 +1,6 @@
 use crate::{
     field::JoltField,
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::{
-        compute_dotproduct_low_optimized,
         math::Math,
         mul_0_1_optimized,
         thread::{drop_in_background_thread, unsafe_allocate_sparse_zero_vec},
@@ -217,7 +215,7 @@ impl<F: JoltField> SparsePolynomial<F> {
 
     #[cfg(test)]
     #[tracing::instrument(skip_all)]
-    pub fn to_dense(self) -> DensePolynomial<F> {
+    pub fn to_dense(self) -> crate::poly::dense_mlpoly::DensePolynomial<F> {
         use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
         let mut evals = unsafe_allocate_zero_vec(self.num_vars.pow2());
@@ -226,7 +224,7 @@ impl<F: JoltField> SparsePolynomial<F> {
             evals[index] = value;
         }
 
-        DensePolynomial::new(evals)
+        crate::poly::dense_mlpoly::DensePolynomial::new(evals)
     }
 }
 
@@ -393,93 +391,6 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
     }
 }
 
-pub trait IndexablePoly<F: JoltField>: std::ops::Index<usize, Output = F> + Sync {
-    fn len(&self) -> usize;
-}
-
-impl<F: JoltField> IndexablePoly<F> for DensePolynomial<F> {
-    fn len(&self) -> usize {
-        self.Z.len()
-    }
-}
-
-// TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
-// and can run all the normal DensePolynomial ops.
-#[derive(Clone)]
-pub struct SegmentedPaddedWitness<F: JoltField> {
-    total_len: usize,
-    pub segments: Vec<Vec<F>>,
-    pub segment_len: usize,
-    zero: F,
-}
-
-impl<F: JoltField> SegmentedPaddedWitness<F> {
-    pub fn new(total_len: usize, segments: Vec<Vec<F>>) -> Self {
-        let segment_len = segments[0].len();
-        assert!(segment_len.is_power_of_two());
-        for segment in &segments {
-            assert_eq!(
-                segment.len(),
-                segment_len,
-                "All segments must be the same length"
-            );
-        }
-        SegmentedPaddedWitness {
-            total_len,
-            segments,
-            segment_len,
-            zero: F::zero(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.total_len
-    }
-
-    #[tracing::instrument(skip_all, name = "SegmentedPaddedWitness::evaluate_all")]
-    pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
-        let chi = EqPolynomial::evals(&point);
-        assert!(chi.len() >= self.segment_len);
-
-        let evals = self
-            .segments
-            .par_iter()
-            .map(|segment| compute_dotproduct_low_optimized(&chi[0..self.segment_len], segment))
-            .collect();
-        drop_in_background_thread(chi);
-        evals
-    }
-
-    pub fn into_dense_polys(self) -> Vec<DensePolynomial<F>> {
-        self.segments
-            .into_iter()
-            .map(|poly| DensePolynomial::new(poly))
-            .collect()
-    }
-}
-
-impl<F: JoltField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
-    type Output = F;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        if index >= self.segments.len() * self.segment_len {
-            &self.zero
-        } else if index >= self.total_len {
-            panic!("index too high");
-        } else {
-            let segment_index = index / self.segment_len;
-            let inner_index = index % self.segment_len;
-            &self.segments[segment_index][inner_index]
-        }
-    }
-}
-
-impl<F: JoltField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
-    fn len(&self) -> usize {
-        self.total_len
-    }
-}
-
 /// Returns the `num_bits` from n in a canonical order
 fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
     (0..num_bits)
@@ -516,6 +427,8 @@ pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
 
 #[cfg(test)]
 mod tests {
+    use crate::poly::dense_mlpoly::DensePolynomial;
+
     use super::*;
     use ark_bn254::Fr;
     use ark_std::Zero;

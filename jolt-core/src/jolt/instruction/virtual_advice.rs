@@ -9,7 +9,7 @@ use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ADVICEInstruction<const WORD_SIZE: usize>(pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {

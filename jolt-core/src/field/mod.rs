@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -31,6 +31,7 @@ pub trait JoltField:
     + Copy
     + Sync
     + Send
+    + Display
     + Debug
     + Default
     + CanonicalSerialize

@@ -7,7 +7,7 @@ use crate::field::JoltField;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SHInstruction<const WORD_SIZE: usize>(pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SHInstruction<WORD_SIZE> {

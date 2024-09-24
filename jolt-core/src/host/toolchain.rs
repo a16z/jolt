@@ -28,9 +28,10 @@ pub fn install_toolchain() -> Result<()> {
             download_toolchain(&client, &toolchain_url)
         }))?;
         unpack_toolchain()?;
+        link_toolchain()?;
         write_tag_file()?;
     }
-    link_toolchain()
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

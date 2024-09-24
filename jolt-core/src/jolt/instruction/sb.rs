@@ -8,7 +8,7 @@ use crate::jolt::subtable::identity::IdentitySubtable;
 use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SBInstruction<const WORD_SIZE: usize>(pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SBInstruction<WORD_SIZE> {

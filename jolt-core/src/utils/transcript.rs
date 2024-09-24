@@ -3,12 +3,22 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use sha3::{Digest, Keccak256};
 
+/// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Clone)]
 pub struct ProofTranscript {
-    // Ethereum compatible 256 bit running state
+    /// Ethereum-compatible 256-bit running state
     pub state: [u8; 32],
-    // We append an ordinal to each invoke of the hash
+    /// We append an ordinal to each invocation of the hash
     n_rounds: u32,
+    #[cfg(test)]
+    /// A complete history of the transcript's `state`; used for testing.
+    state_history: Vec<[u8; 32]>,
+    #[cfg(test)]
+    /// For a proof to be valid, the verifier's `state_history` should always match
+    /// the prover's. In testing, the Jolt verifier may be provided the prover's
+    /// `state_history` so that we can detect any deviations and the backtrace can
+    /// tell us where it happened.
+    expected_state_history: Option<Vec<[u8; 32]>>,
 }
 
 impl ProofTranscript {
@@ -26,7 +36,18 @@ impl ProofTranscript {
         Self {
             state: out.into(),
             n_rounds: 0,
+            #[cfg(test)]
+            state_history: vec![out.into()],
+            #[cfg(test)]
+            expected_state_history: None,
         }
+    }
+
+    #[cfg(test)]
+    /// Compare this transcript to `other` and panic if/when they deviate.
+    /// Typically used to compare the verifier's transcript to the prover's.
+    pub fn compare_to(&mut self, other: Self) {
+        self.expected_state_history = Some(other.state_history);
     }
 
     /// Gives the hasher object with the running seed and index added
@@ -52,15 +73,13 @@ impl ProofTranscript {
             self.hasher().chain_update(packed)
         };
         // Instantiate hasher add our seed, position and msg
-        self.state = hasher.finalize().into();
-        self.n_rounds += 1;
+        self.update_state(hasher.finalize().into());
     }
 
     pub fn append_bytes(&mut self, bytes: &[u8]) {
         // Add the message and label
         let hasher = self.hasher().chain_update(bytes);
-        self.state = hasher.finalize().into();
-        self.n_rounds += 1;
+        self.update_state(hasher.finalize().into());
     }
 
     pub fn append_u64(&mut self, x: u64) {
@@ -68,8 +87,7 @@ impl ProofTranscript {
         let mut packed = [0_u8; 24].to_vec();
         packed.append(&mut x.to_be_bytes().to_vec());
         let hasher = self.hasher().chain_update(packed.clone());
-        self.state = hasher.finalize().into();
-        self.n_rounds += 1;
+        self.update_state(hasher.finalize().into());
     }
 
     pub fn append_protocol_name(&mut self, protocol_name: &'static [u8]) {
@@ -114,8 +132,7 @@ impl ProofTranscript {
         y_bytes = y_bytes.into_iter().rev().collect();
 
         let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes);
-        self.state = hasher.finalize().into();
-        self.n_rounds += 1;
+        self.update_state(hasher.finalize().into());
     }
 
     pub fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
@@ -173,8 +190,22 @@ impl ProofTranscript {
         assert_eq!(32, out.len());
         let rand: [u8; 32] = self.hasher().finalize().into();
         out.clone_from_slice(rand.as_slice());
-        self.state = rand;
+        self.update_state(rand);
+    }
+
+    fn update_state(&mut self, new_state: [u8; 32]) {
+        self.state = new_state;
         self.n_rounds += 1;
+        #[cfg(test)]
+        {
+            if let Some(expected_state_history) = &self.expected_state_history {
+                assert!(
+                    new_state == expected_state_history[self.n_rounds as usize],
+                    "Fiat-Shamir transcript mismatch"
+                );
+            }
+            self.state_history.push(new_state);
+        }
     }
 }
 

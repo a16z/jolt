@@ -1,62 +1,61 @@
 #![allow(clippy::type_complexity)]
+#![allow(dead_code)]
 
 use crate::field::JoltField;
-use crate::r1cs::builder::CombinedUniformBuilder;
-use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
+use crate::poly::opening_proof::{
+    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
+};
+use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
-use rayon::prelude::*;
+use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
+use timestamp_range_check::TimestampRangeCheckStuff;
 
-use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
-        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction, JoltInstruction,
+        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
         VirtualInstructionSequence,
     },
     subtable::JoltSubtableSet,
     vm::timestamp_range_check::TimestampValidityProof,
 };
-use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
+use crate::lasso::memory_checking::{
+    Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
+};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::structured_poly::StructuredCommitment;
-use crate::r1cs::inputs::{R1CSCommitment, R1CSInputs, R1CSProof};
+use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
 
-use self::bytecode::BytecodePreprocessing;
+use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
 use self::instruction_lookups::{
-    InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
+    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
 use self::read_write_memory::{
-    MemoryCommitment, ReadWriteMemory, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
-};
-use self::timestamp_range_check::RangeCheckCommitment;
-use self::{
-    bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, BytecodeRow},
-    instruction_lookups::InstructionPolynomials,
+    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
+    ReadWriteMemoryStuff,
 };
 
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
-pub struct JoltPreprocessing<F, PCS>
+pub struct JoltPreprocessing<const C: usize, F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::Setup,
-    pub instruction_lookups: InstructionLookupsPreprocessing<F>,
+    pub instruction_lookups: InstructionLookupsPreprocessing<C, F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
 }
@@ -66,6 +65,12 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
+    pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
+}
+
+pub struct ProverDebugInfo<F: JoltField> {
+    pub(crate) transcript: ProofTranscript,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
@@ -82,6 +87,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
                 MemoryOp::noop_read(),  // RAM byte 3
                 MemoryOp::noop_read(),  // RAM byte 4
             ],
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
     }
 
@@ -93,8 +99,9 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables>
+pub struct JoltProof<const C: usize, const M: usize, I, F, PCS, InstructionSet, Subtables>
 where
+    I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
@@ -105,150 +112,139 @@ where
     pub bytecode: BytecodeProof<F, PCS>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-    pub r1cs: UniformSpartanProof<F, PCS>,
+    pub r1cs: UniformSpartanProof<C, I, F>,
+    pub opening_proof: ReducedOpeningProof<F, PCS>,
 }
 
-pub struct JoltPolynomials<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
+    pub(crate) bytecode: BytecodeStuff<T>,
+    pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
+    pub(crate) instruction_lookups: InstructionLookupStuff<T>,
+    pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
+    pub(crate) r1cs: R1CSStuff<T>,
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
+    for JoltStuff<T>
 {
-    pub bytecode: BytecodePolynomials<F, PCS>,
-    pub read_write_memory: ReadWriteMemory<F, PCS>,
-    pub timestamp_range_check: RangeCheckPolynomials<F, PCS>,
-    pub instruction_lookups: InstructionPolynomials<F, PCS>,
-}
+    fn read_write_values(&self) -> Vec<&T> {
+        self.bytecode
+            .read_write_values()
+            .into_iter()
+            .chain(self.read_write_memory.read_write_values())
+            .chain(self.instruction_lookups.read_write_values())
+            .chain(self.timestamp_range_check.read_write_values())
+            .chain(self.r1cs.read_write_values())
+            .collect()
+    }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltCommitments<PCS: CommitmentScheme> {
-    pub bytecode: BytecodeCommitment<PCS>,
-    pub read_write_memory: MemoryCommitment<PCS>,
-    pub timestamp_range_check: RangeCheckCommitment<PCS>,
-    pub instruction_lookups: InstructionCommitment<PCS>,
-    pub r1cs: Option<R1CSCommitment<PCS>>,
-}
+    fn init_final_values(&self) -> Vec<&T> {
+        self.bytecode
+            .init_final_values()
+            .into_iter()
+            .chain(self.read_write_memory.init_final_values())
+            .chain(self.instruction_lookups.init_final_values())
+            .chain(self.timestamp_range_check.init_final_values())
+            .chain(self.r1cs.init_final_values())
+            .collect()
+    }
 
-impl<PCS: CommitmentScheme> JoltCommitments<PCS> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        self.bytecode.append_to_transcript(transcript);
-        self.read_write_memory.append_to_transcript(transcript);
-        self.timestamp_range_check.append_to_transcript(transcript);
-        self.instruction_lookups.append_to_transcript(transcript);
-        self.r1cs.as_ref().unwrap().append_to_transcript(transcript);
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        self.bytecode
+            .read_write_values_mut()
+            .into_iter()
+            .chain(self.read_write_memory.read_write_values_mut())
+            .chain(self.instruction_lookups.read_write_values_mut())
+            .chain(self.timestamp_range_check.read_write_values_mut())
+            .chain(self.r1cs.read_write_values_mut())
+            .collect()
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        self.bytecode
+            .init_final_values_mut()
+            .into_iter()
+            .chain(self.read_write_memory.init_final_values_mut())
+            .chain(self.instruction_lookups.init_final_values_mut())
+            .chain(self.timestamp_range_check.init_final_values_mut())
+            .chain(self.r1cs.init_final_values_mut())
+            .collect()
     }
 }
 
-impl<F, PCS> StructuredCommitment<PCS> for JoltPolynomials<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type JoltCommitments<PCS: CommitmentScheme> = JoltStuff<PCS::Commitment>;
+
+impl<
+        const C: usize,
+        T: CanonicalSerialize + CanonicalDeserialize + Default + Sync,
+        PCS: CommitmentScheme,
+    > Initializable<T, JoltPreprocessing<C, PCS::Field, PCS>> for JoltStuff<T>
 {
-    type Commitment = JoltCommitments<PCS>;
+    fn initialize(preprocessing: &JoltPreprocessing<C, PCS::Field, PCS>) -> Self {
+        Self {
+            bytecode: BytecodeStuff::initialize(&preprocessing.bytecode),
+            read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
+            instruction_lookups: InstructionLookupStuff::initialize(
+                &preprocessing.instruction_lookups,
+            ),
+            timestamp_range_check: TimestampRangeCheckStuff::initialize(
+                &crate::lasso::memory_checking::NoPreprocessing,
+            ),
+            r1cs: R1CSStuff::initialize(&C),
+        }
+    }
+}
 
+impl<F: JoltField> JoltPolynomials<F> {
     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-    fn commit(&self, generators: &PCS::Setup) -> Self::Commitment {
-        let bytecode_trace_polys = vec![
-            &self.bytecode.a_read_write,
-            &self.bytecode.t_read,
-            &self.bytecode.v_read_write[0],
-            &self.bytecode.v_read_write[1],
-            &self.bytecode.v_read_write[2],
-            &self.bytecode.v_read_write[3],
-            &self.bytecode.v_read_write[4],
-            &self.bytecode.v_read_write[5],
-        ];
-        let num_bytecode_trace_polys = bytecode_trace_polys.len();
+    pub fn commit<const C: usize, PCS: CommitmentScheme<Field = F>>(
+        &self,
+        preprocessing: &JoltPreprocessing<C, F, PCS>,
+    ) -> JoltCommitments<PCS> {
+        let mut commitments = JoltCommitments::<PCS>::initialize(preprocessing);
 
-        let memory_trace_polys: Vec<&DensePolynomial<F>> = [&self.read_write_memory.a_ram]
+        let trace_polys = self.read_write_values();
+        let trace_comitments =
+            PCS::batch_commit_polys_ref(&trace_polys, &preprocessing.generators, BatchType::Big);
+        commitments
+            .read_write_values_mut()
             .into_iter()
-            .chain(self.read_write_memory.v_read.iter())
-            .chain([&self.read_write_memory.v_write_rd].into_iter())
-            .chain(self.read_write_memory.v_write_ram.iter())
-            .chain(self.read_write_memory.t_read.iter())
-            .chain(self.read_write_memory.t_write_ram.iter())
-            .collect();
-        let num_memory_trace_polys = memory_trace_polys.len();
+            .zip(trace_comitments.into_iter())
+            .for_each(|(dest, src)| *dest = src);
 
-        let range_check_polys: Vec<&DensePolynomial<F>> = self
-            .timestamp_range_check
-            .read_cts_read_timestamp
-            .iter()
-            .chain(self.timestamp_range_check.read_cts_global_minus_read.iter())
-            .chain(self.timestamp_range_check.final_cts_read_timestamp.iter())
-            .chain(
-                self.timestamp_range_check
-                    .final_cts_global_minus_read
-                    .iter(),
-            )
-            .collect();
-        let num_range_check_polys = range_check_polys.len();
-
-        let instruction_trace_polys: Vec<&DensePolynomial<F>> = self
-            .instruction_lookups
-            .dim
-            .iter()
-            .chain(self.instruction_lookups.read_cts.iter())
-            .chain(self.instruction_lookups.E_polys.iter())
-            .chain(self.instruction_lookups.instruction_flag_polys.iter())
-            .chain([&self.instruction_lookups.lookup_outputs].into_iter())
-            .collect();
-
-        let all_trace_polys = bytecode_trace_polys
-            .into_iter()
-            .chain(memory_trace_polys.into_iter())
-            .chain(range_check_polys.into_iter())
-            .chain(instruction_trace_polys.into_iter())
-            .collect::<Vec<_>>();
-        let mut trace_comitments =
-            PCS::batch_commit_polys_ref(&all_trace_polys, generators, BatchType::Big);
-
-        let bytecode_trace_commitment = trace_comitments
-            .drain(..num_bytecode_trace_polys)
-            .collect::<Vec<_>>();
-        let memory_trace_commitment = trace_comitments
-            .drain(..num_memory_trace_polys)
-            .collect::<Vec<_>>();
-        let range_check_commitment = trace_comitments
-            .drain(..num_range_check_polys)
-            .collect::<Vec<_>>();
-        let instruction_trace_commitment = trace_comitments;
-
-        let bytecode_t_final_commitment = PCS::commit(&self.bytecode.t_final, generators);
-        let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
-            || PCS::commit(&self.read_write_memory.v_final, generators),
-            || PCS::commit(&self.read_write_memory.t_final, generators),
+        commitments.bytecode.t_final =
+            PCS::commit(&self.bytecode.t_final, &preprocessing.generators);
+        (
+            commitments.read_write_memory.v_final,
+            commitments.read_write_memory.t_final,
+        ) = rayon::join(
+            || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
+            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators),
         );
-        let instruction_final_commitment = PCS::batch_commit_polys(
+        commitments.instruction_lookups.final_cts = PCS::batch_commit_polys(
             &self.instruction_lookups.final_cts,
-            generators,
+            &preprocessing.generators,
             BatchType::Big,
         );
 
-        JoltCommitments {
-            bytecode: BytecodeCommitment {
-                trace_commitments: bytecode_trace_commitment,
-                t_final_commitment: bytecode_t_final_commitment,
-            },
-            read_write_memory: MemoryCommitment {
-                trace_commitments: memory_trace_commitment,
-                v_final_commitment: memory_v_final_commitment,
-                t_final_commitment: memory_t_final_commitment,
-            },
-            timestamp_range_check: RangeCheckCommitment {
-                commitments: range_check_commitment,
-            },
-            instruction_lookups: InstructionCommitment {
-                trace_commitment: instruction_trace_commitment,
-                final_commitment: instruction_final_commitment,
-            },
-            r1cs: None,
-        }
+        commitments
     }
 }
 
 pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
+    type Constraints: R1CSConstraints<C, F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
@@ -257,16 +253,17 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltPreprocessing<F, PCS> {
+    ) -> JoltPreprocessing<C, F, PCS> {
         let bytecode_commitment_shapes =
-            BytecodePolynomials::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
-        let ram_commitment_shapes =
-            ReadWriteMemory::<F, PCS>::commitment_shapes(max_memory_address, max_trace_length);
+            BytecodeProof::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
+        let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F>::commitment_shapes(
+            max_memory_address,
+            max_trace_length,
+        );
         let timestamp_range_check_commitment_shapes =
             TimestampValidityProof::<F, PCS>::commitment_shapes(max_trace_length);
 
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
-            C,
             M,
             Self::InstructionSet,
             Self::Subtables,
@@ -321,11 +318,19 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
-        circuit_flags: Vec<F>,
-        preprocessing: JoltPreprocessing<F, PCS>,
+        preprocessing: JoltPreprocessing<C, F, PCS>,
     ) -> (
-        JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
+        JoltProof<
+            C,
+            M,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            PCS,
+            Self::InstructionSet,
+            Self::Subtables,
+        >,
         JoltCommitments<PCS>,
+        Option<ProverDebugInfo<F>>,
     ) {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -343,12 +348,12 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             PCS,
             Self::InstructionSet,
             Self::Subtables,
-        >::polynomialize(
+        >::generate_witness(
             &preprocessing.instruction_lookups, &trace
         );
 
-        let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
-        let (memory_polynomials, read_timestamps) = ReadWriteMemory::new(
+        let load_store_flags = &instruction_polynomials.instruction_flags[5..10];
+        let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
             load_store_flags,
             &preprocessing.read_write_memory,
@@ -356,47 +361,66 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
-            || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace),
-            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps),
+            || BytecodeProof::<F, PCS>::generate_witness(&preprocessing.bytecode, &mut trace),
+            || TimestampValidityProof::<F, PCS>::generate_witness(&read_timestamps),
         );
 
-        let jolt_polynomials = JoltPolynomials {
+        let r1cs_builder = Self::Constraints::construct_constraints(
+            padded_trace_length,
+            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
+        );
+        let spartan_key = spartan::UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+        >::setup(&r1cs_builder, padded_trace_length);
+
+        let r1cs_polynomials = R1CSPolynomials::new::<
+            C,
+            M,
+            Self::InstructionSet,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        >(&trace);
+
+        let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
             timestamp_range_check: range_check_polys,
             instruction_lookups: instruction_polynomials,
+            r1cs: r1cs_polynomials,
         };
 
-        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
+        r1cs_builder.compute_aux(&mut jolt_polynomials);
 
-        let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
-            padded_trace_length,
-            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
-            &trace,
-            &jolt_polynomials,
-            circuit_flags,
-            &preprocessing.generators,
-        );
+        let jolt_commitments = jolt_polynomials.commit::<C, PCS>(&preprocessing);
 
-        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
-            &r1cs_builder,
-            padded_trace_length,
-        );
+        transcript.append_scalar(&spartan_key.vk_digest);
 
-        jolt_commitments.r1cs = Some(r1cs_commitments);
-        jolt_commitments.append_to_transcript(&mut transcript);
+        jolt_commitments
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        jolt_commitments
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.generators,
             &preprocessing.bytecode,
             &jolt_polynomials.bytecode,
+            &jolt_polynomials,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
-            &jolt_polynomials.instruction_lookups,
+            &jolt_polynomials,
             &preprocessing.instruction_lookups,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
@@ -405,19 +429,28 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.read_write_memory,
             &jolt_polynomials,
             &program_io,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
-        drop_in_background_thread(jolt_polynomials);
-
-        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
-            &preprocessing.generators,
-            r1cs_builder,
+        let spartan_proof = UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+        >::prove::<PCS>(
+            &r1cs_builder,
             &spartan_key,
-            witness_segments,
+            &jolt_polynomials,
+            &mut opening_accumulator,
             &mut transcript,
         )
         .expect("r1cs proof failed");
+
+        // Batch-prove all openings
+        let opening_proof =
+            opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+
+        drop_in_background_thread(jolt_polynomials);
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -426,51 +459,82 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
             r1cs: spartan_proof,
+            opening_proof,
         };
 
-        (jolt_proof, jolt_commitments)
+        #[cfg(test)]
+        let debug_info = Some(ProverDebugInfo {
+            transcript,
+            opening_accumulator,
+        });
+        #[cfg(not(test))]
+        let debug_info = None;
+        (jolt_proof, jolt_commitments, debug_info)
     }
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltPreprocessing<F, PCS>,
-        proof: JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
+        mut preprocessing: JoltPreprocessing<C, F, PCS>,
+        proof: JoltProof<
+            C,
+            M,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            PCS,
+            Self::InstructionSet,
+            Self::Subtables,
+        >,
         commitments: JoltCommitments<PCS>,
+        _debug_info: Option<ProverDebugInfo<F>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+            VerifierOpeningAccumulator::new();
+
+        #[cfg(test)]
+        if let Some(debug_info) = _debug_info {
+            transcript.compare_to(debug_info.transcript);
+            opening_accumulator
+                .compare_to(debug_info.opening_accumulator, &preprocessing.generators);
+        }
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
-
         let memory_start = RAM_START_ADDRESS - proof.program_io.memory_layout.ram_witness_offset;
-
-        let r1cs_builder = construct_jolt_constraints(padded_trace_length, memory_start);
-
-        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
-            &r1cs_builder,
-            padded_trace_length,
-        );
+        let r1cs_builder =
+            Self::Constraints::construct_constraints(padded_trace_length, memory_start);
+        let spartan_key = spartan::UniformSpartanProof::setup(&r1cs_builder, padded_trace_length);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {
             key: spartan_key,
             proof: proof.r1cs,
         };
 
-        commitments.append_to_transcript(&mut transcript);
+        commitments
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        commitments
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
 
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,
             proof.bytecode,
-            &commitments.bytecode,
+            &commitments,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             &preprocessing.generators,
             proof.instruction_lookups,
-            &commitments.instruction_lookups,
+            &commitments,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
         Self::verify_memory(
@@ -479,224 +543,100 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             proof.read_write_memory,
             &commitments,
             proof.program_io,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
+
         Self::verify_r1cs(
-            &preprocessing.generators,
             r1cs_proof,
-            commitments,
+            &commitments,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
+
+        // Batch-verify all openings
+        opening_accumulator.reduce_and_verify(
+            &preprocessing.generators,
+            proof.opening_proof,
+            &mut transcript,
+        )?;
+
         Ok(())
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_instruction_lookups(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+    fn verify_instruction_lookups<'a>(
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         generators: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
-        commitment: &InstructionCommitment<PCS>,
+        commitments: &'a JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
+        InstructionLookupsProof::verify(
+            preprocessing,
+            generators,
+            proof,
+            commitments,
+            opening_accumulator,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_bytecode(
+    fn verify_bytecode<'a>(
         preprocessing: &BytecodePreprocessing<F>,
         generators: &PCS::Setup,
         proof: BytecodeProof<F, PCS>,
-        commitment: &BytecodeCommitment<PCS>,
+        commitments: &'a JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
             preprocessing,
             generators,
             proof,
-            commitment,
+            &commitments.bytecode,
+            commitments,
+            opening_accumulator,
             transcript,
         )
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_memory(
+    fn verify_memory<'a>(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PCS::Setup,
         proof: ReadWriteMemoryProof<F, PCS>,
-        commitment: &JoltCommitments<PCS>,
+        commitment: &'a JoltCommitments<PCS>,
         program_io: JoltDevice,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
         preprocessing.program_io = Some(program_io);
 
-        ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
+        ReadWriteMemoryProof::verify(
+            proof,
+            generators,
+            preprocessing,
+            commitment,
+            opening_accumulator,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify_r1cs(
-        generators: &PCS::Setup,
-        proof: R1CSProof<F, PCS>,
-        commitments: JoltCommitments<PCS>,
+    fn verify_r1cs<'a>(
+        proof: R1CSProof<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
+        commitments: &'a JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
-            .verify(generators, commitments, C, transcript)
+            .verify(commitments, opening_accumulator, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
-    }
-
-    #[tracing::instrument(skip_all, name = "Jolt::r1cs_setup")]
-    fn r1cs_setup(
-        padded_trace_length: usize,
-        memory_start: u64,
-        instructions: &[JoltTraceStep<Self::InstructionSet>],
-        polynomials: &JoltPolynomials<F, PCS>,
-        circuit_flags: Vec<F>,
-        generators: &PCS::Setup,
-    ) -> (
-        Vec<Vec<F>>,
-        R1CSCommitment<PCS>,
-        CombinedUniformBuilder<F, JoltIn>,
-    ) {
-        let inputs = Self::r1cs_construct_inputs(
-            padded_trace_length,
-            instructions,
-            polynomials,
-            circuit_flags,
-        );
-        let mut inputs_flat: Vec<Vec<F>> = inputs.clone_to_trace_len_chunks();
-
-        let builder = construct_jolt_constraints(padded_trace_length, memory_start);
-        let aux = builder.compute_aux(&inputs_flat);
-
-        assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
-        let span = tracing::span!(tracing::Level::INFO, "commit_chunks_flags");
-        let _guard = span.enter();
-        let chunk_batch_slices: Vec<&[F]> = [&inputs.chunks_x, &inputs.chunks_y]
-            .iter()
-            .flat_map(|batchee| batchee.chunks(padded_trace_length))
-            .collect();
-        let chunks_comms = PCS::batch_commit(&chunk_batch_slices, generators, BatchType::Big);
-
-        let circuit_flags_comms = PCS::batch_commit(
-            &inputs
-                .circuit_flags_bits
-                .chunks(padded_trace_length)
-                .collect::<Vec<&[F]>>(),
-            generators,
-            BatchType::Big,
-        );
-        drop(_guard);
-
-        let io_comms = PCS::batch_commit(&[inputs.pc.as_ref()], generators, BatchType::Big);
-        let aux_comms = PCS::batch_commit(
-            &aux.iter().map(AsRef::as_ref).collect::<Vec<&[F]>>(),
-            generators,
-            BatchType::Big,
-        );
-
-        let r1cs_commitments = R1CSCommitment::<PCS> {
-            io: io_comms,
-            aux: aux_comms,
-            chunks: chunks_comms,
-            circuit_flags: circuit_flags_comms,
-        };
-
-        #[cfg(test)]
-        {
-            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
-            builder.assert_valid(&az, &bz, &cz);
-        }
-
-        inputs_flat.extend(aux);
-
-        (inputs_flat, r1cs_commitments, builder)
-    }
-
-    // Assemble the R1CS inputs from across other Jolt structs.
-    #[tracing::instrument(skip_all, name = "Jolt::r1cs_construct_inputs")]
-    fn r1cs_construct_inputs<'a>(
-        padded_trace_length: usize,
-        instructions: &'a [JoltTraceStep<Self::InstructionSet>],
-        polynomials: &'a JoltPolynomials<F, PCS>,
-        circuit_flags: Vec<F>,
-    ) -> R1CSInputs<'a, F> {
-        let log_M = log2(M) as usize;
-
-        // Derive chunks_x and chunks_y
-        let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
-        let _guard = span.enter();
-
-        let num_chunks = padded_trace_length * C;
-        let mut chunks_x: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
-        let mut chunks_y: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
-
-        for (instruction_index, op) in instructions.iter().enumerate() {
-            if let Some(instr) = &op.instruction_lookup {
-                let (chunks_x_op, chunks_y_op) = instr.operand_chunks(C, log_M);
-                for (chunk_index, (x, y)) in chunks_x_op
-                    .into_iter()
-                    .zip(chunks_y_op.into_iter())
-                    .enumerate()
-                {
-                    let flat_chunk_index = instruction_index + chunk_index * padded_trace_length;
-                    chunks_x[flat_chunk_index] = F::from_u64(x).unwrap();
-                    chunks_y[flat_chunk_index] = F::from_u64(y).unwrap();
-                }
-            } else {
-                for chunk_index in 0..C {
-                    let flat_chunk_index = instruction_index + chunk_index * padded_trace_length;
-                    chunks_x[flat_chunk_index] = F::zero();
-                    chunks_y[flat_chunk_index] = F::zero();
-                }
-            }
-        }
-
-        drop(_guard);
-        drop(span);
-
-        let span = tracing::span!(tracing::Level::INFO, "flatten_instruction_flags");
-        let _enter = span.enter();
-        let instruction_flags: Vec<F> =
-            DensePolynomial::flatten(&polynomials.instruction_lookups.instruction_flag_polys);
-        drop(_enter);
-        drop(span);
-
-        let (bytecode_a, bytecode_v) = polynomials.bytecode.get_polys_r1cs();
-        let (memreg_a_rw, memreg_v_reads, memreg_v_writes) =
-            polynomials.read_write_memory.get_polys_r1cs();
-
-        let span = tracing::span!(tracing::Level::INFO, "chunks_query");
-        let _guard = span.enter();
-        let mut chunks_query: Vec<F> =
-            Vec::with_capacity(C * polynomials.instruction_lookups.dim[0].len());
-        for i in 0..C {
-            chunks_query.par_extend(
-                polynomials.instruction_lookups.dim[i]
-                    .evals_ref()
-                    .par_iter(),
-            );
-        }
-        drop(_guard);
-
-        let inputs: R1CSInputs<F> = R1CSInputs::new(
-            padded_trace_length,
-            bytecode_a.clone(),
-            bytecode_a,
-            bytecode_v,
-            memreg_a_rw,
-            memreg_v_reads,
-            memreg_v_writes,
-            chunks_x,
-            chunks_y,
-            chunks_query,
-            polynomials.instruction_lookups.lookup_outputs.evals(),
-            circuit_flags,
-            instruction_flags,
-        );
-
-        inputs
     }
 
     fn fiat_shamir_preamble(

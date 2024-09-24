@@ -1,17 +1,19 @@
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
-use std::{collections::HashMap, marker::PhantomData};
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::lasso::memory_checking::{
+    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
 use common::to_ram_address;
@@ -20,23 +22,78 @@ use rayon::prelude::*;
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        identity_poly::IdentityPolynomial,
-        structured_poly::{StructuredCommitment, StructuredOpeningProof},
-    },
-    utils::errors::ProofVerifyError,
+    poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial},
 };
 
-use super::JoltTraceStep;
+use super::{JoltPolynomials, JoltTraceStep};
 
-pub type BytecodeProof<F, C> = MemoryCheckingProof<
-    F,
-    C,
-    BytecodePolynomials<F, C>,
-    BytecodeReadWriteOpenings<F>,
-    BytecodeInitFinalOpenings<F>,
->;
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    /// Read/write addresses for offline memory-checking.
+    /// For offline memory-checking, each read is paired with a "virtual" write,
+    /// so the read addresses and write addresses are the same.
+    pub(crate) a_read_write: T,
+    /// Read/write values for offline memory-checking.
+    /// For offline memory-checking, each read is paired with a "virtual" write,
+    /// so the read values and write values are the same. There are six values
+    /// (address, bitflags, rd, rs1, rs2, imm) associated with each memory address.
+    pub(crate) v_read_write: [T; 6],
+    /// Read timestamps for offline memory-checking
+    pub(crate) t_read: T,
+    /// Final timestamps for offline memory-checking
+    pub(crate) t_final: T,
+    a_init_final: VerifierComputedOpening<T>,
+    v_init_final: VerifierComputedOpening<[T; 6]>,
+}
+
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;
+
+impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+    Initializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
+{
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for BytecodeStuff<T>
+{
+    fn read_write_values(&self) -> Vec<&T> {
+        let mut values = vec![&self.a_read_write];
+        values.extend(self.v_read_write.iter());
+        values.push(&self.t_read);
+        values
+    }
+
+    fn init_final_values(&self) -> Vec<&T> {
+        vec![&self.t_final]
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        let mut values = vec![&mut self.a_read_write];
+        values.extend(self.v_read_write.iter_mut());
+        values.push(&mut self.t_read);
+        values
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        vec![&mut self.t_final]
+    }
+}
+
+pub type BytecodeProof<F, PCS> =
+    MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -153,40 +210,25 @@ pub fn random_bytecode_trace(
     trace
 }
 
-pub struct BytecodePolynomials<F: JoltField, C: CommitmentScheme<Field = F>> {
-    _group: PhantomData<C>,
-    /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
-    /// so the read addresses and write addresses are the same.
-    pub(super) a_read_write: DensePolynomial<F>,
-    /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
-    /// so the read values and write values are the same. There are six values (address, bitflags, rd, rs1, rs2, imm)
-    /// associated with each memory address, so `v_read_write` comprises five polynomials.
-    pub(super) v_read_write: [DensePolynomial<F>; 6],
-    /// MLE of the read timestamps.
-    pub(super) t_read: DensePolynomial<F>,
-    /// MLE of the final timestamps.
-    pub(super) t_final: DensePolynomial<F>,
-}
-
 #[derive(Clone)]
 pub struct BytecodePreprocessing<F: JoltField> {
     /// Size of the (padded) bytecode.
     code_size: usize,
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
     /// the initial memory values. There are six values (address, bitflags, rd, rs1, rs2, imm)
-    /// associated with each memory address, so `v_init_final` comprises five polynomials.
+    /// associated with each memory address, so `v_init_final` comprises six polynomials.
     v_init_final: [DensePolynomial<F>; 6],
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
-    virtual_address_map: HashMap<(usize, usize), usize>,
+    virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 
 impl<F: JoltField> BytecodePreprocessing<F> {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
     pub fn preprocess(mut bytecode: Vec<BytecodeRow>) -> Self {
-        let mut virtual_address_map = HashMap::new();
+        let mut virtual_address_map = BTreeMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter_mut() {
             assert!(instruction.address >= RAM_START_ADDRESS as usize);
@@ -248,12 +290,12 @@ impl<F: JoltField> BytecodePreprocessing<F> {
     }
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
-    pub fn new<InstructionSet: JoltInstructionSet>(
+    pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut Vec<JoltTraceStep<InstructionSet>>,
-    ) -> Self {
+    ) -> BytecodePolynomials<F> {
         let num_ops = trace.len();
 
         let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
@@ -386,28 +428,19 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
             assert_eq!(set_difference.len(), 0);
         }
 
-        Self {
-            _group: PhantomData,
+        BytecodeStuff {
             a_read_write,
             v_read_write,
             t_read,
             t_final,
+            a_init_final: None,
+            v_init_final: None,
         }
-    }
-
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::get_polys_r1cs")]
-    pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>) {
-        let (a_read_write, v_read_write) = rayon::join(
-            || self.a_read_write.evals(),
-            || DensePolynomial::flatten(&self.v_read_write),
-        );
-
-        (a_read_write, v_read_write)
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
     pub fn validate_bytecode(bytecode: &[BytecodeRow], trace: &[BytecodeRow]) {
-        let mut bytecode_map: HashMap<usize, &BytecodeRow> = HashMap::new();
+        let mut bytecode_map: BTreeMap<usize, &BytecodeRow> = BTreeMap::new();
 
         for bytecode_row in bytecode.iter() {
             bytecode_map.insert(bytecode_row.address, bytecode_row);
@@ -439,62 +472,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BytecodeCommitment<C: CommitmentScheme> {
-    pub trace_commitments: Vec<C::Commitment>,
-    pub t_final_commitment: C::Commitment,
-}
-
-impl<C: CommitmentScheme> AppendToTranscript for BytecodeCommitment<C> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_protocol_name(b"Bytecode Commitments");
-
-        for commitment in &self.trace_commitments {
-            commitment.append_to_transcript(transcript);
-        }
-
-        self.t_final_commitment.append_to_transcript(transcript);
-    }
-}
-
-impl<F, C> StructuredCommitment<C> for BytecodePolynomials<F, C>
+impl<F, PCS> MemoryCheckingProver<F, PCS> for BytecodeProof<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    type Commitment = BytecodeCommitment<C>;
-
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(&self, generators: &C::Setup) -> Self::Commitment {
-        let trace_polys = vec![
-            &self.a_read_write,
-            &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
-            &self.v_read_write[0],
-            &self.v_read_write[1],
-            &self.v_read_write[2],
-            &self.v_read_write[3],
-            &self.v_read_write[4],
-            &self.v_read_write[5],
-        ];
-        let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
-
-        let t_final_commitment = C::commit(&self.t_final, generators);
-
-        Self::Commitment {
-            trace_commitments,
-            t_final_commitment,
-        }
-    }
-}
-
-impl<F, C> MemoryCheckingProver<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
+    type Polynomials = BytecodePolynomials<F>;
+    type Openings = BytecodeOpenings<F>;
+    type Commitments = BytecodeCommitments<PCS>;
     type Preprocessing = BytecodePreprocessing<F>;
-    type ReadWriteOpenings = BytecodeReadWriteOpenings<F>;
-    type InitFinalOpenings = BytecodeInitFinalOpenings<F>;
 
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]
     type MemoryTuple = [F; 8];
@@ -512,7 +498,8 @@ where
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]
     fn compute_leaves(
         preprocessing: &BytecodePreprocessing<F>,
-        polynomials: &BytecodePolynomials<F, C>,
+        polynomials: &Self::Polynomials,
+        _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
@@ -612,44 +599,68 @@ where
     }
 }
 
-impl<F, C> MemoryCheckingVerifier<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
+impl<F, PCS> MemoryCheckingVerifier<F, PCS> for BytecodeProof<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
+    fn compute_verifier_openings(
+        openings: &mut BytecodeOpenings<F>,
+        preprocessing: &Self::Preprocessing,
+        _r_read_write: &[F],
+        r_init_final: &[F],
+    ) {
+        openings.a_init_final =
+            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
+
+        let chis = EqPolynomial::evals(r_init_final);
+        openings.v_init_final = Some(
+            preprocessing
+                .v_init_final
+                .par_iter()
+                .map(|poly| poly.evaluate_at_chi(&chis))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        );
+    }
+
     fn read_tuples(
         _: &BytecodePreprocessing<F>,
-        openings: &Self::ReadWriteOpenings,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
-            openings.a_read_write_opening,
-            openings.v_read_write_openings[0], // address
-            openings.v_read_write_openings[1], // opcode
-            openings.v_read_write_openings[2], // rd
-            openings.v_read_write_openings[3], // rs1
-            openings.v_read_write_openings[4], // rs2
-            openings.v_read_write_openings[5], // imm
-            openings.t_read_opening,
+            openings.a_read_write,
+            openings.v_read_write[0], // address
+            openings.v_read_write[1], // opcode
+            openings.v_read_write[2], // rd
+            openings.v_read_write[3], // rs1
+            openings.v_read_write[4], // rs2
+            openings.v_read_write[5], // imm
+            openings.t_read,
         ]]
     }
     fn write_tuples(
         _: &BytecodePreprocessing<F>,
-        openings: &Self::ReadWriteOpenings,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
-            openings.a_read_write_opening,
-            openings.v_read_write_openings[0], // address
-            openings.v_read_write_openings[1], // opcode
-            openings.v_read_write_openings[2], // rd
-            openings.v_read_write_openings[3], // rs1
-            openings.v_read_write_openings[4], // rs2
-            openings.v_read_write_openings[5], // imm
-            openings.t_read_opening + F::one(),
+            openings.a_read_write,
+            openings.v_read_write[0], // address
+            openings.v_read_write[1], // opcode
+            openings.v_read_write[2], // rd
+            openings.v_read_write[3], // rs1
+            openings.v_read_write[4], // rs2
+            openings.v_read_write[5], // imm
+            openings.t_read + F::one(),
         ]]
     }
     fn init_tuples(
         _: &BytecodePreprocessing<F>,
-        openings: &Self::InitFinalOpenings,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
@@ -665,7 +676,8 @@ where
     }
     fn final_tuples(
         _: &BytecodePreprocessing<F>,
-        openings: &Self::InitFinalOpenings,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
@@ -681,182 +693,16 @@ where
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BytecodeReadWriteOpenings<F>
-where
-    F: JoltField,
-{
-    /// Evaluation of the a_read_write polynomial at the opening point.
-    a_read_write_opening: F,
-    /// Evaluation of the v_read_write polynomials at the opening point.
-    v_read_write_openings: [F; 6],
-    /// Evaluation of the t_read polynomial at the opening point.
-    t_read_opening: F,
-}
-
-impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeReadWriteOpenings<F>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
-    type Proof = C::BatchedProof;
-
-    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, C>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::evals(opening_point);
-        Self {
-            a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
-            v_read_write_openings: polynomials
-                .v_read_write
-                .par_iter()
-                .map(|poly| poly.evaluate_at_chi(&chis))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
-            t_read_opening: polynomials.t_read.evaluate_at_chi(&chis),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
-    fn prove_openings(
-        generators: &C::Setup,
-        polynomials: &BytecodePolynomials<F, C>,
-        opening_point: &[F],
-        openings: &Self,
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        let mut combined_openings: Vec<F> =
-            vec![openings.a_read_write_opening, openings.t_read_opening];
-        combined_openings.extend(openings.v_read_write_openings.iter());
-
-        C::batch_prove(
-            generators,
-            &[
-                &polynomials.a_read_write,
-                &polynomials.t_read,
-                &polynomials.v_read_write[0],
-                &polynomials.v_read_write[1],
-                &polynomials.v_read_write[2],
-                &polynomials.v_read_write[3],
-                &polynomials.v_read_write[4],
-                &polynomials.v_read_write[5],
-            ],
-            opening_point,
-            &combined_openings,
-            BatchType::Big,
-            transcript,
-        )
-    }
-
-    fn verify_openings(
-        &self,
-        generators: &C::Setup,
-        opening_proof: &Self::Proof,
-        commitment: &BytecodeCommitment<C>,
-        opening_point: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let mut combined_openings: Vec<F> = vec![self.a_read_write_opening, self.t_read_opening];
-        combined_openings.extend(self.v_read_write_openings.iter());
-
-        C::batch_verify(
-            opening_proof,
-            generators,
-            opening_point,
-            &combined_openings,
-            &commitment.trace_commitments.iter().collect::<Vec<_>>(),
-            transcript,
-        )
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BytecodeInitFinalOpenings<F>
-where
-    F: JoltField,
-{
-    /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
-    a_init_final: Option<F>,
-    /// Evaluation of the v_init/final polynomials at the opening point. Computed by the verifier in `compute_verifier_openings`.
-    v_init_final: Option<[F; 6]>,
-    /// Evaluation of the t_final polynomial at the opening point.
-    t_final: F,
-}
-
-impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeInitFinalOpenings<F>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
-    type Preprocessing = BytecodePreprocessing<F>;
-    type Proof = C::Proof;
-
-    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, C>, opening_point: &[F]) -> Self {
-        Self {
-            a_init_final: None,
-            v_init_final: None,
-            t_final: polynomials.t_final.evaluate(opening_point),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
-    fn prove_openings(
-        generators: &C::Setup,
-        polynomials: &BytecodePolynomials<F, C>,
-        opening_point: &[F],
-        _openings: &Self,
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        C::prove(generators, &polynomials.t_final, opening_point, transcript)
-    }
-
-    fn compute_verifier_openings(
-        &mut self,
-        preprocessing: &BytecodePreprocessing<F>,
-        opening_point: &[F],
-    ) {
-        self.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-
-        let chis = EqPolynomial::evals(opening_point);
-        self.v_init_final = Some(
-            preprocessing
-                .v_init_final
-                .par_iter()
-                .map(|poly| poly.evaluate_at_chi(&chis))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
-        );
-    }
-
-    fn verify_openings(
-        &self,
-        generators: &C::Setup,
-        opening_proof: &Self::Proof,
-        commitment: &BytecodeCommitment<C>,
-        opening_point: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        C::verify(
-            opening_proof,
-            generators,
-            transcript,
-            opening_point,
-            &self.t_final,
-            &commitment.t_final_commitment,
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
-    use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
+    use common::{
+        constants::MEMORY_OPS_PER_INSTRUCTION,
+        rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
+    };
     use std::collections::HashSet;
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
@@ -870,7 +716,20 @@ mod tests {
             instruction_lookup: None,
             memory_ops: [MemoryOp::noop_read(); MEMORY_OPS_PER_INSTRUCTION],
             bytecode_row,
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
+    }
+
+    #[test]
+    fn bytecode_stuff_ordering() {
+        let program = vec![
+            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+        ];
+        let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
+        BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
     }
 
     #[test]
@@ -901,12 +760,21 @@ mod tests {
         ];
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-            BytecodePolynomials::new::<RV32I>(&preprocessing, &mut trace);
+        let polys: BytecodePolynomials<Fr> =
+            BytecodeProof::<Fr, HyraxScheme<G1Projective>>::generate_witness::<RV32I>(
+                &preprocessing,
+                &mut trace,
+            );
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
         let (read_write_leaves, init_final_leaves) =
-            BytecodeProof::compute_leaves(&preprocessing, &polys, gamma, tau);
+            BytecodeProof::<Fr, HyraxScheme<G1Projective>>::compute_leaves(
+                &preprocessing,
+                &polys,
+                &JoltPolynomials::default(),
+                gamma,
+                tau,
+            );
         let init_leaves = &init_final_leaves[0];
         let read_leaves = &read_write_leaves[0];
         let write_leaves = &read_write_leaves[1];
@@ -916,130 +784,6 @@ mod tests {
         let init_write_leaves = [init_leaves.clone(), write_leaves.clone()].concat();
         let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
         assert_eq!(difference.len(), 0);
-    }
-
-    #[test]
-    fn e2e_memchecking() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-        ];
-        let mut trace = vec![
-            trace_step(BytecodeRow::new(
-                to_ram_address(3),
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-            )),
-            trace_step(BytecodeRow::new(
-                to_ram_address(2),
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-            )),
-        ];
-        let commitment_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
-            program.len(),
-            trace.len(),
-        );
-
-        let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-            BytecodePolynomials::new(&preprocessing, &mut trace);
-
-        let mut transcript = ProofTranscript::new(b"test_transcript");
-
-        let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
-        let commitments = polys.commit(&generators);
-        let proof = BytecodeProof::prove_memory_checking(
-            &generators,
-            &preprocessing,
-            &polys,
-            &mut transcript,
-        );
-
-        let mut transcript = ProofTranscript::new(b"test_transcript");
-        BytecodeProof::verify_memory_checking(
-            &preprocessing,
-            &generators,
-            proof,
-            &commitments,
-            &mut transcript,
-        )
-        .expect("proof should verify");
-    }
-
-    #[test]
-    fn e2e_mem_checking_non_pow_2() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
-        ];
-        let mut trace = vec![
-            trace_step(BytecodeRow::new(
-                to_ram_address(3),
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-            )),
-            trace_step(BytecodeRow::new(
-                to_ram_address(2),
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-            )),
-            trace_step(BytecodeRow::new(
-                to_ram_address(4),
-                32u64,
-                32u64,
-                32u64,
-                32u64,
-                32u64,
-            )),
-        ];
-        JoltTraceStep::pad(&mut trace);
-
-        let commit_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
-            program.len(),
-            trace.len(),
-        );
-        let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-            BytecodePolynomials::new(&preprocessing, &mut trace);
-        let generators = HyraxScheme::<G1Projective>::setup(&commit_shapes);
-        let commitments = polys.commit(&generators);
-
-        let mut transcript = ProofTranscript::new(b"test_transcript");
-
-        let proof = BytecodeProof::prove_memory_checking(
-            &generators,
-            &preprocessing,
-            &polys,
-            &mut transcript,
-        );
-
-        let mut transcript = ProofTranscript::new(b"test_transcript");
-        BytecodeProof::verify_memory_checking(
-            &preprocessing,
-            &generators,
-            proof,
-            &commitments,
-            &mut transcript,
-        )
-        .expect("should verify");
     }
 
     #[test]
@@ -1057,7 +801,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
+        BytecodeProof::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
     }
 
     #[test]
@@ -1073,6 +817,6 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
+        BytecodeProof::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
     }
 }

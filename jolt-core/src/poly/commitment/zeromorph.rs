@@ -67,6 +67,12 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
 #[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
+impl<P: Pairing> Default for ZeromorphCommitment<P> {
+    fn default() -> Self {
+        Self(P::G1Affine::zero())
+    }
+}
+
 impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());
@@ -550,6 +556,18 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         Zeromorph::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: P::G1 = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.0 * coeff)
+            .sum();
+        ZeromorphCommitment(combined_commitment.into_affine())
     }
 
     fn verify(

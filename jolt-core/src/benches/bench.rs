@@ -107,17 +107,13 @@ where
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, trace, circuit_flags) = program.trace();
+        let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
-            io_device,
-            trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
+        let (jolt_proof, jolt_commitments, _) =
+            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
 
         println!("Proof sizing:");
         serialize_and_print_size("jolt_commitments", &jolt_commitments);
@@ -133,7 +129,8 @@ where
             &jolt_proof.instruction_lookups,
         );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -157,22 +154,19 @@ where
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
     program.set_input(&[5u8; 32]);
-    program.set_input(&1024u32);
+    program.set_input(&1000u32);
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, trace, circuit_flags) = program.trace();
+        let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
-            io_device,
-            trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let (jolt_proof, jolt_commitments, _) =
+            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

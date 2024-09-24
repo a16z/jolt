@@ -106,6 +106,39 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
             transcript,
         )
     }
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let max_size = commitments
+            .iter()
+            .map(|commitment| commitment.row_commitments.len())
+            .max()
+            .unwrap();
+
+        let row_commitments = coeffs
+            .par_iter()
+            .zip(commitments.par_iter())
+            .map(|(coeff, commitment)| {
+                commitment
+                    .row_commitments
+                    .iter()
+                    .map(|row_commitment| *row_commitment * coeff)
+                    .collect()
+            })
+            .reduce(
+                || vec![G::zero(); max_size],
+                |running, new| {
+                    running
+                        .iter()
+                        .zip(new.iter())
+                        .map(|(r, n)| *r + n)
+                        .collect()
+                },
+            );
+        HyraxCommitment { row_commitments }
+    }
+
     fn verify(
         proof: &Self::Proof,
         generators: &Self::Setup,
@@ -153,7 +186,7 @@ pub struct HyraxGenerators<G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
 
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxCommitment<G: CurveGroup> {
     pub row_commitments: Vec<G>,
 }

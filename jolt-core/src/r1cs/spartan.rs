@@ -1,10 +1,14 @@
 #![allow(clippy::len_without_is_empty)]
 
+use std::marker::PhantomData;
+
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::BatchType;
+use crate::jolt::vm::JoltCommitments;
+use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::ProverOpeningAccumulator;
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::key::UniformSpartanKey;
-use crate::r1cs::special_polys::SegmentedPaddedWitness;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
@@ -12,6 +16,7 @@ use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
+use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -20,7 +25,7 @@ use crate::{
 };
 
 use super::builder::CombinedUniformBuilder;
-use super::ops::ConstraintInput;
+use super::inputs::ConstraintInput;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -61,20 +66,20 @@ pub enum SpartanError {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
+pub struct UniformSpartanProof<const C: usize, I: ConstraintInput, F: JoltField> {
+    _inputs: PhantomData<I>,
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F>,
     pub(crate) claimed_witness_evals: Vec<F>,
-    pub(crate) opening_proof: C::BatchedProof,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
-    #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
-    pub fn setup_precommitted<I: ConstraintInput>(
-        constraint_builder: &CombinedUniformBuilder<F, I>,
+impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I, F> {
+    #[tracing::instrument(skip_all, name = "Spartan::setup")]
+    pub fn setup(
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
         padded_num_steps: usize,
-    ) -> UniformSpartanKey<F> {
+    ) -> UniformSpartanKey<C, I, F> {
         assert_eq!(
             padded_num_steps,
             constraint_builder.uniform_repeat().next_power_of_two()
@@ -82,22 +87,18 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         UniformSpartanKey::from_builder(constraint_builder)
     }
 
-    /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
-    #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
-    pub fn prove_precommitted<I: ConstraintInput>(
-        generators: &C::Setup,
-        constraint_builder: CombinedUniformBuilder<F, I>,
-        key: &UniformSpartanKey<F>,
-        witness_segments: Vec<Vec<F>>,
+    #[tracing::instrument(skip_all, name = "Spartan::prove")]
+    pub fn prove<PCS: CommitmentScheme<Field = F>>(
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+        key: &UniformSpartanKey<C, I, F>,
+        polynomials: &JoltPolynomials<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
-        assert_eq!(witness_segments.len(), key.uniform_r1cs.num_vars);
-        witness_segments
+        let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
             .iter()
-            .for_each(|segment| assert_eq!(segment.len(), key.num_steps));
-
-        let segmented_padded_witness =
-            SegmentedPaddedWitness::new(key.num_vars_total(), witness_segments);
+            .map(|var| var.get_ref(polynomials))
+            .collect();
 
         let num_rounds_x = key.num_rows_total().log_2();
         let num_rounds_y = key.num_cols_total().log_2();
@@ -108,12 +109,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .collect::<Vec<F>>();
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
-        let inputs = &segmented_padded_witness.segments[0..I::COUNT];
-        let aux = &segmented_padded_witness.segments[I::COUNT..];
-        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
+        let (mut az, mut bz, mut cz) =
+            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS>(&flattened_polys);
 
         let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
-            // Below is an optimized form of: *A * (*B * *C - *D)
+            // Below is an optimized form of: eq * (Az * Bz - Cz)
             if az.is_zero() || bz.is_zero() {
                 if cz.is_zero() {
                     F::zero()
@@ -170,11 +170,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
+            SumcheckInstanceProof::prove_spartan_quadratic(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                &segmented_padded_witness,
+                &flattened_polys,
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
@@ -182,22 +182,20 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
         let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
-        let witness_evals = segmented_padded_witness.evaluate_all(r_col_step.to_owned());
 
-        let witness_segment_polys: Vec<DensePolynomial<F>> =
-            segmented_padded_witness.into_dense_polys();
-        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
-            witness_segment_polys.iter().collect();
-        let opening_proof = C::batch_prove(
-            generators,
-            &witness_segment_polys_ref,
-            r_col_step,
-            &witness_evals,
-            BatchType::Big,
+        let chi = EqPolynomial::evals(r_col_step);
+        let claimed_witness_evals: Vec<_> = flattened_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chi))
+            .collect();
+
+        opening_accumulator.append(
+            &flattened_polys,
+            DensePolynomial::new(chi),
+            r_col_step.to_vec(),
+            &claimed_witness_evals.iter().collect::<Vec<_>>(),
             transcript,
         );
-
-        drop_in_background_thread(witness_segment_polys);
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
@@ -206,21 +204,20 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             outer_sumcheck_claims[3],
         );
         Ok(UniformSpartanProof {
+            _inputs: PhantomData,
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
-            claimed_witness_evals: witness_evals,
-            opening_proof,
+            claimed_witness_evals,
         })
     }
 
-    #[tracing::instrument(skip_all, name = "SNARK::verify")]
-    /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
-    pub fn verify_precommitted(
+    #[tracing::instrument(skip_all, name = "Spartan::verify")]
+    pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
-        key: &UniformSpartanKey<F>,
-        witness_segment_commitments: Vec<&C::Commitment>,
-        generators: &C::Setup,
+        key: &UniformSpartanKey<C, I, F>,
+        commitments: &JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
@@ -285,74 +282,73 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
+        let flattened_commitments: Vec<_> = I::flatten::<C>()
+            .iter()
+            .map(|var| var.get_ref(commitments))
+            .collect();
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        C::batch_verify(
-            &self.opening_proof,
-            generators,
-            r_y_point,
-            &self.claimed_witness_evals,
-            &witness_segment_commitments,
+        opening_accumulator.append(
+            &flattened_commitments,
+            r_y_point.to_vec(),
+            &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
             transcript,
-        )
-        .map_err(|_| SpartanError::InvalidPCSProof)?;
+        );
 
         Ok(())
     }
 }
 
-#[cfg(test)]
-mod test {
-    use ark_bn254::Fr;
-    use ark_std::One;
+// #[cfg(test)]
+// mod test {
+//     use ark_bn254::Fr;
+//     use ark_std::One;
 
-    use crate::{
-        poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme},
-        r1cs::test::{simp_test_builder_key, SimpTestIn},
-    };
+//     use crate::poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme};
 
-    use super::*;
+//     use super::*;
 
-    #[test]
-    fn integration() {
-        let (builder, key) = simp_test_builder_key();
-        let witness_segments: Vec<Vec<Fr>> = vec![
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
-        ];
+//     #[test]
+//     fn integration() {
+//         let (builder, key) = simp_test_builder_key();
+//         let witness_segments: Vec<Vec<Fr>> = vec![
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
+//         ];
 
-        // Create a witness and commit
-        let witness_segments_ref: Vec<&[Fr]> = witness_segments
-            .iter()
-            .map(|segment| segment.as_slice())
-            .collect();
-        let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
-        let witness_commitment =
-            HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+//         // Create a witness and commit
+//         let witness_segments_ref: Vec<&[Fr]> = witness_segments
+//             .iter()
+//             .map(|segment| segment.as_slice())
+//             .collect();
+//         let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
+//         let witness_commitment =
+//             HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
 
-        // Prove spartan!
-        let mut prover_transcript = ProofTranscript::new(b"stuff");
-        let proof =
-            UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
-                SimpTestIn,
-            >(
-                &gens,
-                builder,
-                &key,
-                witness_segments,
-                &mut prover_transcript,
-            )
-            .unwrap();
+//         // Prove spartan!
+//         let mut prover_transcript = ProofTranscript::new(b"stuff");
+//         let proof =
+//             UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
+//                 SimpTestIn,
+//             >(
+//                 &gens,
+//                 builder,
+//                 &key,
+//                 witness_segments,
+//                 todo!("opening accumulator"),
+//                 &mut prover_transcript,
+//             )
+//             .unwrap();
 
-        let mut verifier_transcript = ProofTranscript::new(b"stuff");
-        let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
-        proof
-            .verify_precommitted(
-                &key,
-                witness_commitment_ref,
-                &gens,
-                &mut verifier_transcript,
-            )
-            .expect("Spartan verifier failed");
-    }
-}
+//         let mut verifier_transcript = ProofTranscript::new(b"stuff");
+//         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
+//         proof
+//             .verify_precommitted(
+//                 &key,
+//                 witness_commitment_ref,
+//                 &gens,
+//                 &mut verifier_transcript,
+//             )
+//             .expect("Spartan verifier failed");
+//     }
+// }

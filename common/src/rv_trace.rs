@@ -3,7 +3,8 @@ use std::str::FromStr;
 use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
-use strum_macros::FromRepr;
+use strum::EnumCount;
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RVTraceRow {
@@ -230,33 +231,52 @@ pub struct ELFInstruction {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 12;
+/// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
+/// Note that the flags below deviate slightly from those described in Appendix A.1
+/// of the Jolt paper.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Ord, EnumCountMacro, EnumIter, Default,
+)]
+pub enum CircuitFlags {
+    #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
+    /// 1 if the first lookup operand is the program counter; 0 otherwise (first lookup operand is RS1 value).
+    LeftOperandIsPC,
+    /// 1 if the second lookup operand is `imm`; 0 otherwise (second lookup operand is RS2 value).
+    RightOperandIsImm,
+    /// 1 if the instruction is a load (i.e. `LB`, `LH`, etc.)
+    Load,
+    /// 1 if the instruction is a store (i.e. `SB`, `SH`, etc.)
+    Store,
+    /// 1 if the instruction is a jump (i.e. `JAL`, `JALR`)
+    Jump,
+    /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
+    Branch,
+    /// 1 if the lookup output is to be stored in `rd` at the end of the step.
+    WriteLookupOutputToRD,
+    /// Used in load/store and branch instructions where the immediate value used as an offset
+    ImmSignBit,
+    /// Indicates whether the instruction performs a concat-type lookup.
+    ConcatLookupQueryChunks,
+    /// 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
+    Virtual,
+    /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
+    Assert,
+    /// Used in virtual sequences; the program counter should be the same for the full seqeuence.
+    DoNotUpdatePC,
+}
+pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 impl ELFInstruction {
     #[rustfmt::skip]
     pub fn to_circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-        // Jolt Appendix A.1
-        // 0: first_operand == rs1 (1 if PC)
-        // 1: second_operand == rs2 (1 if imm)
-        // 2: Load instruction
-        // 3: Store instruction
-        // 4: Jump instruction
-        // 5: Branch instruction
-        // 6: Instruction writes lookup output to rd
-        // 7: Sign-bit of imm
-        // 8: Is concat
-        // 9: Virtual instruction
-        // 10: Assert instruction
-        // 11: Don't update PC
-
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
-        flags[0] = matches!(
+        flags[CircuitFlags::LeftOperandIsPC as usize] = matches!(
             self.opcode,
             RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
         );
 
-        flags[1] = matches!(
+        flags[CircuitFlags::RightOperandIsImm as usize] = matches!(
             self.opcode,
             RV32IM::ADDI
             | RV32IM::XORI
@@ -272,28 +292,28 @@ impl ELFInstruction {
             | RV32IM::JALR,
         );
 
-        flags[2] = matches!(
+        flags[CircuitFlags::Load as usize] = matches!(
             self.opcode,
             RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU,
         );
 
-        flags[3] = matches!(
+        flags[CircuitFlags::Store as usize] = matches!(
             self.opcode,
             RV32IM::SB | RV32IM::SH | RV32IM::SW,
         );
 
-        flags[4] = matches!(
+        flags[CircuitFlags::Jump as usize] = matches!(
             self.opcode,
             RV32IM::JAL | RV32IM::JALR,
         );
 
-        flags[5] = matches!(
+        flags[CircuitFlags::Branch as usize] = matches!(
             self.opcode,
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
         // loads, stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
-        flags[6] = !matches!(
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = !matches!(
             self.opcode,
             RV32IM::SB
             | RV32IM::SH
@@ -315,9 +335,9 @@ impl ELFInstruction {
         );
 
         let mask = 1u32 << 31;
-        flags[7] = matches!(self.imm, Some(imm) if imm & mask == mask);
+        flags[CircuitFlags::ImmSignBit as usize] = matches!(self.imm, Some(imm) if imm & mask == mask);
 
-        flags[8] = matches!(
+        flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
             self.opcode,
             RV32IM::XOR
             | RV32IM::XORI
@@ -348,9 +368,9 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
 
-        flags[9] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
 
-        flags[10] = matches!(self.opcode,
+        flags[CircuitFlags::Assert as usize] = matches!(self.opcode,
             RV32IM::VIRTUAL_ASSERT_EQ                        |
             RV32IM::VIRTUAL_ASSERT_LTE                       |
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
@@ -361,7 +381,7 @@ impl ELFInstruction {
         // All instructions in virtual sequence are mapped from the same
         // ELF address. Thus if an instruction is virtual (and not the last one
         // in its sequence), then we should *not* update the PC.
-        flags[11] = match self.virtual_sequence_remaining {
+        flags[CircuitFlags::DoNotUpdatePC as usize] = match self.virtual_sequence_remaining {
             Some(i) => i != 0,
             None => false
         };

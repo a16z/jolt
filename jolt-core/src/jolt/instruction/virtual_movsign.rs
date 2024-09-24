@@ -13,7 +13,7 @@ use crate::{
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MOVSIGNInstruction<const WORD_SIZE: usize>(pub u64);
 
 // Constants for 32-bit and 64-bit word sizes

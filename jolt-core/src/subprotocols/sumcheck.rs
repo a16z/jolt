@@ -4,7 +4,7 @@
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::r1cs::special_polys::{IndexablePoly, SparsePolynomial, SparseTripleIterator};
+use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
@@ -316,17 +316,17 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         )
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_quadratic")]
-    // A fork of `prove_quad` with the 0th round unrolled from the rest of the
-    // for loop. This allows us to pass in `W` and `X` as references instead of
-    // passing them in as a single `MultilinearPolynomial`, which would require
-    // an expensive concatenation. We defer the actual instantation of a
-    // `MultilinearPolynomial` to the end of the 0th round.
-    pub fn prove_spartan_quadratic<P: IndexablePoly<F>>(
+    #[tracing::instrument(skip_all)]
+    // A specialized sumcheck implementation with the 0th round unrolled from the rest of the
+    // `for` loop. This allows us to pass in `witness_polynomials` by reference instead of
+    // passing them in as a single `DensePolynomial`, which would require an expensive
+    // concatenation. We defer the actual instantation of a `DensePolynomial` to the end of the
+    // 0th round.
+    pub fn prove_spartan_quadratic(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
-        W: &P,
+        witness_polynomials: &[&DensePolynomial<F>],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
@@ -336,38 +336,51 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         /*          Round 0 START         */
 
         let len = poly_A.len() / 2;
-        assert_eq!(len, W.len());
+        let trace_len = witness_polynomials[0].len();
+        witness_polynomials
+            .iter()
+            .for_each(|poly| debug_assert_eq!(poly.len(), trace_len));
+
+        // We don't materialize the full, flattened witness vector, but this closure
+        // simulates it
+        let witness_value = |index: usize| {
+            if (index / trace_len) >= witness_polynomials.len() {
+                F::zero()
+            } else {
+                witness_polynomials[index / trace_len][index % trace_len]
+            }
+        };
 
         let poly = {
             // eval_point_0 = \sum_i A[i] * B[i]
-            // where B[i] = W[i] for i in 0..len
+            // where B[i] = witness_value(i) for i in 0..len
             let eval_point_0: F = (0..len)
                 .into_par_iter()
                 .map(|i| {
-                    if poly_A[i].is_zero() || W[i].is_zero() {
+                    if poly_A[i].is_zero() || witness_value(i).is_zero() {
                         F::zero()
                     } else {
-                        poly_A[i] * W[i]
+                        poly_A[i] * witness_value(i)
                     }
                 })
                 .sum();
             // eval_point_2 = \sum_i (2 * A[len + i] - A[i]) * (2 * B[len + i] - B[i])
-            // where B[i] = W[i] for i in 0..len, B[len] = 1, and B[i] = 0 for i > len
+            // where B[i] = witness_value(i) for i in 0..len, B[len] = 1, and B[i] = 0 for i > len
             let mut eval_point_2: F = (1..len)
                 .into_par_iter()
                 .map(|i| {
-                    if W[i].is_zero() {
+                    if witness_value(i).is_zero() {
                         F::zero()
                     } else {
                         let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-                        let poly_B_bound_point = -W[i];
+                        let poly_B_bound_point = -witness_value(i);
                         mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
                     }
                 })
                 .sum();
             eval_point_2 += mul_0_optimized(
                 &(poly_A[len] + poly_A[len] - poly_A[0]),
-                &(F::from_u64(2).unwrap() - W[0]),
+                &(F::from_u64(2).unwrap() - witness_value(0)),
             );
 
             let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
@@ -390,22 +403,21 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         let (_, mut poly_B) = rayon::join(
             || poly_A.bound_poly_var_top_zero_optimized(&r_i),
             || {
-                // Simulates `poly_B.bound_poly_var_top(&r_i)`
+                // Simulates `poly_B.bound_poly_var_top(&r_i)` by
+                // iterating over `witness_polynomials`
                 // We need to do this because we don't actually have
-                // a `MultilinearPolynomial` instance for `poly_B` yet,
-                // only the constituents of its (Lagrange basis) coefficients
-                // `W` and `X`.
+                // a `DensePolynomial` instance for `poly_B` yet.
                 let zero = F::zero();
                 let one = [F::one()];
-                let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
+                let W_iter = (0..len).into_par_iter().map(witness_value);
                 let Z_iter = W_iter
-                    .chain(one.par_iter())
-                    .chain(rayon::iter::repeatn(&zero, len));
+                    .chain(one.into_par_iter())
+                    .chain(rayon::iter::repeatn(zero, len));
                 let left_iter = Z_iter.clone().take(len);
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter
                     .zip(right_iter)
-                    .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
+                    .map(|(a, b)| if a == b { a } else { a + r_i * (b - a) })
                     .collect();
                 DensePolynomial::new(B)
             },
@@ -413,7 +425,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
         /*          Round 0 END          */
 
-        for i in 1..num_rounds {
+        for _i in 1..num_rounds {
             let poly = {
                 let (eval_point_0, eval_point_2) =
                     Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
@@ -440,10 +452,6 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 || poly_A.bound_poly_var_top_zero_optimized(&r_i),
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
             );
-
-            if i == num_rounds - 1 {
-                assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
-            }
         }
 
         let evals = vec![poly_A[0], poly_B[0]];

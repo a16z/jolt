@@ -17,7 +17,6 @@ pub struct ProgramSummary {
 
     pub io_device: JoltDevice,
     pub processed_trace: Vec<JoltTraceStep<RV32I>>,
-    pub circuit_flags: Vec<bool>,
 }
 
 impl ProgramSummary {

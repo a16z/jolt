@@ -4,6 +4,7 @@ use ark_ff::PrimeField;
 
 use crate::field::JoltField;
 use crate::poly::commitment::hyperkzg::{HyperKZG, HyperKZGProof, HyperKZGVerifierKey};
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use crate::subprotocols::grand_product::BatchedGrandProductProof;
@@ -43,7 +44,6 @@ sol!(
         uint256 outerClaimC;
         SumcheckProof inner;
         uint256[] claimedEvals;
-        HyperKZGProofSol openingProof;
     }
 );
 
@@ -155,7 +155,10 @@ pub fn into_uint256<F: JoltField>(from: F) -> U256 {
     U256::from_le_slice(&buf)
 }
 
-impl Into<SpartanProof> for &UniformSpartanProof<Fp<MontBackend<FrConfig, 4>, 4>, HyperKZG<Bn254>> {
+const C: usize = 4;
+impl Into<SpartanProof>
+    for &UniformSpartanProof<C, JoltR1CSInputs, Fp<MontBackend<FrConfig, 4>, 4>>
+{
     fn into(self) -> SpartanProof {
         let claimed_evals = self
             .claimed_witness_evals
@@ -170,7 +173,6 @@ impl Into<SpartanProof> for &UniformSpartanProof<Fp<MontBackend<FrConfig, 4>, 4>
             outerClaimC: into_uint256(self.outer_sumcheck_claims.2),
             inner: (&self.inner_sumcheck_proof).into(),
             claimedEvals: claimed_evals,
-            openingProof: (&self.opening_proof).into(),
         }
     }
 }

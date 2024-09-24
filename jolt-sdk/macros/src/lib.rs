@@ -102,7 +102,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_fn_name() -> (
                 impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send,
-                impl Fn(jolt::RV32IHyraxProof) -> bool + Sync + Send
+                impl Fn(jolt::JoltHyperKZGProof) -> bool + Sync + Send
             ) {
                 #imports
                 let (program, preprocessing) = #preprocess_fn_name();
@@ -119,10 +119,10 @@ impl MacroBuilder {
                 };
 
 
-                let verify_closure = move |proof: jolt::RV32IHyraxProof| {
+                let verify_closure = move |proof: jolt::JoltHyperKZGProof| {
                     let program = (*program_cp).clone();
                     let preprocessing = (*preprocessing_cp).clone();
-                    RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments).is_ok()
+                    RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments, None).is_ok()
                 };
 
                 (prove_closure, verify_closure)
@@ -190,7 +190,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
-                jolt::JoltPreprocessing<jolt::F, jolt::PCS>
+                jolt::JoltPreprocessing<4, jolt::F, jolt::PCS>
             ) {
                 #imports
 
@@ -201,7 +201,7 @@ impl MacroBuilder {
                 let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<jolt::F, jolt::PCS> =
+                let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         memory_init,
@@ -242,28 +242,26 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::PCS>,
+                preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
 
                 #(#set_program_args;)*
 
-                let (io_device, trace, circuit_flags) =
-                    program.trace();
+                let (io_device, trace) = program.trace();
 
                 let output_bytes = io_device.outputs.clone();
 
-                let (jolt_proof, jolt_commitments) = RV32IJoltVM::prove(
+                let (jolt_proof, jolt_commitments, _) = RV32IJoltVM::prove(
                     io_device,
                     trace,
-                    circuit_flags,
                     preprocessing,
                 );
 
                 #handle_return
 
-                let proof = jolt::RV32IHyraxProof {
+                let proof = jolt::JoltHyperKZGProof {
                     proof: jolt_proof,
                     commitments: jolt_commitments,
                 };
@@ -488,10 +486,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::RV32IHyraxProof)
+                ((), jolt::JoltHyperKZGProof)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::RV32IHyraxProof)
+                (#ty, jolt::JoltHyperKZGProof)
             },
         }
     }
@@ -537,10 +535,10 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, RV32IHyraxProof, RV32IJoltVM};
+                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = RV32IHyraxProof::deserialize_from_bytes(proof_bytes).unwrap();
+                let proof = JoltHyperKZGProof::deserialize_from_bytes(proof_bytes).unwrap();
 
                 let preprocessing = RV32IJoltVM::preprocess(
                     decoded_preprocessing_data.bytecode,

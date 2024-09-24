@@ -1,5 +1,11 @@
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::BatchType;
+use crate::{
+    field::JoltField,
+    jolt::vm::{JoltCommitments, JoltPolynomials, ProverDebugInfo},
+    poly::{
+        commitment::commitment_scheme::BatchType,
+        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+    },
+};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
@@ -12,304 +18,93 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
-        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-pub struct SurgePolys<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    _marker: PhantomData<PCS>,
-    pub dim: Vec<DensePolynomial<F>>,
-    pub read_cts: Vec<DensePolynomial<F>>,
-    pub final_cts: Vec<DensePolynomial<F>>,
-    pub E_polys: Vec<DensePolynomial<F>>,
+use super::memory_checking::{
+    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+};
+
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct SurgeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    /// C-sized vector of `dim_i` polynomials/commitments/openings
+    pub(crate) dim: Vec<T>,
+    /// C-sized vector of `read_cts_i` polynomials/commitments/openings
+    pub(crate) read_cts: Vec<T>,
+    /// C-sized vector of `E_i` polynomials/commitments/openings
+    pub(crate) E_polys: Vec<T>,
+    /// `num_memories`-sized vector of `final_cts_i` polynomials/commitments/openings
+    pub(crate) final_cts: Vec<T>,
+
+    a_init_final: VerifierComputedOpening<T>,
+    v_init_final: VerifierComputedOpening<Vec<T>>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SurgeCommitment<CS: CommitmentScheme> {
-    /// Commitments to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: Vec<CS::Commitment>,
-    /// Commitment to final_cts_i polynomials.
-    pub final_commitment: Vec<CS::Commitment>,
-    /// Commitments to E_i polynomials.
-    pub E_commitment: Vec<CS::Commitment>,
-}
+pub type SurgePolynomials<F: JoltField> = SurgeStuff<DensePolynomial<F>>;
+pub type SurgeOpenings<F: JoltField> = SurgeStuff<F>;
+pub type SurgeCommitments<PCS: CommitmentScheme> = SurgeStuff<PCS::Commitment>;
 
-impl<F, PCS> StructuredCommitment<PCS> for SurgePolys<F, PCS>
+impl<const C: usize, const M: usize, F, T, Instruction>
+    Initializable<T, SurgePreprocessing<F, Instruction, C, M>> for SurgeStuff<T>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    type Commitment = SurgeCommitment<PCS>;
-
-    #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(&self, generators: &PCS::Setup) -> Self::Commitment {
-        let _read_write_num_vars = self.dim[0].get_num_vars();
-        let dim_read_polys: Vec<&DensePolynomial<F>> =
-            self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment =
-            PCS::batch_commit_polys_ref(&dim_read_polys, generators, BatchType::SurgeReadWrite);
-        let E_commitment =
-            PCS::batch_commit_polys(&self.E_polys, generators, BatchType::SurgeReadWrite);
-
-        let _final_num_vars = self.final_cts[0].get_num_vars();
-        let final_commitment =
-            PCS::batch_commit_polys(&self.final_cts, generators, BatchType::SurgeInitFinal);
-
-        Self::Commitment {
-            dim_read_commitment,
-            final_commitment,
-            E_commitment,
-        }
-    }
-}
-
-type PrimarySumcheckOpenings<F> = Vec<F>;
-
-impl<F, PCS> StructuredOpeningProof<F, PCS, SurgePolys<F, PCS>> for PrimarySumcheckOpenings<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    type Proof = PCS::BatchedProof;
-
-    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::evals(opening_point);
-        polynomials
-            .E_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
-    fn prove_openings(
-        generators: &PCS::Setup,
-        polynomials: &SurgePolys<F, PCS>,
-        opening_point: &[F],
-        E_poly_openings: &Vec<F>,
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        PCS::batch_prove(
-            generators,
-            &polynomials.E_polys.iter().collect::<Vec<_>>(),
-            opening_point,
-            E_poly_openings,
-            BatchType::SurgeReadWrite,
-            transcript,
-        )
-    }
-
-    fn verify_openings(
-        &self,
-        generators: &PCS::Setup,
-        opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<PCS>,
-        opening_point: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        PCS::batch_verify(
-            opening_proof,
-            generators,
-            opening_point,
-            self,
-            &commitment.E_commitment.iter().collect::<Vec<_>>(),
-            transcript,
-        )
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SurgeReadWriteOpenings<F>
-where
-    F: JoltField,
-{
-    dim_openings: Vec<F>,    // C-sized
-    read_openings: Vec<F>,   // C-sized
-    E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
-}
-
-impl<F, PCS> StructuredOpeningProof<F, PCS, SurgePolys<F, PCS>> for SurgeReadWriteOpenings<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    type Proof = PCS::BatchedProof;
-
-    #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::evals(opening_point);
-        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
-        Self {
-            dim_openings: polynomials.dim.par_iter().map(evaluate).collect(),
-            read_openings: polynomials.read_cts.par_iter().map(evaluate).collect(),
-            E_poly_openings: polynomials.E_polys.par_iter().map(evaluate).collect(),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
-    fn prove_openings(
-        generators: &PCS::Setup,
-        polynomials: &SurgePolys<F, PCS>,
-        opening_point: &[F],
-        openings: &Self,
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        let read_write_polys = polynomials
-            .dim
-            .iter()
-            .chain(polynomials.read_cts.iter())
-            .chain(polynomials.E_polys.iter())
-            .collect::<Vec<_>>();
-        let read_write_openings = [
-            openings.dim_openings.as_slice(),
-            openings.read_openings.as_slice(),
-            openings.E_poly_openings.as_slice(),
-        ]
-        .concat();
-
-        PCS::batch_prove(
-            generators,
-            &read_write_polys,
-            opening_point,
-            &read_write_openings,
-            BatchType::SurgeReadWrite,
-            transcript,
-        )
-    }
-
-    fn verify_openings(
-        &self,
-        generators: &PCS::Setup,
-        opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<PCS>,
-        opening_point: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let read_write_openings: Vec<F> = [
-            self.dim_openings.as_slice(),
-            self.read_openings.as_slice(),
-            self.E_poly_openings.as_slice(),
-        ]
-        .concat();
-        PCS::batch_verify(
-            opening_proof,
-            generators,
-            opening_point,
-            &read_write_openings,
-            &commitment
-                .dim_read_commitment
-                .iter()
-                .chain(commitment.E_commitment.iter())
-                .collect::<Vec<_>>(),
-            transcript,
-        )
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SurgeFinalOpenings<F, Instruction, const C: usize, const M: usize>
-where
-    F: JoltField,
+    T: CanonicalSerialize + CanonicalDeserialize + Default,
     Instruction: JoltInstruction + Default,
 {
-    _instruction: PhantomData<Instruction>,
-    final_openings: Vec<F>,       // C-sized
-    a_init_final: Option<F>,      // Computed by verifier
-    v_init_final: Option<Vec<F>>, // Computed by verifier
-}
-
-impl<F, PCS, Instruction, const C: usize, const M: usize>
-    StructuredOpeningProof<F, PCS, SurgePolys<F, PCS>> for SurgeFinalOpenings<F, Instruction, C, M>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    Instruction: JoltInstruction + Default,
-{
-    type Proof = PCS::BatchedProof;
-    type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
-
-    #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::evals(opening_point);
-        let final_openings = polynomials
-            .final_cts
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
+    fn initialize(_preprocessing: &SurgePreprocessing<F, Instruction, C, M>) -> Self {
+        let num_memories = C * Instruction::default().subtables::<F>(C, M).len();
         Self {
-            _instruction: PhantomData,
-            final_openings,
+            dim: std::iter::repeat_with(|| T::default()).take(C).collect(),
+            read_cts: std::iter::repeat_with(|| T::default()).take(C).collect(),
+            final_cts: std::iter::repeat_with(|| T::default()).take(C).collect(),
+            E_polys: std::iter::repeat_with(|| T::default())
+                .take(num_memories)
+                .collect(),
             a_init_final: None,
             v_init_final: None,
         }
     }
+}
 
-    #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
-    fn prove_openings(
-        generators: &PCS::Setup,
-        polynomials: &SurgePolys<F, PCS>,
-        opening_point: &[F],
-        openings: &Self,
-        transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        PCS::batch_prove(
-            generators,
-            &polynomials.final_cts.iter().collect::<Vec<_>>(),
-            opening_point,
-            &openings.final_openings,
-            BatchType::SurgeInitFinal,
-            transcript,
-        )
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for SurgeStuff<T> {
+    fn read_write_values(&self) -> Vec<&T> {
+        self.dim
+            .iter()
+            .chain(self.read_cts.iter())
+            .chain(self.E_polys.iter())
+            .collect()
     }
 
-    fn compute_verifier_openings(&mut self, _: &Self::Preprocessing, opening_point: &[F]) {
-        self.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        self.v_init_final = Some(
-            Instruction::default()
-                .subtables(C, M)
-                .iter()
-                .map(|(subtable, _)| subtable.evaluate_mle(opening_point))
-                .collect(),
-        );
+    fn init_final_values(&self) -> Vec<&T> {
+        self.final_cts.iter().collect()
     }
 
-    fn verify_openings(
-        &self,
-        generators: &PCS::Setup,
-        opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<PCS>,
-        opening_point: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        PCS::batch_verify(
-            opening_proof,
-            generators,
-            opening_point,
-            &self.final_openings,
-            &commitment.final_commitment.iter().collect::<Vec<_>>(),
-            transcript,
-        )
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        self.dim
+            .iter_mut()
+            .chain(self.read_cts.iter_mut())
+            .chain(self.E_polys.iter_mut())
+            .collect()
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        self.final_cts.iter_mut().collect()
     }
 }
 
-impl<F, PCS, Instruction, const C: usize, const M: usize>
-    MemoryCheckingProver<F, PCS, SurgePolys<F, PCS>> for SurgeProof<F, PCS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, PCS>
+    for SurgeProof<F, PCS, Instruction, C, M>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
+    type Polynomials = SurgePolynomials<F>;
+    type Openings = SurgeOpenings<F>;
+    type Commitments = SurgeCommitments<PCS>;
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
-    type ReadWriteOpenings = SurgeReadWriteOpenings<F>;
-    type InitFinalOpenings = SurgeFinalOpenings<F, Instruction, C, M>;
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
@@ -318,8 +113,9 @@ where
 
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
     fn compute_leaves(
-        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        polynomials: &SurgePolys<F, PCS>,
+        preprocessing: &Self::Preprocessing,
+        polynomials: &Self::Polynomials,
+        _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
@@ -387,46 +183,66 @@ where
     }
 }
 
-impl<F, CS, Instruction, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, CS, SurgePolys<F, CS>> for SurgeProof<F, CS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize> MemoryCheckingVerifier<F, PCS>
+    for SurgeProof<F, PCS, Instruction, C, M>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
+    fn compute_verifier_openings(
+        openings: &mut Self::Openings,
+        _preprocessing: &Self::Preprocessing,
+        _r_read_write: &[F],
+        r_init_final: &[F],
+    ) {
+        openings.a_init_final =
+            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
+        openings.v_init_final = Some(
+            Instruction::default()
+                .subtables(C, M)
+                .iter()
+                .map(|(subtable, _)| subtable.evaluate_mle(r_init_final))
+                .collect(),
+        );
+    }
+
     fn read_tuples(
-        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        openings: &Self::ReadWriteOpenings,
+        _preprocessing: &Self::Preprocessing,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
-                    openings.dim_openings[dim_index],
-                    openings.E_poly_openings[memory_index],
-                    openings.read_openings[dim_index],
+                    openings.dim[dim_index],
+                    openings.E_polys[memory_index],
+                    openings.read_cts[dim_index],
                 )
             })
             .collect()
     }
     fn write_tuples(
-        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        openings: &Self::ReadWriteOpenings,
+        _preprocessing: &Self::Preprocessing,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
-                    openings.dim_openings[dim_index],
-                    openings.E_poly_openings[memory_index],
-                    openings.read_openings[dim_index] + F::one(),
+                    openings.dim[dim_index],
+                    openings.E_polys[memory_index],
+                    openings.read_cts[dim_index] + F::one(),
                 )
             })
             .collect()
     }
     fn init_tuples(
-        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        openings: &Self::InitFinalOpenings,
+        _preprocessing: &Self::Preprocessing,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -442,8 +258,9 @@ where
             .collect()
     }
     fn final_tuples(
-        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        openings: &Self::InitFinalOpenings,
+        _preprocessing: &Self::Preprocessing,
+        openings: &Self::Openings,
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -454,23 +271,21 @@ where
                 (
                     a_init,
                     v_init[Self::memory_to_subtable_index(memory_index)],
-                    openings.final_openings[dim_index],
+                    openings.final_cts[dim_index],
                 )
             })
             .collect()
     }
 }
 
-pub struct SurgePrimarySumcheck<F, PCS>
+pub struct SurgePrimarySumcheck<F>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
 {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     claimed_evaluation: F,
-    openings: PrimarySumcheckOpenings<F>,
-    opening_proof: PCS::BatchedProof,
+    E_poly_openings: Vec<F>,
 }
 
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
@@ -489,19 +304,14 @@ where
     PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
+    _instruction: PhantomData<Instruction>,
     /// Commitments to all polynomials
-    commitment: SurgeCommitment<PCS>,
+    commitments: SurgeCommitments<PCS>,
 
     /// Primary collation sumcheck proof
-    primary_sumcheck: SurgePrimarySumcheck<F, PCS>,
+    primary_sumcheck: SurgePrimarySumcheck<F>,
 
-    memory_checking: MemoryCheckingProof<
-        F,
-        PCS,
-        SurgePolys<F, PCS>,
-        SurgeReadWriteOpenings<F>,
-        SurgeFinalOpenings<F, Instruction, C, M>,
-    >,
+    memory_checking: MemoryCheckingProof<F, PCS, SurgeOpenings<F>, NoExogenousOpenings>,
 }
 
 impl<F, Instruction, const C: usize, const M: usize> SurgePreprocessing<F, Instruction, C, M>
@@ -519,6 +329,8 @@ where
             .map(|(subtable, _)| subtable.materialize(M))
             .collect();
 
+        // TODO(moodlezoup): do PCS setup here
+
         Self {
             _instruction: PhantomData,
             materialized_subtables,
@@ -532,6 +344,7 @@ where
     PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
+    // TODO(moodlezoup): We can be more efficient (use fewer memories) if we use subtable_indices
     fn num_memories() -> usize {
         C * Instruction::default().subtables::<F>(C, M).len()
     }
@@ -565,13 +378,28 @@ where
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         generators: &PCS::Setup,
         ops: Vec<Instruction>,
-        transcript: &mut ProofTranscript,
-    ) -> Self {
+    ) -> (Self, Option<ProverDebugInfo<F>>) {
+        let mut transcript = ProofTranscript::new(b"Surge transcript");
+        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
         transcript.append_protocol_name(Self::protocol_name());
 
         let num_lookups = ops.len().next_power_of_two();
-        let polynomials = Self::construct_polys(preprocessing, &ops);
-        let commitment = polynomials.commit(generators);
+        let polynomials = Self::generate_witness(preprocessing, &ops);
+
+        let mut commitments = SurgeCommitments::<PCS>::initialize(preprocessing);
+        let trace_polys = polynomials.read_write_values();
+        let trace_comitments =
+            PCS::batch_commit_polys_ref(&trace_polys, generators, BatchType::SurgeReadWrite);
+        commitments
+            .read_write_values_mut()
+            .into_iter()
+            .zip(trace_comitments.into_iter())
+            .for_each(|(dest, src)| *dest = src);
+        commitments.final_cts = PCS::batch_commit_polys(
+            &polynomials.final_cts,
+            generators,
+            BatchType::SurgeInitFinal,
+        );
 
         let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
@@ -593,48 +421,75 @@ where
             instruction.combine_lookups(vals_no_eq, C, M) * eq
         };
 
-        let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
-            &sumcheck_claim,
-            num_rounds,
-            &mut combined_sumcheck_polys,
-            combine_lookups_eq,
-            instruction.g_poly_degree(C) + 1, // combined degree + eq term
-            transcript,
-        );
+        let (primary_sumcheck_proof, r_z, mut sumcheck_openings) =
+            SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
+                &sumcheck_claim,
+                num_rounds,
+                &mut combined_sumcheck_polys,
+                combine_lookups_eq,
+                instruction.g_poly_degree(C) + 1, // combined degree + eq term
+                &mut transcript,
+            );
 
-        let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
-        let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
-            generators,
-            &polynomials,
-            &r_z,
-            &sumcheck_openings,
-            transcript,
+        // Remove EQ
+        let _ = combined_sumcheck_polys.pop();
+        let _ = sumcheck_openings.pop();
+        opening_accumulator.append(
+            &polynomials.E_polys.iter().collect::<Vec<_>>(),
+            DensePolynomial::new(EqPolynomial::evals(&r_z)),
+            r_z.clone(),
+            &sumcheck_openings.iter().collect::<Vec<_>>(),
+            &mut transcript,
         );
 
         let primary_sumcheck = SurgePrimarySumcheck {
             claimed_evaluation: sumcheck_claim,
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
-            openings: sumcheck_openings,
-            opening_proof: sumcheck_opening_proof,
+            E_poly_openings: sumcheck_openings,
         };
 
-        let memory_checking =
-            SurgeProof::prove_memory_checking(generators, preprocessing, &polynomials, transcript);
+        let memory_checking = SurgeProof::prove_memory_checking(
+            generators,
+            preprocessing,
+            &polynomials,
+            &JoltPolynomials::default(), // Hack: required by the memory-checking trait, but unused in Surge
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
-        SurgeProof {
-            commitment,
+        let proof = SurgeProof {
+            _instruction: PhantomData,
+            commitments,
             primary_sumcheck,
             memory_checking,
-        }
+        };
+        #[cfg(test)]
+        let debug_info = Some(ProverDebugInfo {
+            transcript,
+            opening_accumulator,
+        });
+        #[cfg(not(test))]
+        let debug_info = None;
+
+        (proof, debug_info)
     }
 
     pub fn verify(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         generators: &PCS::Setup,
         proof: SurgeProof<F, PCS, Instruction, C, M>,
-        transcript: &mut ProofTranscript,
+        _debug_info: Option<ProverDebugInfo<F>>,
     ) -> Result<(), ProofVerifyError> {
+        let mut transcript = ProofTranscript::new(b"Surge transcript");
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+            VerifierOpeningAccumulator::new();
+        #[cfg(test)]
+        if let Some(debug_info) = _debug_info {
+            transcript.compare_to(debug_info.transcript);
+            opening_accumulator.compare_to(debug_info.opening_accumulator, &generators);
+        }
+
         transcript.append_protocol_name(Self::protocol_name());
         let instruction = Instruction::default();
 
@@ -646,38 +501,43 @@ where
             proof.primary_sumcheck.claimed_evaluation,
             proof.primary_sumcheck.num_rounds,
             primary_sumcheck_poly_degree,
-            transcript,
+            &mut transcript,
         )?;
 
         let eq_eval = EqPolynomial::new(r_primary_sumcheck.to_vec()).evaluate(&r_z);
         assert_eq!(
-            eq_eval * instruction.combine_lookups(&proof.primary_sumcheck.openings, C, M),
+            eq_eval * instruction.combine_lookups(&proof.primary_sumcheck.E_poly_openings, C, M),
             claim_last,
             "Primary sumcheck check failed."
         );
 
-        proof.primary_sumcheck.openings.verify_openings(
-            generators,
-            &proof.primary_sumcheck.opening_proof,
-            &proof.commitment,
-            &r_z,
-            transcript,
-        )?;
+        opening_accumulator.append(
+            &proof.commitments.E_polys.iter().collect::<Vec<_>>(),
+            r_z.clone(),
+            &proof
+                .primary_sumcheck
+                .E_poly_openings
+                .iter()
+                .collect::<Vec<_>>(),
+            &mut transcript,
+        );
 
         Self::verify_memory_checking(
             preprocessing,
             generators,
             proof.memory_checking,
-            &proof.commitment,
-            transcript,
+            &proof.commitments,
+            &JoltCommitments::<PCS>::default(),
+            &mut opening_accumulator,
+            &mut transcript,
         )
     }
 
     #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
-    fn construct_polys(
+    fn generate_witness(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         ops: &[Instruction],
-    ) -> SurgePolys<F, PCS> {
+    ) -> SurgePolynomials<F> {
         let num_lookups = ops.len().next_power_of_two();
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];
 
@@ -743,22 +603,23 @@ where
             }
             E_i_evals.push(E_evals);
         }
-        let E_poly: Vec<DensePolynomial<F>> = E_i_evals
+        let E_polys: Vec<DensePolynomial<F>> = E_i_evals
             .iter()
             .map(|E| DensePolynomial::new(E.to_vec()))
             .collect();
 
-        SurgePolys {
-            _marker: PhantomData,
+        SurgePolynomials {
             dim,
             read_cts,
             final_cts,
-            E_polys: E_poly,
+            E_polys,
+            a_init_final: None,
+            v_init_final: None,
         }
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, PCS>, eq: &DensePolynomial<F>) -> F {
+    fn compute_primary_sumcheck_claim(polys: &SurgePolynomials<F>, eq: &DensePolynomial<F>) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -785,73 +646,65 @@ mod tests {
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
-        poly::{commitment::hyrax::HyraxScheme, commitment::pedersen::PedersenGenerators},
-        utils::transcript::ProofTranscript,
+        poly::commitment::{
+            commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+            hyperkzg::HyperKZG,
+        },
     };
-    use ark_bn254::{Fr, G1Projective};
+    use ark_bn254::{Bn254, Fr};
+    use ark_std::test_rng;
+    use rand_core::RngCore;
 
     #[test]
     fn surge_32_e2e() {
+        let mut rng = test_rng();
         const WORD_SIZE: usize = 32;
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+        const NUM_OPS: usize = 1024;
 
-        let ops = vec![
-            XORInstruction::<WORD_SIZE>(12, 12),
-            XORInstruction::<WORD_SIZE>(12, 82),
-            XORInstruction::<WORD_SIZE>(12, 12),
-            XORInstruction::<WORD_SIZE>(25, 12),
-        ];
-        const C: usize = 8;
-        const M: usize = 1 << 8;
+        let ops = std::iter::repeat_with(|| {
+            XORInstruction::<WORD_SIZE>(rng.next_u32() as u64, rng.next_u32() as u64)
+        })
+        .take(NUM_OPS)
+        .collect();
 
-        let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::num_generators(128),
-            b"LassoV1",
-        );
-        let proof =
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::prove(
+        let generators = HyperKZG::setup(&[CommitShape::new(M, BatchType::SurgeReadWrite)]);
+        let (proof, debug_info) =
+            SurgeProof::<Fr, HyperKZG<Bn254>, XORInstruction<WORD_SIZE>, C, M>::prove(
                 &preprocessing,
                 &generators,
                 ops,
-                &mut transcript,
             );
 
-        let mut transcript = ProofTranscript::new(b"test_transcript");
-        SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
-            .expect("should work");
+        SurgeProof::verify(&preprocessing, &generators, proof, debug_info).expect("should work");
     }
 
     #[test]
     fn surge_32_e2e_non_pow_2() {
+        let mut rng = test_rng();
         const WORD_SIZE: usize = 32;
+        const C: usize = 4;
+        const M: usize = 1 << 16;
 
-        let ops = vec![
-            XORInstruction::<WORD_SIZE>(0, 1),
-            XORInstruction::<WORD_SIZE>(101, 101),
-            XORInstruction::<WORD_SIZE>(202, 1),
-            XORInstruction::<WORD_SIZE>(220, 1),
-            XORInstruction::<WORD_SIZE>(220, 1),
-        ];
-        const C: usize = 2;
-        const M: usize = 1 << 8;
+        const NUM_OPS: usize = 1000;
 
-        let mut transcript = ProofTranscript::new(b"test_transcript");
+        let ops = std::iter::repeat_with(|| {
+            XORInstruction::<WORD_SIZE>(rng.next_u32() as u64, rng.next_u32() as u64)
+        })
+        .take(NUM_OPS)
+        .collect();
+
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::num_generators(128),
-            b"LassoV1",
-        );
-        let proof =
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction<WORD_SIZE>, C, M>::prove(
+        let generators = HyperKZG::setup(&[CommitShape::new(M, BatchType::SurgeReadWrite)]);
+        let (proof, debug_info) =
+            SurgeProof::<Fr, HyperKZG<Bn254>, XORInstruction<WORD_SIZE>, C, M>::prove(
                 &preprocessing,
                 &generators,
                 ops,
-                &mut transcript,
             );
 
-        let mut transcript = ProofTranscript::new(b"test_transcript");
-        SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
-            .expect("should work");
+        SurgeProof::verify(&preprocessing, &generators, proof, debug_info).expect("should work");
     }
 }

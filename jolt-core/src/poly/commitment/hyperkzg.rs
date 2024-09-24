@@ -61,6 +61,12 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
 #[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
+impl<P: Pairing> Default for HyperKZGCommitment<P> {
+    fn default() -> Self {
+        Self(P::G1Affine::zero())
+    }
+}
+
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());
@@ -584,6 +590,18 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         HyperKZG::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: P::G1 = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.0 * coeff)
+            .sum();
+        HyperKZGCommitment(combined_commitment.into_affine())
     }
 
     fn verify(

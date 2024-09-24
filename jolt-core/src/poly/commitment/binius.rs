@@ -11,7 +11,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[derive(Clone)]
 pub struct Binius128Scheme {}
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BiniusCommitment {}
 
 impl AppendToTranscript for BiniusCommitment {

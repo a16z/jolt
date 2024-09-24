@@ -1,14 +1,15 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
 use crate::{
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        structured_poly::{StructuredCommitment, StructuredOpeningProof},
-    },
+    poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::grand_product::{
         BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
     },
@@ -17,9 +18,8 @@ use crate::{
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 use std::iter::zip;
-use std::marker::PhantomData;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MultisetHashes<F: JoltField> {
@@ -43,105 +43,222 @@ impl<F: JoltField> MultisetHashes<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, C, Polynomials, ReadWriteOpenings, InitFinalOpenings>
+pub struct MemoryCheckingProof<F, PCS, Openings, OtherOpenings>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
-    Polynomials: StructuredCommitment<C>,
-    ReadWriteOpenings: StructuredOpeningProof<F, C, Polynomials>,
-    InitFinalOpenings: StructuredOpeningProof<F, C, Polynomials>,
+    PCS: CommitmentScheme<Field = F>,
+    Openings: StructuredPolynomialData<F> + Sync + CanonicalSerialize + CanonicalDeserialize,
+    OtherOpenings: ExogenousOpenings<F> + Sync,
 {
-    pub _polys: PhantomData<Polynomials>,
     /// Read/write/init/final multiset hashes for each memory
     pub multiset_hashes: MultisetHashes<F>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductProof<C>,
+    pub read_write_grand_product: BatchedGrandProductProof<PCS>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductProof<C>,
-    /// The opening proofs associated with the read/write grand product.
-    pub read_write_openings: ReadWriteOpenings,
-    pub read_write_opening_proof: ReadWriteOpenings::Proof,
-    /// The opening proofs associated with the init/final grand product.
-    pub init_final_openings: InitFinalOpenings,
-    pub init_final_opening_proof: InitFinalOpenings::Proof,
+    pub init_final_grand_product: BatchedGrandProductProof<PCS>,
+    /// The openings associated with the grand products.
+    pub openings: Openings,
+    pub exogenous_openings: OtherOpenings,
+}
+
+/// This type, used within a `StructuredPolynomialData` struct, indicates that the
+/// field has a corresponding opening but no corrresponding polynomial or commitment ––
+/// the prover doesn't need to compute a witness polynomial or commitment because
+/// the verifier can compute the opening on its own.
+pub type VerifierComputedOpening<T> = Option<T>;
+
+/// This trait is used to capture the relationship between polynomials, commitments, and
+/// openings in offline memory-checking. For a given offline memory-checking instance,
+/// the "shape" of its polynomials, commitments, and openings is the same. We can define a
+/// a single struct with this "shape", parametrized by a generic type `T` (see e.g. `BytecodeStuff`).
+/// To avoid manually mapping between the respective polynomials/commitments/openings
+/// (which introduces footguns), we implement this trait to define a canonical ordering
+/// over the generic struct's fields.
+pub trait StructuredPolynomialData<T>: CanonicalSerialize + CanonicalDeserialize {
+    /// Returns a `Vec` of references to the read/write values of `self`.
+    /// Ordering should mirror `read_write_values_mut`.
+    fn read_write_values(&self) -> Vec<&T> {
+        vec![]
+    }
+
+    /// Returns a `Vec` of references to the init/final values of `self`.
+    /// Ordering should mirror `init_final_values_mut`.
+    fn init_final_values(&self) -> Vec<&T> {
+        vec![]
+    }
+
+    /// Returns a `Vec` of mutable references to the read/write values of `self`.
+    /// Ordering should mirror `read_write_values`.
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        vec![]
+    }
+
+    /// Returns a `Vec` of mutable references to the init/final values of `self`.
+    /// Ordering should mirror `init_final_values`.
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        vec![]
+    }
+}
+
+/// Sometimes, an offline memory-checking instance "reuses" polynomials/commitments
+/// from a different instance. For example, in `read_write_memory.rs` we use some of
+/// the polynomials/commitments defined in `bytecode.rs`, specifically the ones corresponding
+/// to the RISC-V registers. We need openings from these polynomials, but we shouldn't
+/// recompute or recommit to the polynomials.
+/// This trait is used to cherry-pick the "exogenous" polynomials/commitments needed
+/// by an offline-memory checking instance.
+pub trait ExogenousOpenings<F: JoltField>:
+    Default + CanonicalSerialize + CanonicalDeserialize
+{
+    /// Returns a `Vec` of references to the openings contained in `self`.
+    /// Ordering should mirror `openings_mut`.
+    fn openings(&self) -> Vec<&F>;
+    /// Returns a `Vec` of mutable references to the openings contained in `self`.
+    /// Ordering should mirror `openings`.
+    fn openings_mut(&mut self) -> Vec<&mut F>;
+    /// Cherry-picks the "exogenous" polynomials/commitments needed by an offline-memory
+    /// checking instance. The ordering of the returned polynoials/commitments should
+    /// mirror `openings`/`openings_mut`.
+    fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        polys_or_commitments: &JoltStuff<T>,
+    ) -> Vec<&T>;
+}
+
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct NoExogenousOpenings;
+impl<F: JoltField> ExogenousOpenings<F> for NoExogenousOpenings {
+    fn openings(&self) -> Vec<&F> {
+        vec![]
+    }
+
+    fn openings_mut(&mut self) -> Vec<&mut F> {
+        vec![]
+    }
+
+    fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        _: &JoltStuff<T>,
+    ) -> Vec<&T> {
+        vec![]
+    }
+}
+
+/// This trait (specifically, the `initialize` function) is used in lieu of `Default`
+/// to initialize a `StructuredPolynomialData` struct, which may contain `Vec` fields
+/// whose lengths depend on some preprocessing.
+pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default {
+    /// This function is used in lieu of `Default::default()` to initialize a
+    /// `StructuredPolynomialData` struct, which may contain `Vec` fields
+    /// whose lengths depend on some preprocessing.
+    ///
+    /// Note that the default implementation of initialize, however, does
+    /// just return `Default::default()`.
+    fn initialize(_preprocessing: &Preprocessing) -> Self {
+        Default::default()
+    }
+
+    #[cfg(test)]
+    fn test_ordering_consistency(preprocessing: &Preprocessing) {
+        use itertools::zip_eq;
+
+        let mut data = Self::initialize(preprocessing);
+        let read_write_pointers: Vec<_> = data
+            .read_write_values()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        let read_write_pointers_mut: Vec<_> = data
+            .read_write_values_mut()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        for (i, (ptr, ptr_mut)) in zip_eq(read_write_pointers, read_write_pointers_mut).enumerate()
+        {
+            assert!(ptr == ptr_mut, "Read-write pointer mismatch at index {}", i);
+        }
+
+        let init_final_pointers: Vec<_> = data
+            .init_final_values()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        let init_final_pointers_mut: Vec<_> = data
+            .init_final_values_mut()
+            .into_iter()
+            .map(|ptr| ptr as *const T)
+            .collect();
+        for (i, (ptr, ptr_mut)) in zip_eq(init_final_pointers, init_final_pointers_mut).enumerate()
+        {
+            assert!(ptr == ptr_mut, "Init-final pointer mismatch at index {}", i);
+        }
+    }
 }
 
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
-pub trait MemoryCheckingProver<F, C, Polynomials>
+pub trait MemoryCheckingProver<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
-    Polynomials: StructuredCommitment<C>,
-    Self: std::marker::Sync,
+    PCS: CommitmentScheme<Field = F>,
+    Self: Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+    type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
+    type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
+    type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
+    type Commitments: StructuredPolynomialData<PCS::Commitment>;
+    type ExogenousOpenings: ExogenousOpenings<F> + Sync = NoExogenousOpenings;
+
     type Preprocessing = NoPreprocessing;
-    type ReadWriteOpenings: StructuredOpeningProof<
-        F,
-        C,
-        Polynomials,
-        Preprocessing = NoPreprocessing,
-    >;
-    type InitFinalOpenings: StructuredOpeningProof<
-        F,
-        C,
-        Polynomials,
-        Preprocessing = Self::Preprocessing,
-    >;
+
     /// The data associated with each memory slot. A triple (a, v, t) by default.
     type MemoryTuple = (F, F, F);
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
     fn prove_memory_checking(
-        generators: &C::Setup,
+        pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
-        polynomials: &Polynomials,
+        polynomials: &Self::Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, C, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>
-    {
+    ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
         let (
             read_write_grand_product,
             init_final_grand_product,
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, polynomials, transcript, generators);
-
-        let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
-        let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
-            generators,
+        ) = Self::prove_grand_products(
+            preprocessing,
             polynomials,
-            &r_read_write,
-            &read_write_openings,
+            jolt_polynomials,
             transcript,
+            pcs_setup,
         );
-        let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
-        let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
-            generators,
+
+        let (openings, exogenous_openings) = Self::compute_openings(
+            preprocessing,
+            opening_accumulator,
             polynomials,
+            jolt_polynomials,
+            &r_read_write,
             &r_init_final,
-            &init_final_openings,
             transcript,
         );
 
         MemoryCheckingProof {
-            _polys: PhantomData,
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
-            read_write_openings,
-            read_write_opening_proof,
-            init_final_openings,
-            init_final_opening_proof,
+            openings,
+            exogenous_openings,
         }
     }
 
@@ -149,12 +266,13 @@ where
     /// Proves the grand products for the memory checking multisets (init, read, write, final).
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
-        polynomials: &Polynomials,
+        polynomials: &Self::Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
         transcript: &mut ProofTranscript,
-        pcs_setup: &C::Setup,
+        pcs_setup: &PCS::Setup,
     ) -> (
-        BatchedGrandProductProof<C>,
-        BatchedGrandProductProof<C>,
+        BatchedGrandProductProof<PCS>,
+        BatchedGrandProductProof<PCS>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
@@ -166,7 +284,7 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         let (read_write_leaves, init_final_leaves) =
-            Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
+            Self::compute_leaves(preprocessing, polynomials, jolt_polynomials, &gamma, &tau);
         let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
         let (mut init_final_circuit, init_final_hashes) =
@@ -194,13 +312,76 @@ where
         )
     }
 
+    fn compute_openings(
+        preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        polynomials: &Self::Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> (Self::Openings, Self::ExogenousOpenings) {
+        let mut openings = Self::Openings::initialize(preprocessing);
+        let mut exogenous_openings = Self::ExogenousOpenings::default();
+
+        let eq_read_write = EqPolynomial::evals(r_read_write);
+        polynomials
+            .read_write_values()
+            .par_iter()
+            .zip_eq(openings.read_write_values_mut().into_par_iter())
+            .chain(
+                Self::ExogenousOpenings::exogenous_data(jolt_polynomials)
+                    .par_iter()
+                    .zip_eq(exogenous_openings.openings_mut().into_par_iter()),
+            )
+            .for_each(|(poly, opening)| {
+                let claim = poly.evaluate_at_chi(&eq_read_write);
+                *opening = claim;
+            });
+
+        let read_write_polys: Vec<_> = [
+            polynomials.read_write_values(),
+            Self::ExogenousOpenings::exogenous_data(jolt_polynomials),
+        ]
+        .concat();
+        let read_write_claims: Vec<_> =
+            [openings.read_write_values(), exogenous_openings.openings()].concat();
+        opening_accumulator.append(
+            &read_write_polys,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            &read_write_claims,
+            transcript,
+        );
+
+        let eq_init_final = EqPolynomial::evals(r_init_final);
+        polynomials
+            .init_final_values()
+            .par_iter()
+            .zip_eq(openings.init_final_values_mut().into_par_iter())
+            .for_each(|(poly, opening)| {
+                let claim = poly.evaluate_at_chi(&eq_init_final);
+                *opening = claim;
+            });
+
+        opening_accumulator.append(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            &openings.init_final_values(),
+            transcript,
+        );
+
+        (openings, exogenous_openings)
+    }
+
     /// Constructs a batched grand product circuit for the read and write multisets associated
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
-        _polynomials: &Polynomials,
-        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        _polynomials: &Self::Polynomials,
+        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
         let claims = batched_circuit.claims();
@@ -212,8 +393,8 @@ where
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
-        _polynomials: &Polynomials,
-        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        _polynomials: &Self::Polynomials,
+        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
         let claims = batched_circuit.claims();
@@ -295,12 +476,13 @@ where
     /// Returns: (interleaved read/write leaves, interleaved init/final leaves)
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
-        polynomials: &Polynomials,
+        polynomials: &Self::Polynomials,
+        exogenous_polynomials: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     );
 
     /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.
@@ -311,25 +493,19 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait MemoryCheckingVerifier<F, C, Polynomials>:
-    MemoryCheckingProver<F, C, Polynomials>
+pub trait MemoryCheckingVerifier<F, PCS>: MemoryCheckingProver<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
-    Polynomials: StructuredCommitment<C> + std::marker::Sync,
+    PCS: CommitmentScheme<Field = F>,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
-        generators: &C::Setup,
-        mut proof: MemoryCheckingProof<
-            F,
-            C,
-            Polynomials,
-            Self::ReadWriteOpenings,
-            Self::InitFinalOpenings,
-        >,
-        commitments: &Polynomials::Commitment,
+        pcs_setup: &PCS::Setup,
+        mut proof: MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings>,
+        commitments: &Self::Commitments,
+        jolt_commitments: &JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
@@ -348,43 +524,52 @@ where
             &proof.read_write_grand_product,
             &read_write_hashes,
             transcript,
-            Some(generators),
+            Some(pcs_setup),
         );
         let (claims_init_final, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
             &proof.init_final_grand_product,
             &init_final_hashes,
             transcript,
-            Some(generators),
+            Some(pcs_setup),
         );
 
-        proof.read_write_openings.verify_openings(
-            generators,
-            &proof.read_write_opening_proof,
-            commitments,
-            &r_read_write,
+        let read_write_commits: Vec<_> = [
+            commitments.read_write_values(),
+            Self::ExogenousOpenings::exogenous_data(jolt_commitments),
+        ]
+        .concat();
+        let read_write_claims: Vec<_> = [
+            proof.openings.read_write_values(),
+            proof.exogenous_openings.openings(),
+        ]
+        .concat();
+        opening_accumulator.append(
+            &read_write_commits,
+            r_read_write.to_vec(),
+            &read_write_claims,
             transcript,
-        )?;
-        proof.init_final_openings.verify_openings(
-            generators,
-            &proof.init_final_opening_proof,
-            commitments,
-            &r_init_final,
-            transcript,
-        )?;
+        );
 
-        proof
-            .read_write_openings
-            .compute_verifier_openings(&NoPreprocessing, &r_read_write);
-        proof
-            .init_final_openings
-            .compute_verifier_openings(preprocessing, &r_init_final);
+        opening_accumulator.append(
+            &commitments.init_final_values(),
+            r_init_final.to_vec(),
+            &proof.openings.init_final_values(),
+            transcript,
+        );
+
+        Self::compute_verifier_openings(
+            &mut proof.openings,
+            preprocessing,
+            &r_read_write,
+            &r_init_final,
+        );
 
         Self::check_fingerprints(
             preprocessing,
             claims_read_write,
             claims_init_final,
-            &proof.read_write_openings,
-            &proof.init_final_openings,
+            &proof.openings,
+            &proof.exogenous_openings,
             &gamma,
             &tau,
         );
@@ -392,25 +577,40 @@ where
         Ok(())
     }
 
+    /// Often some of the openings do not require an opening proof provided by the prover, and
+    /// instead can be efficiently computed by the verifier by itself. This function populates
+    /// any such fields in `self`.
+    fn compute_verifier_openings(
+        _openings: &mut Self::Openings,
+        _preprocessing: &Self::Preprocessing,
+        _r_read_write: &[F],
+        _r_init_final: &[F],
+    ) {
+    }
+
     /// Computes "read" memory tuples (one per memory) from the given `openings`.
     fn read_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &Self::ReadWriteOpenings,
+        openings: &Self::Openings,
+        exogenous_openings: &Self::ExogenousOpenings,
     ) -> Vec<Self::MemoryTuple>;
     /// Computes "write" memory tuples (one per memory) from the given `openings`.
     fn write_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &Self::ReadWriteOpenings,
+        openings: &Self::Openings,
+        exogenous_openings: &Self::ExogenousOpenings,
     ) -> Vec<Self::MemoryTuple>;
     /// Computes "init" memory tuples (one per memory) from the given `openings`.
     fn init_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &Self::InitFinalOpenings,
+        openings: &Self::Openings,
+        exogenous_openings: &Self::ExogenousOpenings,
     ) -> Vec<Self::MemoryTuple>;
     /// Computes "final" memory tuples (one per memory) from the given `openings`.
     fn final_tuples(
         preprocessing: &Self::Preprocessing,
-        openings: &Self::InitFinalOpenings,
+        openings: &Self::Openings,
+        exogenous_openings: &Self::ExogenousOpenings,
     ) -> Vec<Self::MemoryTuple>;
 
     /// Checks that the claimed multiset hashes (output by grand product) are consistent with the
@@ -419,24 +619,24 @@ where
         preprocessing: &Self::Preprocessing,
         claims_read_write: Vec<F>,
         claims_init_final: Vec<F>,
-        read_write_openings: &Self::ReadWriteOpenings,
-        init_final_openings: &Self::InitFinalOpenings,
+        openings: &Self::Openings,
+        exogenous_openings: &Self::ExogenousOpenings,
         gamma: &F,
         tau: &F,
     ) {
-        let read_hashes: Vec<_> = Self::read_tuples(preprocessing, read_write_openings)
+        let read_hashes: Vec<_> = Self::read_tuples(preprocessing, openings, exogenous_openings)
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();
-        let write_hashes: Vec<_> = Self::write_tuples(preprocessing, read_write_openings)
+        let write_hashes: Vec<_> = Self::write_tuples(preprocessing, openings, exogenous_openings)
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();
-        let init_hashes: Vec<_> = Self::init_tuples(preprocessing, init_final_openings)
+        let init_hashes: Vec<_> = Self::init_tuples(preprocessing, openings, exogenous_openings)
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();
-        let final_hashes: Vec<_> = Self::final_tuples(preprocessing, init_final_openings)
+        let final_hashes: Vec<_> = Self::final_tuples(preprocessing, openings, exogenous_openings)
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();

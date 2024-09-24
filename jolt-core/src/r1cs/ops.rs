@@ -1,49 +1,47 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
+#[cfg(test)]
+use super::inputs::ConstraintInput;
 use crate::{
     field::{JoltField, OptimizedMul},
+    poly::dense_mlpoly::DensePolynomial,
     utils::thread::unsafe_allocate_zero_vec,
 };
 use rayon::prelude::*;
 use std::fmt::Debug;
+#[cfg(test)]
+use std::fmt::Write as _;
 use std::hash::Hash;
-use strum::{EnumCount, IntoEnumIterator};
-
-pub trait ConstraintInput:
-    Clone
-    + Copy
-    + Debug
-    + PartialEq
-    + Eq
-    + PartialOrd
-    + Ord
-    + IntoEnumIterator
-    + EnumCount
-    + Into<usize>
-    + Hash
-    + Sync
-    + Send
-    + 'static
-{
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Variable<I: ConstraintInput> {
-    Input(I),
+pub enum Variable {
+    Input(usize),
     Auxiliary(usize),
     Constant,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Term<I: ConstraintInput>(pub Variable<I>, pub i64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Term(pub Variable, pub i64);
+impl Term {
+    #[cfg(test)]
+    fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
+        match self.0 {
+            Variable::Input(var_index) | Variable::Auxiliary(var_index) => match self.1.abs() {
+                1 => write!(f, "{:?}", I::from_index::<C>(var_index)),
+                _ => write!(f, "{}⋅{:?}", self.1, I::from_index::<C>(var_index)),
+            },
+            Variable::Constant => write!(f, "{}", self.1),
+        }
+    }
+}
 
 /// Linear Combination of terms.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct LC<I: ConstraintInput>(Vec<Term<I>>);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LC(Vec<Term>);
 
-impl<I: ConstraintInput> LC<I> {
-    pub fn new(terms: Vec<Term<I>>) -> Self {
+impl LC {
+    pub fn new(terms: Vec<Term>) -> Self {
         #[cfg(test)]
         Self::assert_no_duplicate_terms(&terms);
 
@@ -56,11 +54,11 @@ impl<I: ConstraintInput> LC<I> {
         LC::new(vec![])
     }
 
-    pub fn terms(&self) -> &[Term<I>] {
+    pub fn terms(&self) -> &[Term] {
         &self.0
     }
 
-    pub fn constant_term(&self) -> Option<&Term<I>> {
+    pub fn constant_term(&self) -> Option<&Term> {
         self.0
             .last()
             .filter(|term| matches!(term.0, Variable::Constant))
@@ -100,11 +98,7 @@ impl<I: ConstraintInput> LC<I> {
         let mut result = F::zero();
         for term in self.terms().iter() {
             match term.0 {
-                Variable::Input(_) => {
-                    result += values[var_index] * F::from_i64(term.1);
-                    var_index += 1;
-                }
-                Variable::Auxiliary(_) => {
+                Variable::Input(_) | Variable::Auxiliary(_) => {
                     result += values[var_index] * F::from_i64(term.1);
                     var_index += 1;
                 }
@@ -114,41 +108,68 @@ impl<I: ConstraintInput> LC<I> {
         result
     }
 
-    pub fn evaluate_batch<F: JoltField>(&self, inputs: &[&[F]], batch_size: usize) -> Vec<F> {
+    pub fn evaluate_batch<F: JoltField>(
+        &self,
+        flattened_polynomials: &[&DensePolynomial<F>],
+        batch_size: usize,
+    ) -> Vec<F> {
         let mut output = unsafe_allocate_zero_vec(batch_size);
-        self.evaluate_batch_mut(inputs, &mut output);
+        self.evaluate_batch_mut::<F>(flattened_polynomials, &mut output);
         output
     }
 
-    #[tracing::instrument(skip_all, name = "LC::evaluate_batch_mut")]
-    pub fn evaluate_batch_mut<F: JoltField>(&self, inputs: &[&[F]], output: &mut [F]) {
-        let batch_size = output.len();
-        inputs
-            .iter()
-            .for_each(|inner| assert_eq!(inner.len(), batch_size));
-
-        let terms: Vec<F> = self.to_field_elements();
-
-        output
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(batch_index, output_slot)| {
-                *output_slot = self
-                    .terms()
-                    .iter()
-                    .enumerate()
-                    .map(|(term_index, term)| match term.0 {
-                        Variable::Input(_) | Variable::Auxiliary(_) => {
-                            terms[term_index].mul_01_optimized(inputs[term_index][batch_index])
-                        }
-                        Variable::Constant => terms[term_index],
-                    })
-                    .sum();
-            });
+    pub fn evaluate_batch_mut<F: JoltField>(
+        &self,
+        flattened_polynomials: &[&DensePolynomial<F>],
+        output: &mut [F],
+    ) {
+        output.par_iter_mut().enumerate().for_each(|(i, eval)| {
+            *eval = self
+                .terms()
+                .iter()
+                .map(|term| match term.0 {
+                    Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                        F::from_i64(term.1).mul_01_optimized(flattened_polynomials[var_index][i])
+                    }
+                    Variable::Constant => F::from_i64(term.1),
+                })
+                .sum()
+        });
     }
 
     #[cfg(test)]
-    fn assert_no_duplicate_terms(terms: &[Term<I>]) {
+    pub fn pretty_fmt<const C: usize, I: ConstraintInput>(
+        &self,
+        f: &mut String,
+    ) -> std::fmt::Result {
+        if self.0.is_empty() {
+            write!(f, "0")
+        } else {
+            if self.0.len() > 1 {
+                write!(f, "(")?;
+            }
+            for (index, term) in self.0.iter().enumerate() {
+                if term.1 == 0 {
+                    continue;
+                }
+                if index > 0 {
+                    if term.1 < 0 {
+                        write!(f, " - ")?;
+                    } else {
+                        write!(f, " + ")?;
+                    }
+                }
+                term.pretty_fmt::<C, I>(f)?;
+            }
+            if self.0.len() > 1 {
+                write!(f, ")")?;
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    fn assert_no_duplicate_terms(terms: &[Term]) {
         let mut term_vec = Vec::new();
         for term in terms {
             if term_vec.contains(&term.0) {
@@ -160,36 +181,16 @@ impl<I: ConstraintInput> LC<I> {
     }
 }
 
-impl<I: ConstraintInput> std::fmt::Debug for LC<I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "LC(")?;
-        for (index, term) in self.0.iter().enumerate() {
-            if index > 0 {
-                write!(f, " + ")?;
-            }
-            write!(f, "{:?}", term)?;
-        }
-        write!(f, ")")
-    }
-}
-
-impl<I: ConstraintInput> std::fmt::Debug for Term<I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}*{:?}", self.1, self.0)
-    }
-}
-
 // Arithmetic for LC
 
-impl<I, T> std::ops::Add<T> for LC<I>
+impl<T> std::ops::Add<T> for LC
 where
-    I: ConstraintInput,
-    T: Into<LC<I>>,
+    T: Into<LC>,
 {
     type Output = Self;
 
     fn add(self, other: T) -> Self::Output {
-        let other_lc: LC<I> = other.into();
+        let other_lc: LC = other.into();
         let mut combined_terms = self.0;
         // TODO(sragss): Can be made more efficient by assuming sorted
         for other_term in other_lc.terms() {
@@ -206,56 +207,54 @@ where
     }
 }
 
-impl<I, T> std::ops::Add<T> for Term<I>
+impl<T> std::ops::Add<T> for Term
 where
-    I: ConstraintInput,
-    T: Into<LC<I>>,
+    T: Into<LC>,
 {
-    type Output = LC<I>;
+    type Output = LC;
 
     fn add(self, other: T) -> Self::Output {
-        let lc: LC<I> = self.into();
-        let other_lc: LC<I> = other.into();
+        let lc: LC = self.into();
+        let other_lc: LC = other.into();
         lc + other_lc
     }
 }
 
-impl<I, T> std::ops::Add<T> for Variable<I>
+impl<T> std::ops::Add<T> for Variable
 where
-    I: ConstraintInput,
-    T: Into<LC<I>>,
+    T: Into<LC>,
 {
-    type Output = LC<I>;
+    type Output = LC;
 
     fn add(self, other: T) -> Self::Output {
-        let lc: LC<I> = self.into();
-        let other_lc: LC<I> = other.into();
+        let lc: LC = self.into();
+        let other_lc: LC = other.into();
         lc + other_lc
     }
 }
 
-impl<I: ConstraintInput> std::ops::Neg for LC<I> {
+impl std::ops::Neg for LC {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        let negated_terms: Vec<Term<I>> = self.0.into_iter().map(|term| -term).collect();
+        let negated_terms: Vec<Term> = self.0.into_iter().map(|term| -term).collect();
         LC::new(negated_terms)
     }
 }
 
-impl<I: ConstraintInput, T: Into<LC<I>>> std::ops::Sub<T> for LC<I> {
+impl<T: Into<LC>> std::ops::Sub<T> for LC {
     type Output = Self;
 
     fn sub(self, other: T) -> Self::Output {
-        let other: LC<I> = other.into();
+        let other: LC = other.into();
         let negated_other = -other;
         self + negated_other
     }
 }
 
-// Arithmetic for Term<I>
+// Arithmetic for Term
 
-impl<I: ConstraintInput> std::ops::Neg for Term<I> {
+impl std::ops::Neg for Term {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
@@ -263,68 +262,68 @@ impl<I: ConstraintInput> std::ops::Neg for Term<I> {
     }
 }
 
-impl<I: ConstraintInput> From<i64> for Term<I> {
+impl From<i64> for Term {
     fn from(val: i64) -> Self {
         Term(Variable::Constant, val)
     }
 }
 
-impl<I: ConstraintInput> From<Variable<I>> for Term<I> {
-    fn from(val: Variable<I>) -> Self {
+impl From<Variable> for Term {
+    fn from(val: Variable) -> Self {
         Term(val, 1)
     }
 }
 
-impl<I: ConstraintInput> std::ops::Sub for Variable<I> {
-    type Output = LC<I>;
+impl std::ops::Sub for Variable {
+    type Output = LC;
 
     fn sub(self, other: Self) -> Self::Output {
-        let lhs: LC<I> = self.into();
-        let rhs: LC<I> = other.into();
+        let lhs: LC = self.into();
+        let rhs: LC = other.into();
         lhs - rhs
     }
 }
 
-// Into<LC<I>>
+// Into<LC>
 
-impl<I: ConstraintInput> From<i64> for LC<I> {
+impl From<i64> for LC {
     fn from(val: i64) -> Self {
         LC::new(vec![Term(Variable::Constant, val)])
     }
 }
 
-impl<I: ConstraintInput> From<Variable<I>> for LC<I> {
-    fn from(val: Variable<I>) -> Self {
+impl From<Variable> for LC {
+    fn from(val: Variable) -> Self {
         LC::new(vec![Term(val, 1)])
     }
 }
 
-impl<I: ConstraintInput> From<Term<I>> for LC<I> {
-    fn from(val: Term<I>) -> Self {
+impl From<Term> for LC {
+    fn from(val: Term) -> Self {
         LC::new(vec![val])
     }
 }
 
-impl<I: ConstraintInput> From<Vec<Term<I>>> for LC<I> {
-    fn from(val: Vec<Term<I>>) -> Self {
+impl From<Vec<Term>> for LC {
+    fn from(val: Vec<Term>) -> Self {
         LC::new(val)
     }
 }
 
-// Generic arithmetic for Variable<I>
+// Generic arithmetic for Variable
 
-impl<I: ConstraintInput> std::ops::Mul<i64> for Variable<I> {
-    type Output = Term<I>;
+impl std::ops::Mul<i64> for Variable {
+    type Output = Term;
 
     fn mul(self, other: i64) -> Self::Output {
         Term(self, other)
     }
 }
 
-impl<I: ConstraintInput> std::ops::Mul<Variable<I>> for i64 {
-    type Output = Term<I>;
+impl std::ops::Mul<Variable> for i64 {
+    type Output = Term;
 
-    fn mul(self, other: Variable<I>) -> Self::Output {
+    fn mul(self, other: Variable) -> Self::Output {
         Term(other, self)
     }
 }
@@ -332,205 +331,92 @@ impl<I: ConstraintInput> std::ops::Mul<Variable<I>> for i64 {
 /// Conversions and arithmetic for concrete ConstraintInput
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
-    ($ConcreteInput:ty) => {
-        impl Into<usize> for $ConcreteInput {
-            fn into(self) -> usize {
-                self as usize
-            }
-        }
-        impl Into<$crate::r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> $crate::r1cs::ops::Variable<$ConcreteInput> {
-                $crate::r1cs::ops::Variable::Input(self)
+    ($ConcreteInput:ty, $C:expr) => {
+        impl Into<$crate::r1cs::ops::Variable> for $ConcreteInput {
+            fn into(self) -> $crate::r1cs::ops::Variable {
+                $crate::r1cs::ops::Variable::Input(self.to_index::<$C>())
             }
         }
 
-        impl Into<$crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> $crate::r1cs::ops::Term<$ConcreteInput> {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1)
+        impl Into<$crate::r1cs::ops::Term> for $ConcreteInput {
+            fn into(self) -> $crate::r1cs::ops::Term {
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
+                    1,
+                )
             }
         }
 
-        impl Into<$crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> $crate::r1cs::ops::LC<$ConcreteInput> {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1).into()
+        impl Into<$crate::r1cs::ops::LC> for $ConcreteInput {
+            fn into(self) -> $crate::r1cs::ops::LC {
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
+                    1,
+                )
+                .into()
             }
         }
 
-        impl Into<$crate::r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
-            fn into(self) -> $crate::r1cs::ops::LC<$ConcreteInput> {
-                let terms: Vec<$crate::r1cs::ops::Term<$ConcreteInput>> =
+        impl Into<$crate::r1cs::ops::LC> for Vec<$ConcreteInput> {
+            fn into(self) -> $crate::r1cs::ops::LC {
+                let terms: Vec<$crate::r1cs::ops::Term> =
                     self.into_iter().map(Into::into).collect();
                 $crate::r1cs::ops::LC::new(terms)
             }
         }
 
-        impl<T: Into<$crate::r1cs::ops::LC<$ConcreteInput>>> std::ops::Add<T> for $ConcreteInput {
-            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
+        impl<T: Into<$crate::r1cs::ops::LC>> std::ops::Add<T> for $ConcreteInput {
+            type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: T) -> Self::Output {
-                let lhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = self.into();
-                let rhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = rhs.into();
+                let lhs_lc: $crate::r1cs::ops::LC = self.into();
+                let rhs_lc: $crate::r1cs::ops::LC = rhs.into();
                 lhs_lc + rhs_lc
             }
         }
 
-        impl<T: Into<$crate::r1cs::ops::LC<$ConcreteInput>>> std::ops::Sub<T> for $ConcreteInput {
-            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
+        impl<T: Into<$crate::r1cs::ops::LC>> std::ops::Sub<T> for $ConcreteInput {
+            type Output = $crate::r1cs::ops::LC;
 
             fn sub(self, rhs: T) -> Self::Output {
-                let lhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = self.into();
-                let rhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = rhs.into();
+                let lhs_lc: $crate::r1cs::ops::LC = self.into();
+                let rhs_lc: $crate::r1cs::ops::LC = rhs.into();
                 lhs_lc - rhs_lc
             }
         }
 
         impl std::ops::Mul<i64> for $ConcreteInput {
-            type Output = $crate::r1cs::ops::Term<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), rhs)
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
+                    rhs,
+                )
             }
         }
 
         impl std::ops::Mul<$ConcreteInput> for i64 {
-            type Output = $crate::r1cs::ops::Term<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs), self)
+                $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(rhs.to_index::<$C>()),
+                    self,
+                )
             }
         }
         impl std::ops::Add<$ConcreteInput> for i64 {
-            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs), 1);
+                let term1 = $crate::r1cs::ops::Term(
+                    $crate::r1cs::ops::Variable::Input(rhs.to_index::<$C>()),
+                    1,
+                );
                 let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, self);
                 $crate::r1cs::ops::LC::new(vec![term1, term2])
             }
         }
     };
-}
-
-/// ```rust
-/// use jolt_core::input_range;
-/// use jolt_core::r1cs::ops::{ConstraintInput, Variable};
-/// # use strum_macros::{EnumCount, EnumIter};
-///
-/// # #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter, Hash)]
-/// #[repr(usize)]
-/// pub enum Inputs {
-///     A,
-///     B,
-///     C,
-///     D
-/// }
-/// #
-/// # impl Into<usize> for Inputs {
-/// #   fn into(self) -> usize {
-/// #       self as usize
-/// #   }
-/// # }
-/// #
-/// impl ConstraintInput for Inputs {};
-///
-/// let range = input_range!(Inputs::B, Inputs::D);
-/// let expected_range = [Variable::Input(Inputs::B), Variable::Input(Inputs::C), Variable::Input(Inputs::D)];
-/// assert_eq!(range, expected_range);
-/// ```
-#[macro_export]
-macro_rules! input_range {
-    ($start:path, $end:path) => {{
-        let mut arr = [Variable::Input($start); ($end as usize) - ($start as usize) + 1];
-        #[allow(clippy::missing_transmute_annotations)]
-        for i in ($start as usize)..=($end as usize) {
-            arr[i - ($start as usize)] =
-                Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
-        }
-        arr
-    }};
-}
-
-/// Used to fix an aux variable to a constant index at runtime for use elsewhere (largely OffsetEqConstraints).
-#[macro_export]
-macro_rules! assert_static_aux_index {
-    ($var:expr, $index:expr) => {{
-        if let Variable::Auxiliary(aux_index) = $var {
-            assert_eq!(aux_index, $index, "Unexpected auxiliary index");
-        } else {
-            panic!("Variable is not of variant type Variable::Auxiliary");
-        }
-    }};
-}
-
-#[cfg(test)]
-mod test {
-    use strum_macros::{EnumCount, EnumIter};
-
-    use super::*;
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter, Hash)]
-    #[repr(usize)]
-    enum Inputs {
-        A,
-        B,
-        C,
-        D,
-    }
-
-    impl From<Inputs> for usize {
-        fn from(val: Inputs) -> Self {
-            val as usize
-        }
-    }
-    impl ConstraintInput for Inputs {}
-
-    #[test]
-    fn variable_ordering() {
-        let mut variables: Vec<Variable<Inputs>> = vec![
-            Variable::Auxiliary(10),
-            Variable::Auxiliary(5),
-            Variable::Constant,
-            Variable::Input(Inputs::C),
-            Variable::Input(Inputs::B),
-        ];
-        let expected_sort: Vec<Variable<Inputs>> = vec![
-            Variable::Input(Inputs::B),
-            Variable::Input(Inputs::C),
-            Variable::Auxiliary(5),
-            Variable::Auxiliary(10),
-            Variable::Constant,
-        ];
-        variables.sort();
-        assert_eq!(variables, expected_sort);
-    }
-
-    #[test]
-    fn lc_sorting() {
-        let variables: Vec<Variable<Inputs>> = vec![
-            Variable::Auxiliary(10),
-            Variable::Auxiliary(5),
-            Variable::Constant,
-            Variable::Input(Inputs::C),
-            Variable::Input(Inputs::B),
-        ];
-
-        let expected_sort: Vec<Variable<Inputs>> = vec![
-            Variable::Input(Inputs::B),
-            Variable::Input(Inputs::C),
-            Variable::Auxiliary(5),
-            Variable::Auxiliary(10),
-            Variable::Constant,
-        ];
-        let expected_sorted_terms: Vec<Term<Inputs>> = expected_sort
-            .into_iter()
-            .map(|variable| variable.into())
-            .collect();
-
-        let terms = variables
-            .into_iter()
-            .map(|variable| variable.into())
-            .collect();
-        let lc = LC::new(terms);
-        assert_eq!(lc.terms(), expected_sorted_terms);
-    }
 }

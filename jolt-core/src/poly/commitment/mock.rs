@@ -18,7 +18,7 @@ pub struct MockCommitScheme<F: JoltField> {
     _marker: PhantomData<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq)]
 pub struct MockCommitment<F: JoltField> {
     poly: DensePolynomial<F>,
 }
@@ -88,6 +88,27 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         MockProof {
             opening_point: opening_point.to_owned(),
         }
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let max_size = commitments
+            .iter()
+            .map(|comm| comm.poly.len())
+            .max()
+            .unwrap();
+        let mut poly = DensePolynomial::new(vec![Self::Field::zero(); max_size]);
+        for (commitment, coeff) in commitments.iter().zip(coeffs.iter()) {
+            poly.Z
+                .iter_mut()
+                .zip(commitment.poly.Z.iter())
+                .for_each(|(a, b)| {
+                    *a += *coeff * b;
+                });
+        }
+        MockCommitment { poly }
     }
 
     fn verify(

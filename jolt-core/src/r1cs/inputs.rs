@@ -4,269 +4,461 @@
     clippy::too_many_arguments
 )]
 
+use crate::impl_r1cs_input_lc_conversions;
+use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::vm::rv32i_vm::RV32I;
+use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
+use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::r1cs::jolt_constraints::JoltIn;
-use crate::utils::transcript::AppendToTranscript;
-use crate::{
-    jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    utils::transcript::ProofTranscript,
-};
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::utils::transcript::ProofTranscript;
 
 use super::key::UniformSpartanKey;
 use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use rayon::prelude::*;
+use ark_std::log2;
+use common::constants::RAM_OPS_PER_INSTRUCTION;
+use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
+use std::fmt::Debug;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-use strum::EnumCount;
-
-#[derive(Clone, Debug, Default)]
-pub struct R1CSInputs<'a, F: JoltField> {
-    padded_trace_len: usize,
-    pub pc: Vec<F>,
-    pub bytecode_a: Vec<F>,
-    bytecode_v: Vec<F>,
-    memreg_a_rw: &'a [F],
-    memreg_v_reads: Vec<&'a F>,
-    memreg_v_writes: Vec<&'a F>,
-    pub chunks_x: Vec<F>,
-    pub chunks_y: Vec<F>,
-    pub chunks_query: Vec<F>,
-    lookup_outputs: Vec<F>,
-    pub circuit_flags_bits: Vec<F>,
-    instruction_flags_bits: Vec<F>,
+/// Auxiliary variables defined in Jolt's R1CS constraints.
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    pub left_lookup_operand: T,
+    pub right_lookup_operand: T,
+    pub imm_signed: T,
+    pub product: T,
+    pub relevant_y_chunks: Vec<T>,
+    pub write_lookup_output_to_rd: T,
+    pub write_pc_to_rd: T,
+    pub next_pc_jump: T,
+    pub should_branch: T,
+    pub next_pc: T,
 }
 
-impl<'a, F: JoltField> R1CSInputs<'a, F> {
-    #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
-    pub fn new(
-        padded_trace_len: usize,
-        pc: Vec<F>,
-        bytecode_a: Vec<F>,
-        bytecode_v: Vec<F>,
-        memreg_a_rw: &'a [F],
-        memreg_v_reads: Vec<&'a F>,
-        memreg_v_writes: Vec<&'a F>,
-        chunks_x: Vec<F>,
-        chunks_y: Vec<F>,
-        chunks_query: Vec<F>,
-        lookup_outputs: Vec<F>,
-        circuit_flags_bits: Vec<F>,
-        instruction_flags_bits: Vec<F>,
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
+    for AuxVariableStuff<T>
+{
+    #[allow(clippy::field_reassign_with_default)]
+    fn initialize(C: &usize) -> Self {
+        let mut result = Self::default();
+        result.relevant_y_chunks = std::iter::repeat_with(|| T::default()).take(*C).collect();
+        result
+    }
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for AuxVariableStuff<T>
+{
+    fn read_write_values(&self) -> Vec<&T> {
+        let mut values = vec![
+            &self.left_lookup_operand,
+            &self.right_lookup_operand,
+            &self.imm_signed,
+            &self.product,
+        ];
+        values.extend(self.relevant_y_chunks.iter());
+        values.extend([
+            &self.write_lookup_output_to_rd,
+            &self.write_pc_to_rd,
+            &self.next_pc_jump,
+            &self.should_branch,
+            &self.next_pc,
+        ]);
+        values
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        let mut values = vec![
+            &mut self.left_lookup_operand,
+            &mut self.right_lookup_operand,
+            &mut self.imm_signed,
+            &mut self.product,
+        ];
+        values.extend(self.relevant_y_chunks.iter_mut());
+        values.extend([
+            &mut self.write_lookup_output_to_rd,
+            &mut self.write_pc_to_rd,
+            &mut self.next_pc_jump,
+            &mut self.should_branch,
+            &mut self.next_pc,
+        ]);
+        values
+    }
+}
+
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    pub chunks_x: Vec<T>,
+    pub chunks_y: Vec<T>,
+    pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
+    pub aux: AuxVariableStuff<T>,
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
+    for R1CSStuff<T>
+{
+    fn initialize(C: &usize) -> Self {
+        Self {
+            chunks_x: std::iter::repeat_with(|| T::default()).take(*C).collect(),
+            chunks_y: std::iter::repeat_with(|| T::default()).take(*C).collect(),
+            circuit_flags: std::array::from_fn(|_| T::default()),
+            aux: AuxVariableStuff::initialize(C),
+        }
+    }
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
+    fn read_write_values(&self) -> Vec<&T> {
+        self.chunks_x
+            .iter()
+            .chain(self.chunks_y.iter())
+            .chain(self.circuit_flags.iter())
+            .chain(self.aux.read_write_values())
+            .collect()
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        self.chunks_x
+            .iter_mut()
+            .chain(self.chunks_y.iter_mut())
+            .chain(self.circuit_flags.iter_mut())
+            .chain(self.aux.read_write_values_mut())
+            .collect()
+    }
+}
+
+/// Witness polynomials specific to Jolt's R1CS constraints (i.e. not used
+/// for any offline memory-checking instances).
+///
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
+/// Openings specific to Jolt's R1CS constraints (i.e. not used
+/// for any offline memory-checking instances).
+///
+/// Note –– F: JoltField bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
+/// Commitments specific to Jolt's R1CS constraints (i.e. not used
+/// for any offline memory-checking instances).
+///
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
+
+impl<F: JoltField> R1CSPolynomials<F> {
+    pub fn new<
+        const C: usize,
+        const M: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput,
+    >(
+        trace: &[JoltTraceStep<InstructionSet>],
     ) -> Self {
-        assert!(pc.len() % padded_trace_len == 0);
-        assert!(bytecode_a.len() % padded_trace_len == 0);
-        assert!(bytecode_v.len() % padded_trace_len == 0);
-        assert!(memreg_a_rw.len() % padded_trace_len == 0);
-        assert!(memreg_v_reads.len() % padded_trace_len == 0);
-        assert!(memreg_v_writes.len() % padded_trace_len == 0);
-        assert!(chunks_x.len() % padded_trace_len == 0);
-        assert!(chunks_y.len() % padded_trace_len == 0);
-        assert!(chunks_query.len() % padded_trace_len == 0);
-        assert!(lookup_outputs.len() % padded_trace_len == 0);
-        assert!(circuit_flags_bits.len() % padded_trace_len == 0);
-        assert!(instruction_flags_bits.len() % padded_trace_len == 0);
+        let log_M = log2(M) as usize;
+
+        let mut chunks_x = vec![unsafe_allocate_zero_vec(trace.len()); C];
+        let mut chunks_y = vec![unsafe_allocate_zero_vec(trace.len()); C];
+        let mut circuit_flags = vec![unsafe_allocate_zero_vec(trace.len()); NUM_CIRCUIT_FLAGS];
+
+        // TODO(moodlezoup): Can be parallelized
+        for (step_index, step) in trace.iter().enumerate() {
+            if let Some(instr) = &step.instruction_lookup {
+                let (x, y) = instr.operand_chunks(C, log_M);
+                for i in 0..C {
+                    chunks_x[i][step_index] = F::from_u64(x[i]).unwrap();
+                    chunks_y[i][step_index] = F::from_u64(y[i]).unwrap();
+                }
+            }
+
+            for j in 0..NUM_CIRCUIT_FLAGS {
+                if step.circuit_flags[j] {
+                    circuit_flags[j][step_index] = F::one();
+                }
+            }
+        }
 
         Self {
-            padded_trace_len,
-            pc,
-            bytecode_a,
-            bytecode_v,
-            memreg_a_rw,
-            memreg_v_reads,
-            memreg_v_writes,
-            chunks_x,
-            chunks_y,
-            chunks_query,
-            lookup_outputs,
-            circuit_flags_bits,
-            instruction_flags_bits,
+            chunks_x: chunks_x
+                .into_iter()
+                .map(|vals| DensePolynomial::new(vals))
+                .collect(),
+            chunks_y: chunks_y
+                .into_iter()
+                .map(|vals| DensePolynomial::new(vals))
+                .collect(),
+            circuit_flags: circuit_flags
+                .into_iter()
+                .map(|vals| DensePolynomial::new(vals))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            // Actual aux variable polynomials will be computed afterwards
+            aux: AuxVariableStuff::initialize(&C),
         }
-    }
-
-    #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_trace_len_chunks")]
-    pub fn clone_to_trace_len_chunks(&self) -> Vec<Vec<F>> {
-        let mut chunks: Vec<Vec<F>> = Vec::new();
-
-        let pc_chunks = self
-            .pc
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(pc_chunks);
-
-        let bytecode_a_chunks = self
-            .bytecode_a
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(bytecode_a_chunks);
-
-        let bytecode_v_chunks = self
-            .bytecode_v
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(bytecode_v_chunks);
-
-        let memreg_a_rw_chunks = self
-            .memreg_a_rw
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(memreg_a_rw_chunks);
-
-        let memreg_v_reads_chunks = self
-            .memreg_v_reads
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
-        chunks.par_extend(memreg_v_reads_chunks);
-
-        let memreg_v_writes_chunks = self
-            .memreg_v_writes
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
-        chunks.par_extend(memreg_v_writes_chunks);
-
-        let chunks_x_chunks = self
-            .chunks_x
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(chunks_x_chunks);
-
-        let chunks_y_chunks = self
-            .chunks_y
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(chunks_y_chunks);
-
-        let chunks_query_chunks = self
-            .chunks_query
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(chunks_query_chunks);
-
-        let lookup_outputs_chunks = self
-            .lookup_outputs
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(lookup_outputs_chunks);
-
-        let circuit_flags_bits_chunks = self
-            .circuit_flags_bits
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(circuit_flags_bits_chunks);
-
-        let instruction_flags_bits_chunks = self
-            .instruction_flags_bits
-            .par_chunks(self.padded_trace_len)
-            .map(|chunk| chunk.to_vec());
-        chunks.par_extend(instruction_flags_bits_chunks);
-
-        assert_eq!(chunks.len(), JoltIn::COUNT);
-
-        chunks
-    }
-}
-
-/// Commitments unique to R1CS.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment<C: CommitmentScheme> {
-    pub io: Vec<C::Commitment>,
-    pub aux: Vec<C::Commitment>,
-    /// Operand chunks { x, y }
-    pub chunks: Vec<C::Commitment>,
-    pub circuit_flags: Vec<C::Commitment>,
-}
-
-impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"R1CSCommitment_begin");
-        for commitment in &self.io {
-            commitment.append_to_transcript(transcript);
-        }
-        for commitment in &self.aux {
-            commitment.append_to_transcript(transcript);
-        }
-        for commitment in &self.chunks {
-            commitment.append_to_transcript(transcript);
-        }
-        for commitment in &self.circuit_flags {
-            commitment.append_to_transcript(transcript);
-        }
-        transcript.append_message(b"R1CSCommitment_end");
     }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
-    pub key: UniformSpartanKey<F>,
-    pub proof: UniformSpartanProof<F, C>,
+pub struct R1CSProof<const C: usize, I: ConstraintInput, F: JoltField> {
+    pub key: UniformSpartanKey<C, I, F>,
+    pub proof: UniformSpartanProof<C, I, F>,
 }
 
-impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
+impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
-    pub fn verify(
+    pub fn verify<PCS: CommitmentScheme<Field = F>>(
         &self,
-        generators: &C::Setup,
-        jolt_commitments: JoltCommitments<C>,
-        C: usize,
+        commitments: &JoltCommitments<PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
-        let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
-        self.proof.verify_precommitted(
-            &self.key,
-            witness_segment_commitments,
-            generators,
-            transcript,
-        )
+        self.proof
+            .verify(&self.key, commitments, opening_accumulator, transcript)
+    }
+}
+
+/// Jolt's R1CS constraint inputs are typically represneted as an enum.
+/// This trait serves two main purposes:
+/// - Defines a canonical ordering over inputs (and thus indices for each input).
+///   This is needed for sumcheck.
+/// - Defines a mapping between inputs and Jolt's polynomial/commitment/opening types
+///   (i.e. `JoltStuff<T>`).
+pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'static {
+    /// Returns a flat vector of all unique constraint inputs.
+    /// This also serves as a canonical ordering over the inputs.
+    fn flatten<const C: usize>() -> Vec<Self>;
+
+    /// The total number of unique constraint inputs
+    fn num_inputs<const C: usize>() -> usize {
+        Self::flatten::<C>().len()
     }
 
-    #[tracing::instrument(skip_all, name = "R1CSProof::format_commitments")]
-    pub fn format_commitments(
-        jolt_commitments: &JoltCommitments<C>,
-        C: usize,
-    ) -> Vec<&C::Commitment> {
-        let r1cs_commitments = &jolt_commitments.r1cs;
-        let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
-        let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
-            [..1 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
-        let instruction_lookup_indices_commitments =
-            &jolt_commitments.instruction_lookups.trace_commitment[..C];
-        let instruction_flag_commitments = &jolt_commitments.instruction_lookups.trace_commitment
-            [jolt_commitments.instruction_lookups.trace_commitment.len() - RV32I::COUNT - 1
-                ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
+    /// Converts an index to the corresponding constraint input.
+    fn from_index<const C: usize>(index: usize) -> Self {
+        Self::flatten::<C>()[index]
+    }
 
-        let mut combined_commitments: Vec<&C::Commitment> = Vec::new();
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
+    /// Converts a constraint input to its index in the canonical
+    /// ordering over inputs given by `ConstraintInput::flatten`.
+    fn to_index<const C: usize>(&self) -> usize {
+        match Self::flatten::<C>().iter().position(|x| x == self) {
+            Some(index) => index,
+            None => panic!("Invalid variant {:?}", self),
+        }
+    }
 
-        combined_commitments.push(&bytecode_trace_commitments[0]); // "virtual" address
-        combined_commitments.push(&bytecode_trace_commitments[2]); // "real" address
-        combined_commitments.push(&bytecode_trace_commitments[3]); // op_flags_packed
-        combined_commitments.push(&bytecode_trace_commitments[4]); // rd
-        combined_commitments.push(&bytecode_trace_commitments[5]); // rs1
-        combined_commitments.push(&bytecode_trace_commitments[6]); // rs2
-        combined_commitments.push(&bytecode_trace_commitments[7]); // imm
+    /// Gets an immutable reference to a Jolt polynomial/commitment/opening
+    /// corresponding to the given constraint input.
+    fn get_ref<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        &self,
+        jolt_stuff: &'a JoltStuff<T>,
+    ) -> &'a T;
 
-        combined_commitments.extend(memory_trace_commitments.iter());
+    /// Gets a mutable reference to a Jolt polynomial/commitment/opening
+    /// corresponding to the given constraint input.
+    fn get_ref_mut<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        &self,
+        jolt_stuff: &'a mut JoltStuff<T>,
+    ) -> &'a mut T;
+}
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks.iter());
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, Debug, PartialEq, EnumIter)]
+pub enum JoltR1CSInputs {
+    Bytecode_A, // Virtual address
+    // Bytecode_V
+    Bytecode_ELFAddress,
+    Bytecode_Bitflags,
+    Bytecode_RS1,
+    Bytecode_RS2,
+    Bytecode_RD,
+    Bytecode_Imm,
 
-        combined_commitments.extend(instruction_lookup_indices_commitments.iter());
+    RAM_A,
+    // Ram_V
+    RS1_Read,
+    RS2_Read,
+    RD_Read,
+    RAM_Read(usize),
+    RD_Write,
+    RAM_Write(usize),
 
-        combined_commitments.push(
-            jolt_commitments
-                .instruction_lookups
-                .trace_commitment
-                .last()
-                .unwrap(),
-        );
+    ChunksQuery(usize),
+    LookupOutput,
+    ChunksX(usize),
+    ChunksY(usize),
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().circuit_flags.iter());
+    OpFlags(CircuitFlags),
+    InstructionFlags(RV32I),
+    Aux(AuxVariable),
+}
 
-        combined_commitments.extend(instruction_flag_commitments.iter());
+#[derive(Clone, Copy, Debug, Default, PartialEq, EnumIter)]
+pub enum AuxVariable {
+    #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
+    LeftLookupOperand,
+    RightLookupOperand,
+    ImmSigned,
+    Product,
+    RelevantYChunk(usize),
+    WriteLookupOutputToRD,
+    WritePCtoRD,
+    NextPCJump,
+    ShouldBranch,
+    NextPC,
+}
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().aux.iter());
+impl_r1cs_input_lc_conversions!(JoltR1CSInputs, 4);
+impl ConstraintInput for JoltR1CSInputs {
+    fn flatten<const C: usize>() -> Vec<Self> {
+        JoltR1CSInputs::iter()
+            .flat_map(|variant| match variant {
+                Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION).map(Self::RAM_Read).collect(),
+                Self::RAM_Write(_) => (0..RAM_OPS_PER_INSTRUCTION).map(Self::RAM_Write).collect(),
+                Self::ChunksQuery(_) => (0..C).map(Self::ChunksQuery).collect(),
+                Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
+                Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
+                Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
+                Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
+                Self::Aux(_) => AuxVariable::iter()
+                    .flat_map(|aux| match aux {
+                        AuxVariable::RelevantYChunk(_) => (0..C)
+                            .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
+                            .collect(),
+                        _ => vec![Self::Aux(aux)],
+                    })
+                    .collect(),
+                _ => vec![variant],
+            })
+            .collect()
+    }
 
-        combined_commitments
+    fn get_ref<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        &self,
+        jolt: &'a JoltStuff<T>,
+    ) -> &'a T {
+        let aux_polynomials = &jolt.r1cs.aux;
+        match self {
+            JoltR1CSInputs::Bytecode_A => &jolt.bytecode.a_read_write,
+            JoltR1CSInputs::Bytecode_ELFAddress => &jolt.bytecode.v_read_write[0],
+            JoltR1CSInputs::Bytecode_Bitflags => &jolt.bytecode.v_read_write[1],
+            JoltR1CSInputs::Bytecode_RD => &jolt.bytecode.v_read_write[2],
+            JoltR1CSInputs::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
+            JoltR1CSInputs::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
+            JoltR1CSInputs::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
+            JoltR1CSInputs::RAM_A => &jolt.read_write_memory.a_ram,
+            JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read[0],
+            JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read[1],
+            JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read[2],
+            JoltR1CSInputs::RAM_Read(i) => &jolt.read_write_memory.v_read[3 + i],
+            JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
+            JoltR1CSInputs::RAM_Write(i) => &jolt.read_write_memory.v_write_ram[*i],
+            JoltR1CSInputs::ChunksQuery(i) => &jolt.instruction_lookups.dim[*i],
+            JoltR1CSInputs::LookupOutput => &jolt.instruction_lookups.lookup_outputs,
+            JoltR1CSInputs::ChunksX(i) => &jolt.r1cs.chunks_x[*i],
+            JoltR1CSInputs::ChunksY(i) => &jolt.r1cs.chunks_y[*i],
+            JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
+            JoltR1CSInputs::InstructionFlags(i) => {
+                &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
+            }
+            Self::Aux(aux) => match aux {
+                AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,
+                AuxVariable::RightLookupOperand => &aux_polynomials.right_lookup_operand,
+                AuxVariable::ImmSigned => &aux_polynomials.imm_signed,
+                AuxVariable::Product => &aux_polynomials.product,
+                AuxVariable::RelevantYChunk(i) => &aux_polynomials.relevant_y_chunks[*i],
+                AuxVariable::WriteLookupOutputToRD => &aux_polynomials.write_lookup_output_to_rd,
+                AuxVariable::WritePCtoRD => &aux_polynomials.write_pc_to_rd,
+                AuxVariable::NextPCJump => &aux_polynomials.next_pc_jump,
+                AuxVariable::ShouldBranch => &aux_polynomials.should_branch,
+                AuxVariable::NextPC => &aux_polynomials.next_pc,
+            },
+        }
+    }
+
+    fn get_ref_mut<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+        &self,
+        jolt: &'a mut JoltStuff<T>,
+    ) -> &'a mut T {
+        let aux_polynomials = &mut jolt.r1cs.aux;
+        match self {
+            Self::Aux(aux) => match aux {
+                AuxVariable::LeftLookupOperand => &mut aux_polynomials.left_lookup_operand,
+                AuxVariable::RightLookupOperand => &mut aux_polynomials.right_lookup_operand,
+                AuxVariable::ImmSigned => &mut aux_polynomials.imm_signed,
+                AuxVariable::Product => &mut aux_polynomials.product,
+                AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
+                AuxVariable::WriteLookupOutputToRD => {
+                    &mut aux_polynomials.write_lookup_output_to_rd
+                }
+                AuxVariable::WritePCtoRD => &mut aux_polynomials.write_pc_to_rd,
+                AuxVariable::NextPCJump => &mut aux_polynomials.next_pc_jump,
+                AuxVariable::ShouldBranch => &mut aux_polynomials.should_branch,
+                AuxVariable::NextPC => &mut aux_polynomials.next_pc,
+            },
+            _ => panic!("get_ref_mut should only be invoked when computing aux polynomials"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use crate::jolt::vm::JoltPolynomials;
+
+    use super::*;
+
+    #[test]
+    fn from_index_to_index() {
+        const C: usize = 4;
+        for i in 0..JoltR1CSInputs::num_inputs::<C>() {
+            assert_eq!(i, JoltR1CSInputs::from_index::<C>(i).to_index::<C>());
+        }
+        for var in JoltR1CSInputs::flatten::<C>() {
+            assert_eq!(
+                var,
+                JoltR1CSInputs::from_index::<C>(JoltR1CSInputs::to_index::<C>(&var))
+            );
+        }
+    }
+
+    #[test]
+    fn get_ref() {
+        const C: usize = 4;
+        let mut jolt_polys: JoltPolynomials<Fr> = JoltPolynomials::default();
+        jolt_polys.r1cs = R1CSPolynomials::initialize(&C);
+
+        for aux in AuxVariable::iter().flat_map(|aux| match aux {
+            AuxVariable::RelevantYChunk(_) => (0..C)
+                .into_iter()
+                .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
+                .collect(),
+            _ => vec![JoltR1CSInputs::Aux(aux)],
+        }) {
+            let ref_ptr = aux.get_ref(&jolt_polys) as *const DensePolynomial<Fr>;
+            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const DensePolynomial<Fr>;
+            assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
+        }
+    }
+
+    #[test]
+    fn r1cs_stuff_ordering() {
+        const C: usize = 4;
+        R1CSOpenings::<Fr>::test_ordering_consistency(&C);
     }
 }

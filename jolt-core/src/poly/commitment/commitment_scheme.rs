@@ -1,4 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::fmt::Debug;
 
 use crate::{
     field::JoltField,
@@ -35,7 +36,14 @@ pub enum BatchType {
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type Setup: Clone + Sync + Send;
-    type Commitment: Sync + Send + CanonicalSerialize + CanonicalDeserialize + AppendToTranscript;
+    type Commitment: Default
+        + Debug
+        + Sync
+        + Send
+        + PartialEq
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + AppendToTranscript;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 
@@ -63,6 +71,16 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
         Self::batch_commit(&slices, setup, batch_type)
     }
+
+    /// Homomorphically combines multiple commitments into a single commitment, computed as a
+    /// linear combination with the given coefficients.
+    fn combine_commitments(
+        _commitments: &[&Self::Commitment],
+        _coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
+    }
+
     fn prove(
         setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,

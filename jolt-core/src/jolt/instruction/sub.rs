@@ -12,7 +12,7 @@ use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SUBInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
@@ -123,7 +123,7 @@ mod test {
     #[test]
     fn sub_instruction_64_e2e() {
         let mut rng = test_rng();
-        const C: usize = 4;
+        const C: usize = 8;
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 64;
 
