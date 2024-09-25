@@ -57,7 +57,7 @@ $2 \sqrt{n}$ here will be on the order of 3,000, perhaps less. Each (128-bit) sc
 
 The calculation above is slightly delicate, because running Groth16 on 6 million constraints would be fine for many settings, but, say, 50 million constraints would not be. We do think 6 million is about the right estimate for this approach, especially given that 2,000 field operations for the Jolt verifier is a conservative estimate. 
 
-(Note that [some works](https://eprint.iacr.org/2024/1131.pdf) have dramatically overestimated the number of constraints needed to represent the Jolt-with-HyperKZG verifier as on the order of 2 billion, perhaps because they considered directly composing Jolt-with-HyperKZG with Groth16, which necessitates representing the HyperKZG verifier with non-native field arithmetic. The two-step composition proposed here avoids this overhead.) 
+(Note that [some works](https://eprint.iacr.org/2024/1131.pdf) have dramatically overestimated the number of constraints needed to represent the Jolt-with-HyperKZG verifier as on the order of 2 billion, perhaps because they considered directly composing Jolt-with-HyperKZG with Groth16, which necessitates representing the HyperKZG verifier with non-native field arithmetic. The two-step composition proposed here avoids this overhead, leading to just 2-5 million constraints.) 
 
 
 ## Details of the Jolt-with-HyperKZG verifier
