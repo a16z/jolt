@@ -39,11 +39,11 @@ pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 
 impl<P: Pairing> HyperKZGSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self {
-        Self(Arc::new(SRS::setup(rng, max_degree)))
+        Self(Arc::new(SRS::setup(rng, max_degree, 2)))
     }
 
     pub fn trim(self, max_degree: usize) -> (HyperKZGProverKey<P>, HyperKZGVerifierKey<P>) {
-        let (kzg_pk, kzg_vk) = SRS::trim(self.0.clone(), max_degree);
+        let (kzg_pk, kzg_vk) = SRS::trim(self.0, max_degree);
         (HyperKZGProverKey { kzg_pk }, HyperKZGVerifierKey { kzg_vk })
     }
 }
@@ -173,12 +173,11 @@ where
         // for each point u
         v_i.par_iter_mut().zip_eq(f).for_each(|(v_ij, f)| {
             // for each poly f
-            // for each poly f (except the last one - since it is constant)
-            let p = UniPoly::from_coeff(f.to_vec());
-            *v_ij = p.evaluate(&u[i]);
+            *v_ij = UniPoly::eval_with_coeffs(f, &u[i]);
         });
     });
 
+    // TODO(moodlezoup): Avoid cloned()
     transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
     let B = kzg_compute_batch_polynomial::<P>(f, q_powers);
@@ -302,9 +301,8 @@ where
                 poly.Z.len(),
             ));
         }
-        Ok(HyperKZGCommitment(UnivariateKZG::commit(
-            &pp.kzg_pk,
-            &UniPoly::from_coeff(poly.Z.clone()),
+        Ok(HyperKZGCommitment(UnivariateKZG::commit_slice(
+            &pp.kzg_pk, &poly.Z,
         )?))
     }
 
@@ -316,9 +314,7 @@ where
         _eval: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<HyperKZGProof<P>, ProofVerifyError> {
-        let x: Vec<P::ScalarField> = point.to_vec();
-
-        let ell = x.len();
+        let ell = point.len();
         let n = poly.len();
         assert_eq!(n, 1 << ell); // Below we assume that n is a power of two
 
@@ -333,7 +329,8 @@ where
 
             #[allow(clippy::needless_range_loop)]
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
-                *Pi_j = x[ell - i - 1] * (polys[i][2 * j + 1] - polys[i][2 * j]) + polys[i][2 * j];
+                *Pi_j =
+                    point[ell - i - 1] * (polys[i][2 * j + 1] - polys[i][2 * j]) + polys[i][2 * j];
             });
 
             polys.push(Pi);
@@ -346,9 +343,7 @@ where
         // Compute commitments in parallel
         let com: Vec<P::G1Affine> = (1..polys.len())
             .into_par_iter()
-            .map(|i| {
-                UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(polys[i].clone())).unwrap()
-            })
+            .map(|i| UnivariateKZG::commit_slice(&pk.kzg_pk, &polys[i]).unwrap())
             .collect();
 
         // Phase 2
@@ -373,10 +368,9 @@ where
         pi: &HyperKZGProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let x = point.to_vec();
         let y = P_of_x;
 
-        let ell = x.len();
+        let ell = point.len();
 
         let mut com = pi.com.clone();
 
@@ -409,8 +403,8 @@ where
         let two = P::ScalarField::from(2u64);
         for i in 0..ell {
             if two * r * Y[i + 1]
-                != r * (P::ScalarField::one() - x[ell - i - 1]) * (ypos[i] + yneg[i])
-                    + x[ell - i - 1] * (ypos[i] - yneg[i])
+                != r * (P::ScalarField::one() - point[ell - i - 1]) * (ypos[i] + yneg[i])
+                    + point[ell - i - 1] * (ypos[i] - yneg[i])
             {
                 return Err(ProofVerifyError::InternalError);
             }
@@ -526,20 +520,19 @@ where
         HyperKZGSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"HyperKZG_POLY_COMMITMENT_SCHEMEE"),
             max_len,
+            2,
         )))
         .trim(max_len)
     }
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
-            setup.0.kzg_pk.g1_powers().len() > poly.Z.len(),
+            setup.0.kzg_pk.g1_powers().len() >= poly.Z.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
             setup.0.kzg_pk.g1_powers().len(),
             poly.Z.len()
         );
-        HyperKZGCommitment(
-            UnivariateKZG::commit(&setup.0.kzg_pk, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
-        )
+        HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, &poly.Z).unwrap())
     }
 
     fn batch_commit(
@@ -552,23 +545,18 @@ where
             .par_iter()
             .map(|evals| {
                 assert!(
-                    gens.0.kzg_pk.g1_powers().len() > evals.len(),
+                    gens.0.kzg_pk.g1_powers().len() >= evals.len(),
                     "COMMIT KEY LENGTH ERROR {}, {}",
                     gens.0.kzg_pk.g1_powers().len(),
                     evals.len()
                 );
-                HyperKZGCommitment(
-                    UnivariateKZG::commit(&gens.0.kzg_pk, &UniPoly::from_coeff(evals.to_vec()))
-                        .unwrap(),
-                )
+                HyperKZGCommitment(UnivariateKZG::commit_slice(&gens.0.kzg_pk, evals).unwrap())
             })
             .collect::<Vec<_>>()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
-        HyperKZGCommitment(
-            UnivariateKZG::commit(&setup.0.kzg_pk, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
-        )
+        HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, evals).unwrap())
     }
 
     fn prove(
