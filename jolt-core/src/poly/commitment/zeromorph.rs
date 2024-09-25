@@ -33,7 +33,7 @@ pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
 
 impl<P: Pairing> ZeromorphSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self {
-        Self(Arc::new(SRS::setup(rng, max_degree)))
+        Self(Arc::new(SRS::setup(rng, max_degree, max_degree)))
     }
 
     pub fn trim(self, max_degree: usize) -> (ZeromorphProverKey<P>, ZeromorphVerifierKey<P>) {
@@ -489,6 +489,7 @@ where
 
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
+            max_len,
             max_len,
         )))
         .trim(max_len)

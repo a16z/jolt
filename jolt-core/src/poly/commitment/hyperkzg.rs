@@ -39,7 +39,7 @@ pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 
 impl<P: Pairing> HyperKZGSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self {
-        Self(Arc::new(SRS::setup(rng, max_degree)))
+        Self(Arc::new(SRS::setup(rng, max_degree, 2)))
     }
 
     pub fn trim(self, max_degree: usize) -> (HyperKZGProverKey<P>, HyperKZGVerifierKey<P>) {
@@ -516,18 +516,18 @@ where
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup {
         let max_len = shapes.iter().map(|shape| shape.input_length).max().unwrap();
-        println!("SRS length: {}", max_len);
 
         HyperKZGSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"HyperKZG_POLY_COMMITMENT_SCHEMEE"),
             max_len,
+            2,
         )))
         .trim(max_len)
     }
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
-            setup.0.kzg_pk.g1_powers().len() > poly.Z.len(),
+            setup.0.kzg_pk.g1_powers().len() >= poly.Z.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
             setup.0.kzg_pk.g1_powers().len(),
             poly.Z.len()

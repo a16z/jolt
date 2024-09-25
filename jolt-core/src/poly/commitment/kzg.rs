@@ -19,31 +19,38 @@ pub struct SRS<P: Pairing> {
 impl<P: Pairing> SRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(
         mut rng: &mut R,
-        max_degree: usize,
-        // num_g1_powers: usize,
-        // num_g2_powers: usize,
+        num_g1_powers: usize,
+        num_g2_powers: usize,
     ) -> Self {
         let beta = P::ScalarField::rand(&mut rng);
         let g1 = P::G1::rand(&mut rng);
         let g2 = P::G2::rand(&mut rng);
 
-        let beta_powers: Vec<P::ScalarField> = (0..=max_degree)
-            .scan(beta, |acc, _| {
-                let val = *acc;
-                *acc *= beta;
-                Some(val)
-            })
-            .collect();
-
-        let window_size = FixedBase::get_mul_window_size(max_degree);
         let scalar_bits = P::ScalarField::MODULUS_BIT_SIZE as usize;
 
         let (g1_powers_projective, g2_powers_projective) = rayon::join(
             || {
+                let beta_powers: Vec<P::ScalarField> = (0..=num_g1_powers)
+                    .scan(beta, |acc, _| {
+                        let val = *acc;
+                        *acc *= beta;
+                        Some(val)
+                    })
+                    .collect();
+                let window_size = FixedBase::get_mul_window_size(num_g1_powers);
                 let g1_table = FixedBase::get_window_table(scalar_bits, window_size, g1);
                 FixedBase::msm(scalar_bits, window_size, &g1_table, &beta_powers)
             },
             || {
+                let beta_powers: Vec<P::ScalarField> = (0..=num_g2_powers)
+                    .scan(beta, |acc, _| {
+                        let val = *acc;
+                        *acc *= beta;
+                        Some(val)
+                    })
+                    .collect();
+
+                let window_size = FixedBase::get_mul_window_size(num_g2_powers);
                 let g2_table = FixedBase::get_window_table(scalar_bits, window_size, g2);
                 FixedBase::msm(scalar_bits, window_size, &g2_table, &beta_powers)
             },
@@ -127,10 +134,10 @@ where
         poly: &UniPoly<P::ScalarField>,
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        if poly.degree() > pk.g1_powers().len() {
+        if pk.g1_powers().len() < poly.coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
-                poly.degree(),
                 pk.g1_powers().len(),
+                poly.coeffs.len(),
             ));
         }
 
@@ -149,10 +156,10 @@ where
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        if poly.degree() > pk.g1_powers().len() {
+        if pk.g1_powers().len() < poly.coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
-                poly.degree(),
                 pk.g1_powers().len(),
+                poly.coeffs.len(),
             ));
         }
         let c = <P::G1 as VariableBaseMSM>::msm(
@@ -168,11 +175,10 @@ where
         pk: &KZGProverKey<P>,
         coeffs: &[P::ScalarField],
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        let degree = coeffs.len() - 1;
-        if degree > pk.g1_powers().len() {
+        if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
-                degree,
                 pk.g1_powers().len(),
+                coeffs.len(),
             ));
         }
         let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..coeffs.len()], coeffs).unwrap();
@@ -232,7 +238,7 @@ mod test {
             let mut rng = &mut ChaCha20Rng::from_seed(*seed);
             let degree = rng.gen_range(2..20);
 
-            let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree));
+            let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
             let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
