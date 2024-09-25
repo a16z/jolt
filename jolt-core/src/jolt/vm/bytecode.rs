@@ -462,13 +462,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        // a_read_write, t_read, v_read_write (address, opcode, rs1, rs2, rd, imm)
-        let read_write_gen_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let init_final_shape = CommitShape::new(max_bytecode_size, BatchType::Small);
 
-        // t_final
-        let init_final_gen_shape = CommitShape::new(max_bytecode_size, BatchType::Small);
-
-        vec![read_write_gen_shape, init_final_gen_shape]
+        vec![read_write_shape, init_final_shape]
     }
 }
 

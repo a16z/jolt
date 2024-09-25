@@ -1184,19 +1184,13 @@ where
     }
 
     /// Computes the shape of all commitments.
-    pub fn commitment_shapes(
-        preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        max_trace_length: usize,
-    ) -> Vec<CommitShape> {
+    pub fn commitment_shapes(max_trace_length: usize) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
-        // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
-        let read_write_generator_shape = CommitShape::new(max_trace_length, BatchType::Big);
-        let init_final_generator_shape = CommitShape::new(
-            M * preprocessing.num_memories.next_power_of_two(),
-            BatchType::Small,
-        );
 
-        vec![read_write_generator_shape, init_final_generator_shape]
+        let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let init_final_shape = CommitShape::new(M, BatchType::Small);
+
+        vec![read_write_shape, init_final_shape]
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]

@@ -254,6 +254,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<C, F, PCS> {
+        println!("max_trace_length: {max_trace_length}");
         let bytecode_commitment_shapes =
             BytecodeProof::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
         let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F>::commitment_shapes(
@@ -263,11 +264,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let timestamp_range_check_commitment_shapes =
             TimestampValidityProof::<F, PCS>::commitment_shapes(max_trace_length);
 
-        let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
-            M,
-            Self::InstructionSet,
-            Self::Subtables,
-        >();
         let instruction_lookups_commitment_shapes = InstructionLookupsProof::<
             C,
             M,
@@ -275,10 +271,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             PCS,
             Self::InstructionSet,
             Self::Subtables,
-        >::commitment_shapes(
-            &instruction_lookups_preprocessing,
-            max_trace_length,
-        );
+        >::commitment_shapes(max_trace_length);
+
+        let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
+            M,
+            Self::InstructionSet,
+            Self::Subtables,
+        >();
 
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 

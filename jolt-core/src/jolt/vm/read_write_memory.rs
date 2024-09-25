@@ -857,17 +857,10 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
-        let t_read_write_len = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION).next_power_of_two();
-        let t_read_write_shape = CommitShape::new(t_read_write_len, BatchType::Big);
+        let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let init_final_shape = CommitShape::new(max_memory_address, BatchType::Small);
 
-        // { a_ram, v_read, v_write_rd, v_write_ram }
-        let r1cs_shape = CommitShape::new(max_trace_length, BatchType::Big);
-        // v_final, t_final
-        let init_final_len = max_memory_address.next_power_of_two();
-        let init_final_shape = CommitShape::new(init_final_len, BatchType::Small);
-
-        vec![t_read_write_shape, r1cs_shape, init_final_shape]
+        vec![read_write_shape, init_final_shape]
     }
 }
 
