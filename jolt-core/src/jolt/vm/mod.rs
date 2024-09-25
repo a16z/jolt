@@ -254,7 +254,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<C, F, PCS> {
-        println!("max_trace_length: {max_trace_length}");
         let bytecode_commitment_shapes =
             BytecodeProof::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
         let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F>::commitment_shapes(

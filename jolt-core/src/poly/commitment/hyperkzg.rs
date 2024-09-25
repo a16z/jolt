@@ -556,7 +556,7 @@ where
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
-        HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, &evals).unwrap())
+        HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, evals).unwrap())
     }
 
     fn prove(
