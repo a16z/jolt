@@ -117,10 +117,15 @@ impl<F: JoltField> UniPoly<F> {
 
     #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
     pub fn evaluate(&self, r: &F) -> F {
-        let mut eval = self.coeffs[0];
+        Self::eval_with_coeffs(&self.coeffs, r)
+    }
+
+    #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
+    pub fn eval_with_coeffs(coeffs: &[F], r: &F) -> F {
+        let mut eval = coeffs[0];
         let mut power = *r;
-        for i in 1..self.coeffs.len() {
-            eval += power * self.coeffs[i];
+        for i in 1..coeffs.len() {
+            eval += power * coeffs[i];
             power *= *r;
         }
         eval

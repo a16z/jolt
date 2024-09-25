@@ -17,7 +17,12 @@ pub struct SRS<P: Pairing> {
 }
 
 impl<P: Pairing> SRS<P> {
-    pub fn setup<R: RngCore + CryptoRng>(mut rng: &mut R, max_degree: usize) -> Self {
+    pub fn setup<R: RngCore + CryptoRng>(
+        mut rng: &mut R,
+        max_degree: usize,
+        // num_g1_powers: usize,
+        // num_g2_powers: usize,
+    ) -> Self {
         let beta = P::ScalarField::rand(&mut rng);
         let g1 = P::G1::rand(&mut rng);
         let g2 = P::G2::rand(&mut rng);
@@ -155,6 +160,22 @@ where
             poly.coeffs.as_slice(),
         )
         .unwrap();
+        Ok(c.into_affine())
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_slice")]
+    pub fn commit_slice(
+        pk: &KZGProverKey<P>,
+        coeffs: &[P::ScalarField],
+    ) -> Result<P::G1Affine, ProofVerifyError> {
+        let degree = coeffs.len() - 1;
+        if degree > pk.g1_powers().len() {
+            return Err(ProofVerifyError::KeyLengthError(
+                degree,
+                pk.g1_powers().len(),
+            ));
+        }
+        let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..coeffs.len()], coeffs).unwrap();
         Ok(c.into_affine())
     }
 
