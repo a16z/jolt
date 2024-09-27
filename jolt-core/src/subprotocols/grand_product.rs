@@ -3,6 +3,7 @@ use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -58,6 +59,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
@@ -183,6 +185,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS>,
         claims: &Vec<F>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
@@ -1576,12 +1579,17 @@ mod grand_product_tests {
             Fr,
             Zeromorph<Bn254>,
         >>::prove_grand_product(
-            &mut batched_circuit, &mut transcript, None
+            &mut batched_circuit, None, &mut transcript, None
         );
 
         let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        let (_, r_verifier) =
-            BatchedDenseGrandProduct::verify_grand_product(&proof, &claims, &mut transcript, None);
+        let (_, r_verifier) = BatchedDenseGrandProduct::verify_grand_product(
+            &proof,
+            &claims,
+            None,
+            &mut transcript,
+            None,
+        );
         assert_eq!(r_prover, r_verifier);
     }
 
