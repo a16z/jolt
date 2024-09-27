@@ -1,5 +1,5 @@
 # Standard Library
-Jolt supports the full Rust standard library. Do enable support, simply add the `guest-std` feature to the Jolt import in the guest's `Cargo.toml` file and remove the `#![cfg_attr(feature = "guest", no_std)]` directive from the guest code.
+Jolt supports the full Rust standard library. To enable support, simply add the `guest-std` feature to the Jolt import in the guest's `Cargo.toml` file and remove the `#![cfg_attr(feature = "guest", no_std)]` directive from the guest code.
 
 ## Example
 ```rust
