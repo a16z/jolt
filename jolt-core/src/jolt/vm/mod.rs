@@ -21,12 +21,15 @@ use crate::jolt::{
         VirtualInstructionSequence,
     },
     subtable::JoltSubtableSet,
-    vm::timestamp_range_check::TimestampValidityProof,
+    vm::{
+        bytecode::StreamingBytecodePolynomials,
+        timestamp_range_check::TimestampValidityProof,
+    },
 };
 use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, StreamingCommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
@@ -241,7 +244,7 @@ impl<F: JoltField> JoltPolynomials<F> {
     }
 }
 
-pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
+pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
     type Constraints: R1CSConstraints<C, F>;
@@ -332,9 +335,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     ) {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
-        println!("Trace length: {}", trace_length);
 
         JoltTraceStep::pad(&mut trace);
+
+        let mut trace2 = trace.clone();
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
@@ -380,6 +384,15 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         >(&trace);
 
+        let streaming_bytecode_polynomials = StreamingBytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace2);
+        let initialized_commitment = PCS::initialize(streaming_bytecode_polynomials.length(), &preprocessing.generators, &BatchType::Big);
+        // JP: `fold` likely isn't sufficient since we need to extract the internal state.
+        let streaming_trace_commitments =
+            streaming_bytecode_polynomials.fold(initialized_commitment, |state, step| {
+                PCS::process(state, step.a_read_write)
+            });
+        let a_read_write_commitment = PCS::finalize(streaming_trace_commitments);
+
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
@@ -391,6 +404,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
         let jolt_commitments = jolt_polynomials.commit::<C, PCS>(&preprocessing);
+        assert_eq!(a_read_write_commitment, jolt_commitments.bytecode.a_read_write);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 

@@ -8,9 +8,8 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::{BatchType, CommitmentScheme},
-    kzg,
-    kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
+    commitment_scheme::{BatchType, CommitmentScheme, StreamingCommitmentScheme},
+    kzg::{self, KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
@@ -59,7 +58,7 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
     pub kzg_vk: KZGVerifierKey<P>,
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
 impl<P: Pairing> Default for HyperKZGCommitment<P> {
@@ -643,6 +642,23 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"hyperkzg"
+    }
+}
+
+impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
+where
+    <P as Pairing>::ScalarField: field::JoltField,
+{
+    type State = ();
+
+    fn initialize(size: usize, setup: &Self::Setup, batch_type: &BatchType) -> Self::State {
+        todo!()
+    }
+    fn process(state: Self::State, eval: Self::Field) -> Self::State {
+        todo!()
+    }
+    fn finalize(state: Self::State) -> Self::Commitment {
+        todo!()
     }
 }
 

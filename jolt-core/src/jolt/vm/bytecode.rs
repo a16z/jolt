@@ -101,17 +101,17 @@ pub struct BytecodeRowStep<F: JoltField, C: CommitmentScheme<Field = F>> {
     _group: PhantomData<C>,
 
     /// Memory address as read from the ELF.
-    address: F,
+    pub(super) address: F,
     /// Packed instruction/circuit flags, used for r1cs
-    bitflags: F,
+    pub(super) bitflags: F,
     /// Index of the destination register for this instruction (0 if register is unused).
-    rd: F,
+    pub(super) rd: F,
     /// Index of the first source register for this instruction (0 if register is unused).
-    rs1: F,
+    pub(super) rs1: F,
     /// Index of the second source register for this instruction (0 if register is unused).
-    rs2: F,
+    pub(super) rs2: F,
     /// "Immediate" value for this instruction (0 if unused).
-    imm: F,
+    pub(super) imm: F,
     // /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     // /// Jolt paper), then this contains the number of virtual instructions after this
     // /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -236,6 +236,8 @@ pub fn random_bytecode_trace(
 }
 
 pub struct StreamingBytecodePolynomials<'a, F: JoltField, C: CommitmentScheme<Field = F>> {
+    /// Length of the polynomial.
+    length: usize,
     /// Stream that builds the bytecode polynomial.
     polynomial_stream: Box<dyn Iterator<Item = BytecodePolynomialStep<F, C>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
@@ -340,6 +342,7 @@ impl<'a, F: JoltField, C: CommitmentScheme<Field = F>> StreamingBytecodePolynomi
         trace: &'a mut [JoltTraceStep<InstructionSet>],
     ) -> Self {
         let final_cts: Vec<usize> = vec![0; preprocessing.code_size];
+        let length = trace.len();
 
         let polynomial_stream = map_state(final_cts, trace.iter_mut(), |final_cts, step| {
             if !step.bytecode_row.address.is_zero() {
@@ -388,8 +391,21 @@ impl<'a, F: JoltField, C: CommitmentScheme<Field = F>> StreamingBytecodePolynomi
         });
 
         StreamingBytecodePolynomials {
+            length,
             polynomial_stream: Box::new(polynomial_stream),
         }
+    }
+
+    pub fn fold<T, FN>(self, init: T, f: FN) -> T
+    where
+        FN: FnMut(T, BytecodePolynomialStep<F, C>) -> T,
+    {
+        self.polynomial_stream.fold(init, f)
+    }
+
+    /// Returns the number of evaluations of the polynomial.
+    pub fn length(&self) -> usize {
+        self.length
     }
 }
 

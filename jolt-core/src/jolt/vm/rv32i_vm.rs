@@ -36,7 +36,7 @@ use crate::jolt::subtable::{
     truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable,
     SubtableId,
 };
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
 /// are callable on the enum type via enum_dispatch.
@@ -176,7 +176,7 @@ pub const M: usize = 1 << 16;
 impl<F, PCS> Jolt<F, PCS, C, M> for RV32IJoltVM
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
