@@ -22,7 +22,10 @@ use crate::jolt::{
     },
     subtable::JoltSubtableSet,
     vm::{
-        bytecode::StreamingBytecodePolynomials,
+        bytecode::{
+            StreamingBytecodeCommitment,
+            StreamingBytecodePolynomials,
+        },
         timestamp_range_check::TimestampValidityProof,
     },
 };
@@ -385,13 +388,13 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, const C:
         >(&trace);
 
         let streaming_bytecode_polynomials = StreamingBytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace2);
-        let initialized_commitment = PCS::initialize(streaming_bytecode_polynomials.length(), &preprocessing.generators, &BatchType::Big);
+        let initialized_commitment = StreamingBytecodeCommitment::initialize(streaming_bytecode_polynomials.length(), &preprocessing.generators, &BatchType::Big);
         // JP: `fold` likely isn't sufficient since we need to extract the internal state.
         let streaming_trace_commitments =
             streaming_bytecode_polynomials.fold(initialized_commitment, |state, step| {
-                PCS::process(state, step.a_read_write)
+                StreamingBytecodeCommitment::process(state, &step)
             });
-        let a_read_write_commitment = PCS::finalize(streaming_trace_commitments);
+        let bytecode_commitments = StreamingBytecodeCommitment::finalize(streaming_trace_commitments);
 
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
@@ -401,10 +404,19 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, const C:
             r1cs: r1cs_polynomials,
         };
 
+
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
         let jolt_commitments = jolt_polynomials.commit::<C, PCS>(&preprocessing);
-        assert_eq!(a_read_write_commitment, jolt_commitments.bytecode.a_read_write);
+        /// TODO: Temp, remove me XXX
+        assert_eq!(bytecode_commitments[0], jolt_commitments.bytecode.a_read_write);
+        assert_eq!(bytecode_commitments[1], jolt_commitments.bytecode.t_read);
+        assert_eq!(bytecode_commitments[2], jolt_commitments.bytecode.v_read_write[0]);
+        assert_eq!(bytecode_commitments[3], jolt_commitments.bytecode.v_read_write[1]);
+        assert_eq!(bytecode_commitments[4], jolt_commitments.bytecode.v_read_write[2]);
+        assert_eq!(bytecode_commitments[5], jolt_commitments.bytecode.v_read_write[3]);
+        assert_eq!(bytecode_commitments[6], jolt_commitments.bytecode.v_read_write[4]);
+        assert_eq!(bytecode_commitments[7], jolt_commitments.bytecode.v_read_write[5]);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 

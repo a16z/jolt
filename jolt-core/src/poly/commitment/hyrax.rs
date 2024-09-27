@@ -182,6 +182,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct HyraxSchemeState<G: CurveGroup> {
     row_commitments: Vec<G>,
     generators: Vec<<G as CurveGroup>::Affine>,

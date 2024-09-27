@@ -13,7 +13,7 @@ use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme, StreamingCommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::streaming::map_state;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -585,6 +585,56 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
         let init_final_shape = CommitShape::new(max_bytecode_size, BatchType::Small);
 
         vec![read_write_shape, init_final_shape]
+    }
+}
+
+// TODO: Use BytecodeStuff? XXX
+pub struct StreamingBytecodeCommitment<C: StreamingCommitmentScheme> {
+    a_read_write: C::State,
+    v_read_write: [C::State; 6],
+    t_read: C::State,
+}
+
+impl<C: StreamingCommitmentScheme> StreamingBytecodeCommitment<C> {
+    /// Initialize a streaming computation of a commitment.
+    pub fn initialize(size: usize, setup: &C::Setup, batch_type: &BatchType) -> Self {
+        let a_read_write = C::initialize(size, setup, batch_type);
+        let v_read_write = std::array::from_fn(|_| a_read_write.clone());
+        let t_read = a_read_write.clone();
+
+        StreamingBytecodeCommitment {
+            a_read_write,
+            v_read_write,
+            t_read,
+        }
+    }
+
+    /// Process one step to compute the commitment.
+    pub fn process(self, step: &BytecodePolynomialStep<C::Field, C>) -> Self {
+        let step_v_read_write = [
+            step.v_read_write.address,
+            step.v_read_write.bitflags,
+            step.v_read_write.rd,
+            step.v_read_write.rs1,
+            step.v_read_write.rs2,
+            step.v_read_write.imm,
+        ];
+        StreamingBytecodeCommitment {
+            a_read_write: C::process(self.a_read_write, step.a_read_write),
+            v_read_write: self.v_read_write.into_iter().zip(step_v_read_write)
+                .map(|(vrd, step)| C::process(vrd, step)).collect::<Vec<_>>().try_into().unwrap(),
+            t_read: C::process(self.t_read, step.t_read),
+        }
+    }
+
+    /// Return the trace commitments.
+    pub fn finalize(self) -> Vec<C::Commitment> {
+        [
+            C::finalize(self.a_read_write),
+            C::finalize(self.t_read),
+        ].into_iter().chain(
+            self.v_read_write.into_iter().map(|vrw| C::finalize(vrw))
+        ).collect()
     }
 }
 
