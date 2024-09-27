@@ -114,15 +114,16 @@ fn is_std() -> Option<bool> {
         .as_str()
         .expect("Failed to get git-path as string");
 
-    return Some(
-        dependencies
-            .get("features")
-            .and_then(|v| v.as_array())
-            .map_or(false, |features| {
-                features.iter().any(|f| f.as_str() == Some("guest-std"))
-            }),
-    );
-
+    if package == "jolt-sdk" && git == "https://github.com/myceliaspy/jolt" {
+        return Some(
+            dependencies
+                .get("features")
+                .and_then(|v| v.as_array())
+                .map_or(false, |features| {
+                    features.iter().any(|f| f.as_str() == Some("guest-std"))
+                }),
+        );
+    }
     None
 }
 
