@@ -114,7 +114,7 @@ fn is_std() -> Option<bool> {
         .as_str()
         .expect("Failed to get git-path as string");
 
-    if package == "jolt-sdk" && git == "https://github.com/myceliaspy/jolt" {
+    if package == "jolt-sdk" && git == "https://github.com/a16z/jolt" {
         return Some(
             dependencies
                 .get("features")
