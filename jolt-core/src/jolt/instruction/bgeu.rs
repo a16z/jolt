@@ -33,7 +33,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEUInstruction<WORD_SIZE> {
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C - 1)),
         ]
     }
 

@@ -35,10 +35,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTInstruction<WORD_SIZE> {
         // Accumulator for EQ(x_{<s}, y_{<s})
         let mut eq_prod = eq_abs[0];
 
-        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
-            ltu_sum += *ltu_i * eq_prod;
-            eq_prod *= *eq_i;
+        for i in 0..C - 2 {
+            ltu_sum += ltu[i] * eq_prod;
+            eq_prod *= eq[i];
         }
+        // Do not need to update `eq_prod` for the last iteration
+        ltu_sum += ltu[C - 2] * eq_prod;
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
         left_msb[0] * (F::one() - right_msb[0])
@@ -59,7 +61,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTInstruction<WORD_SIZE> {
             (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C - 1)),
             (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
             (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]

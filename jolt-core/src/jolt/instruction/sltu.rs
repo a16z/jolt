@@ -28,11 +28,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
         let mut sum = F::zero();
         let mut eq_prod = F::one();
 
-        for i in 0..C {
+        for i in 0..C - 1 {
             sum += ltu[i] * eq_prod;
             eq_prod *= eq[i];
         }
-        sum
+        // Do not need to update `eq_prod` for the last iteration
+        sum + ltu[C - 1] * eq_prod
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -46,7 +47,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C - 1)),
         ]
     }
 
