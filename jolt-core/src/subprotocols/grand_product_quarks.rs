@@ -124,7 +124,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         self.polynomials[0].len().log_2()
     }
     /// The claimed outputs of the grand products.
-    fn claims(&self) -> Vec<F> {
+    fn claimed_outputs(&self) -> Vec<F> {
         self.polynomials
             .par_iter()
             .map(|f| f.iter().product())
@@ -165,7 +165,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             (
                 None,
                 Vec::<F>::new(),
-                <QuarkGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claims(self),
+                <QuarkGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claimed_outputs(self),
             )
         };
 

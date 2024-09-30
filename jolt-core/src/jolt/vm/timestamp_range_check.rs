@@ -551,7 +551,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     fn num_layers(&self) -> usize {
         unimplemented!("init/final grand products are batched with read/write grand products");
     }
-    fn claims(&self) -> Vec<F> {
+    fn claimed_outputs(&self) -> Vec<F> {
         unimplemented!("init/final grand products are batched with read/write grand products");
     }
 
@@ -569,7 +569,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
     fn verify_grand_product(
         _proof: &BatchedGrandProductProof<PCS>,
-        _claims: &Vec<F>,
+        _claims: &[F],
         _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         _transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
@@ -681,7 +681,9 @@ where
             <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::construct(leaves);
 
         let hashes: Vec<F> =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claims(&batched_circuit);
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claimed_outputs(
+                &batched_circuit,
+            );
         let (read_write_hashes, init_final_hashes) =
             hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
         let multiset_hashes = TimestampValidityProof::<F, PCS>::uninterleave_hashes(

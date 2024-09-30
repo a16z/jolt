@@ -118,7 +118,7 @@ where
         _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    ) -> (Vec<F>, Vec<F>) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
 

@@ -392,7 +392,7 @@ where
         read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
-        let claims = batched_circuit.claims();
+        let claims = batched_circuit.claimed_outputs();
         (batched_circuit, claims)
     }
 
@@ -405,7 +405,7 @@ where
         init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
-        let claims = batched_circuit.claims();
+        let claims = batched_circuit.claimed_outputs();
         (batched_circuit, claims)
     }
 
@@ -570,7 +570,7 @@ where
         Self::compute_verifier_openings(
             &mut proof.openings,
             preprocessing,
-            &r_read_write,
+            &r_read_write, // TODO(moodlezoup): slice based on batch size and combine?
             &r_init_final,
         );
 

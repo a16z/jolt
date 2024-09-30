@@ -499,11 +499,11 @@ where
         _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
 
-        let read_leaves = (0..num_ops)
+        let read_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -523,7 +523,7 @@ where
             })
             .collect();
 
-        let init_leaves = (0..bytecode_size)
+        let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -585,9 +585,10 @@ where
             })
             .collect();
 
+        // TODO(moodlezoup): avoid concat
         (
-            vec![read_leaves, write_leaves],
-            vec![init_leaves, final_leaves],
+            ([read_leaves, write_leaves].concat(), 2),
+            ([init_leaves, final_leaves].concat(), 2),
         )
     }
 
