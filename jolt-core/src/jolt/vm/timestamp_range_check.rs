@@ -557,6 +557,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 
     fn prove_grand_product(
         &mut self,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
         _transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
@@ -565,6 +566,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     fn verify_grand_product(
         _proof: &BatchedGrandProductProof<PCS>,
         _claims: &Vec<F>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
         _transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
@@ -601,6 +603,7 @@ where
             TimestampValidityProof::prove_grand_products(
                 polynomials,
                 jolt_polynomials,
+                opening_accumulator,
                 transcript,
                 generators,
             );
@@ -652,6 +655,7 @@ where
     fn prove_grand_products(
         polynomials: &TimestampRangeCheckPolynomials<F>,
         jolt_polynomials: &JoltPolynomials<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
         setup: &PCS::Setup,
     ) -> (BatchedGrandProductProof<PCS>, MultisetHashes<F>, Vec<F>) {
@@ -688,7 +692,7 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let (batched_grand_product, r_grand_product) =
-            batched_circuit.prove_grand_product(transcript, Some(setup));
+            batched_circuit.prove_grand_product(Some(opening_accumulator), transcript, Some(setup));
 
         drop_in_background_thread(batched_circuit);
 
@@ -725,6 +729,7 @@ where
             BatchedDenseGrandProduct::verify_grand_product(
                 &self.batched_grand_product,
                 &concatenated_hashes,
+                Some(opening_accumulator),
                 transcript,
                 Some(generators),
             );

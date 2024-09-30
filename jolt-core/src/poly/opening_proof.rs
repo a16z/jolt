@@ -105,7 +105,7 @@ pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field 
     #[cfg(test)]
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
-    prover_openings: Vec<ProverOpening<F>>,
+    prover_openings: Option<Vec<ProverOpening<F>>>,
     #[cfg(test)]
     pcs_setup: Option<PCS::Setup>,
 }
@@ -449,7 +449,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         Self {
             openings: vec![],
             #[cfg(test)]
-            prover_openings: vec![],
+            prover_openings: None,
             #[cfg(test)]
             pcs_setup: None,
         }
@@ -463,7 +463,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         prover_openings: ProverOpeningAccumulator<F>,
         pcs_setup: &PCS::Setup,
     ) {
-        self.prover_openings = prover_openings.openings;
+        self.prover_openings = Some(prover_openings.openings);
         self.pcs_setup = Some(pcs_setup.clone());
     }
 
@@ -501,8 +501,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         let joint_commitment = PCS::combine_commitments(commitments, &rho_powers);
 
         #[cfg(test)]
-        {
-            let prover_opening = &self.prover_openings[self.openings.len()];
+        'test: {
+            if self.prover_openings.is_none() {
+                break 'test;
+            }
+            let prover_opening = &self.prover_openings.as_ref().unwrap()[self.openings.len()];
             assert_eq!(
                 prover_opening.batch.len(),
                 commitments.len(),
