@@ -37,4 +37,6 @@ as per [Dao-Thaler](https://eprint.iacr.org/2024/1210).
 
 * AVX-512 speedups.
 
-* GPU integration. 
+* GPU integration.
+
+* Prover space control via folding
