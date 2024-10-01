@@ -40,12 +40,14 @@ A generic config parameter will be added to the `Jolt` struct called `Continuati
 
 # References on non-recursive prover space control
 
-*Verifiable computation using multiple provers. Andrew J. Blumberg, Justin Thaler, Victor Vu, and Michael Walfish. https://eprint.iacr.org/2014/846.
+<OL>
+<LI> Verifiable computation using multiple provers. Andrew J. Blumberg, Justin Thaler, Victor Vu, and Michael Walfish. https://eprint.iacr.org/2014/846.
 
-*Public-coin zero-knowledge arguments with (almost) minimal time and space overheads. AR Block, J Holmgren, A Rosen, RD Rothblum, P Soni. Theory of Cryptography Conference, 168-197.
+<LI> Public-coin zero-knowledge arguments with (almost) minimal time and space overheads. AR Block, J Holmgren, A Rosen, RD Rothblum, P Soni. Theory of Cryptography Conference, 168-197.
 
-*Gemini: Elastic SNARKs for diverse environments J Bootle, A Chiesa, Y Hu, M Orru. EUROCRYPT 2022
+<LI> Gemini: Elastic SNARKs for diverse environments J Bootle, A Chiesa, Y Hu, M Orru. EUROCRYPT 2022
 
-*On black-box constructions of time and space efficient sublinear arguments from symmetric-key primitives. Laasya Bangalore, Rishabh Bhadauria, Carmit Hazay & Muthuramakrishnan Venkitasubramaniam. TCC 2022.
+<LI> On black-box constructions of time and space efficient sublinear arguments from symmetric-key primitives. Laasya Bangalore, Rishabh Bhadauria, Carmit Hazay & Muthuramakrishnan Venkitasubramaniam. TCC 2022.
 
-*Ligetron: Lightweight Scalable End-to-End Zero-Knowledge Proofs. Post-Quantum ZK-SNARKs on a Browser. Ruihan Wang  Carmit Hazay  Muthuramakrishnan Venkitasubramaniam. 2024 IEEE Symposium on Security and Privacy (SP).
+<LI> Ligetron: Lightweight Scalable End-to-End Zero-Knowledge Proofs. Post-Quantum ZK-SNARKs on a Browser. Ruihan Wang  Carmit Hazay  Muthuramakrishnan Venkitasubramaniam. 2024 IEEE Symposium on Security and Privacy (SP).
+</OL>
