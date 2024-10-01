@@ -40,3 +40,4 @@
         - [Groth16 Recursion](./future/groth-16.md)
         - [Precompiles](./future/precompiles.md)
         - [Prover space control](./future/continuations.md)
+            - [Folding](./future/folding.md)   
