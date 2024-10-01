@@ -39,6 +39,6 @@ as per [Dao-Thaler](https://eprint.iacr.org/2024/1210).
 
 * GPU integration.
 
-* Prover space control via folding (see [here](https://github.com/a16z/jolt/edit/main/book/src/future/folding.md) for a sketchy overview of how this will be implemented).
+* Prover space control via folding (see [here](https://jolt.a16zcrypto.com/future/folding.html) for a sketchy overview of how this will be implemented).
 
 * Eliminate some unnecessary lookups identified via formal verification efforts. 
