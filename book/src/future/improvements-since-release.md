@@ -24,7 +24,7 @@ not mentioned in this file is presumably not yet started (or barely started).
 * In progress: change how we are batching grand products, treating them all laid side-by-side as one giant circuit. This
 will reduce proof size by up to 200KB.
 
-* In progress: reduce the number of polynomial evaluation proofs from 7-10 down to 1. 
+* Reduce the number of polynomial evaluation proofs from 7-10 down to 1 (achieved in [this PR](https://github.com/a16z/jolt/pull/453)) 
 
 ## Prover cost improvements (all in progress)
 
