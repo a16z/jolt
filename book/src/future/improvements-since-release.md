@@ -35,7 +35,11 @@ as per [Dao-Thaler](https://eprint.iacr.org/2024/1210).
 
 * Implement the sum-check prover optimization from Section 3 of Angus Gruen's [paper](https://eprint.iacr.org/2024/108).
 
-* AVX-512 speedups.
+* Implement the sum-check prover optimizations from [Bagad-Domb-Thaler](https://eprint.iacr.org/2024/1046), which actually apply whenever small values are being summed, even if those values reside in a big (e.g., 256-bit) field. This captures Spartan as applied in Jolt. Thanks to Lev Soukhanov for this observation.
+
+* Replace byte-addressable memory with word-addressable memory. This is actually [implemented](https://github.com/a16z/jolt/pull/412), but the above speedups to Spartan proving will need to be implemented before it yields an overall performance improvement. 
+
+* AVX-512 speedups (see [here](https://github.com/a16z/vectorized-fields) for a detailed description of in-progress efforts).
 
 * GPU integration.
 
