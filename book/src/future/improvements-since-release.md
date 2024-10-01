@@ -39,4 +39,6 @@ as per [Dao-Thaler](https://eprint.iacr.org/2024/1210).
 
 * GPU integration.
 
-* Prover space control via folding
+* Prover space control via folding.
+
+* Eliminate some unnecessary lookups identified via formal verification efforts. 
