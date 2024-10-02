@@ -16,4 +16,6 @@ pub enum ProofVerifyError {
     SpartanError(String),
     #[error("Length Error: SRS Length: {0}, Key Length: {0}")]
     KeyLengthError(usize, usize),
+    #[error("Invalid key length: {0}, expected power of 2")]
+    InvalidKeyLength(usize),
 }

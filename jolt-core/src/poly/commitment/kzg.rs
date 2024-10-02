@@ -9,11 +9,13 @@ use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct SRS<P: Pairing> {
     pub g1_powers: Vec<P::G1Affine>,
     pub g2_powers: Vec<P::G2Affine>,
+    pub g_products: Vec<P::G1Affine>,
 }
 
 impl<P: Pairing> SRS<P> {
@@ -28,6 +30,11 @@ impl<P: Pairing> SRS<P> {
 
         let scalar_bits = P::ScalarField::MODULUS_BIT_SIZE as usize;
 
+        let g1_window_size = FixedBase::get_mul_window_size(num_g1_powers);
+        let g2_window_size = FixedBase::get_mul_window_size(num_g2_powers);
+        let g1_table = FixedBase::get_window_table(scalar_bits, g1_window_size, g1);
+        let g2_table = FixedBase::get_window_table(scalar_bits, g2_window_size, g2);
+
         let (g1_powers_projective, g2_powers_projective) = rayon::join(
             || {
                 let beta_powers: Vec<P::ScalarField> = (0..=num_g1_powers)
@@ -37,9 +44,7 @@ impl<P: Pairing> SRS<P> {
                         Some(val)
                     })
                     .collect();
-                let window_size = FixedBase::get_mul_window_size(num_g1_powers);
-                let g1_table = FixedBase::get_window_table(scalar_bits, window_size, g1);
-                FixedBase::msm(scalar_bits, window_size, &g1_table, &beta_powers)
+                FixedBase::msm(scalar_bits, g1_window_size, &g1_table, &beta_powers)
             },
             || {
                 let beta_powers: Vec<P::ScalarField> = (0..=num_g2_powers)
@@ -49,10 +54,7 @@ impl<P: Pairing> SRS<P> {
                         Some(val)
                     })
                     .collect();
-
-                let window_size = FixedBase::get_mul_window_size(num_g2_powers);
-                let g2_table = FixedBase::get_window_table(scalar_bits, window_size, g2);
-                FixedBase::msm(scalar_bits, window_size, &g2_table, &beta_powers)
+                FixedBase::msm(scalar_bits, g2_window_size, &g2_table, &beta_powers)
             },
         );
 
@@ -61,9 +63,20 @@ impl<P: Pairing> SRS<P> {
             || P::G2::normalize_batch(&g2_powers_projective),
         );
 
+        // Compute a commitment, G, to all the group elements in the SRS
+        let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;
+        let all_ones_coeffs: Vec<P::ScalarField> = vec![P::ScalarField::one(); num_g1_powers + 1];
+        let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
+        let g_products= powers_of_2.map(|power| {
+            <P::G1 as VariableBaseMSM>::msm(&g1_powers[..power], &all_ones_coeffs[..power])
+            .unwrap()
+            .into_affine()
+        }).collect();
+
         Self {
             g1_powers,
             g2_powers,
+            g_products,
         }
     }
 
@@ -119,6 +132,15 @@ pub struct KZGVerifierKey<P: Pairing> {
     pub beta_g2: P::G2Affine,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum CommitMode {
+    Default,
+    // We noticed that most (93%) of the coefficients arising from lasso grand products are 1.
+    // This mode uses a precomputed commitment, G, save some compute.
+    // Where G is the commitment to the all the group elements in the SRS.
+    GrandProduct,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct UnivariateKZG<P: Pairing> {
     _phantom: PhantomData<P>,
@@ -134,21 +156,7 @@ where
         poly: &UniPoly<P::ScalarField>,
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        if pk.g1_powers().len() < poly.coeffs.len() {
-            return Err(ProofVerifyError::KeyLengthError(
-                pk.g1_powers().len(),
-                poly.coeffs.len(),
-            ));
-        }
-
-        let bases = pk.g1_powers();
-        let c = <P::G1 as VariableBaseMSM>::msm(
-            &bases[offset..poly.coeffs.len()],
-            &poly.coeffs[offset..],
-        )
-        .unwrap();
-
-        Ok(c.into_affine())
+        Self::commit_inner(pk, &poly.coeffs, offset, CommitMode::Default)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit")]
@@ -156,18 +164,16 @@ where
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        if pk.g1_powers().len() < poly.coeffs.len() {
-            return Err(ProofVerifyError::KeyLengthError(
-                pk.g1_powers().len(),
-                poly.coeffs.len(),
-            ));
-        }
-        let c = <P::G1 as VariableBaseMSM>::msm(
-            &pk.g1_powers()[..poly.coeffs.len()],
-            poly.coeffs.as_slice(),
-        )
-        .unwrap();
-        Ok(c.into_affine())
+        Self::commit_inner(pk, &poly.coeffs, 0, CommitMode::Default)
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_with_mode")]
+    pub fn commit_with_mode(
+        pk: &KZGProverKey<P>,
+        poly: &UniPoly<P::ScalarField>,
+        mode: CommitMode,
+    ) -> Result<P::G1Affine, ProofVerifyError> {
+        Self::commit_inner(pk, &poly.coeffs, 0, mode)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit_slice")]
@@ -175,14 +181,74 @@ where
         pk: &KZGProverKey<P>,
         coeffs: &[P::ScalarField],
     ) -> Result<P::G1Affine, ProofVerifyError> {
+        Self::commit_inner(pk, coeffs, 0, CommitMode::Default)
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_slice_with_mode")]
+    pub fn commit_slice_with_mode(
+        pk: &KZGProverKey<P>,
+        coeffs: &[P::ScalarField],
+        mode: CommitMode,
+    ) -> Result<P::G1Affine, ProofVerifyError> {
+        Self::commit_inner(pk, coeffs, 0, mode)
+    }
+
+    #[inline]
+    #[tracing::instrument(skip_all, name = "KZG::commit_inner")]
+    fn commit_inner(
+        pk: &KZGProverKey<P>,
+        coeffs: &[P::ScalarField],
+        offset: usize,
+        mode: CommitMode,
+    ) -> Result<P::G1Affine, ProofVerifyError> {
         if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pk.g1_powers().len(),
                 coeffs.len(),
             ));
         }
-        let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..coeffs.len()], coeffs).unwrap();
-        Ok(c.into_affine())
+
+        match mode {
+            CommitMode::Default => {
+                let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[offset..coeffs.len()], &coeffs[offset..]).unwrap();
+                Ok(c.into_affine())
+            },
+            CommitMode::GrandProduct => {
+                let g1_powers = &pk.g1_powers()[offset..coeffs.len()];
+                let coeffs = &coeffs[offset..];
+                // Commit to the non-1 coefficients first then combine them with the G commitment (all-1s vector) in the SRS
+                let (non_one_coeffs, non_one_bases): (Vec<_>, Vec<_>) = coeffs
+                    .par_iter()
+                    .enumerate()
+                    .filter_map(|(i, coeff)| {
+                        if *coeff != P::ScalarField::one() {
+                            // Subtract 1 from the coeff because we already have a commitment to the all the 1s
+                            Some((*coeff - P::ScalarField::one(), g1_powers[i]))
+                        } else {
+                            None
+                        }
+                    })
+                    .unzip();
+
+                // Perform MSM for the non-1 coefficients
+                let non_one_commitment = if !non_one_coeffs.is_empty() {
+                    <P::G1 as VariableBaseMSM>::msm(&non_one_bases, &non_one_coeffs).unwrap()
+                } else {
+                    P::G1::zero()
+                };
+
+                // find the right precomputed g_product to use
+                let num_powers = (coeffs.len() as f64).log2();
+                if num_powers.fract() != 0.0 {
+                    return Err(ProofVerifyError::InvalidKeyLength(coeffs.len()));
+                }
+
+                let num_powers = num_powers.floor() as usize;
+                // Combine G * H: Multiply the precomputed G commitment with the non-1 commitment (H)
+                let final_commitment = pk.srs.g_products[num_powers] + non_one_commitment;
+                Ok(final_commitment.into_affine())
+            },
+        }
     }
 
     #[tracing::instrument(skip_all, name = "KZG::open")]
@@ -192,7 +258,7 @@ where
         point: &P::ScalarField,
     ) -> Result<(P::G1Affine, P::ScalarField), ProofVerifyError>
     where
-        <P as ark_ec::pairing::Pairing>::ScalarField: JoltField,
+        <P as Pairing>::ScalarField: JoltField,
     {
         let divisor = UniPoly::from_coeff(vec![-*point, P::ScalarField::one()]);
         let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
@@ -231,17 +297,19 @@ mod test {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    #[test]
-    fn kzg_commit_prove_verify() -> Result<(), ProofVerifyError> {
-        let seed = b"11111111111111111111111111111111";
-        for _ in 0..100 {
-            let mut rng = &mut ChaCha20Rng::from_seed(*seed);
-            let degree = rng.gen_range(2..20);
+    fn run_kzg_test<F>(degree_generator: F, commit_mode: CommitMode) -> Result<(), ProofVerifyError>
+    where
+        F: Fn(&mut ChaCha20Rng) -> usize,
+    {
+        for i in 0..100 {
+            let seed = [i; 32];
+            let mut rng = &mut ChaCha20Rng::from_seed(seed);
+            let degree = degree_generator(&mut rng);
 
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
-            let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
+            let comm = UnivariateKZG::<Bn254>::commit_with_mode(&ck, &p, commit_mode)?;
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
@@ -252,5 +320,16 @@ mod test {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn kzg_commit_prove_verify() -> Result<(), ProofVerifyError> {
+        run_kzg_test(|rng| rng.gen_range(2..20), CommitMode::Default)
+    }
+
+    #[test]
+    fn kzg_commit_prove_verify_mode() -> Result<(), ProofVerifyError> {
+        // This test uses the grand product optimization and ensures only powers of 2 are used for degree generation
+        run_kzg_test(|rng| 1 << rng.gen_range(1..8), CommitMode::GrandProduct)
     }
 }
