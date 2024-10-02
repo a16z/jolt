@@ -6,9 +6,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
-use crate::utils::thread::drop_in_background_thread;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::ProofTranscript;
-use ark_ff::Zero;
 use ark_serialize::*;
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -228,19 +227,15 @@ pub struct BatchedDenseGrandProductLayer<F: JoltField> {
 }
 
 impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
-    pub fn new(values: Vec<F>) -> Self {
-        let layer_len = values.len();
-        assert!(layer_len.is_power_of_two());
+    pub fn new(mut values: Vec<F>) -> Self {
+        let layer_len = values.len().next_power_of_two();
+        values.resize(layer_len, F::zero());
         Self { values, layer_len }
     }
 }
 
 impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedDenseGrandProductLayer<F> {}
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> {
-    fn num_rounds(&self) -> usize {
-        self.layer_len.log_2() - 1
-    }
-
     /// Incrementally binds a variable of this batched layer's polynomials.
     /// Even though each layer is backed by a single Vec<F>, it represents two polynomials
     /// one for the left nodes in the circuit, one for the right nodes in the circuit.
@@ -395,11 +390,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
 
     fn claimed_outputs(&self) -> Vec<F> {
-        let num_layers =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::num_layers(self);
-        let last_layer = &self.layers[num_layers - 1];
-        assert_eq!(last_layer.layer_len, self.batch_size);
-        last_layer.values[..last_layer.layer_len].to_vec()
+        let last_layer = &self.layers[self.layers.len() - 1];
+        (0..self.batch_size)
+            .map(|i| {
+                // left * right
+                last_layer.values[2 * i] * last_layer.values[2 * i + 1]
+            })
+            .collect()
     }
 
     fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
@@ -435,6 +432,24 @@ pub type SparseGrandProductLayer<F> = Vec<(usize, F)>;
 pub enum DynamicDensityGrandProductLayer<F: JoltField> {
     Sparse(SparseGrandProductLayer<F>),
     Dense(DenseGrandProductLayer<F>),
+}
+
+impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
+    fn to_dense(&self, size: usize) -> DenseGrandProductLayer<F> {
+        match self {
+            DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
+                let mut dense_layer = vec![F::zero(); size];
+                for (index, value) in sparse_layer {
+                    dense_layer[*index] = *value;
+                }
+                dense_layer
+            }
+            DynamicDensityGrandProductLayer::Dense(dense_layer) => {
+                assert_eq!(dense_layer.len(), size);
+                dense_layer.clone()
+            }
+        }
+    }
 }
 
 /// This constant determines:
@@ -578,10 +593,6 @@ pub struct BatchedSparseGrandProductLayer<F: JoltField> {
 
 impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedSparseGrandProductLayer<F> {}
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F> {
-    fn num_rounds(&self) -> usize {
-        self.layer_len.log_2() - 1
-    }
-
     /// Incrementally binds a variable of this batched layer's polynomials.
     /// If `self` is dense, we bind as in `BatchedDenseGrandProductLayer`,
     /// processing nodes 4 at a time to preserve the interleaved order:
@@ -596,7 +607,45 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
     /// cases to check 😬
     #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::bind")]
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
-        debug_assert!(self.layer_len % 4 == 0);
+        if let Some(coalesced_layer) = &mut self.coalesced_layer {
+            let mut bound_layer = vec![F::zero(); coalesced_layer.len() / 2];
+            for i in 0..bound_layer.len() / 2 {
+                // left
+                bound_layer[2 * i] = coalesced_layer[4 * i]
+                    + *r * (coalesced_layer[4 * i + 2] - coalesced_layer[4 * i]);
+                // right
+                bound_layer[2 * i + 1] = coalesced_layer[4 * i + 1]
+                    + *r * (coalesced_layer[4 * i + 3] - coalesced_layer[4 * i + 1]);
+            }
+            self.coalesced_layer = Some(bound_layer);
+            eq_poly.bound_poly_var_bot(r);
+            return;
+        } else if self.layer_len == 2 {
+            let mut coalesced = vec![F::zero(); self.values.len().next_power_of_two()];
+            for (bound, unbound) in coalesced.chunks_mut(2).zip(self.values.chunks(2)) {
+                let children = [
+                    unbound
+                        .get(0)
+                        .unwrap_or(&DynamicDensityGrandProductLayer::Dense(vec![F::zero(); 2]))
+                        .to_dense(2),
+                    unbound
+                        .get(1)
+                        .unwrap_or(&DynamicDensityGrandProductLayer::Dense(vec![F::zero(); 2]))
+                        .to_dense(2),
+                ];
+                // left
+                bound[0] = children[0][0] + *r * (children[1][0] - children[0][0]);
+                // right
+                bound[1] = children[0][1] + *r * (children[1][1] - children[0][1]);
+            }
+
+            self.coalesced_layer = Some(coalesced);
+            eq_poly.bound_poly_var_bot(r);
+            return;
+        } else {
+            debug_assert!(self.layer_len % 4 == 0);
+        }
+
         rayon::join(
             || {
                 self.values.par_iter_mut().for_each(|layer| match layer {
@@ -990,7 +1039,10 @@ struct BatchedGrandProductToggleLayer<F: JoltField> {
     /// (we know that all non-zero, unbound flag values are 1).
     flag_values: Vec<Vec<F>>,
     fingerprints: Vec<Vec<F>>,
-    // TODO(moodlezoup): coalesced flag_values/fingerprints/flag_indices (or use flat vector)
+
+    coalesced_flags: Option<Vec<F>>,
+    coalesced_fingerprints: Option<Vec<F>>,
+
     layer_len: usize,
 }
 
@@ -1003,6 +1055,8 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             flag_values: vec![],
             fingerprints,
             layer_len,
+            coalesced_flags: None,
+            coalesced_fingerprints: None,
         }
     }
 
@@ -1029,10 +1083,6 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 }
 
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
-    fn num_rounds(&self) -> usize {
-        self.layer_len.log_2()
-    }
-
     /// Incrementally binds a variable of this batched layer's polynomials.
     /// Similar to `BatchedSparseGrandProductLayer::bind`, in that fingerprints use
     /// a sparse representation, but different in a couple of key ways:
@@ -1047,10 +1097,60 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     ///   `self.flag_indices` and `self.flag_values`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::bind")]
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
+        if let Some(coalesced_flags) = &mut self.coalesced_flags {
+            let mut bound_flags = vec![F::zero(); coalesced_flags.len() / 2];
+            for i in 0..bound_flags.len() {
+                bound_flags[i] = coalesced_flags[2 * i]
+                    + *r * (coalesced_flags[2 * i + 1] - coalesced_flags[2 * i]);
+            }
+            self.coalesced_flags = Some(bound_flags);
+
+            let coalesced_fingerpints = self.coalesced_fingerprints.as_mut().unwrap();
+            let mut bound_fingerprints = vec![F::zero(); coalesced_fingerpints.len() / 2];
+            for i in 0..bound_fingerprints.len() {
+                bound_fingerprints[i] = coalesced_fingerpints[2 * i]
+                    + *r * (coalesced_fingerpints[2 * i + 1] - coalesced_fingerpints[2 * i]);
+            }
+            self.coalesced_fingerprints = Some(bound_fingerprints);
+
+            eq_poly.bound_poly_var_bot(r);
+            return;
+        } else if self.layer_len == 1 {
+            let mut coalesced_fingerprints =
+                vec![F::zero(); self.fingerprints.len().next_power_of_two() / 2];
+            for (bound, unbound) in coalesced_fingerprints
+                .iter_mut()
+                .zip(self.fingerprints.chunks(2))
+            {
+                *bound = unbound[0][0] + *r * (unbound[1][0] - unbound[0][0]);
+            }
+
+            let mut coalesced_flags = vec![F::zero(); coalesced_fingerprints.len()];
+            for (bound, unbound) in coalesced_flags.iter_mut().zip(self.flag_values.chunks(2)) {
+                let left = *unbound
+                    .get(0)
+                    .unwrap_or(&vec![])
+                    .first()
+                    .unwrap_or(&F::zero());
+                let right = *unbound
+                    .get(1)
+                    .unwrap_or(&vec![])
+                    .first()
+                    .unwrap_or(&F::zero());
+                *bound = left + *r * (right - left);
+            }
+
+            self.coalesced_fingerprints = Some(coalesced_fingerprints);
+            self.coalesced_flags = Some(coalesced_flags);
+            eq_poly.bound_poly_var_bot(r);
+            return;
+        } else {
+            debug_assert!(self.layer_len % 2 == 0);
+        }
+
         self.fingerprints
             .par_iter_mut()
             .for_each(|layer: &mut Vec<F>| {
-                debug_assert!(self.layer_len % 2 == 0);
                 let n = self.layer_len / 2;
                 for i in 0..n {
                     // TODO(moodlezoup): Try mul_0_optimized here
@@ -1293,19 +1393,10 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
 
     fn final_claims(&self) -> (F, F) {
         assert_eq!(self.layer_len, 1);
-        let flag_claims = self
-            .flag_values
-            .iter()
-            .flat_map(|layer| {
-                if layer.is_empty() {
-                    [F::zero(), F::zero()]
-                } else {
-                    [layer[0], layer[0]]
-                }
-            })
-            .collect();
-        let fingerprint_claims = self.fingerprints.iter().map(|layer| layer[0]).collect();
-        (flag_claims, fingerprint_claims)
+        let flags = self.coalesced_flags.as_ref().unwrap();
+        let fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
+
+        (flags[0], fingerprints[0])
     }
 }
 

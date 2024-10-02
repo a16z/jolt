@@ -4,9 +4,10 @@ use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use rand::rngs::StdRng;
 use rand::RngCore;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::*;
 #[cfg(test)]
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -891,7 +892,7 @@ where
         jolt_polynomials: &'a JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
         let num_ops = polynomials.a_ram.len();
         let memory_size = polynomials.v_final.len();
@@ -900,66 +901,64 @@ where
         let a_rs1 = &jolt_polynomials.bytecode.v_read_write[3];
         let a_rs2 = &jolt_polynomials.bytecode.v_read_write[4];
 
-        let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
-            .into_par_iter()
-            .flat_map(|i| {
-                let read_fingerprints = (0..num_ops)
-                    .into_par_iter()
-                    .map(|j| {
-                        let a = match i {
-                            RS1 => a_rs1[j],
-                            RS2 => a_rs2[j],
-                            RD => a_rd[j],
-                            _ => polynomials.a_ram[j] + F::from_u64((i - RAM_1) as u64).unwrap(),
-                        };
-                        polynomials.t_read[i][j] * gamma_squared
-                            + mul_0_optimized(&polynomials.v_read[i][j], gamma)
-                            + a
+        let mut read_write_leaves: Vec<F> =
+            unsafe_allocate_zero_vec(2 * MEMORY_OPS_PER_INSTRUCTION * num_ops);
+        for (i, chunk) in read_write_leaves.chunks_mut(2 * num_ops).enumerate() {
+            chunk[..num_ops]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(j, read_fingerprint)| {
+                    let a = match i {
+                        RS1 => a_rs1[j],
+                        RS2 => a_rs2[j],
+                        RD => a_rd[j],
+                        _ => polynomials.a_ram[j] + F::from_u64((i - RAM_1) as u64).unwrap(),
+                    };
+                    *read_fingerprint = polynomials.t_read[i][j] * gamma_squared
+                        + mul_0_optimized(&polynomials.v_read[i][j], gamma)
+                        + a
+                        - *tau;
+                });
+            let v_write = match i {
+                RS1 => &polynomials.v_read[0],        // rs1
+                RS2 => &polynomials.v_read[1],        // rs2
+                RD => &polynomials.v_write_rd,        // rd
+                _ => &polynomials.v_write_ram[i - 3], // RAM
+            };
+
+            chunk[num_ops..].par_iter_mut().enumerate().for_each(
+                |(j, write_fingerprint)| match i {
+                    RS1 => {
+                        *write_fingerprint = F::from_u64(j as u64).unwrap() * gamma_squared
+                            + mul_0_optimized(&v_write[j], gamma)
+                            + a_rs1[j]
+                            - *tau;
+                    }
+                    RS2 => {
+                        *write_fingerprint = F::from_u64(j as u64).unwrap() * gamma_squared
+                            + mul_0_optimized(&v_write[j], gamma)
+                            + a_rs2[j]
+                            - *tau;
+                    }
+                    RD => {
+                        *write_fingerprint = F::from_u64(j as u64 + 1).unwrap() * gamma_squared
+                            + mul_0_optimized(&v_write[j], gamma)
+                            + a_rd[j]
                             - *tau
-                    })
-                    .collect();
-                let v_write = match i {
-                    RS1 => &polynomials.v_read[0],        // rs1
-                    RS2 => &polynomials.v_read[1],        // rs2
-                    RD => &polynomials.v_write_rd,        // rd
-                    _ => &polynomials.v_write_ram[i - 3], // RAM
-                };
-                let write_fingerprints = (0..num_ops)
-                    .into_par_iter()
-                    .map(|j| match i {
-                        RS1 => {
-                            F::from_u64(j as u64).unwrap() * gamma_squared
-                                + mul_0_optimized(&v_write[j], gamma)
-                                + a_rs1[j]
-                                - *tau
-                        }
-                        RS2 => {
-                            F::from_u64(j as u64).unwrap() * gamma_squared
-                                + mul_0_optimized(&v_write[j], gamma)
-                                + a_rs2[j]
-                                - *tau
-                        }
-                        RD => {
-                            F::from_u64(j as u64 + 1).unwrap() * gamma_squared
-                                + mul_0_optimized(&v_write[j], gamma)
-                                + a_rd[j]
-                                - *tau
-                        }
-                        _ => {
-                            polynomials.t_write_ram[i - RAM_1][j] * gamma_squared
-                                + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.a_ram[j]
-                                + F::from_u64((i - RAM_1) as u64).unwrap()
-                                - *tau
-                        }
-                    })
-                    .collect();
-                [read_fingerprints, write_fingerprints]
-            })
-            .collect();
+                    }
+                    _ => {
+                        *write_fingerprint = polynomials.t_write_ram[i - RAM_1][j] * gamma_squared
+                            + mul_0_optimized(&v_write[j], gamma)
+                            + polynomials.a_ram[j]
+                            + F::from_u64((i - RAM_1) as u64).unwrap()
+                            - *tau;
+                    }
+                },
+            );
+        }
 
         let v_init = polynomials.v_init.as_ref().unwrap();
-        let init_fingerprints = (0..memory_size)
+        let init_fingerprints: Vec<F> = (0..memory_size)
             .into_par_iter()
             .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
             .collect();
@@ -974,8 +973,8 @@ where
             .collect();
 
         (
-            read_write_leaves,
-            vec![init_fingerprints, final_fingerprints],
+            (read_write_leaves, 2 * MEMORY_OPS_PER_INSTRUCTION),
+            ([init_fingerprints, final_fingerprints].concat(), 2), // TODO(moodlezoup): Avoid concat
         )
     }
 

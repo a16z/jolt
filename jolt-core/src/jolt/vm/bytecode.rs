@@ -773,13 +773,13 @@ mod tests {
                 gamma,
                 tau,
             );
-        let init_leaves = &init_final_leaves[0];
-        let read_leaves = &read_write_leaves[0];
-        let write_leaves = &read_write_leaves[1];
-        let final_leaves = &init_final_leaves[1];
+        let init_leaves = &init_final_leaves.0[..4];
+        let final_leaves = &init_final_leaves.0[4..];
+        let read_leaves = &read_write_leaves.0[..2];
+        let write_leaves = &read_write_leaves.0[2..];
 
-        let read_final_leaves = [read_leaves.clone(), final_leaves.clone()].concat();
-        let init_write_leaves = [init_leaves.clone(), write_leaves.clone()].concat();
+        let read_final_leaves = [read_leaves.to_vec(), final_leaves.to_vec()].concat();
+        let init_write_leaves = [init_leaves.to_vec(), write_leaves.to_vec()].concat();
         let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
         assert_eq!(difference.len(), 0);
     }

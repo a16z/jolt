@@ -1,5 +1,6 @@
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -216,12 +217,13 @@ where
             })
             .collect();
 
-        let init_final_leaves: Vec<Vec<F>> = preprocessing
+        // TODO(moodlezoup): Can probably void the flat_map here
+        let init_final_leaves: Vec<F> = preprocessing
             .materialized_subtables
             .par_iter()
             .enumerate()
             .flat_map_iter(|(subtable_index, subtable)| {
-                let init_leaves: Vec<F> = (0..M)
+                let mut leaves: Vec<F> = (0..M)
                     .map(|i| {
                         let a = &F::from_u64(i as u64).unwrap();
                         let v = &subtable[i];
@@ -230,24 +232,15 @@ where
                         mul_0_1_optimized(v, gamma) + *a - *tau
                     })
                     .collect();
+                for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
+                    let final_cts = &polynomials.final_cts[*memory_index];
+                    let mut final_leaves: Vec<F> = (0..M)
+                        .map(|i| leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared))
+                        .collect();
+                    leaves.append(&mut final_leaves);
+                }
 
-                let final_leaves: Vec<Vec<F>> = preprocessing.subtable_to_memory_indices
-                    [subtable_index]
-                    .iter()
-                    .map(|memory_index| {
-                        let final_cts = &polynomials.final_cts[*memory_index];
-                        (0..M)
-                            .map(|i| {
-                                init_leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared)
-                            })
-                            .collect()
-                    })
-                    .collect();
-
-                let mut polys = Vec::with_capacity(C + 1);
-                polys.push(init_leaves);
-                polys.extend(final_leaves);
-                polys
+                leaves
             })
             .collect();
 
@@ -256,7 +249,13 @@ where
             polynomials.instruction_flag_bitvectors.as_ref().unwrap(),
         );
 
-        ((memory_flags, read_write_leaves), init_final_leaves)
+        (
+            (memory_flags, read_write_leaves),
+            (
+                init_final_leaves,
+                Self::NUM_SUBTABLES + preprocessing.num_memories,
+            ),
+        )
     }
 
     fn interleave_hashes(

@@ -151,8 +151,8 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         #[cfg(test)]
         {
             let expected_eq_poly = EqPolynomial::evals(&opening_point);
-            assert_eq!(
-                eq_poly.Z, expected_eq_poly,
+            assert!(
+                eq_poly.Z == expected_eq_poly,
                 "eq_poly and opening point are inconsistent"
             );
 

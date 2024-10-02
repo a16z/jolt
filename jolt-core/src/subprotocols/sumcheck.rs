@@ -14,7 +14,6 @@ use rayon::prelude::*;
 
 /// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
-    fn num_rounds(&self) -> usize;
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
     fn compute_cubic(&self, eq_poly: &DensePolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
@@ -26,13 +25,13 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         eq_poly: &mut DensePolynomial<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (F, F)) {
-        debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
+        let num_rounds = eq_poly.get_num_vars();
 
         let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for _round in 0..self.num_rounds() {
+        for _round in 0..num_rounds {
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
             let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
