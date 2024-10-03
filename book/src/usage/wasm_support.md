@@ -71,6 +71,7 @@ You can use this example as a starting point and customize it to fit your specif
 You can use the example from the [Quickstart](./quickstart.md#project-tour) chapter and modify the `/src/main.rs` file as follows:
 
 ```rust
+use jolt::Serializable;
 pub fn main() {
     let (prove_fib, _verify_fib) = guest::build_fib();
 
