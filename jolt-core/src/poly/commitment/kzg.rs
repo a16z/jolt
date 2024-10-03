@@ -7,9 +7,9 @@ use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
+use rayon::prelude::*;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct SRS<P: Pairing> {
@@ -67,11 +67,13 @@ impl<P: Pairing> SRS<P> {
         let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;
         let all_ones_coeffs: Vec<P::ScalarField> = vec![P::ScalarField::one(); num_g1_powers + 1];
         let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
-        let g_products= powers_of_2.map(|power| {
-            <P::G1 as VariableBaseMSM>::msm(&g1_powers[..power], &all_ones_coeffs[..power])
-            .unwrap()
-            .into_affine()
-        }).collect();
+        let g_products = powers_of_2
+            .map(|power| {
+                <P::G1 as VariableBaseMSM>::msm(&g1_powers[..power], &all_ones_coeffs[..power])
+                    .unwrap()
+                    .into_affine()
+            })
+            .collect();
 
         Self {
             g1_powers,
@@ -210,9 +212,13 @@ where
 
         match mode {
             CommitMode::Default => {
-                let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[offset..coeffs.len()], &coeffs[offset..]).unwrap();
+                let c = <P::G1 as VariableBaseMSM>::msm(
+                    &pk.g1_powers()[offset..coeffs.len()],
+                    &coeffs[offset..],
+                )
+                .unwrap();
                 Ok(c.into_affine())
-            },
+            }
             CommitMode::GrandProduct => {
                 let g1_powers = &pk.g1_powers()[offset..coeffs.len()];
                 let coeffs = &coeffs[offset..];
@@ -234,6 +240,7 @@ where
                 let non_one_commitment = if !non_one_coeffs.is_empty() {
                     <P::G1 as VariableBaseMSM>::msm(&non_one_bases, &non_one_coeffs).unwrap()
                 } else {
+                    // TODO(sagar): is this right?
                     P::G1::zero()
                 };
 
@@ -244,10 +251,13 @@ where
                 }
 
                 let num_powers = num_powers.floor() as usize;
+                //TODO(sagar): Remove this print
+                // println!("KZG GrandProduct Optimization: non_one_coeffs: {}, total coeffs: {}, non-1%: {}%", non_one_coeffs.len(), coeffs.len(), (non_one_coeffs.len() as f64)/coeffs.len() as f64 * 100.0);
+
                 // Combine G * H: Multiply the precomputed G commitment with the non-1 commitment (H)
                 let final_commitment = pk.srs.g_products[num_powers] + non_one_commitment;
                 Ok(final_commitment.into_affine())
-            },
+            }
         }
     }
 

@@ -555,7 +555,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         // Batch-verify all openings
         opening_accumulator.reduce_and_verify(
             &preprocessing.generators,
-            proof.opening_proof,
+            &proof.opening_proof,
             &mut transcript,
         )?;
 

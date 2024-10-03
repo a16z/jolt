@@ -662,7 +662,7 @@ mod quark_grand_product_tests {
         assert!(result.is_ok(), "Proof did not verify");
 
         assert!(verifier_accumulator
-            .reduce_and_verify(&setup, batched_proof, &mut transcript)
+            .reduce_and_verify(&setup, &batched_proof, &mut transcript)
             .is_ok());
     }
 
@@ -707,7 +707,7 @@ mod quark_grand_product_tests {
             Some(&setup),
         );
         assert!(verifier_accumulator
-            .reduce_and_verify(&setup, batched_proof, &mut transcript)
+            .reduce_and_verify(&setup, &batched_proof, &mut transcript)
             .is_ok());
     }
 }
