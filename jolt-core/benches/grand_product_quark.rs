@@ -9,13 +9,16 @@ use jolt_core::subprotocols::grand_product::{BatchedGrandProduct, BatchedGrandPr
 use jolt_core::subprotocols::grand_product_quarks::QuarkGrandProduct;
 use jolt_core::utils::transcript::ProofTranscript;
 use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
+use rand_core::{RngCore, SeedableRng};
 
 const SRS_SIZE: usize = 1 << 8;
 
+// Sets up the benchmark by generating leaves and computing known products
+// and allows configuring the percentage of ones in the leaves
 fn setup_bench<PCS, F>(
     num_layers: usize,
     layer_size: usize,
+    threshold: u32,
 ) -> (
     // Leaves
     Vec<Vec<F>>,
@@ -27,13 +30,27 @@ where
     PCS: CommitmentScheme<Field = F>,
     F: JoltField,
 {
+    assert!(
+        threshold <= 100,
+        "Threshold must be between 0 and 100, but got {}",
+        threshold
+    );
+
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 
-    // Generate leaves
+    let threshold = ((threshold as u64 * u32::MAX as u64) / 100) as u32;
+
+    // Generate leaves with percentage of ones
     let leaves: Vec<Vec<F>> = (0..num_layers)
         .map(|_| {
-            std::iter::repeat_with(|| F::random(&mut rng))
-                .take(layer_size)
+            (0..layer_size)
+                .map(|_| {
+                    if rng.next_u32() < threshold {
+                        F::one()
+                    } else {
+                        F::random(&mut rng)
+                    }
+                })
                 .collect()
         })
         .collect();
@@ -46,12 +63,17 @@ where
     (leaves, setup, known_products)
 }
 
-fn benchmark_prove<PCS, F>(c: &mut Criterion, name: &str, num_layer: usize, layer_size: usize)
-where
+fn benchmark_prove<PCS, F>(
+    c: &mut Criterion,
+    name: &str,
+    num_layer: usize,
+    layer_size: usize,
+    threshold: u32,
+) where
     PCS: CommitmentScheme<Field = F>, // Generic over PCS implementing CommitmentScheme for field F
     F: JoltField,                     // Generic over a field F
 {
-    let (leaves, setup, _) = setup_bench::<PCS, F>(num_layer, layer_size);
+    let (leaves, setup, _) = setup_bench::<PCS, F>(num_layer, layer_size, threshold);
 
     let mut grand_product =
         <QuarkGrandProduct<F> as BatchedGrandProduct<F, PCS>>::construct(leaves);
@@ -72,12 +94,17 @@ where
     });
 }
 
-fn benchmark_verify<PCS, F>(c: &mut Criterion, name: &str, num_layers: usize, layer_size: usize)
-where
+fn benchmark_verify<PCS, F>(
+    c: &mut Criterion,
+    name: &str,
+    num_layers: usize,
+    layer_size: usize,
+    threshold: u32,
+) where
     PCS: CommitmentScheme<Field = F>, // Generic over PCS implementing CommitmentScheme for field F
     F: JoltField,                     // Generic over a field F
 {
-    let (leaves, setup, known_products) = setup_bench::<PCS, F>(num_layers, layer_size);
+    let (leaves, setup, known_products) = setup_bench::<PCS, F>(num_layers, layer_size, threshold);
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
     let mut grand_product =
@@ -113,14 +140,69 @@ fn main() {
     let mut criterion = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
-    let num_layers = 20;
+    let num_layers = 50;
     let layer_size = 1 << 10;
     // Zeromorph
-    benchmark_prove::<Zeromorph<Bn254>, Fr>(&mut criterion, "Zeromorph", num_layers, layer_size);
-    benchmark_verify::<Zeromorph<Bn254>, Fr>(&mut criterion, "Zeromorph", num_layers, layer_size);
+    benchmark_prove::<Zeromorph<Bn254>, Fr>(
+        &mut criterion,
+        "Zeromorph - random leaves",
+        num_layers,
+        layer_size,
+        0,
+    );
+    benchmark_verify::<Zeromorph<Bn254>, Fr>(
+        &mut criterion,
+        "Zeromorph - random leaves",
+        num_layers,
+        layer_size,
+        0,
+    );
     // HyperKZG
-    benchmark_prove::<HyperKZG<Bn254>, Fr>(&mut criterion, "HyperKZG", num_layers, layer_size);
-    benchmark_verify::<HyperKZG<Bn254>, Fr>(&mut criterion, "HyperKZG", num_layers, layer_size);
+    benchmark_prove::<HyperKZG<Bn254>, Fr>(
+        &mut criterion,
+        "HyperKZG - random leaves",
+        num_layers,
+        layer_size,
+        0,
+    );
+    benchmark_verify::<HyperKZG<Bn254>, Fr>(
+        &mut criterion,
+        "HyperKZG - random leaves",
+        num_layers,
+        layer_size,
+        0,
+    );
+
+    // Zeromorph
+    benchmark_prove::<Zeromorph<Bn254>, Fr>(
+        &mut criterion,
+        "Zeromorph - 100% 1s leaves",
+        num_layers,
+        layer_size,
+        100,
+    );
+    benchmark_verify::<Zeromorph<Bn254>, Fr>(
+        &mut criterion,
+        "Zeromorph - 100% 1s leaves",
+        num_layers,
+        layer_size,
+        100,
+    );
+    // HyperKZG
+    benchmark_prove::<HyperKZG<Bn254>, Fr>(
+        &mut criterion,
+        "HyperKZG - 100% 1s leaves",
+        num_layers,
+        layer_size,
+        100,
+    );
+    benchmark_verify::<HyperKZG<Bn254>, Fr>(
+        &mut criterion,
+        "HyperKZG - 100% 1s leaves",
+        num_layers,
+        layer_size,
+        100,
+    );
 
     criterion.final_summary();
 }

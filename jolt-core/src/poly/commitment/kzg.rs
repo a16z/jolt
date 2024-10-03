@@ -224,7 +224,7 @@ where
                 let coeffs = &coeffs[offset..];
                 // Commit to the non-1 coefficients first then combine them with the G commitment (all-1s vector) in the SRS
                 let (non_one_coeffs, non_one_bases): (Vec<_>, Vec<_>) = coeffs
-                    .par_iter()
+                    .iter()
                     .enumerate()
                     .filter_map(|(i, coeff)| {
                         if *coeff != P::ScalarField::one() {
@@ -240,7 +240,6 @@ where
                 let non_one_commitment = if !non_one_coeffs.is_empty() {
                     <P::G1 as VariableBaseMSM>::msm(&non_one_bases, &non_one_coeffs).unwrap()
                 } else {
-                    // TODO(sagar): is this right?
                     P::G1::zero()
                 };
 
@@ -249,10 +248,7 @@ where
                 if num_powers.fract() != 0.0 {
                     return Err(ProofVerifyError::InvalidKeyLength(coeffs.len()));
                 }
-
                 let num_powers = num_powers.floor() as usize;
-                //TODO(sagar): Remove this print
-                // println!("KZG GrandProduct Optimization: non_one_coeffs: {}, total coeffs: {}, non-1%: {}%", non_one_coeffs.len(), coeffs.len(), (non_one_coeffs.len() as f64)/coeffs.len() as f64 * 100.0);
 
                 // Combine G * H: Multiply the precomputed G commitment with the non-1 commitment (H)
                 let final_commitment = pk.srs.g_products[num_powers] + non_one_commitment;
