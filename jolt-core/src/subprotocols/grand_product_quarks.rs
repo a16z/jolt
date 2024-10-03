@@ -230,7 +230,7 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
 
         // We bind to these polynomials
         transcript.append_scalars(&products);
-        let g_commitment = PCS::batch_commit_polys(&g_polys, setup, BatchType::GrandProducts);
+        let g_commitment = PCS::batch_commit_polys(&g_polys, setup, BatchType::GrandProduct);
         for g in g_commitment.iter() {
             g.append_to_transcript(transcript);
         }

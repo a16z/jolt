@@ -11,7 +11,7 @@ use jolt_core::utils::transcript::ProofTranscript;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-const SRS_SIZE: usize = 1 << 8;
+const SRS_SIZE: usize = 1 << 10;
 
 // Sets up the benchmark by generating leaves and computing known products
 // and allows configuring the percentage of ones in the leaves
@@ -78,20 +78,27 @@ fn benchmark_prove<PCS, F>(
     let mut grand_product =
         <QuarkGrandProduct<F> as BatchedGrandProduct<F, PCS>>::construct(leaves);
 
-    c.bench_function(&format!("Grand Product Prove - {}", name), |b| {
-        b.iter(|| {
-            // Prove the grand product
-            let mut transcript = ProofTranscript::new(b"test_transcript");
-            let mut prover_accumulator: ProverOpeningAccumulator<F> =
-                ProverOpeningAccumulator::new();
-            let _proof: BatchedGrandProductProof<PCS> = grand_product
-                .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, Some(&setup))
-                .0;
+    c.bench_function(
+        &format!("Grand Product Prove: {} - {}% Ones", name, threshold),
+        |b| {
+            b.iter(|| {
+                // Prove the grand product
+                let mut transcript = ProofTranscript::new(b"test_transcript");
+                let mut prover_accumulator: ProverOpeningAccumulator<F> =
+                    ProverOpeningAccumulator::new();
+                let _proof: BatchedGrandProductProof<PCS> = grand_product
+                    .prove_grand_product(
+                        Some(&mut prover_accumulator),
+                        &mut transcript,
+                        Some(&setup),
+                    )
+                    .0;
 
-            let _batched_proof =
-                prover_accumulator.reduce_and_prove::<PCS>(&setup, &mut transcript);
-        });
-    });
+                let _batched_proof =
+                    prover_accumulator.reduce_and_prove::<PCS>(&setup, &mut transcript);
+            });
+        },
+    );
 }
 
 fn benchmark_verify<PCS, F>(
@@ -115,94 +122,47 @@ fn benchmark_verify<PCS, F>(
         .0;
     let batched_proof = prover_accumulator.reduce_and_prove(&setup, &mut transcript);
 
-    c.bench_function(&format!("Grand Product Verify - {}", name), |b| {
-        b.iter(|| {
-            // Verify the grand product
-            transcript = ProofTranscript::new(b"test_transcript");
-            let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS> =
-                VerifierOpeningAccumulator::new();
-            let _ = QuarkGrandProduct::verify_grand_product(
-                &proof,
-                &known_products,
-                Some(&mut verifier_accumulator),
-                &mut transcript,
-                Some(&setup),
-            );
+    c.bench_function(
+        &format!("Grand Product Verify: {} - {}% Ones", name, threshold),
+        |b| {
+            b.iter(|| {
+                // Verify the grand product
+                transcript = ProofTranscript::new(b"test_transcript");
+                let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS> =
+                    VerifierOpeningAccumulator::new();
+                let _ = QuarkGrandProduct::verify_grand_product(
+                    &proof,
+                    &known_products,
+                    Some(&mut verifier_accumulator),
+                    &mut transcript,
+                    Some(&setup),
+                );
 
-            assert!(verifier_accumulator
-                .reduce_and_verify(&setup, &batched_proof, &mut transcript)
-                .is_ok());
-        });
-    });
+                assert!(verifier_accumulator
+                    .reduce_and_verify(&setup, &batched_proof, &mut transcript)
+                    .is_ok());
+            });
+        },
+    );
 }
 
 fn main() {
-    let mut criterion = Criterion::default()
+    let mut c = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
     let num_layers = 50;
     let layer_size = 1 << 10;
     // Zeromorph
-    benchmark_prove::<Zeromorph<Bn254>, Fr>(
-        &mut criterion,
-        "Zeromorph - random leaves",
-        num_layers,
-        layer_size,
-        0,
-    );
-    benchmark_verify::<Zeromorph<Bn254>, Fr>(
-        &mut criterion,
-        "Zeromorph - random leaves",
-        num_layers,
-        layer_size,
-        0,
-    );
-    // HyperKZG
-    benchmark_prove::<HyperKZG<Bn254>, Fr>(
-        &mut criterion,
-        "HyperKZG - random leaves",
-        num_layers,
-        layer_size,
-        0,
-    );
-    benchmark_verify::<HyperKZG<Bn254>, Fr>(
-        &mut criterion,
-        "HyperKZG - random leaves",
-        num_layers,
-        layer_size,
-        0,
-    );
+    benchmark_prove::<Zeromorph<Bn254>, Fr>(&mut c, "Zeromorph", num_layers, layer_size, 0);
+    benchmark_prove::<Zeromorph<Bn254>, Fr>(&mut c, "Zeromorph", num_layers, layer_size, 90);
+    benchmark_verify::<Zeromorph<Bn254>, Fr>(&mut c, "Zeromorph", num_layers, layer_size, 0);
+    benchmark_verify::<Zeromorph<Bn254>, Fr>(&mut c, "Zeromorph", num_layers, layer_size, 90);
 
-    // Zeromorph
-    benchmark_prove::<Zeromorph<Bn254>, Fr>(
-        &mut criterion,
-        "Zeromorph - 100% 1s leaves",
-        num_layers,
-        layer_size,
-        100,
-    );
-    benchmark_verify::<Zeromorph<Bn254>, Fr>(
-        &mut criterion,
-        "Zeromorph - 100% 1s leaves",
-        num_layers,
-        layer_size,
-        100,
-    );
     // HyperKZG
-    benchmark_prove::<HyperKZG<Bn254>, Fr>(
-        &mut criterion,
-        "HyperKZG - 100% 1s leaves",
-        num_layers,
-        layer_size,
-        100,
-    );
-    benchmark_verify::<HyperKZG<Bn254>, Fr>(
-        &mut criterion,
-        "HyperKZG - 100% 1s leaves",
-        num_layers,
-        layer_size,
-        100,
-    );
+    benchmark_prove::<HyperKZG<Bn254>, Fr>(&mut c, "HyperKZG", num_layers, layer_size, 0);
+    benchmark_prove::<HyperKZG<Bn254>, Fr>(&mut c, "HyperKZG", num_layers, layer_size, 90);
+    benchmark_verify::<HyperKZG<Bn254>, Fr>(&mut c, "HyperKZG", num_layers, layer_size, 0);
+    benchmark_verify::<HyperKZG<Bn254>, Fr>(&mut c, "HyperKZG", num_layers, layer_size, 90);
 
-    criterion.final_summary();
+    c.final_summary();
 }

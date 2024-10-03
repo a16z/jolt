@@ -552,7 +552,7 @@ where
                     evals.len()
                 );
                 match batch_type {
-                    BatchType::GrandProducts => HyperKZGCommitment(
+                    BatchType::GrandProduct => HyperKZGCommitment(
                         UnivariateKZG::commit_slice_with_mode(
                             &gens.0.kzg_pk,
                             evals,
