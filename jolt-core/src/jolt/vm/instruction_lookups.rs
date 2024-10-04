@@ -1,5 +1,6 @@
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
+use crate::subprotocols::grand_product::BatchedGrandProduct;
+use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};

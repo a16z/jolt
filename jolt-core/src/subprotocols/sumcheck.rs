@@ -53,6 +53,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);
         }
+        println!("sumcheck round {}", num_rounds);
 
         #[cfg(test)]
         self.sumcheck_sanity_check(eq_poly, previous_claim);
