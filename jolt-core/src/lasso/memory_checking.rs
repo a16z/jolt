@@ -249,10 +249,14 @@ where
         let init_final_batch_size =
             multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
 
-        let (r_read_write_opening, _) = r_read_write
-            .split_at(r_read_write.len() - read_write_batch_size.next_power_of_two().log_2());
-        let (r_init_final_opening, _) = r_init_final
-            .split_at(r_init_final.len() - init_final_batch_size.next_power_of_two().log_2());
+        // let (r_read_write_opening, _) = r_read_write
+        //     .split_at(r_read_write.len() - read_write_batch_size.next_power_of_two().log_2());
+        // let (r_init_final_opening, _) = r_init_final
+        //     .split_at(r_init_final.len() - init_final_batch_size.next_power_of_two().log_2());
+        let (_, r_read_write_opening) =
+            r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
+        let (_, r_init_final_opening) =
+            r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
 
         let (openings, exogenous_openings) = Self::compute_openings(
             preprocessing,
@@ -546,8 +550,10 @@ where
             transcript,
             Some(pcs_setup),
         );
-        let (r_read_write_opening, r_read_write_batch_index) = r_read_write
-            .split_at(r_read_write.len() - read_write_batch_size.next_power_of_two().log_2());
+        // let (r_read_write_opening, r_read_write_batch_index) = r_read_write
+        //     .split_at(r_read_write.len() - read_write_batch_size.next_power_of_two().log_2());
+        let (r_read_write_batch_index, r_read_write_opening) =
+            r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
 
         let init_final_batch_size = init_final_hashes.len();
         let (init_final_claim, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
@@ -557,8 +563,10 @@ where
             transcript,
             Some(pcs_setup),
         );
-        let (r_init_final_opening, r_init_final_batch_index) = r_init_final
-            .split_at(r_init_final.len() - init_final_batch_size.next_power_of_two().log_2());
+        // let (r_init_final_opening, r_init_final_batch_index) = r_init_final
+        // .split_at(r_init_final.len() - init_final_batch_size.next_power_of_two().log_2());
+        let (r_init_final_batch_index, r_init_final_opening) =
+            r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
 
         let read_write_commits: Vec<_> = [
             commitments.read_write_values(),

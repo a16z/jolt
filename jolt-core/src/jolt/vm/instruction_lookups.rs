@@ -1,6 +1,5 @@
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -217,7 +216,6 @@ where
             })
             .collect();
 
-        // TODO(moodlezoup): Can probably void the flat_map here
         let init_final_leaves: Vec<F> = preprocessing
             .materialized_subtables
             .par_iter()

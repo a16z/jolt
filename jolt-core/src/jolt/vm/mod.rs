@@ -332,7 +332,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     ) {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
-        println!("Trace length: {}", trace_length);
 
         JoltTraceStep::pad(&mut trace);
 
@@ -405,7 +404,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
 
-        println!("bytecode");
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.generators,
             &preprocessing.bytecode,
@@ -415,7 +413,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        println!("instruction lookups");
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
             &jolt_polynomials,
@@ -424,7 +421,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        println!("read-write memory");
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.generators,
             &preprocessing.read_write_memory,
@@ -434,7 +430,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        println!("spartan");
         let spartan_proof = UniformSpartanProof::<
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,

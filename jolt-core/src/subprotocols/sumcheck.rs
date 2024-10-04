@@ -18,6 +18,9 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
     fn compute_cubic(&self, eq_poly: &DensePolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
 
+    #[cfg(test)]
+    fn sumcheck_sanity_check(&self, eq_poly: &DensePolynomial<F>, round_claim: F);
+
     #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
     fn prove_sumcheck(
         &mut self,
@@ -32,11 +35,15 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _round in 0..num_rounds {
+            println!("sumcheck round {}", _round);
+            #[cfg(test)]
+            self.sumcheck_sanity_check(eq_poly, previous_claim);
+
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
             let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
-            //derive the verifier's challenge for the next round
+            // derive the verifier's challenge for the next round
             let r_j = transcript.challenge_scalar();
 
             r.push(r_j);
@@ -46,6 +53,9 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);
         }
+
+        #[cfg(test)]
+        self.sumcheck_sanity_check(eq_poly, previous_claim);
 
         debug_assert_eq!(eq_poly.len(), 1);
 
@@ -291,7 +301,8 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             claim_per_round = poly.evaluate(&r_i);
 
             // bound all tables to the verifier's challenege
-            poly_eq.bound_poly_var_bot_01_optimized(&r_i);
+            // poly_eq.bound_poly_var_bot_01_optimized(&r_i);
+            poly_eq.bound_poly_var_bot(&r_i);
             poly_A.bound_poly_var_bot_par(&r_i);
             poly_B.bound_poly_var_bot_par(&r_i);
             poly_C.bound_poly_var_bot_par(&r_i);
