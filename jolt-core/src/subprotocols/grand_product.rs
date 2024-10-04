@@ -75,7 +75,10 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
 
+        let mut i = 0usize;
         for layer in self.layers() {
+            println!("  layer {}", i);
+            i += 1;
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
         }
 
@@ -186,6 +189,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>:
         // TODO(moodlezoup): EQ poly needs to be bigger (and use optimization)
         let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
 
+        println!("  layer claim: {}", claim);
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &mut eq_poly, transcript);
 
@@ -341,7 +345,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                     let eval_point_3 = eval_point_2 + m_eq;
                     (eval_point_0, eval_point_2, eval_point_3)
                 };
-
                 let left = (layer_chunk[0], layer_chunk[2 * gap]);
                 let right = (layer_chunk[gap], layer_chunk[3 * gap]);
 
@@ -354,11 +357,12 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                 let right_eval_2 = right.1 + m_right;
                 let right_eval_3 = right_eval_2 + m_right;
 
-                (
+                let temp = (
                     eq_evals.0 * left.0 * right.0,
                     eq_evals.1 * left_eval_2 * right_eval_2,
                     eq_evals.2 * left_eval_3 * right_eval_3,
-                )
+                );
+                temp
             })
             .reduce(
                 || (F::zero(), F::zero(), F::zero()),
