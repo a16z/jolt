@@ -49,7 +49,7 @@ This time overhead can be reduced with additional engineering/optimizations. For
 
 <UL>
 
-<LI> Maximally batching grand product proofs should cut the "time spent on recursive proving" by a factor of $2$, and at least for the first round of Spartan's sum-check. </LI>
+<LI> Maximally batching grand product proofs should reduce Jolt proof size (and hence cut the time spent on recursive proving) by a factor of $2$. </LI>
   
 <LI> For at least the first round of Spartan's sum-check, we could store only $32$ bits per entry of $a, b, c$ rather than 256, which could save another factor of two in space cost. Also, prover <i>speed</i> optimizations for applying sum-check to small values described in Bagad-Domb-Thaler can also lead to additional space improvements for Spartan. At some point, the space cost of computing grand product proofs would dominate the space cost of Spartan proving and it won't be worthwhile to cut Spartan proving space further. </LI>
 
