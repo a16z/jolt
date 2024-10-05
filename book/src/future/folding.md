@@ -55,6 +55,4 @@ This time overhead can be reduced with additional engineering/optimizations. For
   
 <LI> For at least the first round of Spartan's sum-check, we could store only $32$ bits per entry of $a, b, c$ rather than 256, which could save another factor of two in space cost. Also, prover <i>speed</i> optimizations for applying sum-check to small values described in Bagad-Domb-Thaler can also lead to additional space improvements for Spartan. At some point, the space cost of computing grand product proofs would dominate the space cost of Spartan proving and it won't be worthwhile to cut Spartan proving space further. </LI>
 
-<LI> Using HyperNova in place of Nova will avoid committing to cross terms consisting of random field elements, which would cut the time cost of recursive proving by an order of magnitude. But HyperNova implementations are not yet as mature as Nova itself. </LI>
-
 </UL>
