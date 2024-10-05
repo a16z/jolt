@@ -31,7 +31,7 @@ What dominates the space cost of the Spartan prover? Simply storing the three ve
 Naively implemented, the Spartan prove stores $32$ bytes (i.e., $256$ bits) per entry of $a, b, c$. This is actually overkill as the entries of $a, b, c$ are all $32$-bit values, but it's simplest to ignore this and treat them as arbitrary field elements. 
 
 Hence, the number of bytes required to store $a, b, c$ is 
-$2^{20} \cdot 100 \cdot 32 \cdot 3$ bytes, which is about $10$ billion bytes, a.k. a $10$ GBs. 
+$2^{20} \cdot 100 \cdot 32 \cdot 3$ bytes, which is about $10$ billion bytes, aka $10$ GBs. 
 
 The extra space overhead of taking the Jolt verifier (minus polynomial evaluation proofs, which don't need to be provided or verified when using folding to accumulate such claims) will be well under $500$ MBs. 
 
@@ -51,7 +51,7 @@ This time overhead can be reduced with additional engineering/optimizations. For
 
 <LI> Maximally batching grand product proofs should cut the "time spent on recursive proving" by a factor of $2$, and at least for the first round of Spartan's sum-check. </LI>
   
-<LI> We could store only $32$ bits per entry of $a, b, c$ rather than 256, which could save another factor of two in space cost. Also, prover <i> speed </i>optimizations for applying sum-check to small values (described in [Bagad-Domb-Thaler](https://eprint.iacr.org/2024/1046)) can also lead to additional space improvements for Spartan. At some point, the space cost of computing grand product proofs would dominate the space cost of Spartan proving and it won't be worthwhile to cut Spartan proving space further. </LI>
+<LI> For at least the first round of Spartan's sum-check, we could store only $32$ bits per entry of $a, b, c$ rather than 256, which could save another factor of two in space cost. Also, prover <i>speed</i> optimizations for applying sum-check to small values described in Bagad-Domb-Thaler can also lead to additional space improvements for Spartan. At some point, the space cost of computing grand product proofs would dominate the space cost of Spartan proving and it won't be worthwhile to cut Spartan proving space further. </LI>
 
 <LI> Using HyperNova in place of Nova will avoid committing to cross terms consisting of random field elements, which would cut the time cost of recursive proving by an order of magnitude. But HyperNova implementations are not yet as mature as Nova itself. </LI>
 
