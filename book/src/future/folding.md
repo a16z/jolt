@@ -35,7 +35,7 @@ $2^{20} \cdot 100 \cdot 32 \cdot 3$ bytes, which is about $10$ billion bytes, ak
 
 The prover also has to store the witness vector $z$, which has a similar number of entries as $a, b, c$ (about $80 \cdot 2^{20}$ of them), but $z$'s entries are all 32-bit data types and it's pretty easy to actually store these as $32$ bits each throughout the entire Spartan protocol. So $z$ should only contribute a few hundred MBs to prover space. 
 
-The extra space overhead of taking the Jolt verifier (minus polynomial evaluation proofs, which don't need to be provided or verified when using folding to accumulate such claims) will be well under $500$ MBs. 
+The extra space overhead of taking the Jolt verifier (minus polynomial evaluation proofs, which don't need to be provided or verified when using folding to accumulate such claims) and turning it into constraints as required to apply a recursive folding scheme will be well under $500$ MBs. 
 
 ## Anticipated proving speed
 
