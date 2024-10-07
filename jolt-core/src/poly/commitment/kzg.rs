@@ -139,7 +139,7 @@ pub enum CommitMode {
     Default,
     // We noticed that most (93%) of the coefficients arising from lasso grand products are 1.
     // This mode uses a precomputed commitment, G, to save some compute.
-    // Where G is the commitment to the all the group elements in the SRS.
+    // Where G is the commitment to the all-ones vector of length 2^k```
     GrandProduct,
 }
 
