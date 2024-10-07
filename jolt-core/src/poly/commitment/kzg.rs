@@ -63,7 +63,7 @@ impl<P: Pairing> SRS<P> {
             || P::G2::normalize_batch(&g2_powers_projective),
         );
 
-        // Compute a commitment, G, to all the group elements in the SRS
+        // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS```
         let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;
         let all_ones_coeffs: Vec<P::ScalarField> = vec![P::ScalarField::one(); num_g1_powers + 1];
         let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
