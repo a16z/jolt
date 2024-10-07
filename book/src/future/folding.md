@@ -20,6 +20,10 @@ and the details will be fully fleshed out in an upcoming e-print.</LI>
 
 </OL>
 
+Note that this plan does not require "non-uniform folding". The fact that there are many different primitive RISC-V 
+instructions is handled by "monolithic Jolt". Folding is merely applied to accumluate many copies of the same claim,
+namely that a Jolt proof (minus any HyperKZG evaluation proof) was correctly verified. 
+
 # Space cost estimates
 
 If we shard the VM execution into chunks of $2^{20}$ RISC-V cycles each, then naively implemented we expect Jolt proving to require about 10 GBs of space. The bottleneck here is Spartan proving. The prover space cost for proving all the grand products in Jolt is less than that of Spartan proving, and the prover can compute the Spartan proof and more or less "wipe" memory before computing the grand product proofs. 
@@ -54,5 +58,9 @@ This time overhead can be reduced with additional engineering/optimizations. For
 <LI> Maximally batching grand product proofs should reduce Jolt proof size (and hence cut the time spent on recursive proving) by a factor of $2$. </LI>
   
 <LI> For at least the first round of Spartan's sum-check, we could store only $32$ bits per entry of $a, b, c$ rather than 256, which could save another factor of two in space cost. Also, prover <i>speed</i> optimizations for applying sum-check to small values described in Bagad-Domb-Thaler can also lead to additional space improvements for Spartan. At some point, the space cost of computing grand product proofs would dominate the space cost of Spartan proving and it won't be worthwhile to cut Spartan proving space further. </LI>
+
+<LI> We can lower the size of Jolt proofs, and hence the time spent on recursive proving, by a factor of 2x-4x by 
+switching to the grand product argument from Quarks/Spartan. This does increase prover time "outside of recursion"
+since the Quarks/Spartan prover commits to random field elements, but for small shard sizes (i.e., very small prover space, around 1GB or so) it may lead to a faster prover overall.</LI>
 
 </UL>
