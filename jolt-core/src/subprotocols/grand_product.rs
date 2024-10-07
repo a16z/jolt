@@ -75,10 +75,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
 
-        let mut i = 0usize;
         for layer in self.layers() {
-            println!("  layer {}", i);
-            i += 1;
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
         }
 
@@ -130,7 +127,6 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         let fixed_at_start = r_start.len(); // TODO(moodlezoup): fix?
 
         for (layer_index, layer_proof) in proof_layers.iter().enumerate() {
-            println!("layer_index: {}", layer_index);
             let (sumcheck_claim, r_sumcheck) =
                 layer_proof.verify(claim, layer_index + fixed_at_start, 3, transcript);
 
@@ -189,7 +185,6 @@ pub trait BatchedGrandProductLayer<F: JoltField>:
         // TODO(moodlezoup): EQ poly needs to be bigger (and use optimization)
         let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
 
-        println!("  layer claim: {}", claim);
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &mut eq_poly, transcript);
 
@@ -461,8 +456,6 @@ mod tests {
     use crate::poly::commitment::zeromorph::Zeromorph;
     use ark_bn254::{Bn254, Fr};
     use ark_std::{test_rng, One};
-    use num_integer::Integer;
-    use rand_core::RngCore;
 
     #[test]
     fn dense_construct() {
