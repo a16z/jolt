@@ -37,7 +37,7 @@ Naively implemented, the Spartan prove stores $32$ bytes (i.e., $256$ bits) per 
 Hence, the number of bytes required to store $a, b, c$ is 
 $2^{20} \cdot 100 \cdot 32 \cdot 3$ bytes, which is about $10$ billion bytes, aka $10$ GBs. 
 
-The prover also has to store the witness vector $z$, which has a similar number of entries as $a, b, c$ (about $80 \cdot 2^{20}$ of them), but $z$'s entries are all 32-bit data types and it's pretty easy to actually store these as $32$ bits each throughout the entire Spartan protocol. So $z$ should only contribute a few hundred MBs to prover space. 
+The prover also has to store the witness vector $z$, which has a similar number of entries as $a, b, c$ (about $80 \cdot 2^{20}$ of them), but $z$'s entries are all 32-bit data types and it's pretty easy to actually store these as $32$ bits each throughout the entire Spartan protocol. So $z$ should only contribute a few hundred MBs to prover space if the shard size is $2^{20}$. 
 
 The extra space overhead of taking the Jolt verifier (minus polynomial evaluation proofs, which don't need to be provided or verified when using folding to accumulate such claims) and turning it into constraints as required to apply a recursive folding scheme will be well under $500$ MBs. 
 
@@ -49,7 +49,7 @@ That is, the extra time spent by the Jolt-with-folding prover on recursively pro
 
 ## Going below 10 GBs via smaller chunks
 
-Projects focused on client-side proving may want space costs of 2 GBs (or even lower). One way to achieve that space bound is to use smaller chunks, of $2^{17}$ or $2^{18}$ cycles each rather than $2^{20}$. This is not much smaller than the chunk sizes used by STARK-based zkVMs like SP1 and RISC Zero. With chunks of this size, the Jolt-with-folding prover (again, naively implemented) will be somewhat slower per cycle than "monolithic Jolt", perhaps by a factor of up to two or three. 
+Projects focused on client-side proving may want space costs of 2 GBs (or even lower). One way to achieve that space bound is to use smaller chunks, of $2^{17}$ or $2^{18}$ cycles each rather than $2^{20}$. This is slightly smaller than the chunk sizes used by STARK-based zkVMs like SP1 and RISC Zero. With chunks of this size, the Jolt-with-folding prover (again, naively implemented) will be somewhat slower per cycle than "monolithic Jolt", perhaps by a factor of up to two or three. 
 
 This time overhead can be reduced with additional engineering/optimizations. For example: 
 
@@ -62,5 +62,6 @@ This time overhead can be reduced with additional engineering/optimizations. For
 <LI> We can lower the size of Jolt proofs, and hence the time spent on recursive proving, by a factor of 2x-4x by 
 switching to the grand product argument from Quarks/Spartan. This does increase prover time "outside of recursion"
 since the Quarks/Spartan prover commits to random field elements, but for small shard sizes (i.e., very small prover space, around 1GB or so) it may lead to a faster prover overall.</LI>
-
 </UL>
+
+If all of the above optimizations are implemented, Jolt-with-folding prover space could be as low as 1 GB-2 GB with the prover only 30%-60% slower than "monolithic Jolt" (i.e., Jolt with no recursion or space control for the prover at all).  
