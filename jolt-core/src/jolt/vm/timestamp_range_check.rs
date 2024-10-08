@@ -623,8 +623,7 @@ where
             + multiset_hashes.write_hashes.len()
             + multiset_hashes.init_hashes.len()
             + multiset_hashes.final_hashes.len();
-        let (r_opening, _) = r_grand_product
-            .split_at(r_grand_product.len() - batch_size.next_power_of_two().log_2());
+        let (_, r_opening) = r_grand_product.split_at(batch_size.next_power_of_two().log_2());
         let chis = EqPolynomial::evals(&r_opening);
 
         polynomials
@@ -749,8 +748,8 @@ where
             transcript,
             Some(generators),
         );
-        let (r_opening, r_batch_index) = r_grand_product
-            .split_at(r_grand_product.len() - batch_size.next_power_of_two().log_2());
+        let (r_batch_index, r_opening) =
+            r_grand_product.split_at(batch_size.next_power_of_two().log_2());
 
         opening_accumulator.append(
             &commitments

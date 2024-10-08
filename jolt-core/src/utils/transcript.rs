@@ -150,6 +150,8 @@ impl ProofTranscript {
         // we reverse here so that the random is BE ordering.
         buf = buf.into_iter().rev().collect();
         F::from_bytes(&buf)
+        // F::from_u64(2).unwrap()
+        // F::zero()
     }
 
     pub fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
