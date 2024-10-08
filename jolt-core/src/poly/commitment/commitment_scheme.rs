@@ -31,6 +31,7 @@ pub enum BatchType {
     Small,
     SurgeInitFinal,
     SurgeReadWrite,
+    GrandProduct,
 }
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {

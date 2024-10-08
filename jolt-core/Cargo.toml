@@ -85,6 +85,14 @@ common = { path = "../common" }
 name = "iai"
 harness = false
 
+[[bench]]
+name = "grand_product_quarks"
+harness = false
+
+[[bench]]
+name = "commit"
+harness = false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"

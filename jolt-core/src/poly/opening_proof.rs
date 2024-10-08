@@ -552,7 +552,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
     pub fn reduce_and_verify(
         &self,
         pcs_setup: &PCS::Setup,
-        reduced_opening_proof: ReducedOpeningProof<F, PCS>,
+        reduced_opening_proof: &ReducedOpeningProof<F, PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let num_sumcheck_rounds = self

@@ -29,6 +29,7 @@ const SURGE_RATIO_FINAL: usize = 4;
 pub fn batch_type_to_ratio(batch_type: &BatchType) -> usize {
     match batch_type {
         BatchType::Big => TRACE_LEN_R1CS_POLYS_BATCH_RATIO,
+        BatchType::GrandProduct => TRACE_LEN_R1CS_POLYS_BATCH_RATIO,
         BatchType::Small => 1,
         BatchType::SurgeReadWrite => SURGE_RATIO_READ_WRITE,
         BatchType::SurgeInitFinal => SURGE_RATIO_FINAL,

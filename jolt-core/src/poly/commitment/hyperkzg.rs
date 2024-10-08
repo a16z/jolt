@@ -9,6 +9,7 @@
 //! and within the KZG commitment scheme implementation itself).
 use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
+    kzg,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field;
@@ -538,7 +539,7 @@ where
     fn batch_commit(
         evals: &[&[Self::Field]],
         gens: &Self::Setup,
-        _batch_type: BatchType,
+        batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         // TODO: assert lengths are valid
         evals
@@ -550,7 +551,19 @@ where
                     gens.0.kzg_pk.g1_powers().len(),
                     evals.len()
                 );
-                HyperKZGCommitment(UnivariateKZG::commit_slice(&gens.0.kzg_pk, evals).unwrap())
+                match batch_type {
+                    BatchType::GrandProduct => HyperKZGCommitment(
+                        UnivariateKZG::commit_slice_with_mode(
+                            &gens.0.kzg_pk,
+                            evals,
+                            kzg::CommitMode::GrandProduct,
+                        )
+                        .unwrap(),
+                    ),
+                    _ => HyperKZGCommitment(
+                        UnivariateKZG::commit_slice(&gens.0.kzg_pk, evals).unwrap(),
+                    ),
+                }
             })
             .collect::<Vec<_>>()
     }
