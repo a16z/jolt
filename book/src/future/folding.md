@@ -3,7 +3,7 @@
 The plan to implement folding is simple, with a (very) sketchy overview provided below. 
 
 <OL>
-  <LI> Veryifying Jolt proofs involves two procedures: verifiying sum-check proofs, and folding 
+  <LI> Verifying Jolt proofs involves two procedures: verifiying sum-check proofs, and folding 
 polynomial evaluation claims for committed polynomials. </LI>
 
 <LI> Running Nova with BN254 as the primary curve, we can simply verify sum-check proofs natively. </LI>
@@ -45,11 +45,18 @@ The extra space overhead of taking the Jolt verifier (minus polynomial evaluatio
 
 Even with naive approaches to folding (e.g., using Nova rather than HyperNova, and without fully optimizing the Jolt proof size, meaning not batching all the grand product proofs to the maximum extent possible, so that Jolt proofs are about $100$ KBs rather than $50$ KBs)), we expect prover time of "Jolt with folding" to be close to the prover time cost of "Jolt applied monolithically" to a single shard. 
 
-That is, the extra time spent by the Jolt-with-folding prover on recursively proving verification of Jolt proofs will be modest, and partially offset by the time savings of not having to compute HyperKZG evaluation proofs (except for a single HyperKZG evaluation proof computed for the 'final folded instance'). 
+In more detail, the extra time spent by the Jolt-with-folding prover on recursively proving verification of Jolt proofs will be modest. With folding, for shards of $2^{20}$ cycles, the "extra work" the prover does to fold/recurse is simply commit to roughly one million extra field elements. But the Jolt prover has to commit to about 80 million (small) field elements anyway just to prove the $2^{20}$ cycles. So committing to the one million field elements doesn't have a huge impact on total prover time. 
+
+It is true that the 1 million extra field elements are random, and so roughly equivalent in terms of commitment time
+to 10 million "small" field elements. This still represents at most a ~13% increase in commitment costs for the Jolt prover. 
+
+In fact, for large enough shard sizes (perhaps size $2^{23}$ or so), the Jolt prover may be <i>faster</i> with folding than without it.
+This is because, with folding, the prover does not have to compute any HyperKZG evaluation proofs, except for a single HyperKZG evaluation proof computed for the 'final folded instance'. The savings from HyperKZG evaluation proofs 
+may more than offset the extra work of committing to roughly one million extra field elements per shard. 
 
 ## Going below 10 GBs via smaller chunks
 
-Projects focused on client-side proving may want space costs of 2 GBs (or even lower). One way to achieve that space bound is to use smaller chunks, of $2^{17}$ or $2^{18}$ cycles each rather than $2^{20}$. This is slightly smaller than the chunk sizes used by STARK-based zkVMs like SP1 and RISC Zero. With chunks of this size, the Jolt-with-folding prover (again, naively implemented) will be somewhat slower per cycle than "monolithic Jolt", perhaps by a factor of up to two or three. 
+Projects focused on client-side proving may want space costs of 2 GBs (or even lower, as browsers often limit a single tab to 1 GB of space). One way to achieve that space bound is to use smaller chunks, of $2^{17}$ or $2^{18}$ cycles each rather than $2^{20}$. This is slightly smaller than the chunk sizes used by STARK-based zkVMs like SP1 and RISC Zero. With chunks of this size, the Jolt-with-folding prover (again, naively implemented) will be somewhat slower per cycle than "monolithic Jolt", perhaps by a factor of up to two or three. 
 
 This time overhead can be reduced with additional engineering/optimizations. For example: 
 
