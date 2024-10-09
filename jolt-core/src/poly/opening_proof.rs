@@ -180,17 +180,19 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .sum();
 
         // Compute the random linear combination of the polynomials
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = (1 << opening_point.len()) / num_chunks;
+        let total_evals_len = 1 << opening_point.len();
+        // Only use as many chunks as there are threads, or the total number of evaluations
+        let num_chunks = rayon::current_num_threads().next_power_of_two().min(total_evals_len);
+        let chunk_size = (total_evals_len / num_chunks).max(1);
         let f_batched = (0..num_chunks)
             .into_par_iter()
             .flat_map_iter(|chunk_index| {
+                let index = chunk_index * chunk_size;
                 let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
+
                 for (coeff, poly) in rho_powers.iter().zip(polynomials.iter()) {
-                    for (rlc, poly_eval) in chunk
-                        .iter_mut()
-                        .zip(poly.evals_ref()[chunk_index * chunk_size..].iter())
-                    {
+                    let poly_evals = &poly.evals_ref()[index..];
+                    for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                         *rlc += poly_eval.mul_01_optimized(*coeff);
                     }
                 }
@@ -248,24 +250,23 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
             .map(|opening| opening.polynomial.len())
             .max()
             .unwrap();
-        let num_chunks = rayon::current_num_threads().next_power_of_two();
-        let chunk_size = max_len / num_chunks;
-        assert!(chunk_size > 0);
+        // Only use as many chunks as there are threads, or the total number of evaluations
+        let num_chunks = rayon::current_num_threads().next_power_of_two().min(max_len);
+        let chunk_size = (max_len / num_chunks).max(1);
 
         // Compute random linear combination of the polynomials, accounting for the fact
         // that they may be of different sizes
         let joint_poly: Vec<F> = (0..num_chunks)
             .into_par_iter()
             .flat_map_iter(|chunk_index| {
+                let index = chunk_index * chunk_size;
+
                 let mut chunk = unsafe_allocate_zero_vec(chunk_size);
                 for (coeff, opening) in gamma_powers.iter().zip(self.openings.iter()) {
-                    if chunk_index * chunk_size >= opening.polynomial.len() {
-                        continue;
-                    }
-                    for (rlc, poly_eval) in chunk
-                        .iter_mut()
-                        .zip(opening.polynomial.Z[chunk_index * chunk_size..].iter())
-                    {
+                    let poly_evals = &opening.polynomial.Z[index..];
+
+                    // Perform the random linear combination for this chunk
+                    for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                         *rlc += coeff.mul_01_optimized(*poly_eval);
                     }
                 }
