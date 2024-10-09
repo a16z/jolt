@@ -48,6 +48,9 @@ pub trait JoltField:
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");
     }
+    fn from_usize(val: usize) -> Option<Self> {
+        Self::from_u64(val as u64)
+    }
 }
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {
