@@ -15,7 +15,6 @@ use itertools::interleave;
 use rayon::prelude::*;
 #[cfg(test)]
 use std::collections::HashSet;
-use std::iter::zip;
 
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::{
