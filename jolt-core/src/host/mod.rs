@@ -114,6 +114,10 @@ impl Program {
                 "passes=lower-atomic",
                 "-C",
                 "panic=abort",
+                "-C",
+                "strip=symbols",
+                "-C",
+                "opt-level=z",
             ];
 
             let toolchain = if self.std {
