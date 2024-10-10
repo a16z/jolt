@@ -174,11 +174,8 @@ where
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
     fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
-        let (a, v, t, flag) = *inputs;
-        match flag {
-            Some(val) => val * (t * gamma.square() + v * *gamma + a - *tau) + F::one() - val,
-            None => t * gamma.square() + v * *gamma + a - *tau,
-        }
+        let (a, v, t, _flag) = *inputs;
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
@@ -257,30 +254,27 @@ where
         )
     }
 
-    fn interleave_hashes(
+    fn interleave<T: Copy + Clone>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        multiset_hashes: &MultisetHashes<F>,
-    ) -> (Vec<F>, Vec<F>) {
+        read_values: &Vec<T>,
+        write_values: &Vec<T>,
+        init_values: &Vec<T>,
+        final_values: &Vec<T>,
+    ) -> (Vec<T>, Vec<T>) {
         // R W R W R W ...
-        let read_write_hashes = interleave(
-            multiset_hashes.read_hashes.clone(),
-            multiset_hashes.write_hashes.clone(),
-        )
-        .collect();
+        let read_write_values = interleave(read_values.clone(), write_values.clone()).collect();
 
         // I F F F F I F F F F ...
-        let mut init_final_hashes = Vec::with_capacity(
-            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len(),
-        );
+        let mut init_final_values = Vec::with_capacity(init_values.len() + final_values.len());
         for subtable_index in 0..Self::NUM_SUBTABLES {
-            init_final_hashes.push(multiset_hashes.init_hashes[subtable_index]);
+            init_final_values.push(init_values[subtable_index]);
             let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
             memory_indices
                 .iter()
-                .for_each(|i| init_final_hashes.push(multiset_hashes.final_hashes[*i]));
+                .for_each(|i| init_final_values.push(final_values[*i]));
         }
 
-        (read_write_hashes, init_final_hashes)
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
@@ -445,6 +439,69 @@ where
                 )
             })
             .collect()
+    }
+
+    /// Checks that the claimed multiset hashes (output by grand product) are consistent with the
+    /// openings given by `read_write_openings` and `init_final_openings`.
+    fn check_fingerprints(
+        preprocessing: &Self::Preprocessing,
+        read_write_claim: F,
+        init_final_claim: F,
+        r_read_write_batch_index: &[F],
+        r_init_final_batch_index: &[F],
+        openings: &Self::Openings,
+        exogenous_openings: &NoExogenousOpenings,
+        gamma: &F,
+        tau: &F,
+    ) {
+        let read_tuples: Vec<_> = Self::read_tuples(preprocessing, openings, exogenous_openings);
+        let write_tuples: Vec<_> = Self::write_tuples(preprocessing, openings, exogenous_openings);
+        let init_tuples: Vec<_> = Self::init_tuples(preprocessing, openings, exogenous_openings);
+        let final_tuples: Vec<_> = Self::final_tuples(preprocessing, openings, exogenous_openings);
+
+        let (read_write_tuples, init_final_tuples) = Self::interleave(
+            preprocessing,
+            &read_tuples,
+            &write_tuples,
+            &init_tuples,
+            &final_tuples,
+        );
+
+        assert_eq!(
+            read_write_tuples.len().next_power_of_two(),
+            r_read_write_batch_index.len().pow2(),
+        );
+        assert_eq!(
+            init_final_tuples.len().next_power_of_two(),
+            r_init_final_batch_index.len().pow2()
+        );
+
+        let mut read_write_flags: Vec<_> = read_write_tuples
+            .iter()
+            .map(|tuple| tuple.3.unwrap())
+            .collect();
+        read_write_flags.resize(read_write_flags.len().next_power_of_two(), F::one());
+        let combined_flags: F = read_write_flags
+            .iter()
+            .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
+            .map(|(flag, eq_eval)| *flag * eq_eval)
+            .sum();
+        let combined_read_write_fingerprint: F = read_write_tuples
+            .iter()
+            .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
+            .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
+            .sum();
+        assert_eq!(
+            combined_flags * combined_read_write_fingerprint + F::one() - combined_flags,
+            read_write_claim
+        );
+
+        let combined_init_final_fingerprint: F = init_final_tuples
+            .iter()
+            .zip(EqPolynomial::evals(r_init_final_batch_index).iter())
+            .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
+            .sum();
+        assert_eq!(combined_init_final_fingerprint, init_final_claim);
     }
 }
 

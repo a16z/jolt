@@ -368,19 +368,18 @@ where
         ((leaves.concat(), batch_size), ())
     }
 
-    fn interleave_hashes(
+    fn interleave<T: Copy + Clone>(
         _: &NoPreprocessing,
-        multiset_hashes: &MultisetHashes<F>,
-    ) -> (Vec<F>, Vec<F>) {
-        let read_write_hashes = interleave(
-            multiset_hashes.read_hashes.clone(),
-            multiset_hashes.write_hashes.clone(),
-        )
-        .collect();
-        let mut init_final_hashes = multiset_hashes.final_hashes.clone();
-        init_final_hashes.extend(multiset_hashes.init_hashes.clone());
+        read_values: &Vec<T>,
+        write_values: &Vec<T>,
+        init_values: &Vec<T>,
+        final_values: &Vec<T>,
+    ) -> (Vec<T>, Vec<T>) {
+        let read_write_values = interleave(read_values.clone(), write_values.clone()).collect();
+        let mut init_final_values = final_values.clone();
+        init_final_values.extend(init_values.clone());
 
-        (read_write_hashes, init_final_hashes)
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
@@ -733,11 +732,13 @@ where
         );
         self.multiset_hashes.append_to_transcript(transcript);
 
-        let (read_write_hashes, init_final_hashes) =
-            TimestampValidityProof::<F, PCS>::interleave_hashes(
-                &NoPreprocessing,
-                &self.multiset_hashes,
-            );
+        let (read_write_hashes, init_final_hashes) = TimestampValidityProof::<F, PCS>::interleave(
+            &NoPreprocessing,
+            &self.multiset_hashes.read_hashes,
+            &self.multiset_hashes.write_hashes,
+            &self.multiset_hashes.init_hashes,
+            &self.multiset_hashes.final_hashes,
+        );
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let batch_size = concatenated_hashes.len();
         let (grand_product_claim, r_grand_product) = BatchedDenseGrandProduct::verify_grand_product(
@@ -802,14 +803,13 @@ where
         .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
         .collect();
 
-        let multiset_hashes = MultisetHashes {
-            read_hashes,
-            write_hashes,
-            init_hashes,
-            final_hashes,
-        };
-        let (read_write_hashes, init_final_hashes) =
-            TimestampValidityProof::<F, PCS>::interleave_hashes(&NoPreprocessing, &multiset_hashes);
+        let (read_write_hashes, init_final_hashes) = TimestampValidityProof::<F, PCS>::interleave(
+            &NoPreprocessing,
+            &read_hashes,
+            &write_hashes,
+            &init_hashes,
+            &final_hashes,
+        );
 
         let combined_hash: F = read_write_hashes
             .iter()

@@ -35,7 +35,6 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _round in 0..num_rounds {
-            println!("sumcheck round {}", _round);
             #[cfg(test)]
             self.sumcheck_sanity_check(eq_poly, previous_claim);
 
@@ -53,7 +52,6 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);
         }
-        println!("sumcheck end");
 
         #[cfg(test)]
         self.sumcheck_sanity_check(eq_poly, previous_claim);

@@ -217,7 +217,7 @@ where
     type Preprocessing = NoPreprocessing;
 
     /// The data associated with each memory slot. A triple (a, v, t) by default.
-    type MemoryTuple = (F, F, F);
+    type MemoryTuple: Copy + Clone = (F, F, F);
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
@@ -419,22 +419,17 @@ where
         (batched_circuit, claims)
     }
 
-    fn interleave_hashes(
+    fn interleave<T: Copy + Clone>(
         _preprocessing: &Self::Preprocessing,
-        multiset_hashes: &MultisetHashes<F>,
-    ) -> (Vec<F>, Vec<F>) {
-        let read_write_hashes = interleave(
-            multiset_hashes.read_hashes.clone(),
-            multiset_hashes.write_hashes.clone(),
-        )
-        .collect();
-        let init_final_hashes = interleave(
-            multiset_hashes.init_hashes.clone(),
-            multiset_hashes.final_hashes.clone(),
-        )
-        .collect();
+        read_values: &Vec<T>,
+        write_values: &Vec<T>,
+        init_values: &Vec<T>,
+        final_values: &Vec<T>,
+    ) -> (Vec<T>, Vec<T>) {
+        let read_write_values = interleave(read_values, write_values).cloned().collect();
+        let init_final_values = interleave(init_values, final_values).cloned().collect();
 
-        (read_write_hashes, init_final_hashes)
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
@@ -535,8 +530,13 @@ where
         Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript(transcript);
 
-        let (read_write_hashes, init_final_hashes) =
-            Self::interleave_hashes(preprocessing, &proof.multiset_hashes);
+        let (read_write_hashes, init_final_hashes) = Self::interleave(
+            preprocessing,
+            &proof.multiset_hashes.read_hashes,
+            &proof.multiset_hashes.write_hashes,
+            &proof.multiset_hashes.init_hashes,
+            &proof.multiset_hashes.final_hashes,
+        );
 
         let read_write_batch_size = read_write_hashes.len();
         let (read_write_claim, r_read_write) = Self::ReadWriteGrandProduct::verify_grand_product(
@@ -672,14 +672,13 @@ where
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();
 
-        let multiset_hashes = MultisetHashes {
-            read_hashes,
-            write_hashes,
-            init_hashes,
-            final_hashes,
-        };
-        let (read_write_hashes, init_final_hashes) =
-            Self::interleave_hashes(preprocessing, &multiset_hashes);
+        let (read_write_hashes, init_final_hashes) = Self::interleave(
+            preprocessing,
+            &read_hashes,
+            &write_hashes,
+            &init_hashes,
+            &final_hashes,
+        );
 
         assert_eq!(
             read_write_hashes.len().next_power_of_two(),
@@ -695,9 +694,7 @@ where
             .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
             .map(|(hash, eq_eval)| *hash * eq_eval)
             .sum();
-        println!("read_write_claim: {}", read_write_claim);
-        println!("combined_read_write_hash: {}", combined_read_write_hash);
-        // assert_eq!(combined_read_write_hash, read_write_claim);
+        assert_eq!(combined_read_write_hash, read_write_claim);
 
         let combined_init_final_hash: F = init_final_hashes
             .iter()

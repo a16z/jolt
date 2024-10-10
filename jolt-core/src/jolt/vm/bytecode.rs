@@ -731,60 +731,6 @@ mod tests {
     }
 
     #[test]
-    fn bytecode_poly_leaf_construction() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-        ];
-        let mut trace = vec![
-            trace_step(BytecodeRow::new(
-                to_ram_address(3),
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-            )),
-            trace_step(BytecodeRow::new(
-                to_ram_address(2),
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-            )),
-        ];
-
-        let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr> =
-            BytecodeProof::<Fr, HyraxScheme<G1Projective>>::generate_witness::<RV32I>(
-                &preprocessing,
-                &mut trace,
-            );
-
-        let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_write_leaves, init_final_leaves) =
-            BytecodeProof::<Fr, HyraxScheme<G1Projective>>::compute_leaves(
-                &preprocessing,
-                &polys,
-                &JoltPolynomials::default(),
-                gamma,
-                tau,
-            );
-        let init_leaves = &init_final_leaves.0[..4];
-        let final_leaves = &init_final_leaves.0[4..];
-        let read_leaves = &read_write_leaves.0[..2];
-        let write_leaves = &read_write_leaves.0[2..];
-
-        let read_final_leaves = [read_leaves.to_vec(), final_leaves.to_vec()].concat();
-        let init_write_leaves = [init_leaves.to_vec(), write_leaves.to_vec()].concat();
-        let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
-        assert_eq!(difference.len(), 0);
-    }
-
-    #[test]
     #[should_panic]
     fn bytecode_validation_fake_trace() {
         let program = vec![

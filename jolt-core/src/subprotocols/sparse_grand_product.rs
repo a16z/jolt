@@ -265,7 +265,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         let (mut left_before_binding, mut right_before_binding) = self.to_dense();
 
         if let Some(coalesced_layer) = &mut self.coalesced_layer {
-            println!("sparse bind: coalesced");
             let mut bound_layer = vec![F::zero(); coalesced_layer.len() / 2];
             for i in 0..bound_layer.len() / 2 {
                 // left
@@ -295,7 +294,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             }
             return;
         } else if self.layer_len == 2 {
-            println!("sparse bind: layer_len == 2");
             let mut coalesced = vec![F::zero(); self.values.len().next_power_of_two()];
             for (bound, unbound) in coalesced.chunks_mut(2).zip(self.values.chunks(2)) {
                 let unbound = [unbound[0].to_dense(2), unbound[1].to_dense(2)];
@@ -325,7 +323,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             }
             return;
         } else {
-            println!("sparse bind: normal");
             debug_assert!(self.layer_len % 4 == 0);
         }
 
@@ -527,7 +524,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             .collect();
 
         if let Some(coalesced_layer) = &self.coalesced_layer {
-            println!("sparse compute_cubic: coalesced");
             // Computes:
             //     Σ eq_evals[i] * left[i] * right[i]
             // for the evaluation points {0, 2, 3}
@@ -561,7 +557,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             let cubic_evals = [evals.0, previous_round_claim - evals.0, evals.1, evals.2];
             return UniPoly::from_evals(&cubic_evals);
         } else if self.layer_len == 2 {
-            println!("sparse compute_cubic: layer_len == 2");
             let mut evals = (F::zero(), F::zero(), F::zero());
             for (eq, vals) in eq_evals.iter().zip(self.values.chunks(2)) {
                 let lo = vals[0].to_dense(2);
@@ -586,7 +581,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             let cubic_evals = [evals.0, previous_round_claim - evals.0, evals.1, evals.2];
             return UniPoly::from_evals(&cubic_evals);
         }
-        println!("sparse compute_cubic: normal");
 
         let eq_chunk_size = self.layer_len / 4;
         let evals: (F, F, F) = eq_evals
@@ -925,7 +919,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
         let (mut flags_before_binding, mut fingerprints_before_binding) = self.to_dense();
 
         if let Some(coalesced_flags) = &mut self.coalesced_flags {
-            println!("toggle bind: coalesced");
             let mut bound_flags = vec![F::one(); coalesced_flags.len() / 2];
             for i in 0..bound_flags.len() {
                 bound_flags[i] = coalesced_flags[2 * i]
@@ -962,7 +955,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             return;
         }
 
-        println!("toggle bind: normal");
         debug_assert!(self.layer_len % 4 == 0);
 
         self.fingerprints
@@ -1139,7 +1131,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             .collect();
 
         if let Some(coalesced_flags) = &self.coalesced_flags {
-            println!("toggle compute_cubic: coalesced");
             let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();
 
             let evals = eq_evals
@@ -1170,7 +1161,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             let cubic_evals = [evals.0, previous_round_claim - evals.0, evals.1, evals.2];
             return UniPoly::from_evals(&cubic_evals);
         }
-        println!("toggle compute_cubic: normal");
         debug_assert!(self.layer_len % 4 == 0);
 
         let eq_chunk_size = self.layer_len / 4;

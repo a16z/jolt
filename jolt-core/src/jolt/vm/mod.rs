@@ -518,7 +518,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        println!("bytecode");
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,
@@ -527,7 +526,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        println!("instrucitons");
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             &preprocessing.generators,
@@ -536,7 +534,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        println!("memory");
         Self::verify_memory(
             &mut preprocessing.read_write_memory,
             &preprocessing.generators,
@@ -546,7 +543,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        println!("r1cs");
         Self::verify_r1cs(
             r1cs_proof,
             &commitments,
