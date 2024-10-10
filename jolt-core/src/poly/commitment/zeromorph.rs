@@ -616,15 +616,15 @@ impl<P: Pairing> StreamingCommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
-    type State = ();
+    type State<'a> = ();
 
-    fn initialize(size: usize, setup: &Self::Setup, batch_type: &BatchType) -> Self::State {
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a> {
         todo!()
     }
-    fn process(state: Self::State, eval: Self::Field) -> Self::State {
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
         todo!()
     }
-    fn finalize(state: Self::State) -> Self::Commitment {
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
         todo!()
     }
 }

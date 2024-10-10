@@ -645,20 +645,48 @@ where
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct HyperKZGState<'a, P: Pairing> {
+    acc: P::G1,
+    g1_powers: &'a [P::G1Affine],
+    position: usize,
+}
+
 impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
-    type State = ();
+    type State<'a> = HyperKZGState<'a, P>;
 
-    fn initialize(size: usize, setup: &Self::Setup, batch_type: &BatchType) -> Self::State {
-        todo!()
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a> {
+        assert!(
+            setup.0.kzg_pk.g1_powers().len() >= size,
+            "COMMIT KEY LENGTH ERROR {}, {}",
+            setup.0.kzg_pk.g1_powers().len(),
+            size,
+        );
+
+        HyperKZGState {
+            acc: P::G1::zero(),
+            g1_powers: setup.0.kzg_pk.g1_powers(),
+            position: 0,
+        }
     }
-    fn process(state: Self::State, eval: Self::Field) -> Self::State {
-        todo!()
+
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        let g = state.g1_powers[state.position];
+        let acc = state.acc + (g * eval);
+        let position = state.position + 1;
+
+        HyperKZGState {
+            acc,
+            g1_powers: state.g1_powers,
+            position,
+        }
     }
-    fn finalize(state: Self::State) -> Self::Commitment {
-        todo!()
+
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
+        HyperKZGCommitment(state.acc.into())
     }
 }
 

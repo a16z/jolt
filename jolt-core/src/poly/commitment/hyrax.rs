@@ -192,9 +192,9 @@ pub struct HyraxSchemeState<G: CurveGroup> {
 }
 
 impl<F: JoltField, G: CurveGroup<ScalarField = F>> StreamingCommitmentScheme for HyraxScheme<G> {
-    type State = HyraxSchemeState<G>;
+    type State<'a> = HyraxSchemeState<G>;
 
-    fn initialize(n: usize, generators: &Self::Setup, batch_type: &BatchType) -> Self::State {
+    fn initialize<'a>(n: usize, generators: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a> {
         let ell = n.log_2();
 
         let ratio = batch_type_to_ratio(batch_type);
@@ -216,7 +216,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> StreamingCommitmentScheme for
         }
     }
 
-    fn process(mut state: Self::State, eval: Self::Field) -> Self::State {
+    fn process<'a>(mut state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
         state.current_row.push(eval);
 
         if state.current_row.len() == state.R_size {
@@ -228,7 +228,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> StreamingCommitmentScheme for
 
         state
     }
-    fn finalize(state: Self::State) -> Self::Commitment {
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
         assert_eq!(state.current_row.len(), 0, "Incorrect number of elements processed.");
         assert_eq!(state.row_commitments.len(), state.L_size, "Incorrect number of elements processed.");
 

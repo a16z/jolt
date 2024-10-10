@@ -120,9 +120,9 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {
-    type State: Clone + Debug;
+    type State<'a>: Clone + Debug;
 
-    fn initialize(size: usize, setup: &Self::Setup, batch_type: &BatchType) -> Self::State;
-    fn process(state: Self::State, eval: Self::Field) -> Self::State;
-    fn finalize(state: Self::State) -> Self::Commitment;
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a>;
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment;
 }

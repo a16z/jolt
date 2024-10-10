@@ -589,15 +589,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
 }
 
 // TODO: Use BytecodeStuff? XXX
-pub struct StreamingBytecodeCommitment<C: StreamingCommitmentScheme> {
-    a_read_write: C::State,
-    v_read_write: [C::State; 6],
-    t_read: C::State,
+pub struct StreamingBytecodeCommitment<'a, C: StreamingCommitmentScheme> {
+    a_read_write: C::State<'a>,
+    v_read_write: [C::State<'a>; 6],
+    t_read: C::State<'a>,
 }
 
-impl<C: StreamingCommitmentScheme> StreamingBytecodeCommitment<C> {
+impl<'a, C: StreamingCommitmentScheme> StreamingBytecodeCommitment<'a, C> {
     /// Initialize a streaming computation of a commitment.
-    pub fn initialize(size: usize, setup: &C::Setup, batch_type: &BatchType) -> Self {
+    pub fn initialize(size: usize, setup: &'a C::Setup, batch_type: &BatchType) -> Self {
         let a_read_write = C::initialize(size, setup, batch_type);
         let v_read_write = std::array::from_fn(|_| a_read_write.clone());
         let t_read = a_read_write.clone();
