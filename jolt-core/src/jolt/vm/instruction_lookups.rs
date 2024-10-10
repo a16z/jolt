@@ -1,6 +1,7 @@
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -219,21 +220,26 @@ where
             .par_iter()
             .enumerate()
             .flat_map_iter(|(subtable_index, subtable)| {
-                let mut leaves: Vec<F> = (0..M)
-                    .map(|i| {
-                        let a = &F::from_u64(i as u64).unwrap();
-                        let v = &subtable[i];
-                        // let t = F::zero();
-                        // Compute h(a,v,t) where t == 0
-                        mul_0_1_optimized(v, gamma) + *a - *tau
-                    })
-                    .collect();
+                let mut leaves: Vec<F> = unsafe_allocate_zero_vec(
+                    M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1),
+                );
+                // Init leaves
+                (0..M).for_each(|i| {
+                    let a = &F::from_u64(i as u64).unwrap();
+                    let v = &subtable[i];
+                    // let t = F::zero();
+                    // Compute h(a,v,t) where t == 0
+                    leaves[i] = mul_0_1_optimized(v, gamma) + *a - *tau;
+                });
+                // Final leaves
+                let mut leaf_index = M;
                 for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
                     let final_cts = &polynomials.final_cts[*memory_index];
-                    let mut final_leaves: Vec<F> = (0..M)
-                        .map(|i| leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared))
-                        .collect();
-                    leaves.append(&mut final_leaves);
+                    (0..M).for_each(|i| {
+                        leaves[leaf_index] =
+                            leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared);
+                        leaf_index += 1;
+                    });
                 }
 
                 leaves
