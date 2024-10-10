@@ -86,7 +86,7 @@ name = "iai"
 harness = false
 
 [[bench]]
-name = "grand_product_quarks"
+name = "grand_product"
 harness = false
 
 [[bench]]

@@ -30,23 +30,57 @@ pub struct QuarkGrandProduct<F: JoltField> {
     base_layers: Vec<BatchedDenseGrandProductLayer<F>>,
 }
 
-/// The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs.
-const QUARK_HYBRID_LAYER_DEPTH: usize = 4;
+#[derive(Clone, Copy, Debug, Default)]
+pub enum QuarkHybridLayerDepth {
+    #[default]
+    Default,
+    Min,
+    Max,
+    Custom(usize),
+}
+
+impl QuarkHybridLayerDepth {
+    // The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs
+    pub fn get_crossover_depth(&self) -> usize {
+        match self {
+            QuarkHybridLayerDepth::Min => 0,
+            QuarkHybridLayerDepth::Default => 4,
+            QuarkHybridLayerDepth::Max => usize::MAX,
+            QuarkHybridLayerDepth::Custom(depth) => *depth,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuarkGrandProductConfig {
+    pub hybrid_layer_depth: QuarkHybridLayerDepth,
+}
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     for QuarkGrandProduct<F>
 {
     /// The bottom/input layer of the grand products
     type Leaves = Vec<Vec<F>>;
+    type Config = QuarkGrandProductConfig;
 
     /// Constructs the grand product circuit(s) from `leaves`
+    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
-        // TODO - (aleph_v) Alow custom depths on construction
+        <Self as BatchedGrandProduct<F, PCS>>::construct_with_config(
+            leaves,
+            QuarkGrandProductConfig::default(),
+        )
+    }
+
+    /// Constructs the grand product circuit(s) from `leaves` with the given `config`.
+    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::construct_with_config")]
+    fn construct_with_config(leaves: Self::Leaves, config: Self::Config) -> Self {
         let leave_depth = leaves[0].len().log_2();
-        let num_layers = if leave_depth <= QUARK_HYBRID_LAYER_DEPTH {
+        let crossover = config.hybrid_layer_depth.get_crossover_depth();
+        let num_layers = if leave_depth <= crossover {
             leave_depth - 1
         } else {
-            QUARK_HYBRID_LAYER_DEPTH
+            crossover
         };
 
         // Taken 1 to 1 from the code in the BatchedDenseGrandProductLayer implementation
@@ -80,7 +114,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         // Take the top layer and then turn it into a quark poly
         // Note - We always push the base layer so the unwrap will work even with depth = 0
         let quark_polys = layers.pop().unwrap().layers;
-
         Self {
             polynomials: quark_polys,
             base_layers: layers,
@@ -150,6 +183,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
 
     /// Verifies the given grand product proof.
+    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::verify_grand_product")]
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS>,
         claims: &Vec<F>,
@@ -666,8 +700,7 @@ mod quark_grand_product_tests {
             .is_ok());
     }
 
-    #[test]
-    fn quark_hybrid_e2e() {
+    fn quark_hybrid_test_with_config(config: QuarkGrandProductConfig) {
         const LAYER_SIZE: usize = 1 << 8;
 
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9_u64);
@@ -690,8 +723,10 @@ mod quark_grand_product_tests {
         let mut verifier_accumulator: VerifierOpeningAccumulator<Fr, Zeromorph<Bn254>> =
             VerifierOpeningAccumulator::new();
 
-        let mut hybrid_grand_product =
-            <QuarkGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::construct(v);
+        let mut hybrid_grand_product = <QuarkGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254>,
+        >>::construct_with_config(v, config);
         let proof: BatchedGrandProductProof<Zeromorph<Bn254>> = hybrid_grand_product
             .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, Some(&setup))
             .0;
@@ -709,5 +744,34 @@ mod quark_grand_product_tests {
         assert!(verifier_accumulator
             .reduce_and_verify(&setup, &batched_proof, &mut transcript)
             .is_ok());
+    }
+
+    #[test]
+    fn quark_hybrid_default_config_e2e() {
+        quark_hybrid_test_with_config(QuarkGrandProductConfig::default());
+    }
+
+    #[test]
+    fn quark_hybrid_custom_config_e2e() {
+        let custom_config = QuarkGrandProductConfig {
+            hybrid_layer_depth: QuarkHybridLayerDepth::Custom(20),
+        };
+        quark_hybrid_test_with_config(custom_config);
+    }
+
+    #[test]
+    fn quark_hybrid_zero_min_config_e2e() {
+        let zero_crossover_config = QuarkGrandProductConfig {
+            hybrid_layer_depth: QuarkHybridLayerDepth::Min,
+        };
+        quark_hybrid_test_with_config(zero_crossover_config);
+    }
+
+    #[test]
+    fn quark_hybrid_zero_max_config_e2e() {
+        let zero_crossover_config = QuarkGrandProductConfig {
+            hybrid_layer_depth: QuarkHybridLayerDepth::Max,
+        };
+        quark_hybrid_test_with_config(zero_crossover_config);
     }
 }
