@@ -8,9 +8,8 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::{BatchType, CommitmentScheme},
-    kzg,
-    kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
+    commitment_scheme::{BatchType, CommitmentScheme, StreamingCommitmentScheme},
+    kzg::{self, KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
@@ -59,7 +58,7 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
     pub kzg_vk: KZGVerifierKey<P>,
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
 impl<P: Pairing> Default for HyperKZGCommitment<P> {
@@ -643,6 +642,51 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"hyperkzg"
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HyperKZGState<'a, P: Pairing> {
+    acc: P::G1,
+    g1_powers: &'a [P::G1Affine],
+    position: usize,
+}
+
+impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
+where
+    <P as Pairing>::ScalarField: field::JoltField,
+{
+    type State<'a> = HyperKZGState<'a, P>;
+
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a> {
+        assert!(
+            setup.0.kzg_pk.g1_powers().len() >= size,
+            "COMMIT KEY LENGTH ERROR {}, {}",
+            setup.0.kzg_pk.g1_powers().len(),
+            size,
+        );
+
+        HyperKZGState {
+            acc: P::G1::zero(),
+            g1_powers: setup.0.kzg_pk.g1_powers(),
+            position: 0,
+        }
+    }
+
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        let g = state.g1_powers[state.position];
+        let acc = state.acc + (g * eval);
+        let position = state.position + 1;
+
+        HyperKZGState {
+            acc,
+            g1_powers: state.g1_powers,
+            position,
+        }
+    }
+
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
+        HyperKZGCommitment(state.acc.into())
     }
 }
 

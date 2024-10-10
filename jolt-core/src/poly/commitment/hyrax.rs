@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme, StreamingCommitmentScheme};
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -182,12 +182,67 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct HyraxSchemeState<G: CurveGroup> {
+    row_commitments: Vec<G>,
+    generators: Vec<<G as CurveGroup>::Affine>,
+    current_row: Vec<G::ScalarField>,
+    L_size: usize,
+    R_size: usize,
+}
+
+impl<F: JoltField, G: CurveGroup<ScalarField = F>> StreamingCommitmentScheme for HyraxScheme<G> {
+    type State<'a> = HyraxSchemeState<G>;
+
+    fn initialize<'a>(n: usize, generators: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a> {
+        let ell = n.log_2();
+
+        let ratio = batch_type_to_ratio(batch_type);
+
+        let (L_size, R_size) = matrix_dimensions(ell, ratio);
+        assert_eq!(L_size * R_size, n);
+
+        let generators = CurveGroup::normalize_batch(&generators.generators[..R_size]);
+
+        let row_commitments = Vec::with_capacity(L_size);
+        let current_row = Vec::with_capacity(R_size);
+
+        HyraxSchemeState {
+            row_commitments,
+            generators,
+            current_row,
+            L_size,
+            R_size,
+        }
+    }
+
+    fn process<'a>(mut state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        state.current_row.push(eval);
+
+        if state.current_row.len() == state.R_size {
+            let commitment = PedersenCommitment::commit_vector(&state.current_row, &state.generators);
+            state.row_commitments.push(commitment);
+
+            state.current_row.clear();
+        }
+
+        state
+    }
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
+        assert_eq!(state.current_row.len(), 0, "Incorrect number of elements processed.");
+        assert_eq!(state.row_commitments.len(), state.L_size, "Incorrect number of elements processed.");
+
+        HyraxCommitment {
+            row_commitments: state.row_commitments,
+        }
+    }
+}
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxGenerators<G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
 
-#[derive(Default, Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxCommitment<G: CurveGroup> {
     pub row_commitments: Vec<G>,
 }

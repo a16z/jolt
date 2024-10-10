@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
@@ -61,7 +61,7 @@ pub fn benchmarks(
 fn fibonacci<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     prove_example::<u32, PCS, F>("fibonacci-guest", &9u32)
 }
@@ -69,7 +69,7 @@ where
 fn sha2<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     prove_example::<Vec<u8>, PCS, F>("sha2-guest", &vec![5u8; 2048])
 }
@@ -77,7 +77,7 @@ where
 fn sha3<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     prove_example::<Vec<u8>, PCS, F>("sha3-guest", &vec![5u8; 2048])
 }
@@ -99,7 +99,7 @@ fn prove_example<T: Serialize, PCS, F>(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
@@ -149,7 +149,7 @@ where
 fn sha2chain<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");

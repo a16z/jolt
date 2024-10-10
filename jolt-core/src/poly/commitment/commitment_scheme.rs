@@ -39,6 +39,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Setup: Clone + Sync + Send;
     type Commitment: Default
         + Debug
+        + Eq
         + Sync
         + Send
         + PartialEq
@@ -116,4 +117,12 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];
+}
+
+pub trait StreamingCommitmentScheme: CommitmentScheme {
+    type State<'a>: Clone + Debug;
+
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a>;
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment;
 }
