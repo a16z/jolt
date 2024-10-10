@@ -43,9 +43,14 @@ pub struct BatchedGrandProductProof<PCS: CommitmentScheme> {
 pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: Sized {
     /// The bottom/input layer of the grand products
     type Leaves;
+    type Config: Default + Clone + Copy;
 
-    /// Constructs the grand product circuit(s) from `leaves`
-    fn construct(leaves: Self::Leaves) -> Self;
+    /// Constructs the grand product circuit(s) from `leaves` with the default configuration
+    fn construct(leaves: Self::Leaves) -> Self {
+        Self::construct_with_config(leaves, Self::Config::default())
+    }
+    /// Constructs the grand product circuit(s) from `leaves` with a config
+    fn construct_with_config(leaves: Self::Leaves, config: Self::Config) -> Self;
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
     /// The claimed outputs of the grand products.
@@ -419,6 +424,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     for BatchedDenseGrandProduct<F>
 {
     type Leaves = Vec<Vec<F>>;
+    type Config = ();
 
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
@@ -443,6 +449,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         }
 
         Self { layers }
+    }
+    #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct_with_config")]
+    fn construct_with_config(leaves: Self::Leaves, _config: Self::Config) -> Self {
+        <Self as BatchedGrandProduct<F, PCS>>::construct(leaves)
     }
 
     fn num_layers(&self) -> usize {
@@ -1428,6 +1438,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     for ToggledBatchedGrandProduct<PCS::Field>
 {
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
+    type Config = ();
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
@@ -1456,6 +1467,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             toggle_layer,
             sparse_layers: layers,
         }
+    }
+
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct_with_config")]
+    fn construct_with_config(leaves: Self::Leaves, _config: Self::Config) -> Self {
+        <Self as BatchedGrandProduct<F, PCS>>::construct(leaves)
     }
 
     fn num_layers(&self) -> usize {

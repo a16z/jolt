@@ -540,8 +540,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     for NoopGrandProduct
 {
     type Leaves = ();
+    type Config = ();
 
     fn construct(_leaves: Self::Leaves) -> Self {
+        unimplemented!("init/final grand products are batched with read/write grand products");
+    }
+    fn construct_with_config(_leaves: Self::Leaves, _config: Self::Config) -> Self {
         unimplemented!("init/final grand products are batched with read/write grand products");
     }
     fn num_layers(&self) -> usize {
