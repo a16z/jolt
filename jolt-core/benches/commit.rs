@@ -15,7 +15,7 @@ const SRS_SIZE: usize = 1 << 10;
 fn setup_bench<PCS, F>(
     num_layers: usize,
     layer_size: usize,
-    threshold: u32,
+    percentage_ones: u32,
 ) -> (
     // Leaves
     Vec<Vec<F>>,
@@ -28,14 +28,14 @@ where
     F: JoltField,
 {
     assert!(
-        threshold <= 100,
+        percentage_ones <= 100,
         "Threshold must be between 0 and 100, but got {}",
-        threshold
+        percentage_ones
     );
 
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 
-    let threshold = ((threshold as u64 * u32::MAX as u64) / 100) as u32;
+    let threshold = ((percentage_ones as u64 * u32::MAX as u64) / 100) as u32;
 
     // Generate leaves with percentage of ones
     let leaves: Vec<Vec<F>> = (0..num_layers)

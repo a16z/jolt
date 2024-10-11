@@ -21,7 +21,7 @@ struct BenchConfig {
     pub name: &'static str,
     pub num_layers: usize,
     pub layer_size: usize,
-    pub threshold: u32,
+    pub percentage_ones: u32,
 }
 
 // Sets up the benchmark by generating leaves and computing known products
@@ -84,14 +84,14 @@ fn benchmark_prove<PCS, F, G>(
     G: BatchedGrandProduct<F, PCS, Leaves = Vec<Vec<F>>>,
 {
     let (leaves, setup, _) =
-        setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.threshold);
+        setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.percentage_ones);
 
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
 
     c.bench_function(
         &format!(
             "Grand Product Prove: {} - {}% Ones",
-            config.name, config.threshold
+            config.name, config.percentage_ones
         ),
         |b| {
             b.iter(|| {
@@ -126,7 +126,7 @@ fn benchmark_verify<PCS, F, G>(
     G: BatchedGrandProduct<F, PCS, Leaves = Vec<Vec<F>>>,
 {
     let (leaves, setup, known_products) =
-        setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.threshold);
+        setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.percentage_ones);
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
@@ -144,7 +144,7 @@ fn benchmark_verify<PCS, F, G>(
     c.bench_function(
         &format!(
             "Grand Product Verify: {} - {}% Ones",
-            config.name, config.threshold
+            config.name, config.percentage_ones
         ),
         |b| {
             b.iter(|| {
@@ -195,7 +195,7 @@ fn main() {
         name: "",
         num_layers,
         layer_size,
-        threshold: 90,
+        percentage_ones: 90,
     };
     // Hybrid
     // TODO(sagar): Not sure how useful these benchmarks are since Quarks requires a commitment whereas others don't
@@ -211,6 +211,17 @@ fn main() {
     benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
         &mut c,
         config,
+        QuarkGrandProductConfig {
+            hybrid_layer_depth: QuarkHybridLayerDepth::Min,
+        },
+    );
+    config.name = "HyperKZG Hybrid Min Crossover";
+    benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
+        &mut c,
+        BenchConfig {
+            percentage_ones: 10,
+            ..config
+        },
         QuarkGrandProductConfig {
             hybrid_layer_depth: QuarkHybridLayerDepth::Min,
         },
