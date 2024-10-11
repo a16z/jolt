@@ -5,6 +5,7 @@ use super::sumcheck::BatchedCubicSumcheck;
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -218,14 +219,14 @@ impl<F: JoltField> BatchedSparseGrandProductLayer<F> {
 impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedSparseGrandProductLayer<F> {}
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F> {
     #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &DensePolynomial<F>, round_claim: F) {
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
+        let merged_eq = eq_poly.merge();
         if let Some(coalesced) = &self.coalesced_layer {
             let left = coalesced.iter().step_by(2);
             let right = coalesced.iter().skip(1).step_by(2);
-            let eq = eq_poly.evals_ref().iter();
             let expected: F = left
                 .zip(right)
-                .zip(eq)
+                .zip(merged_eq.evals_ref().iter())
                 .map(|((l, r), eq)| *eq * l * r)
                 .sum();
             assert_eq!(expected, round_claim);
@@ -238,10 +239,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             let left = dense.iter().step_by(2);
             let right = dense.iter().skip(1).step_by(2);
 
-            let eq = eq_poly.evals_ref().iter();
             let expected: F = left
                 .zip(right)
-                .zip(eq)
+                .zip(merged_eq.evals_ref().iter())
                 .map(|((l, r), eq)| *eq * l * r)
                 .sum();
             assert_eq!(expected, round_claim);
@@ -260,7 +260,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
     /// If `self` is sparse, we basically do the same thing but with more
     /// cases to check 😬
     #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::bind")]
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
+    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F) {
         #[cfg(test)]
         let (mut left_before_binding, mut right_before_binding) = self.to_dense();
 
@@ -275,7 +275,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     + *r * (coalesced_layer[4 * i + 3] - coalesced_layer[4 * i + 1]);
             }
             self.coalesced_layer = Some(bound_layer);
-            eq_poly.bound_poly_var_bot(r);
+            eq_poly.bind(*r);
             self.batched_layer_len /= 2;
 
             #[cfg(test)]
@@ -304,7 +304,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             }
 
             self.coalesced_layer = Some(coalesced);
-            eq_poly.bound_poly_var_bot(r);
+            eq_poly.bind(*r);
             self.batched_layer_len /= 2;
 
             #[cfg(test)]
@@ -472,7 +472,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     }
                 })
             },
-            || eq_poly.bound_poly_var_bot(r),
+            || eq_poly.bind(*r),
         );
         self.layer_len /= 2;
         self.batched_layer_len /= 2;
@@ -509,7 +509,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
     /// If `self` is sparse, we basically do the same thing but with some fancy optimizations and
     /// more cases to check 😬
     #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &DensePolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         debug_assert_eq!(self.batched_layer_len, 2 * eq_poly.len());
 
         let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
@@ -742,10 +742,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     }
                 }
             })
-            .fold(
-                || (F::zero(), F::zero(), F::zero()),
-                |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-            )
             .reduce(
                 || (F::zero(), F::zero(), F::zero()),
                 |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
@@ -889,13 +885,14 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
     #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &DensePolynomial<F>, round_claim: F) {
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
         let (flags, fingerprints) = self.to_dense();
+        let merged_eq = eq_poly.merge();
         let expected: F = flags
             .evals_ref()
             .iter()
             .zip(fingerprints.evals_ref().iter())
-            .zip(eq_poly.evals_ref().iter())
+            .zip(merged_eq.evals_ref().iter())
             .map(|((flag, fingerprint), eq)| *eq * (*flag * fingerprint + F::one() - flag))
             .sum();
         assert_eq!(expected, round_claim);
@@ -914,7 +911,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     ///   that it has value 0. In other words, a flag with value 1 will be present in both
     ///   `self.flag_indices` and `self.flag_values`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::bind")]
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
+    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F) {
         #[cfg(test)]
         let (mut flags_before_binding, mut fingerprints_before_binding) = self.to_dense();
 
@@ -934,7 +931,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             }
             self.coalesced_fingerprints = Some(bound_fingerprints);
 
-            eq_poly.bound_poly_var_bot(r);
+            eq_poly.bind(*r);
             self.batched_layer_len /= 2;
 
             #[cfg(test)]
@@ -1050,7 +1047,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         // flag_values.truncate(bound_index);
                     });
             },
-            || eq_poly.bound_poly_var_bot(r),
+            || eq_poly.bind(*r),
         );
         self.layer_len /= 2;
         self.batched_layer_len /= 2;
@@ -1118,7 +1115,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     /// `BatchedGrandProductToggleLayer`. These differences are described in the doc comments
     /// for `BatchedGrandProductToggleLayer::bind`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &DensePolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -1307,7 +1304,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
         r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
+        let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &mut eq_poly, transcript);
@@ -1543,7 +1540,7 @@ mod tests {
             let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
                 .take(4)
                 .collect::<Vec<_>>();
-            let mut eq_poly_dense = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_eq));
+            let mut eq_poly_dense = SplitEqPolynomial::new(&r_eq);
             let mut eq_poly_sparse = eq_poly_dense.clone();
 
             let r = Fr::random(&mut rng);
@@ -1615,7 +1612,7 @@ mod tests {
         let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take((BATCH_SIZE * LAYER_SIZE).next_power_of_two().log_2() - 1)
             .collect::<Vec<_>>();
-        let eq_poly = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_eq));
+        let eq_poly = SplitEqPolynomial::new(&r_eq);
         let claim = Fr::random(&mut rng);
 
         let dense_evals = batched_dense_layer.compute_cubic(&eq_poly, claim);

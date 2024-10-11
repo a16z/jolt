@@ -3,6 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
@@ -14,18 +15,18 @@ use rayon::prelude::*;
 
 /// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
-    fn compute_cubic(&self, eq_poly: &DensePolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
+    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F);
+    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
 
     #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &DensePolynomial<F>, round_claim: F);
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F);
 
     #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
     fn prove_sumcheck(
         &mut self,
         claim: &F,
-        eq_poly: &mut DensePolynomial<F>,
+        eq_poly: &mut SplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (F, F)) {
         let num_rounds = eq_poly.get_num_vars();
@@ -35,6 +36,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _round in 0..num_rounds {
+            println!("sumcheck round {}", _round);
             #[cfg(test)]
             self.sumcheck_sanity_check(eq_poly, previous_claim);
 

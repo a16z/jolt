@@ -2,8 +2,8 @@ use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -75,7 +75,10 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
 
+        let mut i = 0usize;
         for layer in self.layers() {
+            println!("layer {}", i);
+            i += 1;
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
         }
 
@@ -182,8 +185,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>:
         r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
-        // TODO(moodlezoup): EQ poly needs to be bigger (and use optimization)
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
+        let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &mut eq_poly, transcript);
@@ -240,7 +242,7 @@ impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
     }
 
     #[cfg(test)]
-    fn to_polys(&self) -> (DensePolynomial<F>, DensePolynomial<F>) {
+    fn uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>) {
         let gap = self.values.len() / self.batched_layer_len;
         let left_poly =
             DensePolynomial::new(self.values.clone().into_iter().step_by(2 * gap).collect());
@@ -264,15 +266,15 @@ impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
 impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedDenseGrandProductLayer<F> {}
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> {
     #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &DensePolynomial<F>, round_claim: F) {
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
         let gap = self.values.len() / self.batched_layer_len;
 
         let left = self.values.iter().step_by(2 * gap);
         let right = self.values.iter().skip(gap).step_by(2 * gap);
-        let eq = eq_poly.evals_ref().iter();
+        let merged_eq = eq_poly.merge();
         let expected: F = left
             .zip(right)
-            .zip(eq)
+            .zip(merged_eq.evals_ref().iter())
             .map(|((l, r), eq)| *eq * l * r)
             .sum();
         assert_eq!(expected, round_claim);
@@ -291,7 +293,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     ///   0  1 2  3  4  5 6  7
     /// Left nodes have even indices, right nodes have odd indices.
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::bind")]
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
+    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F) {
         // TODO(moodlezoup): Gap or scratch space approach?
         let gap = self.values.len() / self.batched_layer_len;
         debug_assert!(self.values.len() % gap == 0);
@@ -302,8 +304,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
             // Right
             chunk[2 * gap] = chunk[gap] + *r * (chunk[3 * gap] - chunk[gap]);
         });
-        // TODO(moodlezoup): parallelize, using either gap or scratch space approach
-        eq_poly.bound_poly_var_bot(r);
+        eq_poly.bind(*r);
 
         self.batched_layer_len /= 2;
     }
@@ -323,46 +324,97 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &DensePolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         let gap = self.values.len() / self.batched_layer_len;
         debug_assert!(self.values.len() % gap == 0);
         debug_assert_eq!(self.batched_layer_len, 2 * eq_poly.len());
 
-        let cubic_evals = self
-            .values
-            .par_chunks(4 * gap)
-            .zip(eq_poly.Z.par_chunks(2))
-            .map(|(layer_chunk, eq_chunk)| {
-                let eq_evals = {
-                    let eval_point_0 = eq_chunk[0];
-                    let m_eq = eq_chunk[1] - eq_chunk[0];
-                    let eval_point_2 = eq_chunk[1] + m_eq;
+        let cubic_evals = if eq_poly.E1_len == 1 {
+            println!("compute_cubic: E1_len == 1");
+            self.values
+                .par_chunks(4 * gap)
+                .zip(eq_poly.E2.par_chunks(2))
+                .map(|(layer_chunk, eq_chunk)| {
+                    let eq_evals = {
+                        let eval_point_0 = eq_chunk[0];
+                        let m_eq = eq_chunk[1] - eq_chunk[0];
+                        let eval_point_2 = eq_chunk[1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    };
+                    let left = (layer_chunk[0], layer_chunk[2 * gap]);
+                    let right = (layer_chunk[gap], layer_chunk[3 * gap]);
+
+                    let m_left = left.1 - left.0;
+                    let m_right = right.1 - right.0;
+
+                    let left_eval_2 = left.1 + m_left;
+                    let left_eval_3 = left_eval_2 + m_left;
+
+                    let right_eval_2 = right.1 + m_right;
+                    let right_eval_3 = right_eval_2 + m_right;
+
+                    (
+                        eq_evals.0 * left.0 * right.0,
+                        eq_evals.1 * left_eval_2 * right_eval_2,
+                        eq_evals.2 * left_eval_3 * right_eval_3,
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+        } else {
+            println!("compute_cubic: normal");
+            let num_E1_chunks = eq_poly.E1_len / 2;
+
+            let mut evals = (F::zero(), F::zero(), F::zero());
+            for (x1, E1_chunk) in eq_poly.E1[..eq_poly.E1_len].chunks(2).enumerate() {
+                let E1_evals = {
+                    let eval_point_0 = E1_chunk[0];
+                    let m_eq = E1_chunk[1] - E1_chunk[0];
+                    let eval_point_2 = E1_chunk[1] + m_eq;
                     let eval_point_3 = eval_point_2 + m_eq;
                     (eval_point_0, eval_point_2, eval_point_3)
                 };
-                let left = (layer_chunk[0], layer_chunk[2 * gap]);
-                let right = (layer_chunk[gap], layer_chunk[3 * gap]);
+                let inner_sums = eq_poly.E2[..eq_poly.E2_len]
+                    .par_iter()
+                    .zip(
+                        self.values
+                            .par_chunks(4 * gap)
+                            .skip(x1)
+                            .step_by(num_E1_chunks),
+                    )
+                    .map(|(E2_eval, P_x1)| {
+                        let left = (P_x1[0], P_x1[2 * gap]);
+                        let right = (P_x1[gap], P_x1[3 * gap]);
 
-                let m_left = left.1 - left.0;
-                let m_right = right.1 - right.0;
+                        let m_left = left.1 - left.0;
+                        let m_right = right.1 - right.0;
 
-                let left_eval_2 = left.1 + m_left;
-                let left_eval_3 = left_eval_2 + m_left;
+                        let left_eval_2 = left.1 + m_left;
+                        let left_eval_3 = left_eval_2 + m_left;
 
-                let right_eval_2 = right.1 + m_right;
-                let right_eval_3 = right_eval_2 + m_right;
+                        let right_eval_2 = right.1 + m_right;
+                        let right_eval_3 = right_eval_2 + m_right;
 
-                let temp = (
-                    eq_evals.0 * left.0 * right.0,
-                    eq_evals.1 * left_eval_2 * right_eval_2,
-                    eq_evals.2 * left_eval_3 * right_eval_3,
-                );
-                temp
-            })
-            .reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            );
+                        // TODO(moodlezoup): can save a mult by E2_eval here
+                        (
+                            *E2_eval * left.0 * right.0,
+                            *E2_eval * left_eval_2 * right_eval_2,
+                            *E2_eval * left_eval_3 * right_eval_3,
+                        )
+                    })
+                    .reduce(
+                        || (F::zero(), F::zero(), F::zero()),
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    );
+                evals.0 += E1_evals.0 * inner_sums.0;
+                evals.1 += E1_evals.1 * inner_sums.1;
+                evals.2 += E1_evals.2 * inner_sums.2;
+            }
+            evals
+        };
 
         let cubic_evals = [
             cubic_evals.0,
@@ -504,21 +556,21 @@ mod tests {
 
         let mut layer = BatchedDenseGrandProductLayer::<Fr>::new(values.concat());
 
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::evals(
+        let mut eq_poly = SplitEqPolynomial::new(
             &std::iter::repeat_with(|| Fr::random(&mut rng))
                 .take(BATCH_SIZE.next_power_of_two().log_2())
                 .collect::<Vec<Fr>>(),
-        ));
+        );
         let r = Fr::random(&mut rng);
 
-        let (mut expected_left_poly, mut expected_right_poly) = layer.to_polys();
+        let (mut expected_left_poly, mut expected_right_poly) = layer.uninterleave();
 
         layer.bind(&mut eq_poly, &r);
 
         expected_left_poly.bound_poly_var_bot(&r);
         expected_right_poly.bound_poly_var_bot(&r);
 
-        let (actual_left_poly, actual_right_poly) = layer.to_polys();
+        let (actual_left_poly, actual_right_poly) = layer.uninterleave();
         assert_eq!(
             expected_left_poly.Z[..expected_left_poly.len()],
             actual_left_poly.Z[..actual_left_poly.len()]
