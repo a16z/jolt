@@ -106,11 +106,6 @@ fn benchmark_prove<PCS, F, G>(
                         Some(&setup),
                     )
                     .0;
-
-                if prover_accumulator.len() > 0 {
-                    let _ =
-                        Some(prover_accumulator.reduce_and_prove::<PCS>(&setup, &mut transcript));
-                }
             });
         },
     );
@@ -136,10 +131,6 @@ fn benchmark_verify<PCS, F, G>(
         &mut transcript,
         Some(&setup),
     );
-    let mut batched_proof = None;
-    if prover_accumulator.len() > 0 {
-        batched_proof = Some(prover_accumulator.reduce_and_prove(&setup, &mut transcript));
-    }
 
     c.bench_function(
         &format!(
@@ -159,12 +150,6 @@ fn benchmark_verify<PCS, F, G>(
                     &mut transcript,
                     Some(&setup),
                 );
-
-                if let Some(batched_proof) = &batched_proof {
-                    assert!(verifier_accumulator
-                        .reduce_and_verify(&setup, &batched_proof, &mut transcript)
-                        .is_ok());
-                }
 
                 assert_eq!(r_prover, r_verifier);
             });
