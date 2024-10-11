@@ -158,7 +158,7 @@ where
         poly: &UniPoly<P::ScalarField>,
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, offset, CommitMode::Default)
+        Self::commit_inner(pk, &poly.coeffs[offset..], offset, CommitMode::Default)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit")]
@@ -203,25 +203,35 @@ where
         offset: usize,
         mode: CommitMode,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        if pk.g1_powers().len() < coeffs.len() {
+        let final_commitment = Self::commit_inner_helper(pk, coeffs, offset, mode)?;
+        Ok(final_commitment.into_affine())
+    }
+
+    #[inline]
+    pub(crate) fn commit_inner_helper(
+        pk: &KZGProverKey<P>,
+        coeffs: &[P::ScalarField],
+        offset: usize,
+        mode: CommitMode,
+    ) -> Result<P::G1, ProofVerifyError> {
+        if pk.g1_powers().len() < offset + coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pk.g1_powers().len(),
-                coeffs.len(),
+                offset + coeffs.len(),
             ));
         }
 
         match mode {
             CommitMode::Default => {
                 let c = <P::G1 as VariableBaseMSM>::msm(
-                    &pk.g1_powers()[offset..coeffs.len()],
-                    &coeffs[offset..],
+                    &pk.g1_powers()[offset..offset + coeffs.len()],
+                    &coeffs,
                 )
                 .unwrap();
-                Ok(c.into_affine())
+                Ok(c)
             }
             CommitMode::GrandProduct => {
-                let g1_powers = &pk.g1_powers()[offset..coeffs.len()];
-                let coeffs = &coeffs[offset..];
+                let g1_powers = &pk.g1_powers()[offset..offset + coeffs.len()];
                 // Commit to the non-1 coefficients first then combine them with the G commitment (all-1s vector) in the SRS
                 let (non_one_coeffs, non_one_bases): (Vec<_>, Vec<_>) = coeffs
                     .iter()
@@ -252,7 +262,7 @@ where
 
                 // Combine G * H: Multiply the precomputed G commitment with the non-1 commitment (H)
                 let final_commitment = pk.srs.g_products[num_powers] + non_one_commitment;
-                Ok(final_commitment.into_affine())
+                Ok(final_commitment)
             }
         }
     }

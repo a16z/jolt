@@ -9,7 +9,7 @@
 //! and within the KZG commitment scheme implementation itself).
 use super::{
     commitment_scheme::{BatchType, CommitmentScheme, StreamingCommitmentScheme},
-    kzg::{self, KZGProverKey, KZGVerifierKey, UnivariateKZG},
+    kzg::{self, CommitMode, KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
@@ -648,9 +648,13 @@ where
 #[derive(Clone, Debug)]
 pub struct HyperKZGState<'a, P: Pairing> {
     acc: P::G1,
-    g1_powers: &'a [P::G1Affine],
-    position: usize,
+    prover_key: &'a KZGProverKey<P>,
+    current_chunk: Vec<P::ScalarField>,
+    row_count: usize,
+    mode: CommitMode,
 }
+
+const CHUNK_SIZE: usize = 256;
 
 impl<P: Pairing> StreamingCommitmentScheme for HyperKZG<P>
 where
@@ -666,23 +670,40 @@ where
             size,
         );
 
+        assert!(size % CHUNK_SIZE == 0,
+            "CHUNK_SIZE ({}) must evenly divide the size ({})",
+            CHUNK_SIZE,
+            size,
+        );
+
+        let current_chunk = Vec::with_capacity(CHUNK_SIZE);
+        let mode = match batch_type {
+            BatchType::GrandProduct => CommitMode::GrandProduct,
+            _ => CommitMode::Default,
+        };
+
         HyperKZGState {
             acc: P::G1::zero(),
-            g1_powers: setup.0.kzg_pk.g1_powers(),
-            position: 0,
+            prover_key: &setup.0.kzg_pk,
+            current_chunk,
+            row_count: 0,
+            mode,
         }
     }
 
-    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
-        let g = state.g1_powers[state.position];
-        let acc = state.acc + (g * eval);
-        let position = state.position + 1;
+    fn process<'a>(mut state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        state.current_chunk.push(eval);
 
-        HyperKZGState {
-            acc,
-            g1_powers: state.g1_powers,
-            position,
+        if state.current_chunk.len() == CHUNK_SIZE {
+            let offset = state.row_count * CHUNK_SIZE;
+            let c = UnivariateKZG::commit_inner_helper(state.prover_key, &state.current_chunk, offset, state.mode).unwrap();
+
+            state.acc += c;
+            state.current_chunk.clear();
+            state.row_count += 1;
         }
+
+        state
     }
 
     fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
