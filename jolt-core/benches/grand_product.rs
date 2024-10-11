@@ -183,7 +183,6 @@ fn main() {
         percentage_ones: 90,
     };
     // Hybrid
-    // TODO(sagar): Not sure how useful these benchmarks are since Quarks requires a commitment whereas others don't
     config.name = "HyperKZG Hybrid";
     benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
         &mut c,
