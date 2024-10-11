@@ -5,6 +5,7 @@ use crate::field::JoltField;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
+use crate::r1cs::inputs::StreamingR1CSCommitment;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -34,7 +35,7 @@ use crate::lasso::memory_checking::{
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, StreamingCommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
+use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff, StreamingR1CSPolynomials};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -396,6 +397,18 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, const C:
             });
         let bytecode_commitments = StreamingBytecodeCommitment::finalize(streaming_trace_commitments);
 
+        let streaming_r1cs_polynomials = StreamingR1CSPolynomials::<F>::new::<
+            C,
+            M,
+            Self::InstructionSet,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        >(&trace2);
+        let r1cs_commitments = StreamingR1CSCommitment::<C, PCS>::initialize(&streaming_r1cs_polynomials, &preprocessing.generators, &BatchType::Big);
+        let r1cs_commitments = streaming_r1cs_polynomials.fold(r1cs_commitments, |state, step| {
+            StreamingR1CSCommitment::process(state, &step)
+        });
+        let r1cs_commitments = StreamingR1CSCommitment::finalize(r1cs_commitments);
+
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
@@ -417,6 +430,9 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, const C:
         assert_eq!(bytecode_commitments[5], jolt_commitments.bytecode.v_read_write[3]);
         assert_eq!(bytecode_commitments[6], jolt_commitments.bytecode.v_read_write[4]);
         assert_eq!(bytecode_commitments[7], jolt_commitments.bytecode.v_read_write[5]);
+        assert_eq!(r1cs_commitments.0, jolt_commitments.r1cs.chunks_x);
+        assert_eq!(r1cs_commitments.1, jolt_commitments.r1cs.chunks_y);
+        assert_eq!(r1cs_commitments.2, jolt_commitments.r1cs.circuit_flags);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 

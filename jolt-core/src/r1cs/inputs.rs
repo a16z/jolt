@@ -9,7 +9,8 @@ use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
+use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -28,7 +29,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 /// Auxiliary variables defined in Jolt's R1CS constraints.
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub left_lookup_operand: T,
     pub right_lookup_operand: T,
@@ -93,7 +94,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub chunks_x: Vec<T>,
     pub chunks_y: Vec<T>,
@@ -209,6 +210,125 @@ impl<F: JoltField> R1CSPolynomials<F> {
             // Actual aux variable polynomials will be computed afterwards
             aux: AuxVariableStuff::initialize(&C),
         }
+    }
+}
+
+// pub type StreamingR1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
+
+// TODO: Merge this with StreamingBytecodePolynomials so that we only take one pass?
+pub struct StreamingR1CSPolynomials<'a, F: JoltField> {
+    /// Length of the polynomial.
+    length: usize,
+    /// Stream that builds the polynomial.
+    polynomial_stream: Box<dyn Iterator<Item = R1CSPolynomialStep<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+}
+
+impl<'a, F: JoltField> StreamingR1CSPolynomials<'a, F> {
+    pub fn length(&self) -> usize {
+        self.length
+    }
+
+    pub fn fold<T, FN>(self, init: T, f: FN) -> T
+    where
+        FN: FnMut(T, R1CSPolynomialStep<F>) -> T,
+    {
+        self.polynomial_stream.fold(init, f)
+    }
+}
+
+// TODO: Use R1CS stuff?
+pub struct R1CSPolynomialStep<F: JoltField> {
+    pub chunks_x: Vec<F>,
+    pub chunks_y: Vec<F>,
+    pub circuit_flags: [F; NUM_CIRCUIT_FLAGS],
+    // pub aux: AuxVariableStuff<T>,
+}
+
+impl<'a, F: JoltField> StreamingR1CSPolynomials<'a, F> {
+    pub fn new<
+        const C: usize,
+        const M: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput,
+    >(
+        trace: &'a [JoltTraceStep<InstructionSet>],
+    ) -> Self {
+        let log_M = log2(M) as usize;
+        let length = trace.len();
+        let stream = trace.iter().map(move |step| {
+
+            let (chunks_x, chunks_y) =
+                if let Some(instr) = &step.instruction_lookup {
+                    let (x, y) = instr.operand_chunks(C, log_M);
+                    let chunks_x = (0..C).map(|i| F::from_u64(x[i]).unwrap()).collect();
+                    let chunks_y = (0..C).map(|i| F::from_u64(y[i]).unwrap()).collect();
+
+                    (chunks_x, chunks_y)
+                } else {
+                    (vec![F::zero(); C], vec![F::zero(); C])
+                };
+
+            let circuit_flags = std::array::from_fn(|j|
+                if step.circuit_flags[j] { F::one() } else { F::zero() }
+            );
+
+            R1CSPolynomialStep {
+                chunks_x,
+                chunks_y,
+                circuit_flags,
+            }
+        });
+
+        StreamingR1CSPolynomials {
+            length,
+            polynomial_stream: Box::new(stream),
+        }
+    }
+}
+
+// TODO: Use R1CSStuff? XXX
+pub struct StreamingR1CSCommitment<'a, const C: usize, CS: StreamingCommitmentScheme> {
+    pub chunks_x: [CS::State<'a>; C],
+    pub chunks_y: [CS::State<'a>; C],
+    pub circuit_flags: [CS::State<'a>; NUM_CIRCUIT_FLAGS],
+    // pub aux: AuxVariableStuff<CS::State<'a>>,
+}
+
+impl<'a, const C: usize, CS: StreamingCommitmentScheme> StreamingR1CSCommitment<'a, C, CS> {
+    /// Initialize a streaming computation of a commitment.
+    pub fn initialize<F: JoltField,>(poly: &StreamingR1CSPolynomials<'a, F>, setup: &'a CS::Setup, batch_type: &BatchType) -> Self {
+        let size = poly.length();
+        let chunks_x = std::array::from_fn(|_| CS::initialize(size, setup, batch_type));
+        let chunks_y = std::array::from_fn(|_| CS::initialize(size, setup, batch_type));
+        let circuit_flags = std::array::from_fn(|_| CS::initialize(size, setup, batch_type));
+
+        StreamingR1CSCommitment {
+            chunks_x,
+            chunks_y,
+            circuit_flags,
+        }
+    }
+
+    /// Process one step to compute the commitment.
+    pub fn process(self, step: &R1CSPolynomialStep<CS::Field>) -> Self {
+        let chunks_x = self.chunks_x.into_iter().zip(step.chunks_x.iter()).map(|(cs, f)| CS::process(cs, *f)).collect::<Vec<_>>().try_into().unwrap();
+        let chunks_y = self.chunks_y.into_iter().zip(step.chunks_y.iter()).map(|(cs, f)| CS::process(cs, *f)).collect::<Vec<_>>().try_into().unwrap();
+        let circuit_flags = self.circuit_flags.into_iter().zip(step.circuit_flags.iter()).map(|(cs, f)| CS::process(cs, *f)).collect::<Vec<_>>().try_into().unwrap();
+
+        StreamingR1CSCommitment {
+            chunks_x,
+            chunks_y,
+            circuit_flags,
+        }
+    }
+
+    /// Return the commitments.
+    pub fn finalize(self) -> (Vec<CS::Commitment>, Vec<CS::Commitment>, Vec<CS::Commitment>) {
+        let chunks_x = self.chunks_x.into_iter().map(|cs| CS::finalize(cs)).collect();
+        let chunks_y = self.chunks_y.into_iter().map(|cs| CS::finalize(cs)).collect();
+        let circuit_flags = self.circuit_flags.into_iter().map(|cs| CS::finalize(cs)).collect();
+
+        (chunks_x, chunks_y, circuit_flags)
     }
 }
 
