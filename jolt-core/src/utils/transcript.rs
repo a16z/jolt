@@ -90,10 +90,6 @@ impl ProofTranscript {
         self.update_state(hasher.finalize().into());
     }
 
-    pub fn append_protocol_name(&mut self, protocol_name: &'static [u8]) {
-        self.append_message(protocol_name);
-    }
-
     pub fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();

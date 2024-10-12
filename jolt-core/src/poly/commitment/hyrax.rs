@@ -276,7 +276,8 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
         ratio: usize,
         transcript: &mut ProofTranscript,
     ) -> HyraxOpeningProof<G> {
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
@@ -303,7 +304,8 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
         commitment: &HyraxCommitment<G>,
         ratio: usize,
     ) -> Result<(), ProofVerifyError> {
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         // compute L and R
         let (L_size, R_size) = matrix_dimensions(opening_point.len(), ratio);
@@ -371,7 +373,8 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         // append the claimed evaluations to transcript
         transcript.append_scalars(openings);
@@ -455,7 +458,8 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
             )
         });
 
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         // append the claimed evaluations to transcript
         transcript.append_scalars(openings);

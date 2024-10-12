@@ -381,7 +381,8 @@ where
     ) -> (Self, Option<ProverDebugInfo<F>>) {
         let mut transcript = ProofTranscript::new(b"Surge transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         let num_lookups = ops.len().next_power_of_two();
         let polynomials = Self::generate_witness(preprocessing, &ops);
@@ -490,7 +491,8 @@ where
             opening_accumulator.compare_to(debug_info.opening_accumulator, &generators);
         }
 
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
         let instruction = Instruction::default();
 
         let r_primary_sumcheck = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);
