@@ -230,14 +230,32 @@ impl Mmu {
         }
     }
 
+    /// Asserts the validity of an effective memory address.
+    /// Panics if the address is invalid.
+    ///
+    /// # Arguments
+    /// * `effective_address` Effective memory address to validate
+    ///
+    /// Memory Layout:
+    ///                          DRAM_BASE
+    ///                              |
+    /// Low addresses                |                   High addresses
+    /// 0x0                          V                           0xFF...
+    /// |-----------------------------------------------|--------------|
+    /// | ... | panic | zero_padding | <-stack | heap-> |
+    /// |-----------------------------------------------|--------------|
+    /// *Stack grows downwards up to DRAM_BASE
+    /// **Heap grows upwards
     #[inline]
     fn assert_effective_address(&self, effective_address: u64) {
         if effective_address < DRAM_BASE {
+            // less then DRAM_BASE and greater then panic => zero_padding region
             assert!(
                 effective_address <= self.jolt_device.memory_layout.panic,
                 "Stack overflow: Attempted to write to 0x{:X}, which is in the area or zero padding region.",
                 effective_address
             );
+            // less then panic => jolt_device region (i.e. input/output)
             assert!(
                 self.jolt_device.is_output(effective_address)
                     || self.jolt_device.is_panic(effective_address),
@@ -245,6 +263,7 @@ impl Mmu {
                 effective_address
             );
         } else {
+            // greater then memory capacity
             assert!(
                 self.memory.validate_address(effective_address),
                 "Heap overflow: Attempted to write to 0x{:X}, which is beyond the allocated memory.",
