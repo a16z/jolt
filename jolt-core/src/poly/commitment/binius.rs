@@ -5,17 +5,20 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::transcript::{AppendToTranscript, DefaultTranscript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct Binius128Scheme {}
+pub struct Binius128Scheme<ProofTranscript: Transcript> {
+    _phantom: PhantomData<ProofTranscript>,
+}
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BiniusCommitment {}
 
 impl AppendToTranscript for BiniusCommitment {
-    fn append_to_transcript(&self, _transcript: &mut DefaultTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, _transcript: &mut ProofTranscript) {
         todo!()
     }
 }
@@ -29,7 +32,9 @@ pub struct BiniusBatchedProof {}
 #[derive(Clone)]
 pub struct None {}
 
-impl CommitmentScheme for Binius128Scheme {
+impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
+    for Binius128Scheme<ProofTranscript>
+{
     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128bPolyval>;
     type Setup = None;
     type Commitment = BiniusCommitment;
@@ -56,7 +61,7 @@ impl CommitmentScheme for Binius128Scheme {
         _none: &Self::Setup,
         _poly: &DensePolynomial<Self::Field>,
         _opening_point: &[Self::Field],
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         todo!()
     }
@@ -66,7 +71,7 @@ impl CommitmentScheme for Binius128Scheme {
         _opening_point: &[Self::Field],
         _openings: &[Self::Field],
         _batch_type: BatchType,
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         todo!()
     }
@@ -74,7 +79,7 @@ impl CommitmentScheme for Binius128Scheme {
     fn verify(
         _proof: &Self::Proof,
         _setup: &Self::Setup,
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
         _opening_point: &[Self::Field],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
@@ -88,7 +93,7 @@ impl CommitmentScheme for Binius128Scheme {
         _opening_point: &[Self::Field],
         _openings: &[Self::Field],
         _commitments: &[&Self::Commitment],
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         todo!()
     }

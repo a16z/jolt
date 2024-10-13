@@ -20,10 +20,7 @@ use crate::utils::transcript::Transcript;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, DefaultTranscript},
-    },
+    utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -70,7 +67,7 @@ impl<P: Pairing> Default for HyperKZGCommitment<P> {
 }
 
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
-    fn append_to_transcript(&self, transcript: &mut DefaultTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());
     }
 }
@@ -156,11 +153,11 @@ where
     B
 }
 
-fn kzg_open_batch<P: Pairing>(
+fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     f: &[Vec<P::ScalarField>],
     u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
-    transcript: &mut DefaultTranscript,
+    transcript: &mut ProofTranscript,
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
     <P as Pairing>::ScalarField: field::JoltField,
@@ -199,13 +196,13 @@ where
 }
 
 // vk is hashed in transcript already, so we do not add it here
-fn kzg_verify_batch<P: Pairing>(
+fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
     vk: &HyperKZGVerifierKey<P>,
     C: &[P::G1Affine],
     W: &[P::G1Affine],
     u: &[P::ScalarField],
     v: &[Vec<P::ScalarField>],
-    transcript: &mut DefaultTranscript,
+    transcript: &mut ProofTranscript,
 ) -> bool
 where
     <P as Pairing>::ScalarField: field::JoltField,
@@ -281,11 +278,11 @@ where
 }
 
 #[derive(Clone)]
-pub struct HyperKZG<P: Pairing> {
-    _phantom: PhantomData<P>,
+pub struct HyperKZG<P: Pairing, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(P, ProofTranscript)>,
 }
 
-impl<P: Pairing> HyperKZG<P>
+impl<P: Pairing, ProofTranscript: Transcript> HyperKZG<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
@@ -314,7 +311,7 @@ where
         poly: &DensePolynomial<P::ScalarField>,
         point: &[P::ScalarField],
         _eval: &P::ScalarField,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<HyperKZGProof<P>, ProofVerifyError> {
         let ell = point.len();
         let n = poly.len();
@@ -368,7 +365,7 @@ where
         point: &[P::ScalarField],
         P_of_x: &P::ScalarField,
         pi: &HyperKZGProof<P>,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let y = P_of_x;
 
@@ -428,7 +425,7 @@ where
         polynomials: &[&DensePolynomial<P::ScalarField>],
         point: &[P::ScalarField],
         evals: &[P::ScalarField],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> HyperKZGProof<P> {
         let num_vars = point.len();
         let n = 1 << num_vars;
@@ -470,7 +467,8 @@ where
         drop(span);
 
         let poly = DensePolynomial::new(f_batched);
-        HyperKZG::<P>::open(pk, &poly, point, &batched_evaluation, transcript).unwrap()
+        HyperKZG::<P, ProofTranscript>::open(pk, &poly, point, &batched_evaluation, transcript)
+            .unwrap()
     }
 
     fn batch_verify(
@@ -479,7 +477,7 @@ where
         point: &[P::ScalarField],
         evals: &[P::ScalarField],
         batch_proof: &HyperKZGProof<P>,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         //TODO(pat): produce powers in parallel using window method
         // Compute batching of unshifted polynomials f_i:
@@ -495,7 +493,7 @@ where
                 (batched_evaluation, batched_commitment)
             },
         );
-        HyperKZG::<P>::verify(
+        HyperKZG::<P, ProofTranscript>::verify(
             vk,
             &HyperKZGCommitment(batched_commitment.into_affine()),
             point,
@@ -506,7 +504,8 @@ where
     }
 }
 
-impl<P: Pairing> CommitmentScheme for HyperKZG<P>
+impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
+    for HyperKZG<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
@@ -577,10 +576,11 @@ where
         setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
-        HyperKZG::<P>::open(&setup.0, poly, opening_point, &eval, transcript).unwrap()
+        HyperKZG::<P, ProofTranscript>::open(&setup.0, poly, opening_point, &eval, transcript)
+            .unwrap()
     }
 
     fn batch_prove(
@@ -589,9 +589,15 @@ where
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         _batch_type: BatchType,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        HyperKZG::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
+        HyperKZG::<P, ProofTranscript>::batch_open(
+            &setup.0,
+            polynomials,
+            opening_point,
+            openings,
+            transcript,
+        )
     }
 
     fn combine_commitments(
@@ -609,12 +615,12 @@ where
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        HyperKZG::<P>::verify(
+        HyperKZG::<P, ProofTranscript>::verify(
             &setup.1,
             commitment,
             opening_point,
@@ -630,9 +636,9 @@ where
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         commitments: &[&Self::Commitment],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        HyperKZG::<P>::batch_verify(
+        HyperKZG::<P, ProofTranscript>::batch_verify(
             &setup.1,
             commitments,
             opening_point,
@@ -650,7 +656,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::Transcript;
+    use crate::utils::transcript::{DefaultTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::UniformRand;
     use rand_core::SeedableRng;
@@ -665,7 +671,7 @@ mod tests {
         // poly is in eval. representation; evaluated at [(0,0), (0,1), (1,0), (1,1)]
         let poly = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(2), Fr::from(4)]);
 
-        let C = HyperKZG::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
 
         let test_inner = |point: Vec<Fr>, eval: Fr| -> Result<(), ProofVerifyError> {
             let mut tr = DefaultTranscript::new(b"TestEval");
@@ -723,7 +729,7 @@ mod tests {
         let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(3);
 
         // make a commitment
-        let C = HyperKZG::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
 
         // prove an evaluation
         let mut tr = DefaultTranscript::new(b"TestEval");
@@ -782,7 +788,7 @@ mod tests {
             let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(n);
 
             // make a commitment
-            let C = HyperKZG::commit(&pk, &poly).unwrap();
+            let C = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
 
             // prove an evaluation
             let mut prover_transcript = DefaultTranscript::new(b"TestEval");

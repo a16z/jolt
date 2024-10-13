@@ -8,12 +8,17 @@ use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, DefaultTranscript, Transcript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 /// Batched cubic sumcheck used in grand products
-pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
+pub trait BatchedCubicSumcheck<F, ProofTranscript>: Sync
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     fn num_rounds(&self) -> usize;
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
     fn compute_cubic(
@@ -30,8 +35,12 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         claim: &F,
         coeffs: &[F],
         eq_poly: &mut DensePolynomial<F>,
-        transcript: &mut DefaultTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
+        transcript: &mut ProofTranscript,
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F>,
+        (Vec<F>, Vec<F>),
+    ) {
         debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
 
         let mut previous_claim = *claim;
@@ -64,7 +73,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProof<F> {
+impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
     /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
     ///
     /// Params
@@ -84,7 +93,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         polys: &mut Vec<DensePolynomial<F>>,
         comb_func: Func,
         combined_degree: usize,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&[F]) -> F + std::marker::Sync,
@@ -257,7 +266,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         poly_B: &mut SparsePolynomial<F>,
         poly_C: &mut SparsePolynomial<F>,
         comb_func: Func,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&F, &F, &F, &F) -> F + Sync,
@@ -327,7 +336,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
         witness_polynomials: &[&DensePolynomial<F>],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
@@ -493,13 +502,19 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SumcheckInstanceProof<F: JoltField> {
+pub struct SumcheckInstanceProof<F: JoltField, ProofTranscript: Transcript> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField> SumcheckInstanceProof<F> {
-    pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> SumcheckInstanceProof<F> {
-        SumcheckInstanceProof { compressed_polys }
+impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
+    pub fn new(
+        compressed_polys: Vec<CompressedUniPoly<F>>,
+    ) -> SumcheckInstanceProof<F, ProofTranscript> {
+        SumcheckInstanceProof {
+            compressed_polys,
+            _marker: PhantomData,
+        }
     }
 
     /// Verify this sumcheck proof.
@@ -520,7 +535,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(F, Vec<F>), ProofVerifyError> {
         let mut e = claim;
         let mut r: Vec<F> = Vec::new();

@@ -13,7 +13,6 @@ use std::marker::{PhantomData, Sync};
 use super::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::utils::transcript::Transcript;
 use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -24,9 +23,7 @@ use crate::{
         identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::DefaultTranscript,
-    },
+    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::Transcript},
 };
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -46,7 +43,8 @@ pub struct SurgeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
 
 pub type SurgePolynomials<F: JoltField> = SurgeStuff<DensePolynomial<F>>;
 pub type SurgeOpenings<F: JoltField> = SurgeStuff<F>;
-pub type SurgeCommitments<PCS: CommitmentScheme> = SurgeStuff<PCS::Commitment>;
+pub type SurgeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    SurgeStuff<PCS::Commitment>;
 
 impl<const C: usize, const M: usize, F, T, Instruction>
     Initializable<T, SurgePreprocessing<F, Instruction, C, M>> for SurgeStuff<T>
@@ -96,16 +94,17 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
     }
 }
 
-impl<F, PCS, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, PCS>
-    for SurgeProof<F, PCS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize, ProofTranscript: Transcript>
+    MemoryCheckingProver<F, PCS, ProofTranscript>
+    for SurgeProof<F, PCS, Instruction, C, M, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     type Polynomials = SurgePolynomials<F>;
     type Openings = SurgeOpenings<F>;
-    type Commitments = SurgeCommitments<PCS>;
+    type Commitments = SurgeCommitments<PCS, ProofTranscript>;
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
@@ -185,12 +184,14 @@ where
     }
 }
 
-impl<F, PCS, Instruction, const C: usize, const M: usize> MemoryCheckingVerifier<F, PCS>
-    for SurgeProof<F, PCS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize, ProofTranscript>
+    MemoryCheckingVerifier<F, PCS, ProofTranscript>
+    for SurgeProof<F, PCS, Instruction, C, M, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Instruction: JoltInstruction + Default + Sync,
+    ProofTranscript: Transcript,
 {
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
@@ -280,14 +281,16 @@ where
     }
 }
 
-pub struct SurgePrimarySumcheck<F>
+pub struct SurgePrimarySumcheck<F, ProofTranscript>
 where
     F: JoltField,
+    ProofTranscript: Transcript,
 {
-    sumcheck_proof: SumcheckInstanceProof<F>,
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     num_rounds: usize,
     claimed_evaluation: F,
     E_poly_openings: Vec<F>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
@@ -300,20 +303,22 @@ where
 }
 
 #[allow(clippy::type_complexity)]
-pub struct SurgeProof<F, PCS, Instruction, const C: usize, const M: usize>
+pub struct SurgeProof<F, PCS, Instruction, const C: usize, const M: usize, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Instruction: JoltInstruction + Default,
+    ProofTranscript: Transcript,
 {
     _instruction: PhantomData<Instruction>,
     /// Commitments to all polynomials
-    commitments: SurgeCommitments<PCS>,
+    commitments: SurgeCommitments<PCS, ProofTranscript>,
 
     /// Primary collation sumcheck proof
-    primary_sumcheck: SurgePrimarySumcheck<F>,
+    primary_sumcheck: SurgePrimarySumcheck<F, ProofTranscript>,
 
-    memory_checking: MemoryCheckingProof<F, PCS, SurgeOpenings<F>, NoExogenousOpenings>,
+    memory_checking:
+        MemoryCheckingProof<F, PCS, SurgeOpenings<F>, NoExogenousOpenings, ProofTranscript>,
 }
 
 impl<F, Instruction, const C: usize, const M: usize> SurgePreprocessing<F, Instruction, C, M>
@@ -340,11 +345,13 @@ where
     }
 }
 
-impl<F, PCS, Instruction, const C: usize, const M: usize> SurgeProof<F, PCS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize, ProofTranscript>
+    SurgeProof<F, PCS, Instruction, C, M, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Instruction: JoltInstruction + Default + Sync,
+    ProofTranscript: Transcript,
 {
     // TODO(moodlezoup): We can be more efficient (use fewer memories) if we use subtable_indices
     fn num_memories() -> usize {
@@ -380,16 +387,17 @@ where
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         generators: &PCS::Setup,
         ops: Vec<Instruction>,
-    ) -> (Self, Option<ProverDebugInfo<F>>) {
-        let mut transcript = DefaultTranscript::new(b"Surge transcript");
-        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
+    ) -> (Self, Option<ProverDebugInfo<F, ProofTranscript>>) {
+        let mut transcript = ProofTranscript::new(b"Surge transcript");
+        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+            ProverOpeningAccumulator::new();
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
 
         let num_lookups = ops.len().next_power_of_two();
         let polynomials = Self::generate_witness(preprocessing, &ops);
 
-        let mut commitments = SurgeCommitments::<PCS>::initialize(preprocessing);
+        let mut commitments = SurgeCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
         let trace_polys = polynomials.read_write_values();
         let trace_comitments =
             PCS::batch_commit_polys_ref(&trace_polys, generators, BatchType::SurgeReadWrite);
@@ -425,7 +433,7 @@ where
         };
 
         let (primary_sumcheck_proof, r_z, mut sumcheck_openings) =
-            SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
+            SumcheckInstanceProof::<F, ProofTranscript>::prove_arbitrary::<_>(
                 &sumcheck_claim,
                 num_rounds,
                 &mut combined_sumcheck_polys,
@@ -450,6 +458,7 @@ where
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
             E_poly_openings: sumcheck_openings,
+            _marker: PhantomData,
         };
 
         let memory_checking = SurgeProof::prove_memory_checking(
@@ -481,11 +490,11 @@ where
     pub fn verify(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         generators: &PCS::Setup,
-        proof: SurgeProof<F, PCS, Instruction, C, M>,
-        _debug_info: Option<ProverDebugInfo<F>>,
+        proof: SurgeProof<F, PCS, Instruction, C, M, ProofTranscript>,
+        _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> Result<(), ProofVerifyError> {
-        let mut transcript = DefaultTranscript::new(b"Surge transcript");
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+        let mut transcript = ProofTranscript::new(b"Surge transcript");
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
         #[cfg(test)]
         if let Some(debug_info) = _debug_info {
@@ -531,7 +540,7 @@ where
             generators,
             proof.memory_checking,
             &proof.commitments,
-            &JoltCommitments::<PCS>::default(),
+            &JoltCommitments::<PCS, ProofTranscript>::default(),
             &mut opening_accumulator,
             &mut transcript,
         )
@@ -647,6 +656,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::SurgePreprocessing;
+    use crate::utils::transcript::DefaultTranscript;
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
@@ -674,13 +684,18 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::setup(&[CommitShape::new(M, BatchType::SurgeReadWrite)]);
-        let (proof, debug_info) =
-            SurgeProof::<Fr, HyperKZG<Bn254>, XORInstruction<WORD_SIZE>, C, M>::prove(
-                &preprocessing,
-                &generators,
-                ops,
-            );
+        let generators = HyperKZG::<_, DefaultTranscript>::setup(&[CommitShape::new(
+            M,
+            BatchType::SurgeReadWrite,
+        )]);
+        let (proof, debug_info) = SurgeProof::<
+            Fr,
+            HyperKZG<Bn254, DefaultTranscript>,
+            XORInstruction<WORD_SIZE>,
+            C,
+            M,
+            DefaultTranscript,
+        >::prove(&preprocessing, &generators, ops);
 
         SurgeProof::verify(&preprocessing, &generators, proof, debug_info).expect("should work");
     }
@@ -701,13 +716,18 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::setup(&[CommitShape::new(M, BatchType::SurgeReadWrite)]);
-        let (proof, debug_info) =
-            SurgeProof::<Fr, HyperKZG<Bn254>, XORInstruction<WORD_SIZE>, C, M>::prove(
-                &preprocessing,
-                &generators,
-                ops,
-            );
+        let generators = HyperKZG::<_, DefaultTranscript>::setup(&[CommitShape::new(
+            M,
+            BatchType::SurgeReadWrite,
+        )]);
+        let (proof, debug_info) = SurgeProof::<
+            Fr,
+            HyperKZG<Bn254, DefaultTranscript>,
+            XORInstruction<WORD_SIZE>,
+            C,
+            M,
+            DefaultTranscript,
+        >::prove(&preprocessing, &generators, ops);
 
         SurgeProof::verify(&preprocessing, &generators, proof, debug_info).expect("should work");
     }

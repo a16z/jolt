@@ -22,13 +22,6 @@ pub struct DefaultTranscript {
 }
 
 impl DefaultTranscript {
-    #[cfg(test)]
-    /// Compare this transcript to `other` and panic if/when they deviate.
-    /// Typically used to compare the verifier's transcript to the prover's.
-    pub fn compare_to(&mut self, other: Self) {
-        self.expected_state_history = Some(other.state_history);
-    }
-
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
     fn hasher(&self) -> Keccak256 {
@@ -102,6 +95,14 @@ impl Transcript for DefaultTranscript {
             expected_state_history: None,
         }
     }
+
+    #[cfg(test)]
+    /// Compare this transcript to `other` and panic if/when they deviate.
+    /// Typically used to compare the verifier's transcript to the prover's.
+    fn compare_to(&mut self, other: Self) {
+        self.expected_state_history = Some(other.state_history);
+    }
+
     fn append_message(&mut self, msg: &'static [u8]) {
         // We require all messages to fit into one evm word and then right pad them
         // right padding matches the format of the strings when cast to bytes 32 in solidity
@@ -116,11 +117,13 @@ impl Transcript for DefaultTranscript {
         // Instantiate hasher add our seed, position and msg
         self.update_state(hasher.finalize().into());
     }
+
     fn append_bytes(&mut self, bytes: &[u8]) {
         // Add the message and label
         let hasher = self.hasher().chain_update(bytes);
         self.update_state(hasher.finalize().into());
     }
+
     fn append_u64(&mut self, x: u64) {
         // Allocate into a 32 byte region
         let mut packed = [0_u8; 24].to_vec();
@@ -128,6 +131,7 @@ impl Transcript for DefaultTranscript {
         let hasher = self.hasher().chain_update(packed.clone());
         self.update_state(hasher.finalize().into());
     }
+
     fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
@@ -137,6 +141,7 @@ impl Transcript for DefaultTranscript {
         buf = buf.into_iter().rev().collect();
         self.append_bytes(&buf);
     }
+
     fn append_scalars<F: JoltField>(&mut self, scalars: &[F]) {
         self.append_message(b"begin_append_vector");
         for item in scalars.iter() {
@@ -144,6 +149,7 @@ impl Transcript for DefaultTranscript {
         }
         self.append_message(b"end_append_vector");
     }
+
     fn append_point<G: CurveGroup>(&mut self, point: &G) {
         // If we add the point at infinity then we hash over a region of zeros
         if point.is_zero() {
@@ -166,6 +172,7 @@ impl Transcript for DefaultTranscript {
         let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes);
         self.update_state(hasher.finalize().into());
     }
+
     fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
         self.append_message(b"begin_append_vector");
         for item in points.iter() {
@@ -173,6 +180,7 @@ impl Transcript for DefaultTranscript {
         }
         self.append_message(b"end_append_vector");
     }
+
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
         let mut buf = vec![0u8; F::NUM_BYTES];
         self.challenge_bytes(&mut buf);
@@ -181,11 +189,13 @@ impl Transcript for DefaultTranscript {
         buf = buf.into_iter().rev().collect();
         F::from_bytes(&buf)
     }
+
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
         (0..len)
             .map(|_i| self.challenge_scalar())
             .collect::<Vec<F>>()
     }
+
     // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
     fn challenge_scalar_powers<F: JoltField>(&mut self, len: usize) -> Vec<F> {
         let q: F = self.challenge_scalar();
@@ -197,7 +207,8 @@ impl Transcript for DefaultTranscript {
     }
 }
 
-pub trait Transcript {
+pub trait Transcript: Clone + Sync + Send + 'static {
+    fn compare_to(&mut self, other: Self);
     fn new(label: &'static [u8]) -> Self;
     fn append_message(&mut self, msg: &'static [u8]);
     fn append_bytes(&mut self, bytes: &[u8]);
@@ -213,5 +224,5 @@ pub trait Transcript {
 }
 
 pub trait AppendToTranscript {
-    fn append_to_transcript(&self, transcript: &mut DefaultTranscript);
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript);
 }

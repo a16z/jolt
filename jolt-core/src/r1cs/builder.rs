@@ -1,3 +1,10 @@
+use super::{
+    inputs::ConstraintInput,
+    key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
+    ops::{Term, Variable, LC},
+    special_polys::SparsePolynomial,
+};
+use crate::utils::transcript::Transcript;
 use crate::{
     field::JoltField,
     jolt::vm::JoltPolynomials,
@@ -11,13 +18,6 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::PhantomData};
-
-use super::{
-    inputs::ConstraintInput,
-    key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
-    ops::{Term, Variable, LC},
-    special_polys::SparsePolynomial,
-};
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone)]
@@ -636,7 +636,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn compute_spartan_Az_Bz_Cz<PCS: CommitmentScheme<Field = F>>(
+    pub fn compute_spartan_Az_Bz_Cz<
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    >(
         &self,
         flattened_polynomials: &[&DensePolynomial<F>],
     ) -> (

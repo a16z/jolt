@@ -7,7 +7,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
-use crate::utils::transcript::{AppendToTranscript, DefaultTranscript, Transcript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -18,8 +18,8 @@ use tracing::trace_span;
 use crate::msm::VariableBaseMSM;
 
 #[derive(Clone)]
-pub struct HyraxScheme<G: CurveGroup> {
-    marker: PhantomData<G>,
+pub struct HyraxScheme<G: CurveGroup, ProofTranscript: Transcript> {
+    marker: PhantomData<(G, ProofTranscript)>,
 }
 
 const TRACE_LEN_R1CS_POLYS_BATCH_RATIO: usize = 64;
@@ -48,12 +48,14 @@ pub fn matrix_dimensions(num_vars: usize, ratio: usize) -> (usize, usize) {
     (col_size, row_size)
 }
 
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F>, ProofTranscript: Transcript>
+    CommitmentScheme<ProofTranscript> for HyraxScheme<G, ProofTranscript>
+{
     type Field = G::ScalarField;
     type Setup = PedersenGenerators<G>;
     type Commitment = HyraxCommitment<G>;
-    type Proof = HyraxOpeningProof<G>;
-    type BatchedProof = BatchedHyraxOpeningProof<G>;
+    type Proof = HyraxOpeningProof<G, ProofTranscript>;
+    type BatchedProof = BatchedHyraxOpeningProof<G, ProofTranscript>;
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup {
         let mut max_len: usize = 0;
@@ -86,7 +88,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         _setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         // Implicitly prove is "prove_single", with a ratio = 1
         HyraxOpeningProof::prove(poly, opening_point, 1, transcript)
@@ -97,7 +99,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         batch_type: BatchType,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         BatchedHyraxOpeningProof::prove(
             polynomials,
@@ -143,7 +145,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     fn verify(
         proof: &Self::Proof,
         generators: &Self::Setup,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
         opening: &Self::Field,
         commitment: &Self::Commitment,
@@ -166,7 +168,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         commitments: &[&Self::Commitment],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BatchedHyraxOpeningProof::verify(
             batch_proof,
@@ -249,7 +251,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for HyraxCommitment<G> {
-    fn append_to_transcript(&self, transcript: &mut DefaultTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_message(b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
             transcript.append_point(&self.row_commitments[i]);
@@ -259,12 +261,18 @@ impl<G: CurveGroup> AppendToTranscript for HyraxCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyraxOpeningProof<G: CurveGroup> {
+pub struct HyraxOpeningProof<G: CurveGroup, ProofTranscript: Transcript> {
     pub vector_matrix_product: Vec<G::ScalarField>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
+impl<F, G, ProofTranscript> HyraxOpeningProof<G, ProofTranscript>
+where
+    F: JoltField,
+    G: CurveGroup<ScalarField = F>,
+    ProofTranscript: Transcript,
+{
     fn protocol_name() -> &'static [u8] {
         b"Hyrax opening proof"
     }
@@ -274,8 +282,8 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
         poly: &DensePolynomial<G::ScalarField>,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         ratio: usize,
-        transcript: &mut DefaultTranscript,
-    ) -> HyraxOpeningProof<G> {
+        transcript: &mut ProofTranscript,
+    ) -> HyraxOpeningProof<G, ProofTranscript> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
 
@@ -292,13 +300,14 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
 
         HyraxOpeningProof {
             vector_matrix_product,
+            _marker: PhantomData,
         }
     }
 
     pub fn verify(
         &self,
         pedersen_generators: &PedersenGenerators<G>,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         opening: &G::ScalarField,         // evaluation \widetilde{Z}(r)
         commitment: &HyraxCommitment<G>,
@@ -358,20 +367,23 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedHyraxOpeningProof<G: CurveGroup> {
-    pub joint_proof: HyraxOpeningProof<G>,
+pub struct BatchedHyraxOpeningProof<G: CurveGroup, ProofTranscript: Transcript> {
+    pub joint_proof: HyraxOpeningProof<G, ProofTranscript>,
     pub ratio: usize,
+    _marker: PhantomData<ProofTranscript>,
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F>, ProofTranscript: Transcript>
+    BatchedHyraxOpeningProof<G, ProofTranscript>
+{
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
     pub fn prove(
         polynomials: &[&DensePolynomial<G::ScalarField>],
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         batch_type: BatchType,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -434,7 +446,11 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
             transcript,
         );
 
-        Self { joint_proof, ratio }
+        Self {
+            joint_proof,
+            ratio,
+            _marker: PhantomData,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::verify")]
@@ -444,7 +460,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         commitments: &[&HyraxCommitment<G>],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert_eq!(openings.len(), commitments.len());
         let (L_size, _R_size) = matrix_dimensions(opening_point.len(), self.ratio);
@@ -510,7 +526,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::Transcript;
+    use crate::utils::transcript::{DefaultTranscript, Transcript};
     use ark_bn254::{Fr, G1Projective};
 
     #[test]

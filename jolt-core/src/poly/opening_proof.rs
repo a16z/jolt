@@ -3,8 +3,10 @@
 //! For additively homomorphic commitment schemes (including Zeromorph, HyperKZG) we
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
@@ -12,14 +14,13 @@ use super::{
     eq_poly::EqPolynomial,
     unipoly::{CompressedUniPoly, UniPoly},
 };
-use crate::utils::transcript::Transcript;
 use crate::{
     field::{JoltField, OptimizedMul},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         errors::ProofVerifyError,
         thread::unsafe_allocate_zero_vec,
-        transcript::{AppendToTranscript, DefaultTranscript},
+        transcript::{AppendToTranscript, Transcript},
     },
 };
 
@@ -53,7 +54,12 @@ pub struct ProverOpening<F: JoltField> {
 /// at the (same) point.
 /// Multiple `VerifierOpening`s can be accumulated and further
 /// batched/reduced using a `VerifierOpeningAccumulator`.
-pub struct VerifierOpening<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+pub struct VerifierOpening<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     /// The commitments to the opened polynomial. May be a random linear combination
     /// of multiple (additively homomorphic) polynomials, all being opened at the
     /// same point.
@@ -82,7 +88,12 @@ impl<F: JoltField> ProverOpening<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<F, PCS> {
+impl<F, PCS, ProofTranscript> VerifierOpening<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     fn new(commitment: PCS::Commitment, opening_point: Vec<F>, claim: F) -> Self {
         VerifierOpening {
             commitment,
@@ -94,14 +105,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpening<F, PCS> {
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-pub struct ProverOpeningAccumulator<F: JoltField> {
+pub struct ProverOpeningAccumulator<F: JoltField, ProofTranscript: Transcript> {
     openings: Vec<ProverOpening<F>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
 /// so that they can all be reduced to a single opening proof verification using sumcheck.
-pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field = F>> {
-    openings: Vec<VerifierOpening<F, PCS>>,
+pub struct VerifierOpeningAccumulator<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    openings: Vec<VerifierOpening<F, PCS, ProofTranscript>>,
     #[cfg(test)]
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
@@ -111,21 +128,30 @@ pub struct VerifierOpeningAccumulator<F: JoltField, PCS: CommitmentScheme<Field 
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct ReducedOpeningProof<F: JoltField, PCS: CommitmentScheme<Field = F>> {
-    sumcheck_proof: SumcheckInstanceProof<F>,
+pub struct ReducedOpeningProof<
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     sumcheck_claims: Vec<F>,
     joint_opening_proof: PCS::Proof,
 }
 
-impl<F: JoltField> Default for ProverOpeningAccumulator<F> {
+impl<F: JoltField, ProofTranscript: Transcript> Default
+    for ProverOpeningAccumulator<F, ProofTranscript>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: JoltField> ProverOpeningAccumulator<F> {
+impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, ProofTranscript> {
     pub fn new() -> Self {
-        Self { openings: vec![] }
+        Self {
+            openings: vec![],
+            _marker: PhantomData,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -145,7 +171,7 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
         claims: &[&F],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) {
         assert_eq!(polynomials.len(), claims.len());
         #[cfg(test)]
@@ -226,11 +252,11 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
     /// Reduces the multiple openings accumulated into a single opening proof,
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove<PCS: CommitmentScheme<Field = F>>(
+    pub fn reduce_and_prove<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
         &mut self,
         pcs_setup: &PCS::Setup,
-        transcript: &mut DefaultTranscript,
-    ) -> ReducedOpeningProof<F, PCS> {
+        transcript: &mut ProofTranscript,
+    ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
         // Generate coefficients for random linear combination
         let rho: F = transcript.challenge_scalar();
         let mut rho_powers = vec![F::one()];
@@ -301,8 +327,8 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
     pub fn prove_batch_opening_reduction(
         &mut self,
         coeffs: &[F],
-        transcript: &mut DefaultTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>) {
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
         let max_num_vars = self
             .openings
             .iter()
@@ -448,15 +474,23 @@ impl<F: JoltField> ProverOpeningAccumulator<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Default
-    for VerifierOpeningAccumulator<F, PCS>
+impl<F, PCS, ProofTranscript> Default for VerifierOpeningAccumulator<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<F, PCS> {
+impl<F, PCS, ProofTranscript> VerifierOpeningAccumulator<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     pub fn new() -> Self {
         Self {
             openings: vec![],
@@ -472,7 +506,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
     #[cfg(test)]
     pub fn compare_to(
         &mut self,
-        prover_openings: ProverOpeningAccumulator<F>,
+        prover_openings: ProverOpeningAccumulator<F, ProofTranscript>,
         pcs_setup: &PCS::Setup,
     ) {
         self.prover_openings = Some(prover_openings.openings);
@@ -495,7 +529,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         commitments: &[&PCS::Commitment],
         opening_point: Vec<F>,
         claims: &[&F],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) {
         assert_eq!(commitments.len(), claims.len());
         let rho: F = transcript.challenge_scalar();
@@ -564,8 +598,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
     pub fn reduce_and_verify(
         &self,
         pcs_setup: &PCS::Setup,
-        reduced_opening_proof: &ReducedOpeningProof<F, PCS>,
-        transcript: &mut DefaultTranscript,
+        reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let num_sumcheck_rounds = self
             .openings
@@ -655,8 +689,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> VerifierOpeningAccumulator<
         &self,
         coeffs: &[F],
         num_sumcheck_rounds: usize,
-        sumcheck_proof: &SumcheckInstanceProof<F>,
-        transcript: &mut DefaultTranscript,
+        sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(F, Vec<F>), ProofVerifyError> {
         let combined_claim: F = coeffs
             .par_iter()

@@ -9,6 +9,7 @@ use crate::r1cs::spartan::UniformSpartanProof;
 use crate::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use crate::subprotocols::grand_product::BatchedGrandProductProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::utils::transcript::Transcript;
 use alloy_primitives::U256;
 use alloy_sol_types::sol;
 use ark_bn254::FrConfig;
@@ -130,7 +131,9 @@ impl Into<VK> for &HyperKZGVerifierKey<Bn254> {
     }
 }
 
-impl<F: JoltField> Into<SumcheckProof> for &SumcheckInstanceProof<F> {
+impl<F: JoltField, ProofTranscript: Transcript> Into<SumcheckProof>
+    for &SumcheckInstanceProof<F, ProofTranscript>
+{
     fn into(self) -> SumcheckProof {
         let mut compressed_polys = vec![];
 
@@ -156,8 +159,8 @@ pub fn into_uint256<F: JoltField>(from: F) -> U256 {
 }
 
 const C: usize = 4;
-impl Into<SpartanProof>
-    for &UniformSpartanProof<C, JoltR1CSInputs, Fp<MontBackend<FrConfig, 4>, 4>>
+impl<ProofTranscript: Transcript> Into<SpartanProof>
+    for &UniformSpartanProof<C, JoltR1CSInputs, Fp<MontBackend<FrConfig, 4>, 4>, ProofTranscript>
 {
     fn into(self) -> SpartanProof {
         let claimed_evals = self
@@ -177,7 +180,9 @@ impl Into<SpartanProof>
     }
 }
 
-impl<F: JoltField> Into<GKRLayer> for BatchedGrandProductLayerProof<F> {
+impl<F: JoltField, ProofTranscript: Transcript> Into<GKRLayer>
+    for BatchedGrandProductLayerProof<F, ProofTranscript>
+{
     fn into(self) -> GKRLayer {
         let left = self.left_claims.into_iter().map(into_uint256).collect();
         let right = self.right_claims.into_iter().map(into_uint256).collect();
@@ -189,7 +194,9 @@ impl<F: JoltField> Into<GKRLayer> for BatchedGrandProductLayerProof<F> {
     }
 }
 
-impl Into<GrandProductProof> for BatchedGrandProductProof<HyperKZG<Bn254>> {
+impl<ProofTranscript: Transcript> Into<GrandProductProof>
+    for BatchedGrandProductProof<HyperKZG<Bn254, ProofTranscript>, ProofTranscript>
+{
     fn into(self) -> GrandProductProof {
         let layers: Vec<GKRLayer> = self.layers.into_iter().map(|i| i.into()).collect();
         assert!(self.quark_proof.is_none(), "Quarks are unsupported");

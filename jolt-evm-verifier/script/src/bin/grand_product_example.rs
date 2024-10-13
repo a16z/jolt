@@ -2,8 +2,7 @@ use jolt_core::{
     field::JoltField,
     poly::commitment::hyperkzg::HyperKZG,
     subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct},
-    utils::transcript::ProofTranscript,
-    utils::sol_types::GrandProductProof
+    utils::sol_types::GrandProductProof,
 };
 use std::env;
 
@@ -12,18 +11,22 @@ use alloy_sol_types::{sol, SolType};
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
+use jolt_core::utils::transcript::{DefaultTranscript, Transcript};
 
-fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
-    let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr, DefaultTranscript>) {
+    let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
 
-    let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+    let (proof, r_prover) =
+        <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+            Fr,
+            HyperKZG<Bn254, DefaultTranscript>,
+            DefaultTranscript,
+        >>::prove_grand_product(batched_circuit, None, &mut transcript, None);
+    let claims = <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
         Fr,
-        HyperKZG<Bn254>,
-    >>::prove_grand_product(batched_circuit, None, &mut transcript, None);
-    let claims =
-        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, HyperKZG<Bn254>>>::claims(
-            batched_circuit,
-        );
+        HyperKZG<Bn254, DefaultTranscript>,
+        DefaultTranscript,
+    >>::claims(batched_circuit);
 
     //encoding the proof into abi
 
@@ -33,10 +36,7 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
         uint256[] r_prover;
     });
 
-    let r_prover = r_prover
-        .iter()
-        .map(fr_to_uint256)
-        .collect::<Vec<_>>();
+    let r_prover = r_prover.iter().map(fr_to_uint256).collect::<Vec<_>>();
 
     let claims = claims.iter().map(fr_to_uint256).collect::<Vec<_>>();
 
@@ -73,10 +73,12 @@ fn main() {
     .take(BATCH_SIZE)
     .collect();
 
-    let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-        Fr,
-        HyperKZG<Bn254>,
-    >>::construct(leaves);
+    let mut batched_circuit =
+        <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+            Fr,
+            HyperKZG<Bn254, DefaultTranscript>,
+            DefaultTranscript,
+        >>::construct(leaves);
 
     get_proof_data(&mut batched_circuit);
 }

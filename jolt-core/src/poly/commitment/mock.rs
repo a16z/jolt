@@ -2,20 +2,20 @@ use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::utils::transcript::Transcript;
 use crate::{
     field::JoltField,
     poly::dense_mlpoly::DensePolynomial,
     utils::{
         errors::ProofVerifyError,
-        transcript::{AppendToTranscript, DefaultTranscript},
+        transcript::{AppendToTranscript, Transcript},
     },
 };
 
+use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+
 #[derive(Clone)]
-pub struct MockCommitScheme<F: JoltField> {
-    _marker: PhantomData<F>,
+pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
+    _marker: PhantomData<(F, ProofTranscript)>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq)]
@@ -24,7 +24,7 @@ pub struct MockCommitment<F: JoltField> {
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
-    fn append_to_transcript(&self, transcript: &mut DefaultTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_message(b"mocker");
     }
 }
@@ -34,7 +34,11 @@ pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }
 
-impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
+impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     type Field = F;
     type Setup = ();
     type Commitment = MockCommitment<F>;
@@ -71,7 +75,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         _setup: &Self::Setup,
         _poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field],
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         MockProof {
             opening_point: opening_point.to_owned(),
@@ -83,7 +87,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         opening_point: &[Self::Field],
         _openings: &[Self::Field],
         _batch_type: BatchType,
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         MockProof {
             opening_point: opening_point.to_owned(),
@@ -114,7 +118,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
     fn verify(
         proof: &Self::Proof,
         _setup: &Self::Setup,
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
         opening: &Self::Field,
         commitment: &Self::Commitment,
@@ -131,7 +135,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         commitments: &[&Self::Commitment],
-        _transcript: &mut DefaultTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert_eq!(batch_proof.opening_point, opening_point);
         assert_eq!(openings.len(), commitments.len());

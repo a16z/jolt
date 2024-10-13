@@ -173,18 +173,21 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, PCS> Jolt<F, PCS, C, M> for RV32IJoltVM
+impl<F, PCS, ProofTranscript> Jolt<F, PCS, C, M, ProofTranscript> for RV32IJoltVM
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
     type Constraints = JoltRV32IMConstraints;
 }
 
-pub type RV32IJoltProof<F, PCS> = JoltProof<C, M, JoltR1CSInputs, F, PCS, RV32I, RV32ISubtables<F>>;
+pub type RV32IJoltProof<F, PCS, ProofTranscript> =
+    JoltProof<C, M, JoltR1CSInputs, F, PCS, RV32I, RV32ISubtables<F>, ProofTranscript>;
 
+use crate::utils::transcript::{DefaultTranscript, Transcript};
 use eyre::Result;
 use std::fs::File;
 use std::io::Cursor;
@@ -225,11 +228,11 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-pub type PCS = HyperKZG<Bn254>;
+pub type PCS = HyperKZG<Bn254, DefaultTranscript>;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltHyperKZGProof {
-    pub proof: RV32IJoltProof<Fr, PCS>,
-    pub commitments: JoltCommitments<PCS>,
+    pub proof: RV32IJoltProof<Fr, PCS, DefaultTranscript>,
+    pub commitments: JoltCommitments<PCS, DefaultTranscript>,
 }
 
 impl Serializable for JoltHyperKZGProof {}
@@ -251,6 +254,7 @@ mod tests {
     use crate::poly::commitment::hyrax::HyraxScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
+    use crate::utils::transcript::{DefaultTranscript, Transcript};
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -260,31 +264,46 @@ mod tests {
         static ref SHA3_FILE_LOCK: Mutex<()> = Mutex::new(());
     }
 
-    fn test_instruction_set_subtables<PCS: CommitmentScheme>() {
+    fn test_instruction_set_subtables<PCS, ProofTranscript>()
+    where
+        PCS: CommitmentScheme<ProofTranscript>,
+        ProofTranscript: Transcript,
+    {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in <RV32IJoltVM as Jolt<_, PCS, C, M>>::InstructionSet::iter() {
+        for instruction in
+            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::InstructionSet::iter()
+        {
             for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
-                let _ =
-                    <RV32IJoltVM as Jolt<_, PCS, C, M>>::Subtables::from(subtable.subtable_id());
+                let _ = <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::Subtables::from(
+                    subtable.subtable_id(),
+                );
                 subtable_set.insert(subtable.subtable_id());
             }
         }
         assert_eq!(
             subtable_set.len(),
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::Subtables::COUNT,
+            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::Subtables::COUNT,
             "Unused enum variants in Subtables"
         );
     }
 
     #[test]
     fn instruction_set_subtables() {
-        test_instruction_set_subtables::<HyraxScheme<G1Projective>>();
-        test_instruction_set_subtables::<Zeromorph<Bn254>>();
-        test_instruction_set_subtables::<HyperKZG<Bn254>>();
+        test_instruction_set_subtables::<
+            HyraxScheme<G1Projective, DefaultTranscript>,
+            DefaultTranscript,
+        >();
+        test_instruction_set_subtables::<Zeromorph<Bn254, DefaultTranscript>, DefaultTranscript>();
+        test_instruction_set_subtables::<HyperKZG<Bn254, DefaultTranscript>, DefaultTranscript>();
     }
 
-    fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
+    fn fib_e2e<F, PCS, ProofTranscript>()
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
@@ -295,7 +314,11 @@ mod tests {
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<F, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+            <RV32IJoltVM as Jolt<F, PCS, C, M, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
         let verification_result =
             RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
         assert!(
@@ -307,23 +330,27 @@ mod tests {
 
     #[test]
     fn fib_e2e_mock() {
-        fib_e2e::<Fr, MockCommitScheme<Fr>>();
+        fib_e2e::<Fr, MockCommitScheme<Fr, DefaultTranscript>, DefaultTranscript>();
     }
 
     #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
     #[test]
     fn fib_e2e_hyrax() {
-        fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
+        fib_e2e::<
+            ark_bn254::Fr,
+            HyraxScheme<ark_bn254::G1Projective, DefaultTranscript>,
+            DefaultTranscript,
+        >();
     }
 
     #[test]
     fn fib_e2e_zeromorph() {
-        fib_e2e::<Fr, Zeromorph<Bn254>>();
+        fib_e2e::<Fr, Zeromorph<Bn254, DefaultTranscript>, DefaultTranscript>();
     }
 
     #[test]
     fn fib_e2e_hyperkzg() {
-        fib_e2e::<Fr, HyperKZG<Bn254>>();
+        fib_e2e::<Fr, HyperKZG<Bn254, DefaultTranscript>, DefaultTranscript>();
     }
 
     // TODO(sragss): Finish Binius.
@@ -346,11 +373,13 @@ mod tests {
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+            <RV32IJoltVM as Jolt<
+                _,
+                HyraxScheme<G1Projective, DefaultTranscript>,
+                C,
+                M,
+                DefaultTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
         assert!(
@@ -374,11 +403,13 @@ mod tests {
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+            <RV32IJoltVM as Jolt<
+                _,
+                HyraxScheme<G1Projective, DefaultTranscript>,
+                C,
+                M,
+                DefaultTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
@@ -402,11 +433,13 @@ mod tests {
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<_, Zeromorph<Bn254>, C, M>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+            <RV32IJoltVM as Jolt<
+                _,
+                Zeromorph<Bn254, DefaultTranscript>,
+                C,
+                M,
+                DefaultTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
@@ -429,12 +462,15 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<_, HyperKZG<Bn254>, C, M>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
+            _,
+            HyperKZG<Bn254, DefaultTranscript>,
+            C,
+            M,
+            DefaultTranscript,
+        >>::prove(
+            io_device, trace, preprocessing.clone()
+        );
 
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);

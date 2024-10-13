@@ -10,7 +10,7 @@ use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{
     errors::ProofVerifyError,
-    transcript::{AppendToTranscript, DefaultTranscript},
+    transcript::{AppendToTranscript, Transcript},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
@@ -22,12 +22,12 @@ use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
 use tracing::trace_span;
 
+use rayon::prelude::*;
+
 use super::{
     commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
-use crate::utils::transcript::Transcript;
-use rayon::prelude::*;
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
 
@@ -74,7 +74,7 @@ impl<P: Pairing> Default for ZeromorphCommitment<P> {
 }
 
 impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P> {
-    fn append_to_transcript(&self, transcript: &mut DefaultTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());
     }
 }
@@ -222,13 +222,15 @@ where
 }
 
 #[derive(Clone)]
-pub struct Zeromorph<P: Pairing> {
-    _phantom: PhantomData<P>,
+pub struct Zeromorph<P: Pairing, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(P, ProofTranscript)>,
 }
 
-impl<P: Pairing> Zeromorph<P>
+impl<P, ProofTranscript> Zeromorph<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    P: Pairing,
+    ProofTranscript: Transcript,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"Zeromorph"
@@ -256,7 +258,7 @@ where
         point: &[P::ScalarField],
         // Can be calculated
         eval: &P::ScalarField,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<ZeromorphProof<P>, ProofVerifyError> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -334,7 +336,7 @@ where
         polynomials: &[&DensePolynomial<P::ScalarField>],
         point: &[P::ScalarField],
         evals: &[P::ScalarField],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> ZeromorphProof<P> {
         let num_vars = point.len();
         let n = 1 << num_vars;
@@ -376,7 +378,8 @@ where
         drop(span);
 
         let poly = DensePolynomial::new(f_batched);
-        Zeromorph::<P>::open(pk, &poly, point, &batched_evaluation, transcript).unwrap()
+        Zeromorph::<P, ProofTranscript>::open(pk, &poly, point, &batched_evaluation, transcript)
+            .unwrap()
     }
 
     fn batch_verify(
@@ -385,7 +388,7 @@ where
         point: &[P::ScalarField],
         evals: &[P::ScalarField],
         batch_proof: &ZeromorphProof<P>,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         //TODO(pat): produce powers in parallel using window method
         // Compute batching of unshifted polynomials f_i:
@@ -401,7 +404,7 @@ where
                 (batched_evaluation, batched_commitment)
             },
         );
-        Zeromorph::<P>::verify(
+        Zeromorph::<P, ProofTranscript>::verify(
             vk,
             &ZeromorphCommitment(batched_commitment.into_affine()),
             point,
@@ -417,7 +420,7 @@ where
         point: &[P::ScalarField],
         eval: &P::ScalarField,
         proof: &ZeromorphProof<P>,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -476,7 +479,8 @@ where
     }
 }
 
-impl<P: Pairing> CommitmentScheme for Zeromorph<P>
+impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
+    for Zeromorph<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
@@ -544,10 +548,11 @@ where
         setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
-        Zeromorph::<P>::open(&setup.0, poly, opening_point, &eval, transcript).unwrap()
+        Zeromorph::<P, ProofTranscript>::open(&setup.0, poly, opening_point, &eval, transcript)
+            .unwrap()
     }
 
     fn batch_prove(
@@ -556,9 +561,15 @@ where
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         _batch_type: BatchType,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        Zeromorph::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
+        Zeromorph::<P, ProofTranscript>::batch_open(
+            &setup.0,
+            polynomials,
+            opening_point,
+            openings,
+            transcript,
+        )
     }
 
     fn combine_commitments(
@@ -576,12 +587,12 @@ where
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        Zeromorph::<P>::verify(
+        Zeromorph::<P, ProofTranscript>::verify(
             &setup.1,
             commitment,
             opening_point,
@@ -597,9 +608,9 @@ where
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         commitments: &[&Self::Commitment],
-        transcript: &mut DefaultTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        Zeromorph::<P>::batch_verify(
+        Zeromorph::<P, ProofTranscript>::batch_verify(
             &setup.1,
             commitments,
             opening_point,
@@ -618,7 +629,7 @@ where
 mod test {
     use super::*;
     use crate::utils::math::Math;
-    use crate::utils::transcript::Transcript;
+    use crate::utils::transcript::{DefaultTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_ff::{BigInt, Zero};
     use ark_std::{test_rng, UniformRand};
@@ -878,17 +889,23 @@ mod test {
 
             let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << num_vars);
             let (pk, vk) = srs.trim(1 << num_vars);
-            let commitment = Zeromorph::<Bn254>::commit(&pk, &poly).unwrap();
+            let commitment = Zeromorph::<Bn254, DefaultTranscript>::commit(&pk, &poly).unwrap();
 
             let mut prover_transcript = DefaultTranscript::new(b"TestEval");
-            let proof = Zeromorph::<Bn254>::open(&pk, &poly, &point, &eval, &mut prover_transcript)
-                .unwrap();
+            let proof = Zeromorph::<Bn254, DefaultTranscript>::open(
+                &pk,
+                &poly,
+                &point,
+                &eval,
+                &mut prover_transcript,
+            )
+            .unwrap();
             let p_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
             let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-            Zeromorph::<Bn254>::verify(
+            Zeromorph::<Bn254, DefaultTranscript>::verify(
                 &vk,
                 &commitment,
                 &point,
@@ -909,7 +926,7 @@ mod test {
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
             let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-            assert!(Zeromorph::<Bn254>::verify(
+            assert!(Zeromorph::<Bn254, DefaultTranscript>::verify(
                 &vk,
                 &commitment,
                 &altered_verifier_point,
@@ -937,14 +954,14 @@ mod test {
                 let (pk, vk) = srs.trim(1 << num_vars);
                 let commitments: Vec<_> = polys
                     .iter()
-                    .map(|poly| Zeromorph::<Bn254>::commit(&pk, poly).unwrap())
+                    .map(|poly| Zeromorph::<Bn254, DefaultTranscript>::commit(&pk, poly).unwrap())
                     .collect();
 
                 let commitments_refs: Vec<_> = commitments.iter().collect();
                 let polys_refs: Vec<_> = polys.iter().collect();
 
                 let mut prover_transcript = DefaultTranscript::new(b"TestEval");
-                let proof = Zeromorph::<Bn254>::batch_open(
+                let proof = Zeromorph::<Bn254, DefaultTranscript>::batch_open(
                     &pk,
                     &polys_refs,
                     &point,
@@ -956,7 +973,7 @@ mod test {
 
                 // Verify proof.
                 let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-                Zeromorph::<Bn254>::batch_verify(
+                Zeromorph::<Bn254, DefaultTranscript>::batch_verify(
                     &vk,
                     &commitments_refs,
                     &point,
@@ -980,7 +997,7 @@ mod test {
                     .map(|poly| poly.evaluate(&altered_verifier_point))
                     .collect();
                 let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-                assert!(Zeromorph::<Bn254>::batch_verify(
+                assert!(Zeromorph::<Bn254, DefaultTranscript>::batch_verify(
                     &vk,
                     &commitments_refs,
                     &altered_verifier_point,

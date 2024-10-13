@@ -96,7 +96,7 @@ fn benchmark_prove<PCS, F, G>(
         |b| {
             b.iter(|| {
                 // Prove the grand product
-                let mut transcript = DefaultTranscript::new(b"test_transcript");
+                let mut transcript = ProofTranscript::new(b"test_transcript");
                 let mut prover_accumulator: ProverOpeningAccumulator<F> =
                     ProverOpeningAccumulator::new();
                 let _proof: BatchedGrandProductProof<PCS> = grand_product
@@ -123,7 +123,7 @@ fn benchmark_verify<PCS, F, G>(
     let (leaves, setup, known_products) =
         setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.percentage_ones);
 
-    let mut transcript = DefaultTranscript::new(b"test_transcript");
+    let mut transcript = ProofTranscript::new(b"test_transcript");
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
     let mut prover_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
     let (proof, r_prover) = grand_product.prove_grand_product(
@@ -140,7 +140,7 @@ fn benchmark_verify<PCS, F, G>(
         |b| {
             b.iter(|| {
                 // Verify the grand product
-                transcript = DefaultTranscript::new(b"test_transcript");
+                transcript = ProofTranscript::new(b"test_transcript");
                 let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS> =
                     VerifierOpeningAccumulator::new();
                 let (_, r_verifier) = QuarkGrandProduct::verify_grand_product(

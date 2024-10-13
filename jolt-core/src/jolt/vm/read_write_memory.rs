@@ -13,8 +13,6 @@ use std::marker::PhantomData;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
-use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
-use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::Transcript;
 use crate::{
@@ -25,7 +23,7 @@ use crate::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::DefaultTranscript},
+    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -33,6 +31,9 @@ use common::constants::{
     RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
+
+use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
+use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
@@ -179,7 +180,10 @@ pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type ReadWriteMemoryCommitments<PCS: CommitmentScheme> = ReadWriteMemoryStuff<PCS::Commitment>;
+pub type ReadWriteMemoryCommitments<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+> = ReadWriteMemoryStuff<PCS::Commitment>;
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
     Initializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
@@ -864,14 +868,16 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
     }
 }
 
-impl<F, PCS> MemoryCheckingProver<F, PCS> for ReadWriteMemoryProof<F, PCS>
+impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
+    for ReadWriteMemoryProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type Polynomials = ReadWriteMemoryPolynomials<F>;
     type Openings = ReadWriteMemoryOpenings<F>;
-    type Commitments = ReadWriteMemoryCommitments<PCS>;
+    type Commitments = ReadWriteMemoryCommitments<PCS, ProofTranscript>;
     type Preprocessing = ReadWriteMemoryPreprocessing;
 
     type ExogenousOpenings = RegisterAddressOpenings<F>;
@@ -1036,10 +1042,12 @@ where
     }
 }
 
-impl<F, PCS> MemoryCheckingVerifier<F, PCS> for ReadWriteMemoryProof<F, PCS>
+impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
+    for ReadWriteMemoryProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
@@ -1154,29 +1162,31 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct OutputSumcheckProof<F, PCS>
+pub struct OutputSumcheckProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
-    _pcs: PhantomData<PCS>,
+    _pcs: PhantomData<(PCS, ProofTranscript)>,
     num_rounds: usize,
     /// Sumcheck proof that v_final is equal to the program outputs at the relevant indices.
-    sumcheck_proof: SumcheckInstanceProof<F>,
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     /// Opening of v_final at the random point chosen over the course of sumcheck
     opening: F,
 }
 
-impl<F, PCS> OutputSumcheckProof<F, PCS>
+impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn prove_outputs(
         polynomials: &ReadWriteMemoryPolynomials<F>,
         program_io: &JoltDevice,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut DefaultTranscript,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_size = polynomials.v_final.len();
         let num_rounds = memory_size.log_2();
@@ -1231,7 +1241,7 @@ where
         let output_check_fn = |vals: &[F]| -> F { vals[0] * vals[1] * (vals[2] - vals[3]) };
 
         let (sumcheck_proof, r_sumcheck, sumcheck_openings) =
-            SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
+            SumcheckInstanceProof::<F, ProofTranscript>::prove_arbitrary::<_>(
                 &F::zero(),
                 num_rounds,
                 &mut sumcheck_polys,
@@ -1259,9 +1269,9 @@ where
     fn verify(
         proof: &Self,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        commitment: &ReadWriteMemoryCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut DefaultTranscript,
+        commitment: &ReadWriteMemoryCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_eq = transcript.challenge_vector(proof.num_rounds);
 
@@ -1342,21 +1352,28 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct ReadWriteMemoryProof<F, PCS>
+pub struct ReadWriteMemoryProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
-    pub memory_checking_proof:
-        MemoryCheckingProof<F, PCS, ReadWriteMemoryOpenings<F>, RegisterAddressOpenings<F>>,
-    pub timestamp_validity_proof: TimestampValidityProof<F, PCS>,
-    pub output_proof: OutputSumcheckProof<F, PCS>,
+    pub memory_checking_proof: MemoryCheckingProof<
+        F,
+        PCS,
+        ReadWriteMemoryOpenings<F>,
+        RegisterAddressOpenings<F>,
+        ProofTranscript,
+    >,
+    pub timestamp_validity_proof: TimestampValidityProof<F, PCS, ProofTranscript>,
+    pub output_proof: OutputSumcheckProof<F, PCS, ProofTranscript>,
 }
 
-impl<F, PCS> ReadWriteMemoryProof<F, PCS>
+impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]
     pub fn prove<'a>(
@@ -1364,8 +1381,8 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &'a JoltPolynomials<F>,
         program_io: &JoltDevice,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut DefaultTranscript,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
@@ -1402,9 +1419,9 @@ where
         mut self,
         generators: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        commitments: &JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut DefaultTranscript,
+        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
