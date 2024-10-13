@@ -230,6 +230,29 @@ impl Mmu {
         }
     }
 
+    #[inline]
+    fn assert_effective_address(&self, effective_address: u64) {
+        if effective_address < DRAM_BASE {
+            assert!(
+                effective_address <= self.jolt_device.memory_layout.panic,
+                "Stack overflow: Attempted to write to 0x{:X}, which is in the area or zero padding region.",
+                effective_address
+            );
+            assert!(
+                self.jolt_device.is_output(effective_address)
+                    || self.jolt_device.is_panic(effective_address),
+                "Unknown memory mapping 0x{:X}.",
+                effective_address
+            );
+        } else {
+            assert!(
+                self.memory.validate_address(effective_address),
+                "Heap overflow: Attempted to write to 0x{:X}, which is beyond the allocated memory.",
+                effective_address
+            );
+        }
+    }
+
     /// Fetches an instruction byte. This method takes virtual address
     /// and translates into physical address inside.
     ///
@@ -540,31 +563,12 @@ impl Mmu {
     }
 
     fn trace_store(&mut self, effective_address: u64, value: u64) {
-        if effective_address < DRAM_BASE {
-            if self.jolt_device.is_output(effective_address)
-                || self.jolt_device.is_panic(effective_address)
-                || self.jolt_device.is_termination(effective_address)
-            {
-                self.tracer.push_memory(MemoryState::Write {
-                    address: effective_address,
-                    post_value: value,
-                });
-            } else if effective_address > self.jolt_device.memory_layout.panic {
-                // address is in the area or zero padding region => stack overflow as stack grows downwards
-                panic!("Stack overflow: Attempted to write to 0x{:X}, which is in the area or zero padding region.",
-                       effective_address);
-            } else {
-                panic!("Unknown memory mapping {:X}.", effective_address);
-            }
-        } else if !self.memory.validate_address(effective_address) {
-            // address is > DRAM_BASE + memory.len() => heap overflow
-            panic!("Heap overflow: Attempted to write to 0x{:X}, which is beyond the allocated memory.", effective_address);
-        } else {
-            self.tracer.push_memory(MemoryState::Write {
-                address: effective_address,
-                post_value: value,
-            });
-        }
+        self.assert_effective_address(effective_address);
+
+        self.tracer.push_memory(MemoryState::Write {
+            address: effective_address,
+            post_value: value,
+        });
     }
 
     /// Loads two bytes from main memory or peripheral devices depending on
@@ -649,16 +653,7 @@ impl Mmu {
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
-                _ => {
-                    if self.jolt_device.is_output(effective_address)
-                        || self.jolt_device.is_panic(effective_address)
-                        || self.jolt_device.is_termination(effective_address)
-                    {
-                        self.jolt_device.store(effective_address, value);
-                    } else {
-                        panic!("Unknown memory mapping {:X}.", effective_address);
-                    }
-                }
+                _ => self.assert_effective_address(effective_address),
             },
         };
     }
