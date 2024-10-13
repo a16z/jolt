@@ -5,7 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, DefaultTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 #[derive(Clone)]
@@ -15,7 +15,7 @@ pub struct Binius128Scheme {}
 pub struct BiniusCommitment {}
 
 impl AppendToTranscript for BiniusCommitment {
-    fn append_to_transcript(&self, _transcript: &mut ProofTranscript) {
+    fn append_to_transcript(&self, _transcript: &mut DefaultTranscript) {
         todo!()
     }
 }
@@ -56,7 +56,7 @@ impl CommitmentScheme for Binius128Scheme {
         _none: &Self::Setup,
         _poly: &DensePolynomial<Self::Field>,
         _opening_point: &[Self::Field],
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
     ) -> Self::Proof {
         todo!()
     }
@@ -66,7 +66,7 @@ impl CommitmentScheme for Binius128Scheme {
         _opening_point: &[Self::Field],
         _openings: &[Self::Field],
         _batch_type: BatchType,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
     ) -> Self::BatchedProof {
         todo!()
     }
@@ -74,7 +74,7 @@ impl CommitmentScheme for Binius128Scheme {
     fn verify(
         _proof: &Self::Proof,
         _setup: &Self::Setup,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
         _opening_point: &[Self::Field],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
@@ -88,7 +88,7 @@ impl CommitmentScheme for Binius128Scheme {
         _opening_point: &[Self::Field],
         _openings: &[Self::Field],
         _commitments: &[&Self::Commitment],
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         todo!()
     }

@@ -7,7 +7,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::{DefaultTranscript, Transcript};
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::grand_product::{
@@ -34,7 +34,7 @@ pub struct MultisetHashes<F: JoltField> {
 }
 
 impl<F: JoltField> MultisetHashes<F> {
-    pub fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+    pub fn append_to_transcript(&self, transcript: &mut DefaultTranscript) {
         transcript.append_scalars(&self.read_hashes);
         transcript.append_scalars(&self.write_hashes);
         transcript.append_scalars(&self.init_hashes);
@@ -227,7 +227,7 @@ where
         polynomials: &Self::Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
         let (
             read_write_grand_product,
@@ -270,7 +270,7 @@ where
         polynomials: &Self::Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         pcs_setup: &PCS::Setup,
     ) -> (
         BatchedGrandProductProof<PCS>,
@@ -328,7 +328,7 @@ where
         jolt_polynomials: &JoltPolynomials<F>,
         r_read_write: &[F],
         r_init_final: &[F],
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (Self::Openings, Self::ExogenousOpenings) {
         let mut openings = Self::Openings::initialize(preprocessing);
         let mut exogenous_openings = Self::ExogenousOpenings::default();
@@ -515,7 +515,7 @@ where
         commitments: &Self::Commitments,
         jolt_commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();

@@ -6,7 +6,7 @@ use crate::{
     poly::dense_mlpoly::DensePolynomial,
     utils::{
         errors::ProofVerifyError,
-        transcript::{AppendToTranscript, ProofTranscript},
+        transcript::{AppendToTranscript, DefaultTranscript},
     },
 };
 
@@ -86,7 +86,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Self::Proof;
     fn batch_prove(
         setup: &Self::Setup,
@@ -94,13 +94,13 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         batch_type: BatchType,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Self::BatchedProof;
 
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
@@ -112,7 +112,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         commitments: &[&Self::Commitment],
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];

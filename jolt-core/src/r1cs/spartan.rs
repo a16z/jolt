@@ -12,7 +12,7 @@ use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::{DefaultTranscript, Transcript};
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
@@ -93,7 +93,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<Self, SpartanError> {
         let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
             .iter()
@@ -151,7 +151,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             outer_sumcheck_claims[2],
             outer_sumcheck_claims[3],
         );
-        ProofTranscript::append_scalars(transcript, [claim_Az, claim_Bz, claim_Cz].as_slice());
+        DefaultTranscript::append_scalars(transcript, [claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
         let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
@@ -218,7 +218,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         key: &UniformSpartanKey<C, I, F>,
         commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
         let num_rounds_y = key.num_cols_total().log_2();

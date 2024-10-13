@@ -13,7 +13,10 @@ use std::marker::PhantomData;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
+use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
+use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -22,7 +25,7 @@ use crate::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
+    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::DefaultTranscript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -30,9 +33,6 @@ use common::constants::{
     RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
-
-use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
-use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
@@ -1176,7 +1176,7 @@ where
         polynomials: &ReadWriteMemoryPolynomials<F>,
         program_io: &JoltDevice,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Self {
         let memory_size = polynomials.v_final.len();
         let num_rounds = memory_size.log_2();
@@ -1261,7 +1261,7 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         commitment: &ReadWriteMemoryCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_eq = transcript.challenge_vector(proof.num_rounds);
 
@@ -1365,7 +1365,7 @@ where
         polynomials: &'a JoltPolynomials<F>,
         program_io: &JoltDevice,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Self {
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
@@ -1404,7 +1404,7 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,

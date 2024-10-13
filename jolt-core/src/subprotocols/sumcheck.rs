@@ -8,7 +8,7 @@ use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, DefaultTranscript, Transcript};
 use ark_serialize::*;
 use rayon::prelude::*;
 
@@ -30,7 +30,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         claim: &F,
         coeffs: &[F],
         eq_poly: &mut DensePolynomial<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
         debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
 
@@ -84,7 +84,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         polys: &mut Vec<DensePolynomial<F>>,
         comb_func: Func,
         combined_degree: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&[F]) -> F + std::marker::Sync,
@@ -257,7 +257,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         poly_B: &mut SparsePolynomial<F>,
         poly_C: &mut SparsePolynomial<F>,
         comb_func: Func,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&F, &F, &F, &F) -> F + Sync,
@@ -327,7 +327,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
         witness_polynomials: &[&DensePolynomial<F>],
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
@@ -520,7 +520,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(F, Vec<F>), ProofVerifyError> {
         let mut e = claim;
         let mut r: Vec<F> = Vec::new();

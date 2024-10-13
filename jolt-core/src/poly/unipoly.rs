@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
 
 use crate::utils::gaussian_elimination::gaussian_elimination;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, DefaultTranscript, Transcript};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
@@ -252,7 +252,7 @@ impl<F: JoltField> CompressedUniPoly<F> {
 }
 
 impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+    fn append_to_transcript(&self, transcript: &mut DefaultTranscript) {
         transcript.append_message(b"UniPoly_begin");
         for i in 0..self.coeffs_except_linear_term.len() {
             transcript.append_scalar(&self.coeffs_except_linear_term[i]);

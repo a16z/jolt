@@ -13,7 +13,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::DefaultTranscript;
 
 use super::key::UniformSpartanKey;
 use super::spartan::{SpartanError, UniformSpartanProof};
@@ -224,7 +224,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
         &self,
         commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), SpartanError> {
         self.proof
             .verify(&self.key, commitments, opening_accumulator, transcript)

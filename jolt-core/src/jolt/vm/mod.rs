@@ -31,7 +31,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, DefaultTranscript, Transcript};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
@@ -69,7 +69,7 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
 }
 
 pub struct ProverDebugInfo<F: JoltField> {
-    pub(crate) transcript: ProofTranscript,
+    pub(crate) transcript: DefaultTranscript,
     pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
 }
 
@@ -336,7 +336,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         JoltTraceStep::pad(&mut trace);
 
-        let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut transcript = DefaultTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
 
         let instruction_polynomials = InstructionLookupsProof::<
@@ -485,7 +485,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         commitments: JoltCommitments<PCS>,
         _debug_info: Option<ProverDebugInfo<F>>,
     ) -> Result<(), ProofVerifyError> {
-        let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut transcript = DefaultTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
             VerifierOpeningAccumulator::new();
 
@@ -569,7 +569,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
         commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookupsProof::verify(
             preprocessing,
@@ -588,7 +588,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         proof: BytecodeProof<F, PCS>,
         commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
             preprocessing,
@@ -609,7 +609,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         commitment: &'a JoltCommitments<PCS>,
         program_io: JoltDevice,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
@@ -630,7 +630,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         proof: R1CSProof<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
         commitments: &'a JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
             .verify(commitments, opening_accumulator, transcript)
@@ -638,7 +638,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     }
 
     fn fiat_shamir_preamble(
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         program_io: &JoltDevice,
         trace_length: usize,
     ) {

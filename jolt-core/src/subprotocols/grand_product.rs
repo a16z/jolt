@@ -7,7 +7,7 @@ use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumu
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::{DefaultTranscript, Transcript};
 use ark_ff::Zero;
 use ark_serialize::*;
 use itertools::Itertools;
@@ -26,7 +26,7 @@ impl<F: JoltField> BatchedGrandProductLayerProof<F> {
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (F, Vec<F>) {
         self.proof
             .verify(claim, num_rounds, degree_bound, transcript)
@@ -65,7 +65,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     fn prove_grand_product(
         &mut self,
         _opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
@@ -101,7 +101,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         eq_eval: F,
         grand_product_claims: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) {
         let layer_proof = &layer_proofs[layer_index];
 
@@ -127,7 +127,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     fn verify_layers(
         proof_layers: &[BatchedGrandProductLayerProof<F>],
         claims: &Vec<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         r_start: Vec<F>,
     ) -> (Vec<F>, Vec<F>) {
         let mut claims_to_verify = claims.to_owned();
@@ -191,7 +191,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         proof: &BatchedGrandProductProof<PCS>,
         claims: &Vec<F>,
         _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
         // Pass the inputs to the layer verification function, by default we have no quarks and so we do not
@@ -207,7 +207,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
         &mut self,
         claims: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
         // produce a fresh set of coeffs
         let coeffs: Vec<F> = transcript.challenge_vector(claims.len());
@@ -1392,7 +1392,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
         &mut self,
         claims_to_verify: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
         // produce a fresh set of coeffs
         let coeffs: Vec<F> = transcript.challenge_vector(claims_to_verify.len());
@@ -1507,7 +1507,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         eq_eval: F,
         grand_product_claims: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) {
         let layer_proof = &layer_proofs[layer_index];
         if layer_index != layer_proofs.len() - 1 {
@@ -1563,6 +1563,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 mod grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::Zeromorph;
+    use crate::utils::transcript::Transcript;
     use ark_bn254::{Bn254, Fr};
     use ark_std::{test_rng, One};
     use rand_core::RngCore;
@@ -1584,7 +1585,7 @@ mod grand_product_tests {
             Fr,
             Zeromorph<Bn254>,
         >>::construct(leaves);
-        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
 
         // I love the rust type system
         let claims =
@@ -1598,7 +1599,7 @@ mod grand_product_tests {
             &mut batched_circuit, None, &mut transcript, None
         );
 
-        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
         let (_, r_verifier) = BatchedDenseGrandProduct::verify_grand_product(
             &proof,
             &claims,

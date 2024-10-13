@@ -16,7 +16,9 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::iter::zip;
 
+use super::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -25,10 +27,8 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
-    utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
+    utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::DefaultTranscript},
 };
-
-use super::{JoltCommitments, JoltPolynomials, JoltStuff};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampRangeCheckStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
@@ -249,7 +249,7 @@ where
         _: &Self::Polynomials,
         _: &JoltPolynomials<F>,
         _: &mut ProverOpeningAccumulator<F>,
-        _: &mut ProofTranscript,
+        _: &mut DefaultTranscript,
     ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
         unimplemented!("Use TimestampValidityProof::prove instead");
     }
@@ -448,7 +448,7 @@ where
         _commitments: &Self::Commitments,
         _: &JoltCommitments<PCS>,
         _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Use TimestampValidityProof::verify instead");
     }
@@ -562,7 +562,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     fn prove_grand_product(
         &mut self,
         _opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
@@ -571,7 +571,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         _proof: &BatchedGrandProductProof<PCS>,
         _claims: &Vec<F>,
         _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut DefaultTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
@@ -601,7 +601,7 @@ where
         polynomials: &'a TimestampRangeCheckPolynomials<F>,
         jolt_polynomials: &'a JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(
@@ -660,7 +660,7 @@ where
         polynomials: &TimestampRangeCheckPolynomials<F>,
         jolt_polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
         setup: &PCS::Setup,
     ) -> (BatchedGrandProductProof<PCS>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
@@ -709,7 +709,7 @@ where
         generators: &PCS::Setup,
         commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();

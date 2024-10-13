@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
 
+use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
@@ -16,6 +17,7 @@ use crate::lasso::memory_checking::{
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::mul_0_1_optimized;
+use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
@@ -28,11 +30,9 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        transcript::{AppendToTranscript, ProofTranscript},
+        transcript::{AppendToTranscript, DefaultTranscript},
     },
 };
-
-use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -577,7 +577,7 @@ where
         polynomials: &'a JoltPolynomials<F>,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -661,7 +661,7 @@ where
         proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
         commitments: &JoltCommitments<PCS>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> Result<(), ProofVerifyError> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -851,7 +851,7 @@ where
         flag_polys: &[DensePolynomial<F>],
         lookup_outputs_poly: &mut DensePolynomial<F>,
         degree: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>, F) {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
@@ -1068,7 +1068,7 @@ where
 
     fn update_primary_sumcheck_transcript(
         round_uni_poly: UniPoly<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut DefaultTranscript,
     ) -> F {
         round_uni_poly.compress().append_to_transcript(transcript);
 

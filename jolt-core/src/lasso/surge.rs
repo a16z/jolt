@@ -10,6 +10,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
 
+use super::memory_checking::{
+    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+};
+use crate::utils::transcript::Transcript;
 use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -20,11 +24,9 @@ use crate::{
         identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
-};
-
-use super::memory_checking::{
-    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+    utils::{
+        errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::DefaultTranscript,
+    },
 };
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -379,7 +381,7 @@ where
         generators: &PCS::Setup,
         ops: Vec<Instruction>,
     ) -> (Self, Option<ProverDebugInfo<F>>) {
-        let mut transcript = ProofTranscript::new(b"Surge transcript");
+        let mut transcript = DefaultTranscript::new(b"Surge transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -482,7 +484,7 @@ where
         proof: SurgeProof<F, PCS, Instruction, C, M>,
         _debug_info: Option<ProverDebugInfo<F>>,
     ) -> Result<(), ProofVerifyError> {
-        let mut transcript = ProofTranscript::new(b"Surge transcript");
+        let mut transcript = DefaultTranscript::new(b"Surge transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
             VerifierOpeningAccumulator::new();
         #[cfg(test)]
