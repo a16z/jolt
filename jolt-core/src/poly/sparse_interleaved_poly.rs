@@ -1,13 +1,11 @@
+use super::dense_mlpoly::DensePolynomial;
 use crate::field::JoltField;
 use rayon::prelude::*;
 
-#[cfg(test)]
-use super::dense_mlpoly::DensePolynomial;
-
 #[derive(Default, Debug, Clone, PartialEq)]
 struct SparseCoefficient<F: JoltField> {
-    index: usize,
-    value: F,
+    pub(crate) index: usize,
+    pub(crate) value: F,
 }
 
 impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
@@ -23,20 +21,26 @@ impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
 pub struct SparseInterleavedPolynomial<F: JoltField> {
     // num_vars: usize,
     pub(crate) coeffs: Vec<SparseCoefficient<F>>,
-    #[cfg(test)]
-    dense_len: usize,
+    pub(crate) dense_len: usize,
     binding_scratch_space: Vec<SparseCoefficient<F>>,
 }
 
 impl<F: JoltField> SparseInterleavedPolynomial<F> {
-    pub fn new(coeffs: Vec<SparseCoefficient<F>>, _dense_len: usize) -> Self {
-        assert!(_dense_len.is_power_of_two());
+    pub fn new(coeffs: Vec<SparseCoefficient<F>>, dense_len: usize) -> Self {
+        assert!(dense_len.is_power_of_two());
         Self {
-            #[cfg(test)]
-            dense_len: _dense_len,
+            dense_len,
             coeffs,
             binding_scratch_space: vec![],
         }
+    }
+
+    pub fn to_dense(&self, size: usize) -> DensePolynomial<F> {
+        let mut dense_layer = vec![F::one(); size];
+        for coeff in &self.coeffs {
+            dense_layer[coeff.index] = coeff.value;
+        }
+        DensePolynomial::new(dense_layer)
     }
 
     #[cfg(test)]
@@ -70,6 +74,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         (left_poly, right_poly)
     }
 
+    // TODO(moodlezoup): Dynamic density
     pub fn bind(&mut self, r: F) {
         let last_index = self.coeffs.last().unwrap().index;
         self.coeffs.push((last_index + 1, F::one()).into());
