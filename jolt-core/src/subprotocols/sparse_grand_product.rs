@@ -512,16 +512,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         debug_assert_eq!(self.batched_layer_len, 2 * eq_poly.len());
 
-        let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let eval_point_0 = eq_poly[2 * i];
-                let m_eq = eq_poly[2 * i + 1] - eq_poly[2 * i];
-                let eval_point_2 = eq_poly[2 * i + 1] + m_eq;
-                let eval_point_3 = eval_point_2 + m_eq;
-                (eval_point_0, eval_point_2, eval_point_3)
-            })
-            .collect();
+        let eq_evals: Vec<(F, F, F)> = todo!();
+        // let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
+        //     .into_par_iter()
+        //     .map(|i| {
+        //         let eval_point_0 = eq_poly[2 * i];
+        //         let m_eq = eq_poly[2 * i + 1] - eq_poly[2 * i];
+        //         let eval_point_2 = eq_poly[2 * i + 1] + m_eq;
+        //         let eval_point_3 = eval_point_2 + m_eq;
+        //         (eval_point_0, eval_point_2, eval_point_3)
+        //     })
+        //     .collect();
 
         if let Some(coalesced_layer) = &self.coalesced_layer {
             // Computes:
@@ -1116,16 +1117,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     /// for `BatchedGrandProductToggleLayer::bind`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let eval_point_0 = eq_poly[2 * i];
-                let m_eq = eq_poly[2 * i + 1] - eq_poly[2 * i];
-                let eval_point_2 = eq_poly[2 * i + 1] + m_eq;
-                let eval_point_3 = eval_point_2 + m_eq;
-                (eval_point_0, eval_point_2, eval_point_3)
-            })
-            .collect();
+        let eq_evals: Vec<(F, F, F)> = todo!();
+        // let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
+        //     .into_par_iter()
+        //     .map(|i| {
+        //         let eval_point_0 = eq_poly[2 * i];
+        //         let m_eq = eq_poly[2 * i + 1] - eq_poly[2 * i];
+        //         let eval_point_2 = eq_poly[2 * i + 1] + m_eq;
+        //         let eval_point_3 = eval_point_2 + m_eq;
+        //         (eval_point_0, eval_point_2, eval_point_3)
+        //     })
+        //     .collect();
 
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();

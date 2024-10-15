@@ -4,7 +4,7 @@ use rayon::prelude::*;
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct DenseInterleavedPolynomial<F: JoltField> {
     // num_vars: usize,
     gap: usize, // TODO(moodlezoup): Gap or scratch space approach?
@@ -69,12 +69,6 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
         });
 
         self.gap *= 2;
-    }
-}
-
-impl<F: JoltField> Clone for DenseInterleavedPolynomial<F> {
-    fn clone(&self) -> Self {
-        Self::new(self.coeffs.clone())
     }
 }
 
