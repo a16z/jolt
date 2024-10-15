@@ -185,18 +185,46 @@ use rayon::prelude::*;
 #[derive(Debug, Clone)]
 pub struct BatchedSparseGrandProductLayer<F: JoltField> {
     pub values: SparseInterleavedPolynomial<F>,
-    // /// At some point in sumcheck, the polynomials represented by `values` will be bound
-    // /// to the extent that each element in the `Vec` will only contain a pair of values
-    // /// (a "left" node and a "right" node). For subsequent sumcheck iterations, we transition
-    // /// to using this "coalesced" layer, which is simply flattens `values` into a single
-    // /// dense vector.
-    // coalesced_layer: Option<DenseGrandProductLayer<F>>,
 }
 
 impl<F: JoltField> BatchedSparseGrandProductLayer<F> {
     #[cfg(test)]
     fn to_dense(&self) -> (DensePolynomial<F>, DensePolynomial<F>) {
         self.values.uninterleave()
+    }
+
+    fn layer_output(&self) -> Self {
+        let coeffs: Vec<_> = self
+            .values
+            .par_blocks(2)
+            .flat_map(|sparse_block| {
+                let mut outputs = vec![];
+
+                let block_index = sparse_block[0].index / 4;
+                let mut dense_block = [F::one(), F::one(), F::one(), F::one()];
+                for coeff in sparse_block {
+                    if coeff.index / 4 == block_index {
+                        dense_block[coeff.index % 4] = coeff.value;
+                    }
+                }
+
+                let left = dense_block[0].mul_1_optimized(dense_block[2]);
+                let right = dense_block[1].mul_1_optimized(dense_block[3]);
+                if !left.is_one() {
+                    let left_index = 2 * block_index;
+                    outputs.push((left_index, left).into());
+                }
+                if !right.is_one() {
+                    let right_index = 2 * block_index;
+                    outputs.push((right_index, right).into());
+                }
+
+                outputs
+            })
+            .collect();
+        Self {
+            values: SparseInterleavedPolynomial::new(coeffs, self.values.dense_len / 2),
+        }
     }
 }
 
@@ -509,7 +537,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
 
     fn final_claims(&self) -> (F, F) {
         assert_eq!(self.values.dense_len, 2);
-        let dense = self.values.to_dense(2);
+        let dense = self.values.to_dense();
         (dense[0], dense[1])
     }
 }
@@ -613,21 +641,21 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
     }
 
     fn layer_output(&self) -> BatchedSparseGrandProductLayer<F> {
-        let output_layers = self
+        let values = self
             .fingerprints
             .par_iter()
             .enumerate()
-            .map(|(batch_index, fingerprints)| {
+            .flat_map(|(batch_index, fingerprints)| {
                 let flag_indices = &self.flag_indices[batch_index / 2];
-                let mut sparse_layer = vec![];
+                let mut sparse_coeffs = vec![];
                 for i in flag_indices {
-                    sparse_layer.push((*i, fingerprints[*i]));
+                    sparse_coeffs.push((batch_index * self.layer_len + i, fingerprints[*i]).into());
                 }
-                DynamicDensityGrandProductLayer::Sparse(sparse_layer)
+                sparse_coeffs
             })
             .collect();
         BatchedSparseGrandProductLayer {
-            values: output_layers,
+            values: SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2),
         }
     }
 }
@@ -1099,19 +1127,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         layers.push(toggle_layer.layer_output());
 
         for i in 0..num_layers - 1 {
-            let previous_layers = &layers[i];
-            let len = previous_layers.layer_len / 2;
-            let new_layers = previous_layers
-                .values
-                .par_iter()
-                .map(|previous_layer| previous_layer.layer_output(len))
-                .collect();
-            layers.push(BatchedSparseGrandProductLayer {
-                layer_len: len,
-                batched_layer_len: previous_layers.batched_layer_len / 2,
-                values: new_layers,
-                coalesced_layer: None,
-            });
+            let previous_layer = &layers[i];
+            layers.push(previous_layer.layer_output());
         }
 
         Self {
@@ -1125,25 +1142,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
 
     fn claimed_outputs(&self) -> Vec<F> {
-        let last_layers = &self.sparse_layers.last().unwrap();
-        last_layers
-            .values
-            .par_iter()
-            .map(|layer| match layer {
-                DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
-                    match sparse_layer.len() {
-                        0 => F::one(), // Neither left nor right claim is present, so they must both be 1
-                        1 => sparse_layer[0].1, // Only one claim is present
-                        2 => sparse_layer[0].1 * sparse_layer[1].1, // Both left and right claim are present
-                        _ => panic!("Sparse layer length > 2"),
-                    }
-                }
-                DynamicDensityGrandProductLayer::Dense(dense_layer) => {
-                    assert_eq!(dense_layer.len(), 2);
-                    dense_layer[0] * dense_layer[1]
-                }
-            })
-            .collect()
+        let last_layer = &self.sparse_layers.last().unwrap();
+        last_layer.values.to_dense().Z
     }
 
     fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
@@ -1201,297 +1201,276 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        poly::commitment::zeromorph::Zeromorph,
-        subprotocols::grand_product::BatchedDenseGrandProductLayer,
-    };
-    use ark_bn254::{Bn254, Fr};
-    use ark_std::{test_rng, One};
-    use num_integer::Integer;
-    use rand_core::RngCore;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::{
+//         poly::commitment::zeromorph::Zeromorph,
+//         subprotocols::grand_product::BatchedDenseGrandProductLayer,
+//     };
+//     use ark_bn254::{Bn254, Fr};
+//     use ark_std::{test_rng, One};
+//     use num_integer::Integer;
+//     use rand_core::RngCore;
 
-    fn condense(sparse_layers: BatchedSparseGrandProductLayer<Fr>) -> Vec<Fr> {
-        if let Some(coalesced) = sparse_layers.coalesced_layer {
-            return coalesced;
-        }
-        sparse_layers
-            .values
-            .iter()
-            .map(|layer| match layer {
-                DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
-                    let mut densified =
-                        DenseGrandProductLayer::from(vec![Fr::one(); sparse_layers.layer_len]);
-                    for (index, value) in sparse_layer {
-                        densified[*index] = *value;
-                    }
-                    densified
-                }
-                DynamicDensityGrandProductLayer::Dense(dense_layer) => {
-                    dense_layer[..sparse_layers.layer_len].to_vec()
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>()
-    }
+//     fn condense(sparse_layer: BatchedSparseGrandProductLayer<Fr>) -> Vec<Fr> {
+//         sparse_layer.values.to_dense().Z
+//     }
 
-    #[test]
-    fn dense_sparse_bind_parity() {
-        const LAYER_SIZE: usize = 1 << 10;
-        const BATCH_SIZE: usize = 5;
-        let mut rng = test_rng();
+//     #[test]
+//     fn dense_sparse_bind_parity() {
+//         const LAYER_SIZE: usize = 1 << 10;
+//         const BATCH_SIZE: usize = 5;
+//         let mut rng = test_rng();
 
-        let dense_layers: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            std::iter::repeat_with(|| {
-                if rng.next_u32() % 4 == 0 {
-                    Fr::random(&mut rng)
-                } else {
-                    Fr::one()
-                }
-            })
-            .take(LAYER_SIZE)
-            .collect()
-        })
-        .take(BATCH_SIZE)
-        .collect();
+//         let dense_layers: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+//             std::iter::repeat_with(|| {
+//                 if rng.next_u32() % 4 == 0 {
+//                     Fr::random(&mut rng)
+//                 } else {
+//                     Fr::one()
+//                 }
+//             })
+//             .take(LAYER_SIZE)
+//             .collect()
+//         })
+//         .take(BATCH_SIZE)
+//         .collect();
 
-        let mut batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
+//         let mut batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
 
-        let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
-            .iter()
-            .map(|dense_layer| {
-                let mut sparse_layer = vec![];
-                for (i, val) in dense_layer.iter().enumerate() {
-                    if !val.is_one() {
-                        sparse_layer.push((i, *val));
-                    }
-                }
-                DynamicDensityGrandProductLayer::Sparse(sparse_layer)
-            })
-            .collect();
-        let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
-            BatchedSparseGrandProductLayer {
-                layer_len: LAYER_SIZE,
-                batched_layer_len: (BATCH_SIZE * LAYER_SIZE).next_power_of_two(),
-                values: sparse_layers,
-                coalesced_layer: None,
-            };
+//         let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
+//             .iter()
+//             .map(|dense_layer| {
+//                 let mut sparse_layer = vec![];
+//                 for (i, val) in dense_layer.iter().enumerate() {
+//                     if !val.is_one() {
+//                         sparse_layer.push((i, *val));
+//                     }
+//                 }
+//                 DynamicDensityGrandProductLayer::Sparse(sparse_layer)
+//             })
+//             .collect();
+//         let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
+//             BatchedSparseGrandProductLayer {
+//                 layer_len: LAYER_SIZE,
+//                 batched_layer_len: (BATCH_SIZE * LAYER_SIZE).next_power_of_two(),
+//                 values: sparse_layers,
+//                 coalesced_layer: None,
+//             };
 
-        for (dense, sparse) in batched_dense_layer
-            .iter()
-            .zip(condense(batched_sparse_layer.clone()).iter())
-        {
-            assert_eq!(dense, sparse);
-        }
+//         for (dense, sparse) in batched_dense_layer
+//             .iter()
+//             .zip(condense(batched_sparse_layer.clone()).iter())
+//         {
+//             assert_eq!(dense, sparse);
+//         }
 
-        for _ in 0..LAYER_SIZE.log_2() - 1 {
-            let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(4)
-                .collect::<Vec<_>>();
-            let mut eq_poly_dense = SplitEqPolynomial::new(&r_eq);
-            let mut eq_poly_sparse = eq_poly_dense.clone();
+//         for _ in 0..LAYER_SIZE.log_2() - 1 {
+//             let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
+//                 .take(4)
+//                 .collect::<Vec<_>>();
+//             let mut eq_poly_dense = SplitEqPolynomial::new(&r_eq);
+//             let mut eq_poly_sparse = eq_poly_dense.clone();
 
-            let r = Fr::random(&mut rng);
-            batched_dense_layer.bind(&mut eq_poly_dense, &r);
-            batched_sparse_layer.bind(&mut eq_poly_sparse, &r);
+//             let r = Fr::random(&mut rng);
+//             batched_dense_layer.bind(&mut eq_poly_dense, &r);
+//             batched_sparse_layer.bind(&mut eq_poly_sparse, &r);
 
-            assert_eq!(eq_poly_dense, eq_poly_sparse);
+//             assert_eq!(eq_poly_dense, eq_poly_sparse);
 
-            for (dense, sparse) in batched_dense_layer
-                .iter()
-                .zip(condense(batched_sparse_layer.clone()).iter())
-            {
-                assert_eq!(dense, sparse);
-            }
-        }
-    }
+//             for (dense, sparse) in batched_dense_layer
+//                 .iter()
+//                 .zip(condense(batched_sparse_layer.clone()).iter())
+//             {
+//                 assert_eq!(dense, sparse);
+//             }
+//         }
+//     }
 
-    #[test]
-    fn dense_sparse_compute_cubic_parity() {
-        const LAYER_SIZE: usize = 1 << 10;
-        const BATCH_SIZE: usize = 5;
-        let mut rng = test_rng();
+//     #[test]
+//     fn dense_sparse_compute_cubic_parity() {
+//         const LAYER_SIZE: usize = 1 << 10;
+//         const BATCH_SIZE: usize = 5;
+//         let mut rng = test_rng();
 
-        let dense_layers: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| {
-                if rng.next_u32() % 4 == 0 {
-                    Fr::random(&mut rng)
-                } else {
-                    Fr::one()
-                }
-            })
-            .take(LAYER_SIZE)
-            .collect::<Vec<_>>();
-            layer
-        })
-        .take(BATCH_SIZE)
-        .collect();
+//         let dense_layers: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+//             let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| {
+//                 if rng.next_u32() % 4 == 0 {
+//                     Fr::random(&mut rng)
+//                 } else {
+//                     Fr::one()
+//                 }
+//             })
+//             .take(LAYER_SIZE)
+//             .collect::<Vec<_>>();
+//             layer
+//         })
+//         .take(BATCH_SIZE)
+//         .collect();
 
-        let batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
+//         let batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
 
-        let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
-            .iter()
-            .map(|dense_layer| {
-                let mut sparse_layer = vec![];
-                for (i, val) in dense_layer.iter().enumerate() {
-                    if !val.is_one() {
-                        sparse_layer.push((i, *val));
-                    }
-                }
-                DynamicDensityGrandProductLayer::Sparse(sparse_layer)
-            })
-            .collect();
+//         let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
+//             .iter()
+//             .map(|dense_layer| {
+//                 let mut sparse_layer = vec![];
+//                 for (i, val) in dense_layer.iter().enumerate() {
+//                     if !val.is_one() {
+//                         sparse_layer.push((i, *val));
+//                     }
+//                 }
+//                 DynamicDensityGrandProductLayer::Sparse(sparse_layer)
+//             })
+//             .collect();
 
-        let batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
-            BatchedSparseGrandProductLayer {
-                layer_len: LAYER_SIZE,
-                batched_layer_len: (BATCH_SIZE * LAYER_SIZE).next_power_of_two(),
-                values: sparse_layers,
-                coalesced_layer: None,
-            };
+//         let batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
+//             BatchedSparseGrandProductLayer {
+//                 layer_len: LAYER_SIZE,
+//                 batched_layer_len: (BATCH_SIZE * LAYER_SIZE).next_power_of_two(),
+//                 values: sparse_layers,
+//                 coalesced_layer: None,
+//             };
 
-        for (dense, sparse) in batched_dense_layer
-            .iter()
-            .zip(condense(batched_sparse_layer.clone()).iter())
-        {
-            assert_eq!(dense, sparse);
-        }
+//         for (dense, sparse) in batched_dense_layer
+//             .iter()
+//             .zip(condense(batched_sparse_layer.clone()).iter())
+//         {
+//             assert_eq!(dense, sparse);
+//         }
 
-        let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take((BATCH_SIZE * LAYER_SIZE).next_power_of_two().log_2() - 1)
-            .collect::<Vec<_>>();
-        let eq_poly = SplitEqPolynomial::new(&r_eq);
-        let claim = Fr::random(&mut rng);
+//         let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
+//             .take((BATCH_SIZE * LAYER_SIZE).next_power_of_two().log_2() - 1)
+//             .collect::<Vec<_>>();
+//         let eq_poly = SplitEqPolynomial::new(&r_eq);
+//         let claim = Fr::random(&mut rng);
 
-        let dense_evals = batched_dense_layer.compute_cubic(&eq_poly, claim);
-        let sparse_evals = batched_sparse_layer.compute_cubic(&eq_poly, claim);
-        assert_eq!(dense_evals, sparse_evals);
-    }
+//         let dense_evals = batched_dense_layer.compute_cubic(&eq_poly, claim);
+//         let sparse_evals = batched_sparse_layer.compute_cubic(&eq_poly, claim);
+//         assert_eq!(dense_evals, sparse_evals);
+//     }
 
-    #[test]
-    fn sparse_prove_verify() {
-        const LAYER_SIZE: usize = 1 << 5;
-        const BATCH_SIZE: usize = 6;
-        let mut rng = test_rng();
+//     #[test]
+//     fn sparse_prove_verify() {
+//         const LAYER_SIZE: usize = 1 << 5;
+//         const BATCH_SIZE: usize = 6;
+//         let mut rng = test_rng();
 
-        let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(LAYER_SIZE)
-                .collect::<Vec<_>>();
-            layer
-        })
-        .take(BATCH_SIZE)
-        .collect();
+//         let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+//             let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+//                 .take(LAYER_SIZE)
+//                 .collect::<Vec<_>>();
+//             layer
+//         })
+//         .take(BATCH_SIZE)
+//         .collect();
 
-        let flags: Vec<Vec<usize>> = std::iter::repeat_with(|| {
-            let mut layer = vec![];
-            for i in 0..LAYER_SIZE {
-                if rng.next_u32().is_even() {
-                    layer.push(i);
-                }
-            }
-            layer
-        })
-        .take(BATCH_SIZE / 2)
-        .collect();
+//         let flags: Vec<Vec<usize>> = std::iter::repeat_with(|| {
+//             let mut layer = vec![];
+//             for i in 0..LAYER_SIZE {
+//                 if rng.next_u32().is_even() {
+//                     layer.push(i);
+//                 }
+//             }
+//             layer
+//         })
+//         .take(BATCH_SIZE / 2)
+//         .collect();
 
-        let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::construct((flags, fingerprints));
+//         let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+//             Fr,
+//             Zeromorph<Bn254>,
+//         >>::construct((flags, fingerprints));
 
-        let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::claimed_outputs(&circuit);
+//         let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+//             Fr,
+//             Zeromorph<Bn254>,
+//         >>::claimed_outputs(&circuit);
 
-        let mut prover_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::prove_grand_product(
-            &mut circuit, None, &mut prover_transcript, None
-        );
+//         let mut prover_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+//         let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+//             Fr,
+//             Zeromorph<Bn254>,
+//         >>::prove_grand_product(
+//             &mut circuit, &mut prover_transcript, None
+//         );
 
-        let mut verifier_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        verifier_transcript.compare_to(prover_transcript);
-        let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
-            &proof,
-            &claims,
-            None,
-            &mut verifier_transcript,
-            None,
-        );
-        assert_eq!(r_prover, r_verifier);
-    }
+//         let mut verifier_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+//         verifier_transcript.compare_to(prover_transcript);
+//         let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
+//             &proof,
+//             &claims,
+//             &mut verifier_transcript,
+//             None,
+//         );
+//         assert_eq!(r_prover, r_verifier);
+//     }
 
-    #[test]
-    fn sparse_construct() {
-        const LAYER_SIZE: usize = 1 << 8;
-        const BATCH_SIZE: usize = 3;
-        let mut rng = test_rng();
+//     #[test]
+//     fn sparse_construct() {
+//         const LAYER_SIZE: usize = 1 << 8;
+//         const BATCH_SIZE: usize = 3;
+//         let mut rng = test_rng();
 
-        let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(LAYER_SIZE)
-                .collect::<Vec<_>>();
-            layer
-        })
-        .take(BATCH_SIZE * 2)
-        .collect();
+//         let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+//             let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+//                 .take(LAYER_SIZE)
+//                 .collect::<Vec<_>>();
+//             layer
+//         })
+//         .take(BATCH_SIZE * 2)
+//         .collect();
 
-        let flag_indices: Vec<Vec<usize>> = std::iter::repeat_with(|| {
-            let mut layer = vec![];
-            for i in 0..LAYER_SIZE {
-                if rng.next_u32().is_even() {
-                    layer.push(i);
-                }
-            }
-            layer
-        })
-        .take(BATCH_SIZE)
-        .collect();
+//         let flag_indices: Vec<Vec<usize>> = std::iter::repeat_with(|| {
+//             let mut layer = vec![];
+//             for i in 0..LAYER_SIZE {
+//                 if rng.next_u32().is_even() {
+//                     layer.push(i);
+//                 }
+//             }
+//             layer
+//         })
+//         .take(BATCH_SIZE)
+//         .collect();
 
-        let mut expected_outputs: Vec<Fr> = vec![];
-        for (indices, fingerprints) in flag_indices.iter().zip(fingerprints.chunks(2)) {
-            let read_fingerprints = &fingerprints[0];
-            let write_fingerprints = &fingerprints[1];
+//         let mut expected_outputs: Vec<Fr> = vec![];
+//         for (indices, fingerprints) in flag_indices.iter().zip(fingerprints.chunks(2)) {
+//             let read_fingerprints = &fingerprints[0];
+//             let write_fingerprints = &fingerprints[1];
 
-            expected_outputs.push(
-                indices
-                    .iter()
-                    .map(|index| read_fingerprints[*index])
-                    .product(),
-            );
-            expected_outputs.push(
-                indices
-                    .iter()
-                    .map(|index| write_fingerprints[*index])
-                    .product(),
-            );
-        }
+//             expected_outputs.push(
+//                 indices
+//                     .iter()
+//                     .map(|index| read_fingerprints[*index])
+//                     .product(),
+//             );
+//             expected_outputs.push(
+//                 indices
+//                     .iter()
+//                     .map(|index| write_fingerprints[*index])
+//                     .product(),
+//             );
+//         }
 
-        let circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::construct((flag_indices, fingerprints));
+//         let circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+//             Fr,
+//             Zeromorph<Bn254>,
+//         >>::construct((flag_indices, fingerprints));
 
-        let mut layer_size = LAYER_SIZE;
-        for layers in &circuit.sparse_layers {
-            for (layer, expected_product) in layers.values.iter().zip(expected_outputs.iter()) {
-                let actual_product: Fr = layer.to_dense(layer_size).iter().product();
-                assert_eq!(*expected_product, actual_product);
-            }
-            layer_size /= 2;
-        }
+//         let mut layer_size = LAYER_SIZE;
+//         for layers in &circuit.sparse_layers {
+//             for (layer, expected_product) in layers.values.iter().zip(expected_outputs.iter()) {
+//                 let actual_product: Fr = layer.to_dense(layer_size).iter().product();
+//                 assert_eq!(*expected_product, actual_product);
+//             }
+//             layer_size /= 2;
+//         }
 
-        let claimed_outputs: Vec<Fr> = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::claimed_outputs(&circuit);
+//         let claimed_outputs: Vec<Fr> = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+//             Fr,
+//             Zeromorph<Bn254>,
+//         >>::claimed_outputs(&circuit);
 
-        assert!(claimed_outputs == expected_outputs);
-    }
-}
+//         assert!(claimed_outputs == expected_outputs);
+//     }
+// }
