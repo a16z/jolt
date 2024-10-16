@@ -16,6 +16,7 @@ use crate::lasso::memory_checking::{
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::mul_0_1_optimized;
+use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
@@ -25,11 +26,7 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
+    utils::{errors::ProofVerifyError, math::Math, transcript::AppendToTranscript},
 };
 
 use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
@@ -79,8 +76,10 @@ pub type InstructionLookupOpenings<F: JoltField> = InstructionLookupStuff<F>;
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type InstructionLookupCommitments<PCS: CommitmentScheme> =
-    InstructionLookupStuff<PCS::Commitment>;
+pub type InstructionLookupCommitments<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+> = InstructionLookupStuff<PCS::Commitment>;
 
 impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
     Initializable<T, InstructionLookupsPreprocessing<C, F>> for InstructionLookupStuff<T>
@@ -154,19 +153,21 @@ where
     lookup_outputs_opening: F,
 }
 
-impl<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables> MemoryCheckingProver<F, PCS>
-    for InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>
+impl<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables, ProofTranscript>
+    MemoryCheckingProver<F, PCS, ProofTranscript>
+    for InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
+    ProofTranscript: Transcript,
 {
-    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
+    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F, ProofTranscript>;
 
     type Polynomials = InstructionLookupPolynomials<F>;
     type Openings = InstructionLookupOpenings<F>;
-    type Commitments = InstructionLookupCommitments<PCS>;
+    type Commitments = InstructionLookupCommitments<PCS, ProofTranscript>;
 
     type Preprocessing = InstructionLookupsPreprocessing<C, F>;
 
@@ -188,8 +189,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
     ) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
@@ -362,17 +363,19 @@ where
         b"Instruction lookups check"
     }
 
-    type InitFinalGrandProduct = crate::subprotocols::grand_product::BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct =
+        crate::subprotocols::grand_product::BatchedDenseGrandProduct<F, ProofTranscript>;
 }
 
-impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, PCS>
-    for InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>
+impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTranscript>
+    MemoryCheckingVerifier<F, PCS, ProofTranscript>
+    for InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
+    ProofTranscript: Transcript,
 {
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
@@ -459,24 +462,33 @@ pub struct InstructionLookupsProof<
     PCS,
     InstructionSet,
     Subtables,
+    ProofTranscript,
 > where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Subtables: JoltSubtableSet<F>,
     InstructionSet: JoltInstructionSet,
+    ProofTranscript: Transcript,
 {
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
-    primary_sumcheck: PrimarySumcheck<F>,
-    memory_checking: MemoryCheckingProof<F, PCS, InstructionLookupOpenings<F>, NoExogenousOpenings>,
+    primary_sumcheck: PrimarySumcheck<F, ProofTranscript>,
+    memory_checking: MemoryCheckingProof<
+        F,
+        PCS,
+        InstructionLookupOpenings<F>,
+        NoExogenousOpenings,
+        ProofTranscript,
+    >,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct PrimarySumcheck<F: JoltField> {
-    sumcheck_proof: SumcheckInstanceProof<F>,
+pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     num_rounds: usize,
     openings: PrimarySumcheckOpenings<F>,
     // opening_proof: PCS::BatchedProof,
+    _marker: PhantomData<ProofTranscript>,
 }
 
 #[derive(Clone)]
@@ -560,13 +572,14 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
     }
 }
 
-impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize>
-    InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>
+impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTranscript>
+    InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
+    ProofTranscript: Transcript,
 {
     const NUM_SUBTABLES: usize = Subtables::COUNT;
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
@@ -576,10 +589,11 @@ where
         generators: &PCS::Setup,
         polynomials: &'a JoltPolynomials<F>,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables> {
-        transcript.append_protocol_name(Self::protocol_name());
+    ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript> {
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         let trace_length = polynomials.instruction_lookups.dim[0].len();
         let r_eq = transcript.challenge_vector(trace_length.log_2());
@@ -635,6 +649,7 @@ where
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
             openings: sumcheck_openings,
+            _marker: PhantomData,
         };
 
         let memory_checking = Self::prove_memory_checking(
@@ -657,12 +672,13 @@ where
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         pcs_setup: &PCS::Setup,
-        proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-        commitments: &JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
+        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         let r_eq = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);
 
@@ -850,7 +866,13 @@ where
         lookup_outputs_poly: &mut DensePolynomial<F>,
         degree: usize,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>, F) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F>,
+        Vec<F>,
+        Vec<F>,
+        F,
+    ) {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
         memory_polys

@@ -1,13 +1,11 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::fmt::Debug;
 
+use crate::utils::transcript::Transcript;
 use crate::{
     field::JoltField,
     poly::dense_mlpoly::DensePolynomial,
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
+    utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 
 #[derive(Clone, Debug)]
@@ -34,7 +32,7 @@ pub enum BatchType {
     GrandProduct,
 }
 
-pub trait CommitmentScheme: Clone + Sync + Send + 'static {
+pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type Setup: Clone + Sync + Send;
     type Commitment: Default

@@ -8,7 +8,7 @@ use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use jolt_core::poly::commitment::hyperkzg::*;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::utils::transcript::ProofTranscript;
+use jolt_core::utils::transcript::{DefaultTranscript, Transcript};
 use rand_core::SeedableRng;
 
 use jolt_core::utils::sol_types::{HyperKZGProofSol, VK};
@@ -37,14 +37,14 @@ fn main() {
     let eval = poly.evaluate(&point);
 
     // make a commitment
-    let c = HyperKZG::commit(&pk, &poly).unwrap();
+    let c = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
 
     // prove an evaluation
-    let mut prover_transcript = ProofTranscript::new(b"TestEval");
+    let mut prover_transcript = DefaultTranscript::new(b"TestEval");
     let proof: HyperKZGProof<Bn254> =
         HyperKZG::open(&pk, &poly, &point, &eval, &mut prover_transcript).unwrap();
 
-    let mut verifier_tr = ProofTranscript::new(b"TestEval");
+    let mut verifier_tr = DefaultTranscript::new(b"TestEval");
     assert!(HyperKZG::verify(&vk, &c, &point, &eval, &proof, &mut verifier_tr).is_ok());
 
     sol!(struct Example {

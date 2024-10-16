@@ -5,17 +5,20 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct Binius128Scheme {}
+pub struct Binius128Scheme<ProofTranscript: Transcript> {
+    _phantom: PhantomData<ProofTranscript>,
+}
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BiniusCommitment {}
 
 impl AppendToTranscript for BiniusCommitment {
-    fn append_to_transcript(&self, _transcript: &mut ProofTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, _transcript: &mut ProofTranscript) {
         todo!()
     }
 }
@@ -29,7 +32,9 @@ pub struct BiniusBatchedProof {}
 #[derive(Clone)]
 pub struct None {}
 
-impl CommitmentScheme for Binius128Scheme {
+impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
+    for Binius128Scheme<ProofTranscript>
+{
     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128bPolyval>;
     type Setup = None;
     type Commitment = BiniusCommitment;

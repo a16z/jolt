@@ -13,7 +13,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
 use super::spartan::{SpartanError, UniformSpartanProof};
@@ -24,6 +24,7 @@ use ark_std::log2;
 use common::constants::RAM_OPS_PER_INSTRUCTION;
 use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -157,7 +158,8 @@ pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
+pub type R1CSCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    R1CSStuff<PCS::Commitment>;
 
 impl<F: JoltField> R1CSPolynomials<F> {
     pub fn new<
@@ -213,19 +215,27 @@ impl<F: JoltField> R1CSPolynomials<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<const C: usize, I: ConstraintInput, F: JoltField> {
+pub struct R1CSProof<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
+{
     pub key: UniformSpartanKey<C, I, F>,
-    pub proof: UniformSpartanProof<C, I, F>,
+    pub proof: UniformSpartanProof<C, I, F, ProofTranscript>,
+    pub _marker: PhantomData<ProofTranscript>,
 }
 
-impl<const C: usize, I: ConstraintInput, F: JoltField> R1CSProof<C, I, F> {
+impl<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
+    R1CSProof<C, I, F, ProofTranscript>
+{
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
-    pub fn verify<PCS: CommitmentScheme<Field = F>>(
+    pub fn verify<PCS>(
         &self,
-        commitments: &JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError> {
+    ) -> Result<(), SpartanError>
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
         self.proof
             .verify(&self.key, commitments, opening_accumulator, transcript)
     }

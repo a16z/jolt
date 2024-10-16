@@ -7,15 +7,15 @@ use crate::{
     poly::dense_mlpoly::DensePolynomial,
     utils::{
         errors::ProofVerifyError,
-        transcript::{AppendToTranscript, ProofTranscript},
+        transcript::{AppendToTranscript, Transcript},
     },
 };
 
 use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 
 #[derive(Clone)]
-pub struct MockCommitScheme<F: JoltField> {
-    _marker: PhantomData<F>,
+pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
+    _marker: PhantomData<(F, ProofTranscript)>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq)]
@@ -24,7 +24,7 @@ pub struct MockCommitment<F: JoltField> {
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_message(b"mocker");
     }
 }
@@ -34,7 +34,11 @@ pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }
 
-impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
+impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     type Field = F;
     type Setup = ();
     type Commitment = MockCommitment<F>;

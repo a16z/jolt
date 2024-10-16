@@ -8,12 +8,17 @@ use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 /// Batched cubic sumcheck used in grand products
-pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
+pub trait BatchedCubicSumcheck<F, ProofTranscript>: Sync
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     fn num_rounds(&self) -> usize;
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
     fn compute_cubic(
@@ -31,7 +36,11 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         coeffs: &[F],
         eq_poly: &mut DensePolynomial<F>,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F>,
+        (Vec<F>, Vec<F>),
+    ) {
         debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
 
         let mut previous_claim = *claim;
@@ -64,7 +73,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProof<F> {
+impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
     /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
     ///
     /// Params
@@ -493,13 +502,19 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SumcheckInstanceProof<F: JoltField> {
+pub struct SumcheckInstanceProof<F: JoltField, ProofTranscript: Transcript> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField> SumcheckInstanceProof<F> {
-    pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> SumcheckInstanceProof<F> {
-        SumcheckInstanceProof { compressed_polys }
+impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
+    pub fn new(
+        compressed_polys: Vec<CompressedUniPoly<F>>,
+    ) -> SumcheckInstanceProof<F, ProofTranscript> {
+        SumcheckInstanceProof {
+            compressed_polys,
+            _marker: PhantomData,
+        }
     }
 
     /// Verify this sumcheck proof.
