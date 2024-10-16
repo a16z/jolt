@@ -124,7 +124,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
             .par_chunk_by(move |x, y| x.index / block_size == y.index / block_size)
     }
 
-    pub fn bind_par_blocks(&mut self, r: F) {
+    pub fn bind(&mut self, r: F) {
         self.coeffs = self
             .par_blocks(4)
             .flat_map(|sparse_block| {
@@ -154,89 +154,6 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
             .collect();
 
         self.dense_len /= 2;
-    }
-
-    // TODO(moodlezoup): Dynamic density
-    pub fn bind(&mut self, r: F) {
-        let last_index = self.coeffs.last().unwrap().index;
-        self.coeffs.push((last_index + 1, F::one()).into());
-        self.coeffs.push((last_index + 2, F::one()).into());
-        self.coeffs.push((last_index + 3, F::one()).into());
-
-        // TODO(moodlezoup): Is it more efficient to filter first?
-        self.coeffs = self
-            .coeffs
-            .par_windows(4)
-            .flat_map(|window| {
-                let mut bound = vec![];
-
-                if window[0].index % 4 == 0 {
-                    let block_index = window[0].index / 4;
-                    let mut block = [F::one(), F::one(), F::one(), F::one()];
-                    for coeff in window {
-                        if coeff.index / 4 == block_index {
-                            block[coeff.index % 4] = coeff.value;
-                        }
-                    }
-                    let left = block[0] + r.mul_0_optimized(block[2] - block[0]);
-                    let right = block[1] + r.mul_0_optimized(block[3] - block[1]);
-                    if !left.is_one() {
-                        let left_index = 2 * block_index;
-                        bound.push((left_index, left).into());
-                    }
-                    if !right.is_one() {
-                        let right_index = 2 * block_index + 1;
-                        bound.push((right_index, right).into());
-                    }
-                }
-
-                if window[1].index / 4 > window[0].index / 4 && window[1].index % 4 != 0 {
-                    let block_index = window[1].index / 4;
-                    let mut block = [F::one(), F::one(), F::one(), F::one()];
-                    for coeff in window {
-                        if coeff.index / 4 == block_index {
-                            block[coeff.index % 4] = coeff.value;
-                        }
-                    }
-                    let left = block[0] + r.mul_0_optimized(block[2] - block[0]);
-                    let right = block[1] + r.mul_0_optimized(block[3] - block[1]);
-                    if !left.is_one() {
-                        let left_index = 2 * block_index;
-                        bound.push((left_index, left).into());
-                    }
-                    if !right.is_one() {
-                        let right_index = 2 * block_index + 1;
-                        bound.push((right_index, right).into());
-                    }
-                }
-
-                bound
-            })
-            .collect();
-
-        // TODO(moodlezoup): Can avoid inserts
-        if self.coeffs[0].index % 4 != 0 {
-            // Process block starting with self.coeffs[0]
-            let block_index = self.coeffs[0].index / 4;
-            let mut block = [F::one(), F::one(), F::one(), F::one()];
-            for coeff in &self.coeffs[..4] {
-                if coeff.index / 4 == block_index {
-                    block[coeff.index % 4] = coeff.value;
-                }
-            }
-            let left = block[0] + r.mul_0_optimized(block[2] - block[0]);
-            let right = block[1] + r.mul_0_optimized(block[3] - block[1]);
-            if !right.is_one() {
-                let right_index = 2 * block_index + 1;
-                self.coeffs.insert(0, (right_index, right).into());
-            }
-            if !left.is_one() {
-                let left_index = 2 * block_index;
-                self.coeffs.insert(0, (left_index, left).into());
-            }
-        }
-
-        // self.dense_len /= 2;
     }
 }
 
@@ -296,30 +213,6 @@ mod tests {
 
     #[test]
     fn bind_par_blocks() {
-        let mut rng = test_rng();
-        const NUM_VARS: usize = 10;
-        let left = random_sparse_vector(&mut rng, 1 << NUM_VARS, 0.2);
-        let mut left = DensePolynomial::new(left);
-        let right = random_sparse_vector(&mut rng, 1 << NUM_VARS, 0.2);
-        let mut right = DensePolynomial::new(right);
-
-        let mut interleaved = SparseInterleavedPolynomial::interleave(&left, &right);
-
-        for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
-            interleaved.bind_par_blocks(r);
-            left.bound_poly_var_bot(&r);
-            right.bound_poly_var_bot(&r);
-
-            assert_eq!(
-                interleaved.coeffs,
-                SparseInterleavedPolynomial::interleave(&left, &right).coeffs
-            );
-        }
-    }
-
-    #[test]
-    fn bind() {
         let mut rng = test_rng();
         const NUM_VARS: usize = 10;
         let left = random_sparse_vector(&mut rng, 1 << NUM_VARS, 0.2);
