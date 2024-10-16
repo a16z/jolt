@@ -1542,7 +1542,7 @@ impl<
 
     fn claims(&self) -> Vec<F> {
         let last_layers: &BatchedSparseGrandProductLayer<F, ProofTranscript> =
-            &self.sparse_layers.last().unwrap();
+            self.sparse_layers.last().unwrap();
         let (left_claims, right_claims) = last_layers.final_claims();
         left_claims
             .iter()

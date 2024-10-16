@@ -9,7 +9,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::math::Math;
-use crate::utils::transcript::{AppendToTranscript, DefaultTranscript, Transcript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use itertools::Itertools;
@@ -688,7 +688,7 @@ fn line_reduce_verify<F: JoltField, ProofTranscript: Transcript>(
 mod quark_grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::*;
-    use crate::utils::transcript::Transcript;
+    use crate::utils::transcript::{DefaultTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use rand_core::SeedableRng;
 
