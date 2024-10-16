@@ -26,7 +26,7 @@ struct BenchConfig {
 
 // Sets up the benchmark by generating leaves and computing known products
 // and allows configuring the percentage of ones in the leaves
-fn setup_bench<PCS, F>(
+fn setup_bench<PCS, F, ProofTranscript>(
     num_batches: usize,
     layer_size: usize,
     threshold: u32,
@@ -38,8 +38,9 @@ fn setup_bench<PCS, F>(
     Vec<F>,
 )
 where
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
+    ProofTranscript: Transcript,
 {
     assert!(
         threshold <= 100,
@@ -74,17 +75,21 @@ where
     (leaves, setup, known_products)
 }
 
-fn benchmark_prove<PCS, F, G>(
+fn benchmark_prove<PCS, F, G, ProofTranscript>(
     c: &mut Criterion,
     config: BenchConfig,
     grand_products_config: G::Config,
 ) where
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, Leaves = Vec<Vec<F>>>,
+    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = Vec<Vec<F>>>,
+    ProofTranscript: Transcript,
 {
-    let (leaves, setup, _) =
-        setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.percentage_ones);
+    let (leaves, setup, _) = setup_bench::<PCS, F, ProofTranscript>(
+        config.num_layers,
+        config.layer_size,
+        config.percentage_ones,
+    );
 
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
 
@@ -97,9 +102,9 @@ fn benchmark_prove<PCS, F, G>(
             b.iter(|| {
                 // Prove the grand product
                 let mut transcript = ProofTranscript::new(b"test_transcript");
-                let mut prover_accumulator: ProverOpeningAccumulator<F> =
+                let mut prover_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
                     ProverOpeningAccumulator::new();
-                let _proof: BatchedGrandProductProof<PCS> = grand_product
+                let _proof: BatchedGrandProductProof<PCS, ProofTranscript> = grand_product
                     .prove_grand_product(
                         Some(&mut prover_accumulator),
                         &mut transcript,
@@ -111,21 +116,26 @@ fn benchmark_prove<PCS, F, G>(
     );
 }
 
-fn benchmark_verify<PCS, F, G>(
+fn benchmark_verify<PCS, F, G, ProofTranscript>(
     c: &mut Criterion,
     config: BenchConfig,
     grand_products_config: G::Config,
 ) where
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, Leaves = Vec<Vec<F>>>,
+    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = Vec<Vec<F>>>,
+    ProofTranscript: Transcript,
 {
-    let (leaves, setup, known_products) =
-        setup_bench::<PCS, F>(config.num_layers, config.layer_size, config.percentage_ones);
+    let (leaves, setup, known_products) = setup_bench::<PCS, F, ProofTranscript>(
+        config.num_layers,
+        config.layer_size,
+        config.percentage_ones,
+    );
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
     let mut grand_product = G::construct_with_config(leaves, grand_products_config);
-    let mut prover_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
+    let mut prover_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+        ProverOpeningAccumulator::new();
     let (proof, r_prover) = grand_product.prove_grand_product(
         Some(&mut prover_accumulator),
         &mut transcript,
@@ -141,7 +151,7 @@ fn benchmark_verify<PCS, F, G>(
             b.iter(|| {
                 // Verify the grand product
                 transcript = ProofTranscript::new(b"test_transcript");
-                let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS> =
+                let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
                     VerifierOpeningAccumulator::new();
                 let (_, r_verifier) = QuarkGrandProduct::verify_grand_product(
                     &proof,
@@ -157,17 +167,18 @@ fn benchmark_verify<PCS, F, G>(
     );
 }
 
-fn benchmark_prove_and_verify<PCS, F, G>(
+fn benchmark_prove_and_verify<PCS, F, G, ProofTranscript>(
     c: &mut Criterion,
     config: BenchConfig,
     grand_product_config: G::Config,
 ) where
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, Leaves = Vec<Vec<F>>>,
+    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = Vec<Vec<F>>>,
+    ProofTranscript: Transcript,
 {
-    benchmark_prove::<PCS, F, G>(c, config, grand_product_config);
-    benchmark_verify::<PCS, F, G>(c, config, grand_product_config);
+    benchmark_prove::<PCS, F, G, ProofTranscript>(c, config, grand_product_config);
+    benchmark_verify::<PCS, F, G, ProofTranscript>(c, config, grand_product_config);
 }
 
 fn main() {
@@ -184,15 +195,21 @@ fn main() {
     };
     // Hybrid
     config.name = "HyperKZG Hybrid";
-    benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
-        &mut c,
-        config,
-        QuarkGrandProductConfig::default(),
-    );
+    benchmark_prove_and_verify::<
+        HyperKZG<Bn254, DefaultTranscript>,
+        Fr,
+        QuarkGrandProduct<Fr, DefaultTranscript>,
+        DefaultTranscript,
+    >(&mut c, config, QuarkGrandProductConfig::default());
 
     // Hybrid min
     config.name = "HyperKZG Hybrid Min Crossover";
-    benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
+    benchmark_prove_and_verify::<
+        HyperKZG<Bn254, DefaultTranscript>,
+        Fr,
+        QuarkGrandProduct<Fr, DefaultTranscript>,
+        DefaultTranscript,
+    >(
         &mut c,
         config,
         QuarkGrandProductConfig {
@@ -200,7 +217,12 @@ fn main() {
         },
     );
     config.name = "HyperKZG Hybrid Min Crossover";
-    benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
+    benchmark_prove_and_verify::<
+        HyperKZG<Bn254, DefaultTranscript>,
+        Fr,
+        QuarkGrandProduct<Fr, DefaultTranscript>,
+        DefaultTranscript,
+    >(
         &mut c,
         BenchConfig {
             percentage_ones: 10,
@@ -213,7 +235,12 @@ fn main() {
 
     // Hybrid max
     config.name = "HyperKZG Hybrid Max Crossover";
-    benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, QuarkGrandProduct<Fr>>(
+    benchmark_prove_and_verify::<
+        HyperKZG<Bn254, DefaultTranscript>,
+        Fr,
+        QuarkGrandProduct<Fr, DefaultTranscript>,
+        DefaultTranscript,
+    >(
         &mut c,
         config,
         QuarkGrandProductConfig {
@@ -223,11 +250,19 @@ fn main() {
 
     // GKR
     config.name = "HyperKZG GKR";
-    benchmark_prove_and_verify::<HyperKZG<Bn254>, Fr, BatchedDenseGrandProduct<Fr>>(
+    benchmark_prove_and_verify::<
+        HyperKZG<Bn254, DefaultTranscript>,
+        Fr,
+        BatchedDenseGrandProduct<Fr, DefaultTranscript>,
+        DefaultTranscript,
+    >(
         &mut c,
         config,
-        <BatchedDenseGrandProduct<_> as BatchedGrandProduct<Fr, HyperKZG<Bn254>>>::Config::default(
-        ),
+        <BatchedDenseGrandProduct<_, DefaultTranscript> as BatchedGrandProduct<
+            Fr,
+            HyperKZG<Bn254, DefaultTranscript>,
+            DefaultTranscript,
+        >>::Config::default(),
     );
 
     c.final_summary();
