@@ -190,7 +190,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
-                jolt::JoltPreprocessing<4, jolt::F, jolt::PCS>
+                jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
             ) {
                 #imports
 
@@ -201,7 +201,7 @@ impl MacroBuilder {
                 let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS> =
+                let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         memory_init,
@@ -242,7 +242,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS>,
+                preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
@@ -399,6 +399,7 @@ impl MacroBuilder {
                 JoltPreprocessing,
                 Jolt,
                 JoltCommitments,
+                ProofTranscript,
                 RV32IJoltVM,
                 RV32I,
                 RV32IJoltProof,
@@ -535,7 +536,7 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM};
+                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM, ProofTranscript};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
                 let proof = JoltHyperKZGProof::deserialize_from_bytes(proof_bytes).unwrap();

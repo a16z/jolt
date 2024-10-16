@@ -228,11 +228,12 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-pub type PCS = HyperKZG<Bn254, DefaultTranscript>;
+pub type ProofTranscript = DefaultTranscript;
+pub type PCS = HyperKZG<Bn254, ProofTranscript>;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltHyperKZGProof {
-    pub proof: RV32IJoltProof<Fr, PCS, DefaultTranscript>,
-    pub commitments: JoltCommitments<PCS, DefaultTranscript>,
+    pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
+    pub commitments: JoltCommitments<PCS, ProofTranscript>,
 }
 
 impl Serializable for JoltHyperKZGProof {}
