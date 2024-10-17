@@ -1,6 +1,7 @@
 use super::dense_mlpoly::DensePolynomial;
 use crate::field::{JoltField, OptimizedMul};
 use rayon::prelude::*;
+use smallvec::SmallVec;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct SparseCoefficient<F: JoltField> {
@@ -19,20 +20,20 @@ impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
 
 #[derive(Default, Debug, Clone)]
 pub struct SparseInterleavedPolynomial<F: JoltField> {
-    pub(crate) coeffs: Vec<SparseCoefficient<F>>,
-    pub(crate) dense_len: usize,
-    // TODO(moodlezoup): Is it possible to "collect_into_vec"
-    // for a non-indexed rayon ParallelIterator if we know that
-    // the destination has sufficient capacity for the collect?
-    // If so, we can reuse the same "scratch space" vector across
-    // bindings. par_extend + clear/set_len?
-    // binding_scratch_space: Vec<SparseCoefficient<F>>
+    pub coeffs: Vec<SparseCoefficient<F>>,
+    pub dense_len: usize,
+    binding_scratch_space: Vec<SparseCoefficient<F>>,
 }
 
 impl<F: JoltField> SparseInterleavedPolynomial<F> {
     pub fn new(coeffs: Vec<SparseCoefficient<F>>, dense_len: usize) -> Self {
         assert!(dense_len.is_power_of_two());
-        Self { dense_len, coeffs }
+        let sparse_len = coeffs.len();
+        Self {
+            dense_len,
+            coeffs,
+            binding_scratch_space: vec![SparseCoefficient::default(); sparse_len], // TODO(moodlezoup): can optimize
+        }
     }
 
     pub fn to_dense(&self) -> DensePolynomial<F> {
@@ -74,43 +75,160 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         (left_poly, right_poly)
     }
 
-    pub fn parallelizable_slices(&self) -> Vec<&[SparseCoefficient<F>]> {
-        let num_threads = rayon::current_num_threads();
-        let target_slice_length = self.coeffs.len() / num_threads;
+    pub fn parallelizable_slices(coeffs: &[SparseCoefficient<F>]) -> Vec<&[SparseCoefficient<F>]> {
+        let num_slices = 4 * rayon::current_num_threads();
+        let target_slice_length = coeffs.len() / num_slices;
         if target_slice_length == 0 {
-            return vec![&self.coeffs];
+            return vec![&coeffs];
         }
 
-        let mut boundary_indices: Vec<_> = (target_slice_length..self.coeffs.len())
+        let mut boundary_indices: Vec<_> = (target_slice_length..coeffs.len())
             .step_by(target_slice_length)
             .collect();
 
         for boundary in boundary_indices.iter_mut() {
-            while *boundary < self.coeffs.len() - 1 {
-                let current = &self.coeffs[*boundary];
-                let next = &self.coeffs[*boundary + 1];
+            while *boundary < coeffs.len() - 1 {
+                let current = &coeffs[*boundary];
+                let next = &coeffs[*boundary + 1];
                 if next.index / 4 > current.index / 4 {
                     *boundary += 1;
                     break;
                 }
                 *boundary += 1;
             }
-            if *boundary == self.coeffs.len() - 1 {
+            if *boundary == coeffs.len() - 1 {
                 *boundary += 1;
             }
         }
         boundary_indices.dedup();
 
-        let mut slices = vec![&self.coeffs[..boundary_indices[0]]];
+        let mut slices = vec![&coeffs[..boundary_indices[0]]];
         for boundaries in boundary_indices.windows(2) {
-            slices.push(&self.coeffs[boundaries[0]..boundaries[1]])
+            slices.push(&coeffs[boundaries[0]..boundaries[1]])
         }
         let last_boundary = *boundary_indices.last().unwrap();
-        if last_boundary != self.coeffs.len() {
-            slices.push(&self.coeffs[last_boundary..]);
+        if last_boundary != coeffs.len() {
+            slices.push(&coeffs[last_boundary..]);
         }
 
         slices
+    }
+
+    pub fn bind_slices(&mut self, r: F) {
+        unsafe {
+            self.binding_scratch_space.set_len(0);
+        }
+        let slices = Self::parallelizable_slices(&self.coeffs);
+        let binding_iter = slices.par_iter().flat_map_iter(|slice| {
+            let mut bound: Vec<SparseCoefficient<F>> = Vec::with_capacity(slice.len());
+
+            let mut next_left_node_to_process = 0usize;
+            let mut next_right_node_to_process = 0usize;
+
+            for j in 0..slice.len() {
+                let current = &slice[j];
+                if current.index % 2 == 0 && current.index < next_left_node_to_process {
+                    // This left node was already bound with its sibling in a previous iteration
+                    continue;
+                }
+                if current.index % 2 == 1 && current.index < next_right_node_to_process {
+                    // This right node was already bound with its sibling in a previous iteration
+                    continue;
+                }
+
+                let neighbors = [
+                    slice
+                        .get(j + 1)
+                        .cloned()
+                        .unwrap_or((current.index + 1, F::one()).into()),
+                    slice
+                        .get(j + 2)
+                        .cloned()
+                        .unwrap_or((current.index + 2, F::one()).into()),
+                ];
+                let find_neighbor = |query_index: usize| {
+                    neighbors
+                        .iter()
+                        .find_map(|neighbor| {
+                            if neighbor.index == query_index {
+                                Some(neighbor.value)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(F::one())
+                };
+
+                match current.index % 4 {
+                    0 => {
+                        // Find sibling left node
+                        let sibling_value: F = find_neighbor(current.index + 2);
+                        bound.push(
+                            (
+                                current.index / 2,
+                                current.value + r * (sibling_value - current.value),
+                            )
+                                .into(),
+                        );
+                        next_left_node_to_process = current.index + 4;
+                    }
+                    1 => {
+                        // Edge case: If this right node's neighbor is not 1 and has _not_
+                        // been bound yet, we need to bind the neighbor first to preserve
+                        // the monotonic ordering of the bound layer.
+                        if next_left_node_to_process <= current.index + 1 {
+                            let left_neighbor: F = find_neighbor(current.index + 1);
+                            if !left_neighbor.is_one() {
+                                bound.push(
+                                    (current.index / 2, F::one() + r * (left_neighbor - F::one()))
+                                        .into(),
+                                );
+                            }
+                            next_left_node_to_process = current.index + 3;
+                        }
+
+                        // Find sibling right node
+                        let sibling_value: F = find_neighbor(current.index + 2);
+                        bound.push(
+                            (
+                                current.index / 2 + 1,
+                                current.value + r * (sibling_value - current.value),
+                            )
+                                .into(),
+                        );
+                        next_right_node_to_process = current.index + 4;
+                    }
+                    2 => {
+                        // Sibling left node wasn't encountered in previous iteration,
+                        // so sibling must have value 1.
+                        bound.push(
+                            (
+                                current.index / 2 - 1,
+                                F::one() + r * (current.value - F::one()),
+                            )
+                                .into(),
+                        );
+                        next_left_node_to_process = current.index + 2;
+                    }
+                    3 => {
+                        // Sibling right node wasn't encountered in previous iteration,
+                        // so sibling must have value 1.
+                        bound.push(
+                            (current.index / 2, F::one() + r * (current.value - F::one())).into(),
+                        );
+                        next_right_node_to_process = current.index + 2;
+                    }
+                    _ => unreachable!("?_?"),
+                }
+            }
+
+            bound.into_iter()
+        });
+
+        self.binding_scratch_space.par_extend(binding_iter);
+        std::mem::swap(&mut self.coeffs, &mut self.binding_scratch_space);
+
+        self.dense_len /= 2;
     }
 
     pub fn par_blocks(
@@ -125,10 +243,15 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
     }
 
     pub fn bind(&mut self, r: F) {
-        self.coeffs = self
-            .par_blocks(4)
-            .flat_map(|sparse_block| {
-                let mut bound: [Option<SparseCoefficient<F>>; 2] = [None, None];
+        unsafe {
+            self.binding_scratch_space.set_len(0);
+        }
+
+        let binding_iter = self
+            .coeffs
+            .par_chunk_by(|x, y| x.index / 4 == y.index / 4)
+            .flat_map_iter(|sparse_block| {
+                let mut bound = SmallVec::<[SparseCoefficient<F>; 2]>::new();
 
                 let block_index = sparse_block[0].index / 4;
                 let mut dense_block = [F::one(), F::one(), F::one(), F::one()];
@@ -139,19 +262,20 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 }
                 let left = dense_block[0] + r.mul_0_optimized(dense_block[2] - dense_block[0]);
                 let right = dense_block[1] + r.mul_0_optimized(dense_block[3] - dense_block[1]);
+
                 if !left.is_one() {
                     let left_index = 2 * block_index;
-                    bound[0] = Some((left_index, left).into());
+                    bound.push((left_index, left).into());
                 }
                 if !right.is_one() {
                     let right_index = 2 * block_index + 1;
-                    bound[1] = Some((right_index, right).into());
+                    bound.push((right_index, right).into());
                 }
+                bound.into_iter()
+            });
 
-                bound
-            })
-            .filter_map(|bound_value| bound_value)
-            .collect();
+        self.binding_scratch_space.par_extend(binding_iter);
+        std::mem::swap(&mut self.coeffs, &mut self.binding_scratch_space);
 
         self.dense_len /= 2;
     }
@@ -280,7 +404,7 @@ mod tests {
             }
 
             let poly = SparseInterleavedPolynomial::new(coeffs, 2 << num_vars);
-            let slices = poly.parallelizable_slices();
+            let slices = SparseInterleavedPolynomial::parallelizable_slices(&poly.coeffs);
 
             for (slice_index, slice) in slices.iter().enumerate().skip(1) {
                 let prev_slice = slices[slice_index - 1];

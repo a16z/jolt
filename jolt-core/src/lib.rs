@@ -10,6 +10,8 @@
 #![allow(long_running_const_eval)]
 #![allow(clippy::len_without_is_empty)]
 #![allow(type_alias_bounds)]
+#![feature(coroutines)]
+#![feature(iter_from_coroutine)]
 
 #[cfg(feature = "host")]
 pub mod benches;

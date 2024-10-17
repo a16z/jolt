@@ -93,6 +93,10 @@ harness = false
 name = "commit"
 harness = false
 
+[[bench]]
+name = "polynomial"
+harness = false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"

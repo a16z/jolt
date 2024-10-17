@@ -26,10 +26,10 @@ pub struct QuarkGrandProductProof<PCS: CommitmentScheme> {
     num_vars: usize,
 }
 
-// pub struct QuarkGrandProduct<F: JoltField> {
-//     polynomials: Vec<Vec<F>>,
-//     base_layers: Vec<BatchedDenseGrandProductLayer<F>>,
-// }
+pub struct QuarkGrandProduct<F: JoltField> {
+    polynomials: Vec<Vec<F>>,
+    base_layers: Vec<BatchedDenseGrandProductLayer<F>>,
+}
 
 // #[derive(Clone, Copy, Debug, Default)]
 // pub enum QuarkHybridLayerDepth {
