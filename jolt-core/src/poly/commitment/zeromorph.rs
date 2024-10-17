@@ -25,7 +25,7 @@ use tracing::trace_span;
 use rayon::prelude::*;
 
 use super::{
-    commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+    commitment_scheme::{BatchType, CommitShape, CommitmentScheme, StreamingCommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 
@@ -64,7 +64,7 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
     pub tau_N_max_sub_2_N: P::G2Affine,
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> Default for ZeromorphCommitment<P> {
@@ -609,6 +609,23 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"zeromorph"
+    }
+}
+
+impl<P: Pairing> StreamingCommitmentScheme for Zeromorph<P>
+where
+    <P as Pairing>::ScalarField: field::JoltField,
+{
+    type State<'a> = ();
+
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup, batch_type: &BatchType) -> Self::State<'a> {
+        todo!()
+    }
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        todo!()
+    }
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
+        todo!()
     }
 }
 

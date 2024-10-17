@@ -6,14 +6,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
+use std::marker::PhantomData;
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme, StreamingCommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
+use crate::utils::streaming::map_state;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
 use common::to_ram_address;
@@ -94,6 +96,29 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 
 pub type BytecodeProof<F, PCS> =
     MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings>;
+
+pub struct BytecodeRowStep<F: JoltField, C: CommitmentScheme<Field = F>> {
+    _group: PhantomData<C>,
+
+    /// Memory address as read from the ELF.
+    pub(super) address: F,
+    /// Packed instruction/circuit flags, used for r1cs
+    pub(super) bitflags: F,
+    /// Index of the destination register for this instruction (0 if register is unused).
+    pub(super) rd: F,
+    /// Index of the first source register for this instruction (0 if register is unused).
+    pub(super) rs1: F,
+    /// Index of the second source register for this instruction (0 if register is unused).
+    pub(super) rs2: F,
+    /// "Immediate" value for this instruction (0 if unused).
+    pub(super) imm: F,
+    // /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    // /// Jolt paper), then this contains the number of virtual instructions after this
+    // /// one in the sequence. I.e. if this is the last instruction in the sequence,
+    // /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    // /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    // virtual_sequence_remaining: Option<usize>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -210,6 +235,26 @@ pub fn random_bytecode_trace(
     trace
 }
 
+pub struct StreamingBytecodePolynomials<'a, F: JoltField, C: CommitmentScheme<Field = F>> {
+    /// Length of the polynomial.
+    length: usize,
+    /// Stream that builds the bytecode polynomial.
+    polynomial_stream: Box<dyn Iterator<Item = BytecodePolynomialStep<F, C>> + 'a>, // MapState<Vec<usize>, I, FN>,
+}
+
+pub struct BytecodePolynomialStep<F: JoltField, C: CommitmentScheme<Field = F>> {
+    _group: PhantomData<C>,
+    /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
+    /// so the read addresses and write addresses are the same.
+    pub(super) a_read_write: F,
+    /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
+    /// so the read values and write values are the same. There are six values (address, bitflags, rd, rs1, rs2, imm)
+    /// associated with each memory address, so `v_read_write` comprises five polynomials.
+    pub(super) v_read_write: BytecodeRowStep<F, C>,
+    /// MLE of the read timestamps.
+    pub(super) t_read: F,
+}
+
 #[derive(Clone)]
 pub struct BytecodePreprocessing<F: JoltField> {
     /// Size of the (padded) bytecode.
@@ -287,6 +332,80 @@ impl<F: JoltField> BytecodePreprocessing<F> {
             code_size,
             virtual_address_map,
         }
+    }
+}
+
+impl<'a, F: JoltField, C: CommitmentScheme<Field = F>> StreamingBytecodePolynomials<'a, F, C> {
+    #[tracing::instrument(skip_all, name = "StreamingBytecodePolynomials::new")]
+    pub fn new<InstructionSet: JoltInstructionSet>(
+        preprocessing: &'a BytecodePreprocessing<F>,
+        trace: &'a mut [JoltTraceStep<InstructionSet>],
+    ) -> Self {
+        let final_cts: Vec<usize> = vec![0; preprocessing.code_size];
+        let length = trace.len();
+
+        let polynomial_stream = map_state(final_cts, trace.iter_mut(), |final_cts, step| {
+            if !step.bytecode_row.address.is_zero() {
+                assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
+                assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
+                // Compress instruction address for more efficient commitment:
+                step.bytecode_row.address = 1
+                    + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
+                        / BYTES_PER_INSTRUCTION;
+            }
+
+            let virtual_address = preprocessing
+                .virtual_address_map
+                .get(&(
+                    step.bytecode_row.address,
+                    step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                ))
+                .unwrap();
+            let a_read_write_usize = *virtual_address;
+            let counter = final_cts[*virtual_address];
+            final_cts[*virtual_address] = counter + 1;
+
+            let address = F::from_u64(step.bytecode_row.address as u64).unwrap();
+            let bitflags = F::from_u64(step.bytecode_row.bitflags).unwrap();
+            let rd = F::from_u64(step.bytecode_row.rd).unwrap();
+            let rs1 = F::from_u64(step.bytecode_row.rs1).unwrap();
+            let rs2 = F::from_u64(step.bytecode_row.rs2).unwrap();
+            let imm = F::from_u64(step.bytecode_row.imm).unwrap();
+
+            let v_read_write = BytecodeRowStep {
+                _group: PhantomData,
+                address,
+                bitflags,
+                rd,
+                rs1,
+                rs2,
+                imm,
+            };
+
+            BytecodePolynomialStep {
+                _group: PhantomData,
+                a_read_write: F::from_usize(a_read_write_usize).unwrap(),
+                v_read_write,
+                t_read: F::from_usize(counter).unwrap(),
+            }
+        });
+
+        StreamingBytecodePolynomials {
+            length,
+            polynomial_stream: Box::new(polynomial_stream),
+        }
+    }
+
+    pub fn fold<T, FN>(self, init: T, f: FN) -> T
+    where
+        FN: FnMut(T, BytecodePolynomialStep<F, C>) -> T,
+    {
+        self.polynomial_stream.fold(init, f)
+    }
+
+    /// Returns the number of evaluations of the polynomial.
+    pub fn length(&self) -> usize {
+        self.length
     }
 }
 
@@ -466,6 +585,56 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
         let init_final_shape = CommitShape::new(max_bytecode_size, BatchType::Small);
 
         vec![read_write_shape, init_final_shape]
+    }
+}
+
+// TODO: Use BytecodeStuff? XXX
+pub struct StreamingBytecodeCommitment<'a, C: StreamingCommitmentScheme> {
+    a_read_write: C::State<'a>,
+    v_read_write: [C::State<'a>; 6],
+    t_read: C::State<'a>,
+}
+
+impl<'a, C: StreamingCommitmentScheme> StreamingBytecodeCommitment<'a, C> {
+    /// Initialize a streaming computation of a commitment.
+    pub fn initialize(size: usize, setup: &'a C::Setup, batch_type: &BatchType) -> Self {
+        let a_read_write = C::initialize(size, setup, batch_type);
+        let v_read_write = std::array::from_fn(|_| a_read_write.clone());
+        let t_read = a_read_write.clone();
+
+        StreamingBytecodeCommitment {
+            a_read_write,
+            v_read_write,
+            t_read,
+        }
+    }
+
+    /// Process one step to compute the commitment.
+    pub fn process(self, step: &BytecodePolynomialStep<C::Field, C>) -> Self {
+        let step_v_read_write = [
+            step.v_read_write.address,
+            step.v_read_write.bitflags,
+            step.v_read_write.rd,
+            step.v_read_write.rs1,
+            step.v_read_write.rs2,
+            step.v_read_write.imm,
+        ];
+        StreamingBytecodeCommitment {
+            a_read_write: C::process(self.a_read_write, step.a_read_write),
+            v_read_write: self.v_read_write.into_iter().zip(step_v_read_write)
+                .map(|(vrd, step)| C::process(vrd, step)).collect::<Vec<_>>().try_into().unwrap(),
+            t_read: C::process(self.t_read, step.t_read),
+        }
+    }
+
+    /// Return the trace commitments.
+    pub fn finalize(self) -> Vec<C::Commitment> {
+        [
+            C::finalize(self.a_read_write),
+            C::finalize(self.t_read),
+        ].into_iter().chain(
+            self.v_read_write.into_iter().map(|vrw| C::finalize(vrw))
+        ).collect()
     }
 }
 
