@@ -1183,11 +1183,13 @@ where
         let r_eq = transcript.challenge_vector(num_rounds);
         let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_eq));
 
+        let input_start_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            program_io.memory_layout.ram_witness_offset,
+        ) as u64;
         let io_witness_range: Vec<_> = (0..memory_size as u64)
             .map(|i| {
-                if i >= program_io.memory_layout.input_start
-                    && i < program_io.memory_layout.ram_witness_offset
-                {
+                if i >= input_start_index && i < program_io.memory_layout.ram_witness_offset {
                     F::one()
                 } else {
                     F::zero()
@@ -1281,9 +1283,13 @@ where
             "Ram witness offset must be a power of two"
         );
 
-        let io_witness_range: Vec<_> = (0..nonzero_memory_size as u64)
+        let input_start_index = memory_address_to_witness_index(
+            memory_layout.input_start,
+            memory_layout.ram_witness_offset,
+        );
+        let io_witness_range: Vec<_> = (0..nonzero_memory_size)
             .map(|i| {
-                if i >= memory_layout.input_start {
+                if i >= input_start_index {
                     F::one()
                 } else {
                     F::zero()
@@ -1291,9 +1297,12 @@ where
             })
             .collect();
         let mut io_witness_range_eval = DensePolynomial::new(io_witness_range)
-            .evaluate(&r_sumcheck[0..log_nonzero_memory_size]);
+            .evaluate(&r_sumcheck[(proof.num_rounds - log_nonzero_memory_size)..]);
 
-        let r_prod: F = r_sumcheck[log_nonzero_memory_size..].iter().product();
+        let r_prod: F = r_sumcheck[..(proof.num_rounds - log_nonzero_memory_size)]
+            .iter()
+            .map(|r| F::one() - r)
+            .product();
         io_witness_range_eval *= r_prod;
 
         let mut v_io: Vec<u64> = vec![0; nonzero_memory_size];
@@ -1320,8 +1329,8 @@ where
             memory_layout.panic,
             memory_layout.ram_witness_offset,
         )] = preprocessing.program_io.as_ref().unwrap().panic as u64;
-        let mut v_io_eval =
-            DensePolynomial::from_u64(&v_io).evaluate(&r_sumcheck[..log_nonzero_memory_size]);
+        let mut v_io_eval = DensePolynomial::from_u64(&v_io)
+            .evaluate(&r_sumcheck[(proof.num_rounds - log_nonzero_memory_size)..]);
         v_io_eval *= r_prod;
 
         assert_eq!(
