@@ -482,4 +482,33 @@ mod tests {
             verification_result.err()
         );
     }
+
+    #[test]
+    #[should_panic]
+    fn truncated_trace() {
+        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&9u32);
+        let (bytecode, memory_init) = program.decode();
+        let (mut io_device, mut trace) = program.trace();
+        trace.truncate(100);
+        io_device.outputs[0] = 0; // change the output to 0
+        drop(artifact_guard);
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<Fr, HyperKZG<Bn254>, C, M>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
 }

@@ -543,6 +543,7 @@ impl Mmu {
         if effective_address < DRAM_BASE {
             if self.jolt_device.is_output(effective_address)
                 || self.jolt_device.is_panic(effective_address)
+                || self.jolt_device.is_termination(effective_address)
             {
                 self.tracer.push_memory(MemoryState::Write {
                     address: effective_address,
@@ -644,6 +645,7 @@ impl Mmu {
                 _ => {
                     if self.jolt_device.is_output(effective_address)
                         || self.jolt_device.is_panic(effective_address)
+                        || self.jolt_device.is_termination(effective_address)
                     {
                         self.jolt_device.store(effective_address, value);
                     } else {
