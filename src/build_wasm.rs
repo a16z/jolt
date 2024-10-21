@@ -54,8 +54,10 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
 
 fn extract_provable_functions() -> Vec<FunctionAttributes> {
     let guest_path = Path::new("guest/src/lib.rs");
-    let content = fs::read_to_string(guest_path).expect(&format!("Unable to read file: {:?}", guest_path));
-    let syntax: syn::File = syn::parse_file(&content).expect(&format!("Unable to parse file: {:?}", guest_path));
+    let content = fs::read_to_string(guest_path)
+        .unwrap_or_else(|_| panic!("Unable to read file: {:?}", guest_path));
+    let syntax: syn::File = syn::parse_file(&content)
+        .unwrap_or_else(|_| panic!("Unable to parse file: {:?}", guest_path));
 
     syntax
         .items
