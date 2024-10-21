@@ -452,8 +452,9 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
         let (bytecode, memory_init) = program.decode();
-        let (io_device, mut trace) = program.trace();
+        let (mut io_device, mut trace) = program.trace();
         trace.truncate(100);
+        io_device.outputs[0] = 0; // change the output to 0
         drop(artifact_guard);
 
         let preprocessing =
