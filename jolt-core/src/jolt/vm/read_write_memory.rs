@@ -1223,11 +1223,13 @@ where
             program_io.memory_layout.panic,
             program_io.memory_layout.ram_witness_offset,
         )] = program_io.panic as u64;
-        // Set termination bit
-        v_io[memory_address_to_witness_index(
-            program_io.memory_layout.termination,
-            program_io.memory_layout.ram_witness_offset,
-        )] = 1;
+        if !program_io.panic {
+            // Set termination bit
+            v_io[memory_address_to_witness_index(
+                program_io.memory_layout.termination,
+                program_io.memory_layout.ram_witness_offset,
+            )] = 1;
+        }
 
         let mut sumcheck_polys = vec![
             eq,
@@ -1336,11 +1338,13 @@ where
             memory_layout.panic,
             memory_layout.ram_witness_offset,
         )] = preprocessing.program_io.as_ref().unwrap().panic as u64;
-        // Set termination bit
-        v_io[memory_address_to_witness_index(
-            memory_layout.termination,
-            memory_layout.ram_witness_offset,
-        )] = 1;
+        if !preprocessing.program_io.as_ref().unwrap().panic {
+            // Set termination bit
+            v_io[memory_address_to_witness_index(
+                memory_layout.termination,
+                memory_layout.ram_witness_offset,
+            )] = 1;
+        }
         let mut v_io_eval = DensePolynomial::from_u64(&v_io)
             .evaluate(&r_sumcheck[(proof.num_rounds - log_nonzero_memory_size)..]);
         v_io_eval *= r_prod;
