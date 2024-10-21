@@ -497,12 +497,15 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<Fr, HyperKZG<Bn254>, C, M>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
+            Fr,
+            HyperKZG<Bn254, KeccakTranscript>,
+            C,
+            M,
+            KeccakTranscript,
+        >>::prove(
+            io_device, trace, preprocessing.clone()
+        );
         let verification_result =
             RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
         assert!(
