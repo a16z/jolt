@@ -1628,7 +1628,7 @@ impl<
 mod grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::Zeromorph;
-    use crate::utils::transcript::{DefaultTranscript, Transcript};
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::{test_rng, One};
     use rand_core::RngCore;
@@ -1647,27 +1647,27 @@ mod grand_product_tests {
         .collect();
 
         let mut batched_circuit =
-            <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+            <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, DefaultTranscript>,
-                DefaultTranscript,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
             >>::construct(leaves);
-        let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
         // I love the rust type system
-        let claims = <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+        let claims = <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
             Fr,
-            Zeromorph<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         >>::claims(&batched_circuit);
         let (proof, r_prover) =
-            <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+            <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, DefaultTranscript>,
-                DefaultTranscript,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
             >>::prove_grand_product(&mut batched_circuit, None, &mut transcript, None);
 
-        let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
         let (_, r_verifier) = BatchedDenseGrandProduct::verify_grand_product(
             &proof,
             &claims,
@@ -1698,7 +1698,7 @@ mod grand_product_tests {
         .take(BATCH_SIZE)
         .collect();
         let mut batched_dense_layer =
-            BatchedDenseGrandProductLayer::<Fr, DefaultTranscript>::new(dense_layers.clone());
+            BatchedDenseGrandProductLayer::<Fr, KeccakTranscript>::new(dense_layers.clone());
 
         let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
             .iter()
@@ -1712,14 +1712,14 @@ mod grand_product_tests {
                 DynamicDensityGrandProductLayer::Sparse(sparse_layer)
             })
             .collect();
-        let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr, DefaultTranscript> =
+        let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr, KeccakTranscript> =
             BatchedSparseGrandProductLayer {
                 layer_len: LAYER_SIZE,
                 layers: sparse_layers,
                 _marker: PhantomData,
             };
 
-        let condense = |sparse_layers: BatchedSparseGrandProductLayer<Fr, DefaultTranscript>| {
+        let condense = |sparse_layers: BatchedSparseGrandProductLayer<Fr, KeccakTranscript>| {
             sparse_layers
                 .layers
                 .iter()
@@ -1801,7 +1801,7 @@ mod grand_product_tests {
         })
         .take(BATCH_SIZE)
         .collect();
-        let dense_layers: BatchedSparseGrandProductLayer<Fr, DefaultTranscript> =
+        let dense_layers: BatchedSparseGrandProductLayer<Fr, KeccakTranscript> =
             BatchedSparseGrandProductLayer {
                 layer_len: LAYER_SIZE,
                 layers: dense_layers,
@@ -1825,7 +1825,7 @@ mod grand_product_tests {
                 DynamicDensityGrandProductLayer::Sparse(sparse_layer)
             })
             .collect();
-        let sparse_layers: BatchedSparseGrandProductLayer<Fr, DefaultTranscript> =
+        let sparse_layers: BatchedSparseGrandProductLayer<Fr, KeccakTranscript> =
             BatchedSparseGrandProductLayer {
                 layer_len: LAYER_SIZE,
                 layers: sparse_layers,

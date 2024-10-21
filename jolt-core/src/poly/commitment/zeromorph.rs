@@ -629,7 +629,7 @@ where
 mod test {
     use super::*;
     use crate::utils::math::Math;
-    use crate::utils::transcript::{DefaultTranscript, Transcript};
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_ff::{BigInt, Zero};
     use ark_std::{test_rng, UniformRand};
@@ -889,10 +889,10 @@ mod test {
 
             let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << num_vars);
             let (pk, vk) = srs.trim(1 << num_vars);
-            let commitment = Zeromorph::<Bn254, DefaultTranscript>::commit(&pk, &poly).unwrap();
+            let commitment = Zeromorph::<Bn254, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
-            let mut prover_transcript = DefaultTranscript::new(b"TestEval");
-            let proof = Zeromorph::<Bn254, DefaultTranscript>::open(
+            let mut prover_transcript = KeccakTranscript::new(b"TestEval");
+            let proof = Zeromorph::<Bn254, KeccakTranscript>::open(
                 &pk,
                 &poly,
                 &point,
@@ -904,8 +904,8 @@ mod test {
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
-            let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-            Zeromorph::<Bn254, DefaultTranscript>::verify(
+            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+            Zeromorph::<Bn254, KeccakTranscript>::verify(
                 &vk,
                 &commitment,
                 &point,
@@ -925,8 +925,8 @@ mod test {
                 .map(|s| *s + <Bn254 as Pairing>::ScalarField::one())
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
-            let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-            assert!(Zeromorph::<Bn254, DefaultTranscript>::verify(
+            let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+            assert!(Zeromorph::<Bn254, KeccakTranscript>::verify(
                 &vk,
                 &commitment,
                 &altered_verifier_point,
@@ -954,14 +954,14 @@ mod test {
                 let (pk, vk) = srs.trim(1 << num_vars);
                 let commitments: Vec<_> = polys
                     .iter()
-                    .map(|poly| Zeromorph::<Bn254, DefaultTranscript>::commit(&pk, poly).unwrap())
+                    .map(|poly| Zeromorph::<Bn254, KeccakTranscript>::commit(&pk, poly).unwrap())
                     .collect();
 
                 let commitments_refs: Vec<_> = commitments.iter().collect();
                 let polys_refs: Vec<_> = polys.iter().collect();
 
-                let mut prover_transcript = DefaultTranscript::new(b"TestEval");
-                let proof = Zeromorph::<Bn254, DefaultTranscript>::batch_open(
+                let mut prover_transcript = KeccakTranscript::new(b"TestEval");
+                let proof = Zeromorph::<Bn254, KeccakTranscript>::batch_open(
                     &pk,
                     &polys_refs,
                     &point,
@@ -972,8 +972,8 @@ mod test {
                     prover_transcript.challenge_scalar();
 
                 // Verify proof.
-                let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-                Zeromorph::<Bn254, DefaultTranscript>::batch_verify(
+                let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+                Zeromorph::<Bn254, KeccakTranscript>::batch_verify(
                     &vk,
                     &commitments_refs,
                     &point,
@@ -996,8 +996,8 @@ mod test {
                     .iter()
                     .map(|poly| poly.evaluate(&altered_verifier_point))
                     .collect();
-                let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
-                assert!(Zeromorph::<Bn254, DefaultTranscript>::batch_verify(
+                let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+                assert!(Zeromorph::<Bn254, KeccakTranscript>::batch_verify(
                     &vk,
                     &commitments_refs,
                     &altered_verifier_point,

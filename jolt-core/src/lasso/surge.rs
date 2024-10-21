@@ -656,7 +656,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::SurgePreprocessing;
-    use crate::utils::transcript::DefaultTranscript;
+    use crate::utils::transcript::KeccakTranscript;
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
@@ -684,17 +684,17 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::<_, DefaultTranscript>::setup(&[CommitShape::new(
+        let generators = HyperKZG::<_, KeccakTranscript>::setup(&[CommitShape::new(
             M,
             BatchType::SurgeReadWrite,
         )]);
         let (proof, debug_info) = SurgeProof::<
             Fr,
-            HyperKZG<Bn254, DefaultTranscript>,
+            HyperKZG<Bn254, KeccakTranscript>,
             XORInstruction<WORD_SIZE>,
             C,
             M,
-            DefaultTranscript,
+            KeccakTranscript,
         >::prove(&preprocessing, &generators, ops);
 
         SurgeProof::verify(&preprocessing, &generators, proof, debug_info).expect("should work");
@@ -716,17 +716,17 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::<_, DefaultTranscript>::setup(&[CommitShape::new(
+        let generators = HyperKZG::<_, KeccakTranscript>::setup(&[CommitShape::new(
             M,
             BatchType::SurgeReadWrite,
         )]);
         let (proof, debug_info) = SurgeProof::<
             Fr,
-            HyperKZG<Bn254, DefaultTranscript>,
+            HyperKZG<Bn254, KeccakTranscript>,
             XORInstruction<WORD_SIZE>,
             C,
             M,
-            DefaultTranscript,
+            KeccakTranscript,
         >::prove(&preprocessing, &generators, ops);
 
         SurgeProof::verify(&preprocessing, &generators, proof, debug_info).expect("should work");

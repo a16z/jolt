@@ -5,7 +5,7 @@ use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitShape, Com
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::commitment::kzg::CommitMode;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
-use jolt_core::utils::transcript::{DefaultTranscript, Transcript};
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -101,7 +101,7 @@ fn main() {
     let num_layers = 50;
     let layer_size = 1 << 10;
     // Zeromorph
-    benchmark_commit::<Zeromorph<Bn254, DefaultTranscript>, Fr, DefaultTranscript>(
+    benchmark_commit::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "Zeromorph",
         num_layers,
@@ -109,7 +109,7 @@ fn main() {
         90,
         BatchType::Big,
     );
-    benchmark_commit::<HyperKZG<Bn254, DefaultTranscript>, Fr, DefaultTranscript>(
+    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "HyperKZG",
         num_layers,
@@ -117,7 +117,7 @@ fn main() {
         90,
         BatchType::GrandProduct,
     );
-    benchmark_commit::<HyperKZG<Bn254, DefaultTranscript>, Fr, DefaultTranscript>(
+    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "HyperKZG",
         num_layers,

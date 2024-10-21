@@ -6,7 +6,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
-use crate::utils::transcript::{DefaultTranscript, Transcript};
+use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr, G1Projective};
 use serde::Serialize;
 
@@ -36,38 +36,38 @@ pub fn benchmarks(
     match pcs_type {
         PCSType::Hyrax => match bench_type {
             BenchType::Sha2 => {
-                sha2::<Fr, HyraxScheme<G1Projective, DefaultTranscript>, DefaultTranscript>()
+                sha2::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Sha3 => {
-                sha3::<Fr, HyraxScheme<G1Projective, DefaultTranscript>, DefaultTranscript>()
+                sha3::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Sha2Chain => {
-                sha2chain::<Fr, HyraxScheme<G1Projective, DefaultTranscript>, DefaultTranscript>()
+                sha2chain::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Fibonacci => {
-                fibonacci::<Fr, HyraxScheme<G1Projective, DefaultTranscript>, DefaultTranscript>()
+                fibonacci::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::Zeromorph => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254, DefaultTranscript>, DefaultTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254, DefaultTranscript>, DefaultTranscript>(),
+            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
             BenchType::Sha2Chain => {
-                sha2chain::<Fr, Zeromorph<Bn254, DefaultTranscript>, DefaultTranscript>()
+                sha2chain::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Fibonacci => {
-                fibonacci::<Fr, Zeromorph<Bn254, DefaultTranscript>, DefaultTranscript>()
+                fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254, DefaultTranscript>, DefaultTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254, DefaultTranscript>, DefaultTranscript>(),
+            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
             BenchType::Sha2Chain => {
-                sha2chain::<Fr, HyperKZG<Bn254, DefaultTranscript>, DefaultTranscript>()
+                sha2chain::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Fibonacci => {
-                fibonacci::<Fr, HyperKZG<Bn254, DefaultTranscript>, DefaultTranscript>()
+                fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             _ => panic!("BenchType does not have a mapping"),
         },

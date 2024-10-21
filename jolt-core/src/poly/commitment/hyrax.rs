@@ -526,7 +526,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>, ProofTranscript: Transcript>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::{DefaultTranscript, Transcript};
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Fr, G1Projective};
 
     #[test]
@@ -559,10 +559,10 @@ mod tests {
         let generators: PedersenGenerators<G> = PedersenGenerators::new(1 << 8, b"test-two");
         let poly_commitment: HyraxCommitment<G> = HyraxCommitment::commit(&poly, &generators);
 
-        let mut prover_transcript = DefaultTranscript::new(b"example");
+        let mut prover_transcript = KeccakTranscript::new(b"example");
         let proof = HyraxOpeningProof::prove(&poly, &r, RATIO, &mut prover_transcript);
 
-        let mut verifier_transcript = DefaultTranscript::new(b"example");
+        let mut verifier_transcript = KeccakTranscript::new(b"example");
 
         assert!(proof
             .verify(

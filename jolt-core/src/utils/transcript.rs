@@ -5,7 +5,7 @@ use sha3::{Digest, Keccak256};
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Clone)]
-pub struct DefaultTranscript {
+pub struct KeccakTranscript {
     /// Ethereum-compatible 256-bit running state
     pub state: [u8; 32],
     /// We append an ordinal to each invocation of the hash
@@ -21,7 +21,7 @@ pub struct DefaultTranscript {
     expected_state_history: Option<Vec<[u8; 32]>>,
 }
 
-impl DefaultTranscript {
+impl KeccakTranscript {
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
     fn hasher(&self) -> Keccak256 {
@@ -74,7 +74,7 @@ impl DefaultTranscript {
     }
 }
 
-impl Transcript for DefaultTranscript {
+impl Transcript for KeccakTranscript {
     fn new(label: &'static [u8]) -> Self {
         // Hash in the label
         assert!(label.len() < 33);

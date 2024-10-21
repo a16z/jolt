@@ -10,7 +10,7 @@ use jolt_core::subprotocols::grand_product::{
 use jolt_core::subprotocols::grand_product_quarks::{
     QuarkGrandProduct, QuarkGrandProductConfig, QuarkHybridLayerDepth,
 };
-use jolt_core::utils::transcript::{DefaultTranscript, Transcript};
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -196,19 +196,19 @@ fn main() {
     // Hybrid
     config.name = "HyperKZG Hybrid";
     benchmark_prove_and_verify::<
-        HyperKZG<Bn254, DefaultTranscript>,
+        HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        QuarkGrandProduct<Fr, DefaultTranscript>,
-        DefaultTranscript,
+        QuarkGrandProduct<Fr, KeccakTranscript>,
+        KeccakTranscript,
     >(&mut c, config, QuarkGrandProductConfig::default());
 
     // Hybrid min
     config.name = "HyperKZG Hybrid Min Crossover";
     benchmark_prove_and_verify::<
-        HyperKZG<Bn254, DefaultTranscript>,
+        HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        QuarkGrandProduct<Fr, DefaultTranscript>,
-        DefaultTranscript,
+        QuarkGrandProduct<Fr, KeccakTranscript>,
+        KeccakTranscript,
     >(
         &mut c,
         config,
@@ -218,10 +218,10 @@ fn main() {
     );
     config.name = "HyperKZG Hybrid Min Crossover";
     benchmark_prove_and_verify::<
-        HyperKZG<Bn254, DefaultTranscript>,
+        HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        QuarkGrandProduct<Fr, DefaultTranscript>,
-        DefaultTranscript,
+        QuarkGrandProduct<Fr, KeccakTranscript>,
+        KeccakTranscript,
     >(
         &mut c,
         BenchConfig {
@@ -236,10 +236,10 @@ fn main() {
     // Hybrid max
     config.name = "HyperKZG Hybrid Max Crossover";
     benchmark_prove_and_verify::<
-        HyperKZG<Bn254, DefaultTranscript>,
+        HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        QuarkGrandProduct<Fr, DefaultTranscript>,
-        DefaultTranscript,
+        QuarkGrandProduct<Fr, KeccakTranscript>,
+        KeccakTranscript,
     >(
         &mut c,
         config,
@@ -251,17 +251,17 @@ fn main() {
     // GKR
     config.name = "HyperKZG GKR";
     benchmark_prove_and_verify::<
-        HyperKZG<Bn254, DefaultTranscript>,
+        HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        BatchedDenseGrandProduct<Fr, DefaultTranscript>,
-        DefaultTranscript,
+        BatchedDenseGrandProduct<Fr, KeccakTranscript>,
+        KeccakTranscript,
     >(
         &mut c,
         config,
-        <BatchedDenseGrandProduct<_, DefaultTranscript> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<_, KeccakTranscript> as BatchedGrandProduct<
             Fr,
-            HyperKZG<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         >>::Config::default(),
     );
 

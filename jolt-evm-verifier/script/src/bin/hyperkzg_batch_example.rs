@@ -9,7 +9,7 @@ use ark_std::UniformRand;
 use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use jolt_core::poly::commitment::hyperkzg::*;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::utils::transcript::{DefaultTranscript, Transcript};
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_core::SeedableRng;
 
 use jolt_core::utils::sol_types::{HyperKZGProofSol, VK};
@@ -42,7 +42,7 @@ fn main() {
                 .collect::<Vec<_>>(),
         );
         let eval = poly.evaluate(&point);
-        commitments.push(HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap());
+        commitments.push(HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap());
         polys.push(poly);
         evals.push(eval);
     }
@@ -52,7 +52,7 @@ fn main() {
     }
 
     // prove an evaluation
-    let mut prover_transcript = DefaultTranscript::new(b"TestEval");
+    let mut prover_transcript = KeccakTranscript::new(b"TestEval");
     let proof: HyperKZGProof<Bn254> = HyperKZG::batch_prove(
         &(pk, vk),
         borrowed.as_slice(),

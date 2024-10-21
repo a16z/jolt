@@ -11,21 +11,21 @@ use alloy_sol_types::{sol, SolType};
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
-use jolt_core::utils::transcript::{DefaultTranscript, Transcript};
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 
-fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr, DefaultTranscript>) {
-    let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
+fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr, KeccakTranscript>) {
+    let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
     let (proof, r_prover) =
-        <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
             Fr,
-            HyperKZG<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         >>::prove_grand_product(batched_circuit, None, &mut transcript, None);
-    let claims = <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+    let claims = <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
         Fr,
-        HyperKZG<Bn254, DefaultTranscript>,
-        DefaultTranscript,
+        HyperKZG<Bn254, KeccakTranscript>,
+        KeccakTranscript,
     >>::claims(batched_circuit);
 
     //encoding the proof into abi
@@ -74,10 +74,10 @@ fn main() {
     .collect();
 
     let mut batched_circuit =
-        <BatchedDenseGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
             Fr,
-            HyperKZG<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         >>::construct(leaves);
 
     get_proof_data(&mut batched_circuit);

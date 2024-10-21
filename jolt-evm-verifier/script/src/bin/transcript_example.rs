@@ -1,6 +1,6 @@
 use jolt_core::{
     field::JoltField,
-    utils::transcript::{DefaultTranscript, Transcript},
+    utils::transcript::{KeccakTranscript, Transcript},
 };
 
 use ark_ff::{BigInteger, PrimeField};
@@ -37,7 +37,7 @@ fn main() {
     let mut vector_responses = Vec::<Vec<Fr>>::new();
 
     let usizes: Vec<u64> = vec![rng.gen(), rng.gen()];
-    let mut transcript = DefaultTranscript::new(b"test_transcript");
+    let mut transcript = KeccakTranscript::new(b"test_transcript");
 
     transcript.append_u64(usizes[0]);
     transcript.append_u64(usizes[1]);

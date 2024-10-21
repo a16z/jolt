@@ -656,7 +656,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::transcript::{DefaultTranscript, Transcript};
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::UniformRand;
     use rand_core::SeedableRng;
@@ -671,12 +671,12 @@ mod tests {
         // poly is in eval. representation; evaluated at [(0,0), (0,1), (1,0), (1,1)]
         let poly = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(2), Fr::from(4)]);
 
-        let C = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
         let test_inner = |point: Vec<Fr>, eval: Fr| -> Result<(), ProofVerifyError> {
-            let mut tr = DefaultTranscript::new(b"TestEval");
+            let mut tr = KeccakTranscript::new(b"TestEval");
             let proof = HyperKZG::open(&pk, &poly, &point, &eval, &mut tr).unwrap();
-            let mut tr = DefaultTranscript::new(b"TestEval");
+            let mut tr = KeccakTranscript::new(b"TestEval");
             HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut tr)
         };
 
@@ -729,15 +729,15 @@ mod tests {
         let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(3);
 
         // make a commitment
-        let C = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
         // prove an evaluation
-        let mut tr = DefaultTranscript::new(b"TestEval");
+        let mut tr = KeccakTranscript::new(b"TestEval");
         let proof = HyperKZG::open(&pk, &poly, &point, &eval, &mut tr).unwrap();
         let post_c_p = tr.challenge_scalar::<Fr>();
 
         // verify the evaluation
-        let mut verifier_transcript = DefaultTranscript::new(b"TestEval");
+        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
         assert!(
             HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut verifier_transcript,).is_ok()
         );
@@ -754,7 +754,7 @@ mod tests {
         let mut bad_proof = proof.clone();
         let v1 = bad_proof.v[1].clone();
         bad_proof.v[0].clone_from(&v1);
-        let mut verifier_transcript2 = DefaultTranscript::new(b"TestEval");
+        let mut verifier_transcript2 = KeccakTranscript::new(b"TestEval");
         assert!(HyperKZG::verify(
             &vk,
             &C,
@@ -788,22 +788,22 @@ mod tests {
             let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(n);
 
             // make a commitment
-            let C = HyperKZG::<_, DefaultTranscript>::commit(&pk, &poly).unwrap();
+            let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
             // prove an evaluation
-            let mut prover_transcript = DefaultTranscript::new(b"TestEval");
+            let mut prover_transcript = KeccakTranscript::new(b"TestEval");
             let proof: HyperKZGProof<Bn254> =
                 HyperKZG::open(&pk, &poly, &point, &eval, &mut prover_transcript).unwrap();
 
             // verify the evaluation
-            let mut verifier_tr = DefaultTranscript::new(b"TestEval");
+            let mut verifier_tr = KeccakTranscript::new(b"TestEval");
             assert!(HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut verifier_tr,).is_ok());
 
             // Change the proof and expect verification to fail
             let mut bad_proof = proof.clone();
             let v1 = bad_proof.v[1].clone();
             bad_proof.v[0].clone_from(&v1);
-            let mut verifier_tr2 = DefaultTranscript::new(b"TestEval");
+            let mut verifier_tr2 = KeccakTranscript::new(b"TestEval");
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
             );

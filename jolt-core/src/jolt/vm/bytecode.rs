@@ -705,7 +705,7 @@ mod tests {
     use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
 
     use super::*;
-    use crate::utils::transcript::DefaultTranscript;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::{Fr, G1Projective};
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -770,8 +770,8 @@ mod tests {
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr> = BytecodeProof::<
             Fr,
-            HyraxScheme<G1Projective, DefaultTranscript>,
-            DefaultTranscript,
+            HyraxScheme<G1Projective, KeccakTranscript>,
+            KeccakTranscript,
         >::generate_witness::<RV32I>(
             &preprocessing, &mut trace
         );
@@ -779,8 +779,8 @@ mod tests {
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
         let (read_write_leaves, init_final_leaves) = BytecodeProof::<
             Fr,
-            HyraxScheme<G1Projective, DefaultTranscript>,
-            DefaultTranscript,
+            HyraxScheme<G1Projective, KeccakTranscript>,
+            KeccakTranscript,
         >::compute_leaves(
             &preprocessing,
             &polys,
@@ -814,7 +814,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective, DefaultTranscript>, DefaultTranscript>::validate_bytecode(
+        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
             &program, &trace,
         );
     }
@@ -832,7 +832,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective, DefaultTranscript>, DefaultTranscript>::validate_bytecode(
+        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
             &program, &trace,
         );
     }

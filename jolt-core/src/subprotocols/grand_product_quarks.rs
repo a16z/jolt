@@ -688,7 +688,7 @@ fn line_reduce_verify<F: JoltField, ProofTranscript: Transcript>(
 mod quark_grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::*;
-    use crate::utils::transcript::{DefaultTranscript, Transcript};
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use rand_core::SeedableRng;
 
@@ -706,27 +706,27 @@ mod quark_grand_product_tests {
             .collect();
         let known_products = vec![leaves_1.iter().product(), leaves_2.iter().product()];
         let v = vec![leaves_1, leaves_2];
-        let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr, DefaultTranscript> =
+        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
             ProverOpeningAccumulator::new();
         let mut verifier_accumulator: VerifierOpeningAccumulator<
             Fr,
-            Zeromorph<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         > = VerifierOpeningAccumulator::new();
 
         let (proof, _, _) = QuarkGrandProductProof::<
-            Zeromorph<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         >::prove(&v, &mut prover_accumulator, &mut transcript, &setup);
         let batched_proof = prover_accumulator.reduce_and_prove(&setup, &mut transcript);
 
         // Note resetting the transcript is important
-        transcript = DefaultTranscript::new(b"test_transcript");
+        transcript = KeccakTranscript::new(b"test_transcript");
         let result = proof.verify(
             &known_products,
             &mut verifier_accumulator,
@@ -754,35 +754,33 @@ mod quark_grand_product_tests {
         let known_products: Vec<Fr> = vec![leaves_1.iter().product(), leaves_2.iter().product()];
 
         let v = vec![leaves_1, leaves_2];
-        let mut transcript: DefaultTranscript = DefaultTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr, DefaultTranscript> =
+        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
             ProverOpeningAccumulator::new();
         let mut verifier_accumulator: VerifierOpeningAccumulator<
             Fr,
-            Zeromorph<Bn254, DefaultTranscript>,
-            DefaultTranscript,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
         > = VerifierOpeningAccumulator::new();
 
         let mut hybrid_grand_product =
-            <QuarkGrandProduct<Fr, DefaultTranscript> as BatchedGrandProduct<
+            <QuarkGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
                 Fr,
-                Zeromorph<Bn254, DefaultTranscript>,
-                DefaultTranscript,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
             >>::construct_with_config(v, config);
-        let proof: BatchedGrandProductProof<
-            Zeromorph<Bn254, DefaultTranscript>,
-            DefaultTranscript,
-        > = hybrid_grand_product
-            .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, Some(&setup))
-            .0;
+        let proof: BatchedGrandProductProof<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript> =
+            hybrid_grand_product
+                .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, Some(&setup))
+                .0;
         let batched_proof = prover_accumulator.reduce_and_prove(&setup, &mut transcript);
 
         // Note resetting the transcript is important
-        transcript = DefaultTranscript::new(b"test_transcript");
+        transcript = KeccakTranscript::new(b"test_transcript");
         let _ = QuarkGrandProduct::verify_grand_product(
             &proof,
             &known_products,
