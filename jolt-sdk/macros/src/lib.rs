@@ -279,6 +279,7 @@ impl MacroBuilder {
         let output_start = memory_layout.output_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
+        let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
             let input_ptr = #input_start as *const u8;
@@ -341,6 +342,9 @@ impl MacroBuilder {
                 #check_input_len
                 #block
                 #handle_return
+                unsafe {
+                    core::ptr::write_volatile(#termination_bit as *mut u8, 1);
+                }
             }
 
             #panic_fn
