@@ -667,6 +667,10 @@ impl JoltDevice {
             return;
         }
 
+        if address == self.memory_layout.termination {
+            return;
+        }
+
         let internal_address = self.convert_write_address(address);
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
@@ -684,11 +688,15 @@ impl JoltDevice {
     }
 
     pub fn is_output(&self, address: u64) -> bool {
-        address >= self.memory_layout.output_start && address < self.memory_layout.panic
+        address >= self.memory_layout.output_start && address < self.memory_layout.termination
     }
 
     pub fn is_panic(&self, address: u64) -> bool {
         address == self.memory_layout.panic
+    }
+
+    pub fn is_termination(&self, address: u64) -> bool {
+        address == self.memory_layout.termination
     }
 
     fn convert_read_address(&self, address: u64) -> usize {
@@ -712,6 +720,7 @@ pub struct MemoryLayout {
     pub output_start: u64,
     pub output_end: u64,
     pub panic: u64,
+    pub termination: u64,
 }
 
 impl MemoryLayout {
@@ -725,12 +734,14 @@ impl MemoryLayout {
             output_start: output_start(max_input_size, max_output_size),
             output_end: output_end(max_input_size, max_output_size),
             panic: panic_address(max_input_size, max_output_size),
+            termination: termination_address(max_input_size, max_output_size),
         }
     }
 }
 
 pub fn ram_witness_offset(max_input: u64, max_output: u64) -> u64 {
-    (REGISTER_COUNT + max_input + max_output + 1).next_power_of_two()
+    // Adds 2 to account for panic bit and termination bit
+    (REGISTER_COUNT + max_input + max_output + 2).next_power_of_two()
 }
 
 fn input_start(max_input: u64, max_output: u64) -> u64 {
@@ -751,4 +762,8 @@ fn output_end(max_input: u64, max_output: u64) -> u64 {
 
 fn panic_address(max_input: u64, max_output: u64) -> u64 {
     output_end(max_input, max_output) + 1
+}
+
+fn termination_address(max_input: u64, max_output: u64) -> u64 {
+    panic_address(max_input, max_output) + 1
 }
