@@ -69,7 +69,6 @@ bytemuck = "1.19.0"
 hex = "0.4.3"
 tokio = { version = "1.38.0", optional = true }
 alloy-primitives = "0.7.6"
-alloy-rs = "0.2.1"
 alloy-sol-macro = "0.7.6"
 alloy-sol-types = "0.7.6"
 
