@@ -65,13 +65,11 @@ rand = "0.8.5"
 sysinfo = "0.30.8"
 syn = { version = "1.0.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.68"
 rmp-serde = "1.3.0"
 toml_edit = "0.22.14"
 
 jolt-sdk = { path = "./jolt-sdk" }
 jolt-core = { path = "./jolt-core" }
-alloy-core = "0.7.6"
 common = { path = "./common" }
 
 [profile.test]
@@ -96,3 +94,6 @@ debug = false
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
+
+[workspace.metadata.cargo-machete]
+ignored = ["jolt-sdk"]
