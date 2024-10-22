@@ -251,14 +251,15 @@ impl Mmu {
         if effective_address < DRAM_BASE {
             // less then DRAM_BASE and greater then panic => zero_padding region
             assert!(
-                effective_address <= self.jolt_device.memory_layout.panic,
+                effective_address <= self.jolt_device.memory_layout.termination,
                 "Stack overflow: Attempted to write to 0x{:X}, which is in the area or zero padding region.",
                 effective_address
             );
             // less then panic => jolt_device region (i.e. input/output)
             assert!(
                 self.jolt_device.is_output(effective_address)
-                    || self.jolt_device.is_panic(effective_address),
+                    || self.jolt_device.is_panic(effective_address)
+                    || self.jolt_device.is_termination(effective_address),
                 "Unknown memory mapping 0x{:X}.",
                 effective_address
             );
