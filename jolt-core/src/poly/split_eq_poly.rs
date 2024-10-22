@@ -43,7 +43,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
 
     pub fn bind(&mut self, r: F) {
         if self.E1_len == 1 {
-            println!("bind: E1_len == 1");
             // E_1 is already completely bound, so we bind E_2
             let n = self.E2_len / 2;
             for i in 0..n {
@@ -51,7 +50,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             }
             self.E2_len = n;
         } else {
-            println!("bind: normal");
             // Bind E_1
             let n = self.E1_len / 2;
             for i in 0..n {
@@ -62,7 +60,6 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             // If E_1 is now completely bound, we will be switching over to the
             // linear-time sumcheck prover, using E_1 * E_2:
             if self.E1_len == 1 {
-                println!("bind: switch");
                 self.E2[..self.E2_len]
                     .iter_mut()
                     .for_each(|eval| *eval *= self.E1[0]);

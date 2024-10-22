@@ -13,16 +13,21 @@ fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec
 
 fn random_sparse_coeffs<F: JoltField>(
     rng: &mut impl Rng,
+    batch_size: usize,
     num_vars: usize,
     density: f64,
-) -> Vec<SparseCoefficient<F>> {
-    let mut coeffs = vec![];
-    for i in 0..(2 << num_vars) {
-        if rng.gen_bool(density) {
-            coeffs.push((i, F::random(rng)).into())
-        }
-    }
-    coeffs
+) -> Vec<Vec<SparseCoefficient<F>>> {
+    (0..batch_size)
+        .map(|batch_index| {
+            let mut coeffs: Vec<SparseCoefficient<F>> = vec![];
+            for i in 0..(1 << num_vars) {
+                if rng.gen_bool(density) {
+                    coeffs.push((batch_index * (1 << num_vars) + i, F::random(rng)).into())
+                }
+            }
+            coeffs
+        })
+        .collect()
 }
 
 fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
@@ -49,10 +54,16 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     );
 }
 
-fn benchmark_sparse_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize, density: f64) {
+fn benchmark_sparse_interleaved<F: JoltField>(
+    c: &mut Criterion,
+    batch_size: usize,
+    num_vars: usize,
+    density: f64,
+) {
     c.bench_function(
         &format!(
-            "SparseInterleavedPolynomial::bind {} variables, {}% ones",
+            "SparseInterleavedPolynomial::bind {} x {} variables, {}% ones",
+            batch_size,
             num_vars,
             (1.0 - density) * 100.0
         ),
@@ -60,8 +71,9 @@ fn benchmark_sparse_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize
             b.iter_with_setup(
                 || {
                     let mut rng = test_rng();
-                    let coeffs = random_sparse_coeffs(&mut rng, num_vars, density);
-                    let poly = SparseInterleavedPolynomial::new(coeffs, 2 << num_vars);
+                    let coeffs = random_sparse_coeffs(&mut rng, batch_size, num_vars, density);
+                    let poly =
+                        SparseInterleavedPolynomial::new(coeffs, batch_size * (1 << num_vars));
                     let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
                         .take(num_vars)
                         .collect();
@@ -69,7 +81,7 @@ fn benchmark_sparse_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize
                 },
                 |(mut poly, r)| {
                     for i in 0..num_vars {
-                        criterion::black_box(poly.bind_slices(r[i]));
+                        criterion::black_box(poly.bind(r[i]));
                     }
                 },
             );
@@ -82,8 +94,10 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
 
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 24, 0.1);
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 25, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 21, 0.1);
     // benchmark_sparse_interleaved::<Fr>(&mut criterion, 26, 0.1);
     // benchmark_sparse_interleaved::<Fr>(&mut criterion, 27, 0.1);
 
