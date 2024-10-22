@@ -154,6 +154,48 @@ fn toolchain_url() -> String {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+/// Uninstalls the toolchain if it is already installed
+pub fn uninstall_toolchain() -> Result<()> {
+    if !has_toolchain() {
+        println!("Toolchain is not installed");
+        return Ok(());
+    }
+
+    // Remove the linked toolchain from rustup
+    let output = std::process::Command::new("rustup")
+        .args(["toolchain", "remove", "riscv32im-jolt-zkvm-elf"])
+        .output()?;
+
+    if !output.status.success() {
+        bail!(
+            "Failed to remove toolchain: {}",
+            String::from_utf8(output.stderr)?
+        );
+    }
+
+    // Remove the unpacked toolchain directory
+    let link_path = jolt_dir().join("rust/build/host/stage2");
+    if link_path.exists() {
+        fs::remove_dir_all(&link_path)?;
+    }
+
+    // Remove the downloaded toolchain archive
+    let toolchain_archive = jolt_dir().join("rust-toolchain.tar.gz");
+    if toolchain_archive.exists() {
+        fs::remove_file(&toolchain_archive)?;
+    }
+
+    // Remove the toolchain tag file
+    let tag_file = toolchain_tag_file();
+    if tag_file.exists() {
+        fs::remove_file(&tag_file)?;
+    }
+
+    println!("Toolchain uninstalled successfully");
+    Ok(())
+}
+
 fn has_toolchain() -> bool {
     let tag_path = toolchain_tag_file();
     if let Ok(tag) = read_to_string(tag_path) {
