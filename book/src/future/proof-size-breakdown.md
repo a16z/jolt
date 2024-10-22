@@ -1,4 +1,4 @@
-With HyperKZG commitments, Jolt's proof size today (or in the very near term) is 35KB-200KB.
+With HyperKZG commitments, Jolt's proof size (with no composition/recursion) today (or in the very near term) is 35KB-200KB.
 
 Here is the breakdown of contributors to proof size:
 
