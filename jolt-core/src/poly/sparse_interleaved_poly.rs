@@ -19,9 +19,9 @@ impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
 
 #[derive(Default, Debug, Clone)]
 pub struct SparseInterleavedPolynomial<F: JoltField> {
-    coeffs: Vec<Vec<SparseCoefficient<F>>>,
-    coalesced: Vec<F>,
-    pub dense_len: usize,
+    pub(crate) coeffs: Vec<Vec<SparseCoefficient<F>>>,
+    pub(crate) coalesced: Vec<F>,
+    pub(crate) dense_len: usize,
 }
 
 impl<F: JoltField> PartialEq for SparseInterleavedPolynomial<F> {
@@ -64,11 +64,15 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
     }
 
     pub fn to_dense(&self) -> DensePolynomial<F> {
-        let mut dense_layer = vec![F::one(); self.dense_len];
-        for coeff in self.coeffs.iter().flatten() {
-            dense_layer[coeff.index] = coeff.value;
+        if !self.coalesced.is_empty() {
+            DensePolynomial::new_padded(self.coalesced.clone())
+        } else {
+            let mut dense_layer = vec![F::one(); self.dense_len];
+            for coeff in self.coeffs.iter().flatten() {
+                dense_layer[coeff.index] = coeff.value;
+            }
+            DensePolynomial::new_padded(dense_layer)
         }
-        DensePolynomial::new(dense_layer)
     }
 
     #[cfg(test)]
@@ -117,15 +121,15 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         Self::new(coeffs, left.len() + right.len())
     }
 
-    #[cfg(test)]
     pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
-        let mut left = vec![F::one(); self.dense_len / 2];
-        let mut right = vec![F::one(); self.dense_len / 2];
-
         if !self.coalesced.is_empty() {
-            left = self.coalesced.iter().step_by(2).cloned().collect();
-            right = self.coalesced.iter().skip(1).step_by(2).cloned().collect();
+            let left = self.coalesced.iter().step_by(2).cloned().collect();
+            let right = self.coalesced.iter().skip(1).step_by(2).cloned().collect();
+            (left, right)
         } else {
+            let mut left = vec![F::one(); self.dense_len / 2];
+            let mut right = vec![F::one(); self.dense_len / 2];
+
             self.coeffs.iter().flatten().for_each(|coeff| {
                 if coeff.index % 2 == 0 {
                     left[coeff.index / 2] = coeff.value;
@@ -133,9 +137,8 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                     right[coeff.index / 2] = coeff.value;
                 }
             });
+            (left, right)
         }
-
-        (left, right)
     }
 
     pub fn par_blocks(
@@ -281,21 +284,22 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 }
 
 #[cfg(test)]
+pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, r: F) {
+    let mut left_poly = DensePolynomial::new_padded(left.clone());
+    let mut right_poly = DensePolynomial::new_padded(right.clone());
+    left_poly.bound_poly_var_bot(&r);
+    right_poly.bound_poly_var_bot(&r);
+
+    *left = left_poly.Z[..left.len() / 2].to_vec();
+    *right = right_poly.Z[..right.len() / 2].to_vec();
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_std::{rand::Rng, test_rng, One};
     use itertools::Itertools;
-
-    fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, r: F) {
-        let mut left_poly = DensePolynomial::new_padded(left.clone());
-        let mut right_poly = DensePolynomial::new_padded(right.clone());
-        left_poly.bound_poly_var_bot(&r);
-        right_poly.bound_poly_var_bot(&r);
-
-        *left = left_poly.Z[..left.len() / 2].to_vec();
-        *right = right_poly.Z[..right.len() / 2].to_vec();
-    }
 
     fn random_sparse_vector(rng: &mut impl Rng, len: usize, density: f64) -> Vec<Fr> {
         std::iter::repeat_with(|| {
@@ -357,9 +361,6 @@ mod tests {
                 .collect();
             let interleaved = SparseInterleavedPolynomial::new(coeffs, batch_size << num_vars);
             let (left, right) = interleaved.uninterleave();
-            println!("{:?}", interleaved);
-            println!("{:?}", left);
-            println!("{:?}", right);
 
             assert_eq!(
                 interleaved,
