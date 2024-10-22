@@ -7,20 +7,22 @@ use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumu
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::Transcript;
 use ark_ff::Zero;
 use ark_serialize::*;
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::marker::PhantomData;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductLayerProof<F: JoltField> {
-    pub proof: SumcheckInstanceProof<F>,
+pub struct BatchedGrandProductLayerProof<F: JoltField, ProofTranscript: Transcript> {
+    pub proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub left_claims: Vec<F>,
     pub right_claims: Vec<F>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField> BatchedGrandProductLayerProof<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayerProof<F, ProofTranscript> {
     pub fn verify(
         &self,
         claim: F,
@@ -35,12 +37,21 @@ impl<F: JoltField> BatchedGrandProductLayerProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductProof<PCS: CommitmentScheme> {
-    pub layers: Vec<BatchedGrandProductLayerProof<PCS::Field>>,
-    pub quark_proof: Option<QuarkGrandProductProof<PCS>>,
+pub struct BatchedGrandProductProof<PCS, ProofTranscript>
+where
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+{
+    pub layers: Vec<BatchedGrandProductLayerProof<PCS::Field, ProofTranscript>>,
+    pub quark_proof: Option<QuarkGrandProductProof<PCS, ProofTranscript>>,
 }
 
-pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: Sized {
+pub trait BatchedGrandProduct<F, PCS, ProofTranscript>: Sized
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     /// The bottom/input layer of the grand products
     type Leaves;
     type Config: Default + Clone + Copy;
@@ -58,16 +69,18 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
     /// of proving.
-    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>>;
+    fn layers(
+        &'_ mut self,
+    ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>>;
 
     /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
-    ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
+    ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
         let mut claims_to_verify = self.claims();
         let mut r_grand_product = Vec::new();
@@ -94,7 +107,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     /// This function may be overridden if the layer isn't just multiplication gates, e.g. in the
     /// case of `ToggledBatchedGrandProduct`.
     fn verify_sumcheck_claim(
-        layer_proofs: &[BatchedGrandProductLayerProof<F>],
+        layer_proofs: &[BatchedGrandProductLayerProof<F, ProofTranscript>],
         layer_index: usize,
         coeffs: &[F],
         sumcheck_claim: F,
@@ -125,7 +138,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
 
     /// Function used for layer sumchecks in the generic batch verifier as well as the quark layered sumcheck hybrid
     fn verify_layers(
-        proof_layers: &[BatchedGrandProductLayerProof<F>],
+        proof_layers: &[BatchedGrandProductLayerProof<F, ProofTranscript>],
         claims: &Vec<F>,
         transcript: &mut ProofTranscript,
         r_start: Vec<F>,
@@ -188,9 +201,9 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
 
     /// Verifies the given grand product proof.
     fn verify_grand_product(
-        proof: &BatchedGrandProductProof<PCS>,
+        proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claims: &Vec<F>,
-        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
@@ -201,14 +214,19 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
     }
 }
 
-pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
+pub trait BatchedGrandProductLayer<F, ProofTranscript>:
+    BatchedCubicSumcheck<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     /// Proves a single layer of a batched grand product circuit
     fn prove_layer(
         &mut self,
         claims: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
-    ) -> BatchedGrandProductLayerProof<F> {
+    ) -> BatchedGrandProductLayerProof<F, ProofTranscript> {
         // produce a fresh set of coeffs
         let coeffs: Vec<F> = transcript.challenge_vector(claims.len());
         // produce a joint claim
@@ -251,6 +269,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             proof: sumcheck_proof,
             left_claims,
             right_claims,
+            _marker: PhantomData,
         }
     }
 }
@@ -266,23 +285,30 @@ pub type DenseGrandProductLayer<F> = Vec<F>;
 
 /// Represents a batch of `DenseGrandProductLayer`, all of the same length `layer_len`.
 #[derive(Debug, Clone)]
-pub struct BatchedDenseGrandProductLayer<F: JoltField> {
+pub struct BatchedDenseGrandProductLayer<F: JoltField, ProofTranscript: Transcript> {
     pub layers: Vec<DenseGrandProductLayer<F>>,
     pub layer_len: usize,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedDenseGrandProductLayer<F, ProofTranscript> {
     pub fn new(values: Vec<Vec<F>>) -> Self {
         let layer_len = values[0].len();
         Self {
             layers: values,
             layer_len,
+            _marker: PhantomData,
         }
     }
 }
 
-impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedDenseGrandProductLayer<F> {}
-impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
+    for BatchedDenseGrandProductLayer<F, ProofTranscript>
+{
+}
+impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
+    for BatchedDenseGrandProductLayer<F, ProofTranscript>
+{
     fn num_rounds(&self) -> usize {
         self.layer_len.log_2() - 1
     }
@@ -416,12 +442,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
 ///    / \   / \
 ///   o   o o   o  <- layers[layers.len() - 2]
 ///       ...
-pub struct BatchedDenseGrandProduct<F: JoltField> {
-    layers: Vec<BatchedDenseGrandProductLayer<F>>,
+pub struct BatchedDenseGrandProduct<F: JoltField, ProofTranscript: Transcript> {
+    layers: Vec<BatchedDenseGrandProductLayer<F, ProofTranscript>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
-    for BatchedDenseGrandProduct<F>
+impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
+    for BatchedDenseGrandProduct<F, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type Leaves = Vec<Vec<F>>;
     type Config = ();
@@ -429,7 +460,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
         let num_layers = leaves[0].len().log_2();
-        let mut layers: Vec<BatchedDenseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
+        let mut layers: Vec<BatchedDenseGrandProductLayer<F, ProofTranscript>> =
+            Vec::with_capacity(num_layers);
         layers.push(BatchedDenseGrandProductLayer::new(leaves));
 
         for i in 0..num_layers - 1 {
@@ -448,11 +480,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             layers.push(BatchedDenseGrandProductLayer::new(new_layers));
         }
 
-        Self { layers }
+        Self {
+            layers,
+            _marker: PhantomData,
+        }
     }
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct_with_config")]
     fn construct_with_config(leaves: Self::Leaves, _config: Self::Config) -> Self {
-        <Self as BatchedGrandProduct<F, PCS>>::construct(leaves)
+        <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::construct(leaves)
     }
 
     fn num_layers(&self) -> usize {
@@ -460,8 +495,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
 
     fn claims(&self) -> Vec<F> {
-        let num_layers =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::num_layers(self);
+        let num_layers = <BatchedDenseGrandProduct<F, ProofTranscript> as BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+        >>::num_layers(self);
         let last_layers = &self.layers[num_layers - 1];
         assert_eq!(last_layers.layer_len, 2);
         last_layers
@@ -471,10 +509,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             .collect()
     }
 
-    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
+    fn layers(
+        &'_ mut self,
+    ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>> {
         self.layers
             .iter_mut()
-            .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F>)
+            .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F, ProofTranscript>)
             .rev()
     }
 }
@@ -625,13 +665,19 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
 /// size `layer_len`. Note that within a single batch, some layers may be represented by
 /// sparse vectors and others by dense vectors.
 #[derive(Debug, Clone)]
-pub struct BatchedSparseGrandProductLayer<F: JoltField> {
+pub struct BatchedSparseGrandProductLayer<F: JoltField, ProofTranscript: Transcript> {
     pub layer_len: usize,
     pub layers: Vec<DynamicDensityGrandProductLayer<F>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedSparseGrandProductLayer<F> {}
-impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
+    for BatchedSparseGrandProductLayer<F, ProofTranscript>
+{
+}
+impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
+    for BatchedSparseGrandProductLayer<F, ProofTranscript>
+{
     fn num_rounds(&self) -> usize {
         self.layer_len.log_2() - 1
     }
@@ -1056,7 +1102,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
 ///   o      o     o      o                          ↑
 ///  / \    / \   / \    / \    –––––––––––––––––––––––––––––––––––––––––––
 /// 🏴  o  🏳️ o  🏳️ o  🏴  o    toggle layer        ↓
-struct BatchedGrandProductToggleLayer<F: JoltField> {
+struct BatchedGrandProductToggleLayer<F: JoltField, ProofTranscript: Transcript> {
     /// The list of non-zero flag indices for each layer in the batch.
     flag_indices: Vec<Vec<usize>>,
     /// The list of non-zero flag values for each layer in the batch.
@@ -1065,9 +1111,10 @@ struct BatchedGrandProductToggleLayer<F: JoltField> {
     flag_values: Vec<Vec<F>>,
     fingerprints: Vec<Vec<F>>,
     layer_len: usize,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductToggleLayer<F, ProofTranscript> {
     fn new(flag_indices: Vec<Vec<usize>>, fingerprints: Vec<Vec<F>>) -> Self {
         let layer_len = fingerprints[0].len();
         Self {
@@ -1076,10 +1123,11 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             flag_values: vec![],
             fingerprints,
             layer_len,
+            _marker: PhantomData,
         }
     }
 
-    fn layer_output(&self) -> BatchedSparseGrandProductLayer<F> {
+    fn layer_output(&self) -> BatchedSparseGrandProductLayer<F, ProofTranscript> {
         let output_layers = self
             .fingerprints
             .par_iter()
@@ -1096,11 +1144,14 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         BatchedSparseGrandProductLayer {
             layer_len: self.layer_len,
             layers: output_layers,
+            _marker: PhantomData,
         }
     }
 }
 
-impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
+    for BatchedGrandProductToggleLayer<F, ProofTranscript>
+{
     fn num_rounds(&self) -> usize {
         self.layer_len.log_2()
     }
@@ -1387,13 +1438,15 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     }
 }
 
-impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLayer<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
+    for BatchedGrandProductToggleLayer<F, ProofTranscript>
+{
     fn prove_layer(
         &mut self,
         claims_to_verify: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
-    ) -> BatchedGrandProductLayerProof<F> {
+    ) -> BatchedGrandProductLayerProof<F, ProofTranscript> {
         // produce a fresh set of coeffs
         let coeffs: Vec<F> = transcript.challenge_vector(claims_to_verify.len());
         // produce a joint claim
@@ -1425,17 +1478,23 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
             proof: sumcheck_proof,
             left_claims,
             right_claims,
+            _marker: PhantomData,
         }
     }
 }
 
-pub struct ToggledBatchedGrandProduct<F: JoltField> {
-    toggle_layer: BatchedGrandProductToggleLayer<F>,
-    sparse_layers: Vec<BatchedSparseGrandProductLayer<F>>,
+pub struct ToggledBatchedGrandProduct<F: JoltField, ProofTranscript: Transcript> {
+    toggle_layer: BatchedGrandProductToggleLayer<F, ProofTranscript>,
+    sparse_layers: Vec<BatchedSparseGrandProductLayer<F, ProofTranscript>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
-    for ToggledBatchedGrandProduct<PCS::Field>
+impl<
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    > BatchedGrandProduct<F, PCS, ProofTranscript>
+    for ToggledBatchedGrandProduct<PCS::Field, ProofTranscript>
 {
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
     type Config = ();
@@ -1446,7 +1505,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         let num_layers = fingerprints[0].len().log_2();
 
         let toggle_layer = BatchedGrandProductToggleLayer::new(flags, fingerprints);
-        let mut layers: Vec<BatchedSparseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
+        let mut layers: Vec<BatchedSparseGrandProductLayer<F, ProofTranscript>> =
+            Vec::with_capacity(num_layers);
         layers.push(toggle_layer.layer_output());
 
         for i in 0..num_layers - 1 {
@@ -1460,18 +1520,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             layers.push(BatchedSparseGrandProductLayer {
                 layer_len: len,
                 layers: new_layers,
+                _marker: PhantomData,
             });
         }
 
         Self {
             toggle_layer,
             sparse_layers: layers,
+            _marker: PhantomData,
         }
     }
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct_with_config")]
     fn construct_with_config(leaves: Self::Leaves, _config: Self::Config) -> Self {
-        <Self as BatchedGrandProduct<F, PCS>>::construct(leaves)
+        <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::construct(leaves)
     }
 
     fn num_layers(&self) -> usize {
@@ -1479,7 +1541,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     }
 
     fn claims(&self) -> Vec<F> {
-        let last_layers = &self.sparse_layers.last().unwrap();
+        let last_layers: &BatchedSparseGrandProductLayer<F, ProofTranscript> =
+            self.sparse_layers.last().unwrap();
         let (left_claims, right_claims) = last_layers.final_claims();
         left_claims
             .iter()
@@ -1488,19 +1551,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             .collect()
     }
 
-    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
-        [&mut self.toggle_layer as &mut dyn BatchedGrandProductLayer<F>]
+    fn layers(
+        &'_ mut self,
+    ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>> {
+        [&mut self.toggle_layer as &mut dyn BatchedGrandProductLayer<F, ProofTranscript>]
             .into_iter()
             .chain(
                 self.sparse_layers
                     .iter_mut()
-                    .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F>),
+                    .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F, ProofTranscript>),
             )
             .rev()
     }
 
     fn verify_sumcheck_claim(
-        layer_proofs: &[BatchedGrandProductLayerProof<F>],
+        layer_proofs: &[BatchedGrandProductLayerProof<F, ProofTranscript>],
         layer_index: usize,
         coeffs: &[F],
         sumcheck_claim: F,
@@ -1563,6 +1628,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 mod grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::Zeromorph;
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::{test_rng, One};
     use rand_core::RngCore;
@@ -1580,25 +1646,28 @@ mod grand_product_tests {
         .take(BATCH_SIZE)
         .collect();
 
-        let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::construct(leaves);
-        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let mut batched_circuit =
+            <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::construct(leaves);
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
         // I love the rust type system
-        let claims =
-            <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::claims(
-                &batched_circuit,
-            );
-        let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+        let claims = <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
             Fr,
-            Zeromorph<Bn254>,
-        >>::prove_grand_product(
-            &mut batched_circuit, None, &mut transcript, None
-        );
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >>::claims(&batched_circuit);
+        let (proof, r_prover) =
+            <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove_grand_product(&mut batched_circuit, None, &mut transcript, None);
 
-        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
         let (_, r_verifier) = BatchedDenseGrandProduct::verify_grand_product(
             &proof,
             &claims,
@@ -1628,7 +1697,8 @@ mod grand_product_tests {
         })
         .take(BATCH_SIZE)
         .collect();
-        let mut batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.clone());
+        let mut batched_dense_layer =
+            BatchedDenseGrandProductLayer::<Fr, KeccakTranscript>::new(dense_layers.clone());
 
         let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
             .iter()
@@ -1642,13 +1712,14 @@ mod grand_product_tests {
                 DynamicDensityGrandProductLayer::Sparse(sparse_layer)
             })
             .collect();
-        let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
+        let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr, KeccakTranscript> =
             BatchedSparseGrandProductLayer {
                 layer_len: LAYER_SIZE,
                 layers: sparse_layers,
+                _marker: PhantomData,
             };
 
-        let condense = |sparse_layers: BatchedSparseGrandProductLayer<Fr>| {
+        let condense = |sparse_layers: BatchedSparseGrandProductLayer<Fr, KeccakTranscript>| {
             sparse_layers
                 .layers
                 .iter()
@@ -1730,10 +1801,12 @@ mod grand_product_tests {
         })
         .take(BATCH_SIZE)
         .collect();
-        let dense_layers: BatchedSparseGrandProductLayer<Fr> = BatchedSparseGrandProductLayer {
-            layer_len: LAYER_SIZE,
-            layers: dense_layers,
-        };
+        let dense_layers: BatchedSparseGrandProductLayer<Fr, KeccakTranscript> =
+            BatchedSparseGrandProductLayer {
+                layer_len: LAYER_SIZE,
+                layers: dense_layers,
+                _marker: PhantomData,
+            };
 
         let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
             .layers
@@ -1752,10 +1825,12 @@ mod grand_product_tests {
                 DynamicDensityGrandProductLayer::Sparse(sparse_layer)
             })
             .collect();
-        let sparse_layers: BatchedSparseGrandProductLayer<Fr> = BatchedSparseGrandProductLayer {
-            layer_len: LAYER_SIZE,
-            layers: sparse_layers,
-        };
+        let sparse_layers: BatchedSparseGrandProductLayer<Fr, KeccakTranscript> =
+            BatchedSparseGrandProductLayer {
+                layer_len: LAYER_SIZE,
+                layers: sparse_layers,
+                _marker: PhantomData,
+            };
 
         let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(LAYER_SIZE.log_2() - 1)

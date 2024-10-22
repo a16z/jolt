@@ -12,7 +12,7 @@ use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
@@ -66,15 +66,26 @@ pub enum SpartanError {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<const C: usize, I: ConstraintInput, F: JoltField> {
+pub struct UniformSpartanProof<
+    const C: usize,
+    I: ConstraintInput,
+    F: JoltField,
+    ProofTranscript: Transcript,
+> {
     _inputs: PhantomData<I>,
-    pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F>,
+    pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
-    pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F>,
+    pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) claimed_witness_evals: Vec<F>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I, F> {
+impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTranscript>
+where
+    I: ConstraintInput,
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     #[tracing::instrument(skip_all, name = "Spartan::setup")]
     pub fn setup(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
@@ -88,13 +99,16 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
     }
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
-    pub fn prove<PCS: CommitmentScheme<Field = F>>(
+    pub fn prove<PCS>(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Self, SpartanError> {
+    ) -> Result<Self, SpartanError>
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    {
         let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
@@ -110,7 +124,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         let (mut az, mut bz, mut cz) =
-            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS>(&flattened_polys);
+            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS, ProofTranscript>(&flattened_polys);
 
         let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
             // Below is an optimized form of: eq * (Az * Bz - Cz)
@@ -209,17 +223,22 @@ impl<const C: usize, I: ConstraintInput, F: JoltField> UniformSpartanProof<C, I,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
             claimed_witness_evals,
+            _marker: PhantomData,
         })
     }
 
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
-    pub fn verify<PCS: CommitmentScheme<Field = F>>(
+    pub fn verify<PCS>(
         &self,
         key: &UniformSpartanKey<C, I, F>,
-        commitments: &JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError> {
+    ) -> Result<(), SpartanError>
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
         let num_rounds_x = key.num_rows_total().log_2();
         let num_rounds_y = key.num_cols_total().log_2();
 

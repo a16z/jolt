@@ -9,25 +9,30 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::math::Math;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::marker::PhantomData;
 use thiserror::Error;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct QuarkGrandProductProof<PCS: CommitmentScheme> {
-    sumcheck_proof: SumcheckInstanceProof<PCS::Field>,
+pub struct QuarkGrandProductProof<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+> {
+    sumcheck_proof: SumcheckInstanceProof<PCS::Field, ProofTranscript>,
     g_commitment: Vec<PCS::Commitment>,
     claimed_eval_g_r: Vec<PCS::Field>,
     claimed_eval_g_r_x: (Vec<PCS::Field>, Vec<PCS::Field>),
     helper_values: (Vec<PCS::Field>, Vec<PCS::Field>),
     num_vars: usize,
 }
-pub struct QuarkGrandProduct<F: JoltField> {
+pub struct QuarkGrandProduct<F: JoltField, ProofTranscript: Transcript> {
     polynomials: Vec<Vec<F>>,
-    base_layers: Vec<BatchedDenseGrandProductLayer<F>>,
+    base_layers: Vec<BatchedDenseGrandProductLayer<F, ProofTranscript>>,
+    _marker: PhantomData<ProofTranscript>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -56,8 +61,12 @@ pub struct QuarkGrandProductConfig {
     pub hybrid_layer_depth: QuarkHybridLayerDepth,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
-    for QuarkGrandProduct<F>
+impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
+    for QuarkGrandProduct<F, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     /// The bottom/input layer of the grand products
     type Leaves = Vec<Vec<F>>;
@@ -66,7 +75,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     /// Constructs the grand product circuit(s) from `leaves`
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
-        <Self as BatchedGrandProduct<F, PCS>>::construct_with_config(
+        <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::construct_with_config(
             leaves,
             QuarkGrandProductConfig::default(),
         )
@@ -84,8 +93,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         };
 
         // Taken 1 to 1 from the code in the BatchedDenseGrandProductLayer implementation
-        let mut layers = Vec::<BatchedDenseGrandProductLayer<F>>::new();
-        layers.push(BatchedDenseGrandProductLayer::<F>::new(leaves));
+        let mut layers = Vec::<BatchedDenseGrandProductLayer<F, ProofTranscript>>::new();
+        layers.push(BatchedDenseGrandProductLayer::<F, ProofTranscript>::new(
+            leaves,
+        ));
 
         for i in 0..num_layers {
             let previous_layers = &layers[i];
@@ -108,6 +119,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             return Self {
                 polynomials: Vec::<Vec<F>>::new(),
                 base_layers: layers,
+                _marker: PhantomData,
             };
         }
 
@@ -117,6 +129,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         Self {
             polynomials: quark_polys,
             base_layers: layers,
+            _marker: PhantomData,
         }
     }
     /// The number of layers in the grand product, in this case it is the log of the quark layer size plus the gkr layer depth.
@@ -134,7 +147,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     /// Each layer is mutable so that its polynomials can be bound over the course
     /// of proving.
     #[allow(unreachable_code)]
-    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
+    fn layers(
+        &'_ mut self,
+    ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>> {
         panic!("We don't use the default prover and so we don't need the generic iterator");
         std::iter::empty()
     }
@@ -143,10 +158,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
-        opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::Setup>,
-    ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
+    ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.base_layers.len());
 
         // For proofs of polynomials of size less than 16 we support these with no quark proof
@@ -154,7 +169,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is 4 layers deep in the tree
             // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
             // by the quark proof is in fact the folded result of the base layer.
-            let (quark, random, claims) = QuarkGrandProductProof::<PCS>::prove(
+            let (quark, random, claims) = QuarkGrandProductProof::<PCS, ProofTranscript>::prove(
                 &self.polynomials,
                 opening_accumulator.unwrap(),
                 transcript,
@@ -165,7 +180,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             (
                 None,
                 Vec::<F>::new(),
-                <QuarkGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claims(self),
+                <QuarkGrandProduct<F, ProofTranscript> as BatchedGrandProduct<
+                    F,
+                    PCS,
+                    ProofTranscript,
+                >>::claims(self),
             )
         };
 
@@ -185,9 +204,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
     /// Verifies the given grand product proof.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::verify_grand_product")]
     fn verify_grand_product(
-        proof: &BatchedGrandProductProof<PCS>,
+        proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claims: &Vec<F>,
-        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
+        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (Vec<F>, Vec<F>) {
@@ -207,11 +226,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             }
         };
 
-        let (sumcheck_claims, sumcheck_r) = <Self as BatchedGrandProduct<F, PCS>>::verify_layers(
-            &proof.layers,
-            &v_points,
-            transcript,
-            rand,
+        let (sumcheck_claims, sumcheck_r) = <Self as BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+        >>::verify_layers(
+            &proof.layers, &v_points, transcript, rand
         );
 
         (sumcheck_claims, sumcheck_r)
@@ -231,7 +251,11 @@ pub enum QuarkError {
     InvalidBinding,
 }
 
-impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
+impl<PCS, ProofTranscript> QuarkGrandProductProof<PCS, ProofTranscript>
+where
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+{
     /// Computes a grand product proof using the Section 5 technique from Quarks Paper
     /// First - Extends the evals of v to create an f poly, then commits to it and evals
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
@@ -239,7 +263,7 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
     /// Returns a random point and evaluation to be verified by the caller (which our hybrid prover does with GKR)
     fn prove(
         leaves: &[Vec<PCS::Field>],
-        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field>,
+        opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, ProofTranscript>,
         transcript: &mut ProofTranscript,
         setup: &PCS::Setup,
     ) -> (Self, Vec<PCS::Field>, Vec<PCS::Field>) {
@@ -253,7 +277,7 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
 
         for v in leaves.iter() {
             let v_polynomial = DensePolynomial::<PCS::Field>::new(v.to_vec());
-            let (f_1_r, f_r_0, f_r_1, p) = v_into_f::<PCS>(&v_polynomial);
+            let (f_1_r, f_r_0, f_r_1, p) = v_into_f::<PCS, ProofTranscript>(&v_polynomial);
             v_polys.push(v_polynomial);
             g_polys.push(f_1_r.clone());
             sumcheck_polys.push(f_1_r);
@@ -272,14 +296,14 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
         // Now we do the sumcheck using the prove arbitrary
         // First instantiate our polynomials
         let tau: Vec<PCS::Field> = transcript.challenge_vector(v_variables);
-        let evals: DensePolynomial<<PCS as CommitmentScheme>::Field> =
+        let evals: DensePolynomial<<PCS as CommitmentScheme<ProofTranscript>>::Field> =
             DensePolynomial::new(EqPolynomial::evals(&tau));
         //We add evals as the second to last polynomial in the sumcheck
         sumcheck_polys.push(evals);
 
         // Next we calculate the polynomial equal to 1 at all points but 1,1,1...,0
         let challenge_sum = vec![PCS::Field::one(); v_variables];
-        let eq_sum: DensePolynomial<<PCS as CommitmentScheme>::Field> =
+        let eq_sum: DensePolynomial<<PCS as CommitmentScheme<ProofTranscript>>::Field> =
             DensePolynomial::new(EqPolynomial::evals(&challenge_sum));
         //We add evals as the last polynomial in the sumcheck
         sumcheck_polys.push(eq_sum);
@@ -312,14 +336,15 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
         // Now run the sumcheck in arbitrary mode
         // Note - We use the final randomness from binding all variables (x) as the source random for the openings so the verifier can
         //        check that the base layer is the same as is committed too.
-        let (sumcheck_proof, x, _) = SumcheckInstanceProof::<PCS::Field>::prove_arbitrary::<_>(
-            &rlc_claims,
-            v_variables,
-            &mut sumcheck_polys,
-            output_check_fn,
-            3,
-            transcript,
-        );
+        let (sumcheck_proof, x, _) =
+            SumcheckInstanceProof::<PCS::Field, ProofTranscript>::prove_arbitrary::<_>(
+                &rlc_claims,
+                v_variables,
+                &mut sumcheck_polys,
+                output_check_fn,
+                3,
+                transcript,
+            );
 
         let borrowed: Vec<&DensePolynomial<PCS::Field>> = g_polys.iter().collect();
         let chis_r = EqPolynomial::evals(&x);
@@ -344,10 +369,15 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
         // Therefore we do a line reduced opening on g(r', 0) and g(r', 1)e();
         let mut r_prime = vec![PCS::Field::zero(); x.len() - 1];
         r_prime.clone_from_slice(&x[1..x.len()]);
-        let claimed_eval_g_r_x =
-            open_and_prove::<PCS>(&r_prime, &g_polys, opening_accumulator, transcript);
+        let claimed_eval_g_r_x = open_and_prove::<PCS, ProofTranscript>(
+            &r_prime,
+            &g_polys,
+            opening_accumulator,
+            transcript,
+        );
         // next we need to make a claim about h(r', 0) and h(r', 1) so we use our line reduction to make one claim
-        let ((r_t, h_r_t), helper_values) = line_reduce::<PCS>(&r_prime, &v_polys, transcript);
+        let ((r_t, h_r_t), helper_values) =
+            line_reduce::<PCS, ProofTranscript>(&r_prime, &v_polys, transcript);
 
         let num_vars = v_variables;
 
@@ -370,7 +400,7 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
     fn verify(
         &self,
         claims: &[PCS::Field],
-        opening_accumulator: &mut VerifierOpeningAccumulator<PCS::Field, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<PCS::Field, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
         n_rounds: usize,
     ) -> Result<(Vec<PCS::Field>, Vec<PCS::Field>), QuarkError> {
@@ -412,7 +442,7 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
             transcript,
         );
         // Next do the line reduction verification of g(r', 0) and g(r', 1)
-        line_reduce_opening_verify::<PCS>(
+        line_reduce_opening_verify::<PCS, ProofTranscript>(
             &self.claimed_eval_g_r_x,
             &r_prime,
             &borrowed_g,
@@ -477,14 +507,18 @@ impl<PCS: CommitmentScheme> QuarkGrandProductProof<PCS> {
 
 // Computes slices of f for the sumcheck
 #[allow(clippy::type_complexity)]
-fn v_into_f<PCS: CommitmentScheme>(
+fn v_into_f<PCS, ProofTranscript>(
     v: &DensePolynomial<PCS::Field>,
 ) -> (
     DensePolynomial<PCS::Field>,
     DensePolynomial<PCS::Field>,
     DensePolynomial<PCS::Field>,
     PCS::Field,
-) {
+)
+where
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+{
     let v_length = v.len();
     let mut f_evals = vec![PCS::Field::zero(); 2 * v_length];
     let (evals, _) = v.split_evals(v.len());
@@ -528,15 +562,15 @@ fn v_into_f<PCS: CommitmentScheme>(
 //        (or vice versa) as implicitly defining the line t*f(0r) + (t-1)f(1r) and so the evals data alone
 //        is sufficient to calculate the claimed line, then we sample a random value r_star and do an opening proof
 //        on (r_star - 1) * f(0r) + r_star * f(1r) in the commitment to f.
-fn open_and_prove<PCS: CommitmentScheme>(
+fn open_and_prove<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript>(
     r: &[PCS::Field],
     f_polys: &[DensePolynomial<PCS::Field>],
-    opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field>,
+    opening_accumulator: &mut ProverOpeningAccumulator<PCS::Field, ProofTranscript>,
     transcript: &mut ProofTranscript,
 ) -> (Vec<PCS::Field>, Vec<PCS::Field>) {
     // Do the line reduction protocol
     let ((r_star, openings_star), (openings_0, openings_1)) =
-        line_reduce::<PCS>(r, f_polys, transcript);
+        line_reduce::<PCS, ProofTranscript>(r, f_polys, transcript);
     opening_accumulator.append(
         &f_polys.iter().collect::<Vec<_>>(),
         DensePolynomial::new(EqPolynomial::evals(&r_star)),
@@ -551,7 +585,7 @@ fn open_and_prove<PCS: CommitmentScheme>(
 #[allow(clippy::type_complexity)]
 /// Calculates the r0 r1 values and writes their evaluation to the transcript before calculating r star and
 /// the opening of this, but does not prove the opening as that is left to the calling function
-fn line_reduce<PCS: CommitmentScheme>(
+fn line_reduce<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript>(
     r: &[PCS::Field],
     f_polys: &[DensePolynomial<PCS::Field>],
     transcript: &mut ProofTranscript,
@@ -604,11 +638,14 @@ fn line_reduce<PCS: CommitmentScheme>(
 }
 
 /// Does the counterpart of the open_and_prove by computing an r_star vector point and then validating this opening
-fn line_reduce_opening_verify<PCS: CommitmentScheme>(
+fn line_reduce_opening_verify<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+>(
     data: &(Vec<PCS::Field>, Vec<PCS::Field>),
     r: &[PCS::Field],
     commitments: &[&PCS::Commitment],
-    opening_accumulator: &mut VerifierOpeningAccumulator<PCS::Field, PCS>,
+    opening_accumulator: &mut VerifierOpeningAccumulator<PCS::Field, PCS, ProofTranscript>,
     transcript: &mut ProofTranscript,
 ) {
     // First compute the line reduction and points
@@ -623,7 +660,7 @@ fn line_reduce_opening_verify<PCS: CommitmentScheme>(
     );
 }
 
-fn line_reduce_verify<F: JoltField>(
+fn line_reduce_verify<F: JoltField, ProofTranscript: Transcript>(
     data: &(Vec<F>, Vec<F>),
     r: &[F],
     transcript: &mut ProofTranscript,
@@ -651,6 +688,7 @@ fn line_reduce_verify<F: JoltField>(
 mod quark_grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::*;
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use rand_core::SeedableRng;
 
@@ -668,25 +706,27 @@ mod quark_grand_product_tests {
             .collect();
         let known_products = vec![leaves_1.iter().product(), leaves_2.iter().product()];
         let v = vec![leaves_1, leaves_2];
-        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr> = ProverOpeningAccumulator::new();
-        let mut verifier_accumulator: VerifierOpeningAccumulator<Fr, Zeromorph<Bn254>> =
-            VerifierOpeningAccumulator::new();
+        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
+            ProverOpeningAccumulator::new();
+        let mut verifier_accumulator: VerifierOpeningAccumulator<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        > = VerifierOpeningAccumulator::new();
 
-        let (proof, _, _) = QuarkGrandProductProof::<Zeromorph<Bn254>>::prove(
-            &v,
-            &mut prover_accumulator,
-            &mut transcript,
-            &setup,
-        );
+        let (proof, _, _) = QuarkGrandProductProof::<
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >::prove(&v, &mut prover_accumulator, &mut transcript, &setup);
         let batched_proof = prover_accumulator.reduce_and_prove(&setup, &mut transcript);
 
         // Note resetting the transcript is important
-        transcript = ProofTranscript::new(b"test_transcript");
+        transcript = KeccakTranscript::new(b"test_transcript");
         let result = proof.verify(
             &known_products,
             &mut verifier_accumulator,
@@ -714,26 +754,33 @@ mod quark_grand_product_tests {
         let known_products: Vec<Fr> = vec![leaves_1.iter().product(), leaves_2.iter().product()];
 
         let v = vec![leaves_1, leaves_2];
-        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
-        let mut prover_accumulator: ProverOpeningAccumulator<Fr> = ProverOpeningAccumulator::new();
-        let mut verifier_accumulator: VerifierOpeningAccumulator<Fr, Zeromorph<Bn254>> =
-            VerifierOpeningAccumulator::new();
-
-        let mut hybrid_grand_product = <QuarkGrandProduct<Fr> as BatchedGrandProduct<
+        let mut prover_accumulator: ProverOpeningAccumulator<Fr, KeccakTranscript> =
+            ProverOpeningAccumulator::new();
+        let mut verifier_accumulator: VerifierOpeningAccumulator<
             Fr,
-            Zeromorph<Bn254>,
-        >>::construct_with_config(v, config);
-        let proof: BatchedGrandProductProof<Zeromorph<Bn254>> = hybrid_grand_product
-            .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, Some(&setup))
-            .0;
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        > = VerifierOpeningAccumulator::new();
+
+        let mut hybrid_grand_product =
+            <QuarkGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::construct_with_config(v, config);
+        let proof: BatchedGrandProductProof<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript> =
+            hybrid_grand_product
+                .prove_grand_product(Some(&mut prover_accumulator), &mut transcript, Some(&setup))
+                .0;
         let batched_proof = prover_accumulator.reduce_and_prove(&setup, &mut transcript);
 
         // Note resetting the transcript is important
-        transcript = ProofTranscript::new(b"test_transcript");
+        transcript = KeccakTranscript::new(b"test_transcript");
         let _ = QuarkGrandProduct::verify_grand_product(
             &proof,
             &known_products,

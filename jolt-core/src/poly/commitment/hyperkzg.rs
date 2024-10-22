@@ -16,13 +16,11 @@ use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::utils::transcript::Transcript;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
+    utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -69,7 +67,7 @@ impl<P: Pairing> Default for HyperKZGCommitment<P> {
 }
 
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
-    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_point(&self.0.into_group());
     }
 }
@@ -155,7 +153,7 @@ where
     B
 }
 
-fn kzg_open_batch<P: Pairing>(
+fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     f: &[Vec<P::ScalarField>],
     u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
@@ -198,7 +196,7 @@ where
 }
 
 // vk is hashed in transcript already, so we do not add it here
-fn kzg_verify_batch<P: Pairing>(
+fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
     vk: &HyperKZGVerifierKey<P>,
     C: &[P::G1Affine],
     W: &[P::G1Affine],
@@ -280,11 +278,11 @@ where
 }
 
 #[derive(Clone)]
-pub struct HyperKZG<P: Pairing> {
-    _phantom: PhantomData<P>,
+pub struct HyperKZG<P: Pairing, ProofTranscript: Transcript> {
+    _phantom: PhantomData<(P, ProofTranscript)>,
 }
 
-impl<P: Pairing> HyperKZG<P>
+impl<P: Pairing, ProofTranscript: Transcript> HyperKZG<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
@@ -469,7 +467,8 @@ where
         drop(span);
 
         let poly = DensePolynomial::new(f_batched);
-        HyperKZG::<P>::open(pk, &poly, point, &batched_evaluation, transcript).unwrap()
+        HyperKZG::<P, ProofTranscript>::open(pk, &poly, point, &batched_evaluation, transcript)
+            .unwrap()
     }
 
     fn batch_verify(
@@ -494,7 +493,7 @@ where
                 (batched_evaluation, batched_commitment)
             },
         );
-        HyperKZG::<P>::verify(
+        HyperKZG::<P, ProofTranscript>::verify(
             vk,
             &HyperKZGCommitment(batched_commitment.into_affine()),
             point,
@@ -505,7 +504,8 @@ where
     }
 }
 
-impl<P: Pairing> CommitmentScheme for HyperKZG<P>
+impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
+    for HyperKZG<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
 {
@@ -579,7 +579,8 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
-        HyperKZG::<P>::open(&setup.0, poly, opening_point, &eval, transcript).unwrap()
+        HyperKZG::<P, ProofTranscript>::open(&setup.0, poly, opening_point, &eval, transcript)
+            .unwrap()
     }
 
     fn batch_prove(
@@ -590,7 +591,13 @@ where
         _batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        HyperKZG::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
+        HyperKZG::<P, ProofTranscript>::batch_open(
+            &setup.0,
+            polynomials,
+            opening_point,
+            openings,
+            transcript,
+        )
     }
 
     fn combine_commitments(
@@ -613,7 +620,7 @@ where
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        HyperKZG::<P>::verify(
+        HyperKZG::<P, ProofTranscript>::verify(
             &setup.1,
             commitment,
             opening_point,
@@ -631,7 +638,7 @@ where
         commitments: &[&Self::Commitment],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        HyperKZG::<P>::batch_verify(
+        HyperKZG::<P, ProofTranscript>::batch_verify(
             &setup.1,
             commitments,
             opening_point,
@@ -649,6 +656,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::UniformRand;
     use rand_core::SeedableRng;
@@ -663,12 +671,12 @@ mod tests {
         // poly is in eval. representation; evaluated at [(0,0), (0,1), (1,0), (1,1)]
         let poly = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(2), Fr::from(4)]);
 
-        let C = HyperKZG::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
         let test_inner = |point: Vec<Fr>, eval: Fr| -> Result<(), ProofVerifyError> {
-            let mut tr = ProofTranscript::new(b"TestEval");
+            let mut tr = KeccakTranscript::new(b"TestEval");
             let proof = HyperKZG::open(&pk, &poly, &point, &eval, &mut tr).unwrap();
-            let mut tr = ProofTranscript::new(b"TestEval");
+            let mut tr = KeccakTranscript::new(b"TestEval");
             HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut tr)
         };
 
@@ -721,15 +729,15 @@ mod tests {
         let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(3);
 
         // make a commitment
-        let C = HyperKZG::commit(&pk, &poly).unwrap();
+        let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
         // prove an evaluation
-        let mut tr = ProofTranscript::new(b"TestEval");
+        let mut tr = KeccakTranscript::new(b"TestEval");
         let proof = HyperKZG::open(&pk, &poly, &point, &eval, &mut tr).unwrap();
         let post_c_p = tr.challenge_scalar::<Fr>();
 
         // verify the evaluation
-        let mut verifier_transcript = ProofTranscript::new(b"TestEval");
+        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
         assert!(
             HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut verifier_transcript,).is_ok()
         );
@@ -746,7 +754,7 @@ mod tests {
         let mut bad_proof = proof.clone();
         let v1 = bad_proof.v[1].clone();
         bad_proof.v[0].clone_from(&v1);
-        let mut verifier_transcript2 = ProofTranscript::new(b"TestEval");
+        let mut verifier_transcript2 = KeccakTranscript::new(b"TestEval");
         assert!(HyperKZG::verify(
             &vk,
             &C,
@@ -780,22 +788,22 @@ mod tests {
             let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(n);
 
             // make a commitment
-            let C = HyperKZG::commit(&pk, &poly).unwrap();
+            let C = HyperKZG::<_, KeccakTranscript>::commit(&pk, &poly).unwrap();
 
             // prove an evaluation
-            let mut prover_transcript = ProofTranscript::new(b"TestEval");
+            let mut prover_transcript = KeccakTranscript::new(b"TestEval");
             let proof: HyperKZGProof<Bn254> =
                 HyperKZG::open(&pk, &poly, &point, &eval, &mut prover_transcript).unwrap();
 
             // verify the evaluation
-            let mut verifier_tr = ProofTranscript::new(b"TestEval");
+            let mut verifier_tr = KeccakTranscript::new(b"TestEval");
             assert!(HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut verifier_tr,).is_ok());
 
             // Change the proof and expect verification to fail
             let mut bad_proof = proof.clone();
             let v1 = bad_proof.v[1].clone();
             bad_proof.v[0].clone_from(&v1);
-            let mut verifier_tr2 = ProofTranscript::new(b"TestEval");
+            let mut verifier_tr2 = KeccakTranscript::new(b"TestEval");
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
             );
