@@ -32,6 +32,8 @@ enum Command {
     },
     /// Installs the required RISC-V toolchains for Rust
     InstallToolchain,
+    /// Uninstalls the RISC-V toolchains for Rust
+    UninstallToolchain,
     /// Handles preprocessing and generates WASM compatible files
     BuildWasm,
 }
@@ -41,6 +43,7 @@ fn main() {
     match cli.command {
         Command::New { name, wasm } => create_project(name, wasm),
         Command::InstallToolchain => install_toolchain(),
+        Command::UninstallToolchain => uninstall_toolchain(),
         Command::BuildWasm => build_wasm(),
     }
 }
@@ -59,6 +62,12 @@ fn install_toolchain() {
         panic!("toolchain install failed: {}", err);
     }
     display_welcome();
+}
+
+fn uninstall_toolchain() {
+    if let Err(err) = toolchain::uninstall_toolchain() {
+        panic!("toolchain uninstall failed: {}", err);
+    }
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
