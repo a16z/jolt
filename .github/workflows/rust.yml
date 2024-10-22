@@ -41,6 +41,13 @@ jobs:
           command: clippy
           args: --all
 
+  machete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: bnjbvr/cargo-machete@main
+      - name: cargo machete
+        run: cargo machete --with-metadata
+
   test:
     runs-on: ubuntu-latest
     steps:
