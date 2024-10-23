@@ -235,24 +235,13 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `effective_address` Effective memory address to validate
-    ///
-    /// Memory Layout:
-    ///                          DRAM_BASE
-    ///                              |
-    /// Low addresses                |                   High addresses
-    /// 0x0                          V                           0xFF...
-    /// |-----------------------------------------------|--------------|
-    /// | ... | panic | zero_padding | <-stack | heap-> |
-    /// |-----------------------------------------------|--------------|
-    /// *Stack grows downwards up to DRAM_BASE
-    /// **Heap grows upwards
     #[inline]
     fn assert_effective_address(&self, effective_address: u64) {
         if effective_address < DRAM_BASE {
             // less then DRAM_BASE and greater then panic => zero_padding region
             assert!(
                 effective_address <= self.jolt_device.memory_layout.termination,
-                "Stack overflow: Attempted to write to 0x{:X}, which is in the area of zero padding region.",
+                "Stack overflow: Attempted to write to 0x{:X}",
                 effective_address
             );
             // less then panic => jolt_device region (i.e. input/output)
@@ -260,14 +249,14 @@ impl Mmu {
                 self.jolt_device.is_output(effective_address)
                     || self.jolt_device.is_panic(effective_address)
                     || self.jolt_device.is_termination(effective_address),
-                "Unknown memory mapping 0x{:X}.",
+                "Unknown memory mapping: 0x{:X}",
                 effective_address
             );
         } else {
             // greater then memory capacity
             assert!(
                 self.memory.validate_address(effective_address),
-                "Heap overflow: Attempted to write to 0x{:X}, which is beyond the allocated memory.",
+                "Heap overflow: Attempted to write to 0x{:X}",
                 effective_address
             );
         }
