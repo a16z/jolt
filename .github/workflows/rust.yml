@@ -49,6 +49,7 @@ jobs:
         run: cargo machete --with-metadata
 
   build-wasm:
+    name: Build Wasm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -56,6 +57,7 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
+        working-directory: ./jolt-sdk
         run: cargo build --release --target wasm32-unknown-unknown
 
   test:
