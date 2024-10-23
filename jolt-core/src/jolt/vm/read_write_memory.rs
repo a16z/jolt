@@ -417,20 +417,19 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
+                                    w_tuples_ram
+                                        .lock()
+                                        .unwrap()
+                                        .insert((remapped_a, v_new, timestamp));
                                 }
 
                                 a_ram.push(remapped_a);
                                 v_read_ram[RAM_1_INDEX].push(v_old);
                                 t_read_ram[RAM_1_INDEX].push(t_final_ram[remapped_a_index]);
                                 v_write_ram[0].push(v_new);
-                                t_write_ram[0].push(timestamp + 1);
+                                t_write_ram[0].push(timestamp);
                                 v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
+                                t_final_ram[remapped_a_index] = timestamp;
                                 ram_word_address = a;
                                 is_v_write_ram = true;
                             }
@@ -502,19 +501,18 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
+                                    w_tuples_ram
+                                        .lock()
+                                        .unwrap()
+                                        .insert((remapped_a, v_new, timestamp));
                                 }
 
                                 v_read_ram[RAM_2_INDEX].push(v_old);
                                 t_read_ram[RAM_2_INDEX].push(t_final_ram[remapped_a_index]);
                                 v_write_ram[1].push(v_new);
-                                t_write_ram[1].push(timestamp + 1);
+                                t_write_ram[1].push(timestamp);
                                 v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
+                                t_final_ram[remapped_a_index] = timestamp;
                             }
                         };
                     } else {
@@ -584,19 +582,18 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
+                                    w_tuples_ram
+                                        .lock()
+                                        .unwrap()
+                                        .insert((remapped_a, v_new, timestamp));
                                 }
 
                                 v_read_ram[RAM_3_INDEX].push(v_old);
                                 t_read_ram[RAM_3_INDEX].push(t_final_ram[remapped_a_index]);
                                 v_write_ram[2].push(v_new);
-                                t_write_ram[2].push(timestamp + 1);
+                                t_write_ram[2].push(timestamp);
                                 v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
+                                t_final_ram[remapped_a_index] = timestamp;
                             }
                         };
                         match step[RAM_4_INDEX] {
@@ -640,19 +637,18 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
+                                    w_tuples_ram
+                                        .lock()
+                                        .unwrap()
+                                        .insert((remapped_a, v_new, timestamp));
                                 }
 
                                 v_read_ram[RAM_4_INDEX].push(v_old);
                                 t_read_ram[RAM_4_INDEX].push(t_final_ram[remapped_a_index]);
                                 v_write_ram[3].push(v_new);
-                                t_write_ram[3].push(timestamp + 1);
+                                t_write_ram[3].push(timestamp);
                                 v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
+                                t_final_ram[remapped_a_index] = timestamp;
                             }
                         };
                     } else {
@@ -761,17 +757,14 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                                     v_old,
                                     t_final_reg[a as usize],
                                 ));
-                                w_tuples_reg
-                                    .lock()
-                                    .unwrap()
-                                    .insert((a, v_new, timestamp + 1));
+                                w_tuples_reg.lock().unwrap().insert((a, v_new, timestamp));
                             }
 
                             v_read_reg[RD].push(v_old);
                             t_read_reg[RD].push(t_final_reg[a as usize]);
                             v_write_rd.push(v_new);
                             v_final_reg[a as usize] = v_new;
-                            t_final_reg[a as usize] = timestamp + 1;
+                            t_final_reg[a as usize] = timestamp;
                         }
                     };
                 }
@@ -948,7 +941,7 @@ where
                                 - *tau
                         }
                         RD => {
-                            F::from_u64(j as u64 + 1).unwrap() * gamma_squared
+                            F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
                                 + a_rd[j]
                                 - *tau
@@ -1128,10 +1121,8 @@ where
                 } else {
                     openings.v_write_ram[i - 3]
                 };
-                let t = if i == RS1 || i == RS2 {
+                let t = if i == RS1 || i == RS2 || i == RD {
                     openings.identity.unwrap()
-                } else if i == RD {
-                    openings.identity.unwrap() + F::one()
                 } else {
                     openings.t_write_ram[i - RAM_1]
                 };
