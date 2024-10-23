@@ -57,7 +57,7 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
-        working-directory: ./jolt-sdk
+        working-directory: ./jolt-core
         run: cargo build --release --target wasm32-unknown-unknown
 
   test:
