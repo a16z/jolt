@@ -252,7 +252,7 @@ impl Mmu {
             // less then DRAM_BASE and greater then panic => zero_padding region
             assert!(
                 effective_address <= self.jolt_device.memory_layout.termination,
-                "Stack overflow: Attempted to write to 0x{:X}, which is in the area or zero padding region.",
+                "Stack overflow: Attempted to write to 0x{:X}, which is in the area of zero padding region.",
                 effective_address
             );
             // less then panic => jolt_device region (i.e. input/output)
@@ -673,7 +673,10 @@ impl Mmu {
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
-                _ => self.assert_effective_address(effective_address),
+                _ => {
+                    self.assert_effective_address(effective_address);
+                    self.jolt_device.store(effective_address, value);
+                }
             },
         };
     }
