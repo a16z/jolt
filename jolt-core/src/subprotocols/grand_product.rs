@@ -330,7 +330,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
         debug_assert_eq!(self.batched_layer_len, 2 * eq_poly.len());
 
         let cubic_evals = if eq_poly.E1_len == 1 {
-            println!("compute_cubic: E1_len == 1");
             self.values
                 .par_chunks(4 * gap)
                 .zip(eq_poly.E2.par_chunks(2))
@@ -365,7 +364,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         } else {
-            println!("compute_cubic: normal");
             let num_E1_chunks = eq_poly.E1_len / 2;
 
             let mut evals = (F::zero(), F::zero(), F::zero());
@@ -409,6 +407,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                         || (F::zero(), F::zero(), F::zero()),
                         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                     );
+
                 evals.0 += E1_evals.0 * inner_sums.0;
                 evals.1 += E1_evals.1 * inner_sums.1;
                 evals.2 += E1_evals.2 * inner_sums.2;

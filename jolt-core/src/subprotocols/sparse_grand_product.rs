@@ -140,243 +140,213 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
     /// more cases to check 😬
     #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        todo!()
         // debug_assert_eq!(self.values.dense_len, 2 * eq_poly.len());
 
-        // if eq_poly.E1_len == 1 {
-        //     let eq_evals: Vec<(F, F, F)> = eq_poly
-        //         .E2
-        //         .par_chunks(2)
-        //         .map(|eq_chunk| {
-        //             let eval_point_0 = eq_chunk[0];
-        //             let m_eq = eq_chunk[1] - eq_chunk[0];
-        //             let eval_point_2 = eq_chunk[1] + m_eq;
-        //             let eval_point_3 = eval_point_2 + m_eq;
-        //             (eval_point_0, eval_point_2, eval_point_3)
-        //         })
-        //         .collect();
-        //     // TODO(moodlezoup): Can more efficiently compute these
-        //     let eq_eval_sums: (F, F, F) = eq_evals
-        //         .par_iter()
-        //         .fold(
-        //             || (F::zero(), F::zero(), F::zero()),
-        //             |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-        //         )
-        //         .reduce(
-        //             || (F::zero(), F::zero(), F::zero()),
-        //             |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-        //         );
+        let cubic_evals = if eq_poly.E1_len == 1 {
+            if !self.values.coalesced.is_empty() {
+                println!("E1_len == 1, coaleseced");
+                self.values
+                    .coalesced
+                    .par_chunks(4)
+                    .zip(eq_poly.E2.par_chunks(2))
+                    .map(|(layer_chunk, eq_chunk)| {
+                        let eq_evals = {
+                            let eval_point_0 = eq_chunk[0];
+                            let m_eq = eq_chunk[1] - eq_chunk[0];
+                            let eval_point_2 = eq_chunk[1] + m_eq;
+                            let eval_point_3 = eval_point_2 + m_eq;
+                            (eval_point_0, eval_point_2, eval_point_3)
+                        };
+                        let left = (layer_chunk[0], layer_chunk[2]);
+                        let right = (layer_chunk[1], layer_chunk[3]);
 
-        //     let deltas: Vec<(F, F, F)> = self
-        //         .values
-        //         .coeffs
-        //         .par_windows(4)
-        //         .flat_map(|window| {
-        //             let mut deltas: Vec<(F, F, F)> = vec![];
+                        let m_left = left.1 - left.0;
+                        let m_right = right.1 - right.0;
 
-        //             if window[0].index % 4 == 0 {
-        //                 let block_index = window[0].index / 4;
-        //                 let mut block = [F::one(), F::one(), F::one(), F::one()];
-        //                 for coeff in window {
-        //                     if coeff.index / 4 == block_index {
-        //                         block[coeff.index % 4] = coeff.value;
-        //                     }
-        //                 }
+                        let left_eval_2 = left.1 + m_left;
+                        let left_eval_3 = left_eval_2 + m_left;
 
-        //                 let left = (block[0], block[2]);
-        //                 let right = (block[1], block[3]);
+                        let right_eval_2 = right.1 + m_right;
+                        let right_eval_3 = right_eval_2 + m_right;
 
-        //                 let m_left = left.1 - left.0;
-        //                 let m_right = right.1 - right.0;
+                        (
+                            eq_evals.0 * left.0 * right.0,
+                            eq_evals.1 * left_eval_2 * right_eval_2,
+                            eq_evals.2 * left_eval_3 * right_eval_3,
+                        )
+                    })
+                    .reduce(
+                        || (F::zero(), F::zero(), F::zero()),
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    )
+            } else {
+                println!("E1_len == 1, not coaleseced");
+                let eq_evals: Vec<(F, F, F)> = eq_poly
+                    .E2
+                    .par_chunks(2)
+                    .map(|eq_chunk| {
+                        let eval_point_0 = eq_chunk[0];
+                        let m_eq = eq_chunk[1] - eq_chunk[0];
+                        let eval_point_2 = eq_chunk[1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    })
+                    .collect();
+                // TODO(moodlezoup): Can more efficiently compute these
+                let eq_eval_sums: (F, F, F) = eq_evals
+                    .par_iter()
+                    .fold(
+                        || (F::zero(), F::zero(), F::zero()),
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    )
+                    .reduce(
+                        || (F::zero(), F::zero(), F::zero()),
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    );
 
-        //                 let left_eval_2 = left.1 + m_left;
-        //                 let left_eval_3 = left_eval_2 + m_left;
+                let deltas: Vec<(F, F, F)> = self
+                    .values
+                    .coeffs
+                    .par_iter()
+                    .flat_map(|segment| {
+                        segment.par_chunk_by(|x, y| x.index / 4 == y.index / 4).map(
+                            |sparse_block| {
+                                let block_index = sparse_block[0].index / 4;
+                                let mut block = [F::one(); 4];
+                                for coeff in sparse_block {
+                                    block[coeff.index % 4] = coeff.value;
+                                }
 
-        //                 let right_eval_2 = right.1 + m_right;
-        //                 let right_eval_3 = right_eval_2 + m_right;
+                                let left = (block[0], block[2]);
+                                let right = (block[1], block[3]);
 
-        //                 let E2_eval = eq_poly.E2[block_index];
-        //                 // TODO(moodlezoup): Can save a multiplication here
-        //                 deltas.push((
-        //                     E2_eval * (left.0 * right.0 - F::one()),
-        //                     E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-        //                     E2_eval * (left_eval_3 * right_eval_3 - F::one()),
-        //                 ));
-        //             }
+                                let m_left = left.1 - left.0;
+                                let m_right = right.1 - right.0;
 
-        //             if window[1].index / 4 > window[0].index / 4 && window[1].index % 4 != 0 {
-        //                 let block_index = window[1].index / 4;
-        //                 let mut block = [F::one(), F::one(), F::one(), F::one()];
-        //                 for coeff in window {
-        //                     if coeff.index / 4 == block_index {
-        //                         block[coeff.index % 4] = coeff.value;
-        //                     }
-        //                 }
+                                let left_eval_2 = left.1 + m_left;
+                                let left_eval_3 = left_eval_2 + m_left;
 
-        //                 let left = (block[0], block[2]);
-        //                 let right = (block[1], block[3]);
+                                let right_eval_2 = right.1 + m_right;
+                                let right_eval_3 = right_eval_2 + m_right;
 
-        //                 let m_left = left.1 - left.0;
-        //                 let m_right = right.1 - right.0;
+                                let E2_eval = eq_poly.E2[block_index];
+                                // TODO(moodlezoup): Can save a multiplication here
+                                (
+                                    E2_eval * (left.0 * right.0 - F::one()),
+                                    E2_eval * (left_eval_2 * right_eval_2 - F::one()),
+                                    E2_eval * (left_eval_3 * right_eval_3 - F::one()),
+                                )
+                            },
+                        )
+                    })
+                    .collect();
 
-        //                 let left_eval_2 = left.1 + m_left;
-        //                 let left_eval_3 = left_eval_2 + m_left;
+                deltas.into_par_iter().reduce(
+                    || eq_eval_sums,
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+            }
+        } else {
+            println!("E1_len != 1");
+            println!("is coalesced?: {}", !self.values.coalesced.is_empty());
+            let deltas: Vec<(F, F, F, usize)> = self
+                .values
+                .coeffs
+                .par_iter()
+                .flat_map(|segment| {
+                    segment
+                        .par_chunk_by(|x, y| x.index / 4 == y.index / 4)
+                        .map(|sparse_block| {
+                            let block_index = sparse_block[0].index / 4;
+                            let mut block = [F::one(); 4];
+                            for coeff in sparse_block {
+                                block[coeff.index % 4] = coeff.value;
+                            }
 
-        //                 let right_eval_2 = right.1 + m_right;
-        //                 let right_eval_3 = right_eval_2 + m_right;
+                            let left = (block[0], block[2]);
+                            let right = (block[1], block[3]);
 
-        //                 let E2_eval = eq_poly.E2[block_index];
-        //                 // TODO(moodlezoup): Can save a multiplication here
-        //                 deltas.push((
-        //                     E2_eval * (left.0 * right.0 - F::one()),
-        //                     E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-        //                     E2_eval * (left_eval_3 * right_eval_3 - F::one()),
-        //                 ));
-        //             }
+                            let m_left = left.1 - left.0;
+                            let m_right = right.1 - right.0;
 
-        //             deltas
-        //         })
-        //         .collect();
+                            let left_eval_2 = left.1 + m_left;
+                            let left_eval_3 = left_eval_2 + m_left;
 
-        //     let cubic_evals: (F, F, F) = deltas.into_par_iter().reduce(
-        //         || eq_eval_sums,
-        //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-        //     );
+                            let right_eval_2 = right.1 + m_right;
+                            let right_eval_3 = right_eval_2 + m_right;
 
-        //     let cubic_evals = [
-        //         cubic_evals.0,
-        //         previous_round_claim - cubic_evals.0,
-        //         cubic_evals.1,
-        //         cubic_evals.2,
-        //     ];
-        //     UniPoly::from_evals(&cubic_evals)
-        // } else {
-        //     // TODO(moodlezoup): Handle first window, last window
+                            let num_x1_bits = eq_poly.E1_len.log_2() - 1;
+                            let x1_bitmask = (1 << num_x1_bits) - 1;
+                            let x1 = block_index & x1_bitmask;
+                            let x2 = block_index >> num_x1_bits;
 
-        //     let deltas: Vec<(F, F, F, usize)> = self
-        //         .values
-        //         .coeffs
-        //         .par_windows(4)
-        //         .flat_map(|window| {
-        //             let mut deltas: Vec<(F, F, F, usize)> = vec![];
+                            let E2_eval = eq_poly.E2[x2];
+                            // TODO(moodlezoup): Can save a multiplication here
+                            (
+                                E2_eval * (left.0 * right.0 - F::one()),
+                                E2_eval * (left_eval_2 * right_eval_2 - F::one()),
+                                E2_eval * (left_eval_3 * right_eval_3 - F::one()),
+                                x1,
+                            )
+                        })
+                })
+                .collect();
 
-        //             if window[0].index % 4 == 0 {
-        //                 let block_index = window[0].index / 4;
-        //                 let mut block = [F::one(), F::one(), F::one(), F::one()];
-        //                 for coeff in window {
-        //                     if coeff.index / 4 == block_index {
-        //                         block[coeff.index % 4] = coeff.value;
-        //                     }
-        //                 }
+            let mut inner_sums: Vec<(F, F, F)> =
+                vec![(F::one(), F::one(), F::one()); eq_poly.E1_len / 2];
+            for delta in deltas.iter() {
+                let x1 = delta.3;
+                inner_sums[x1].0 += delta.0;
+                inner_sums[x1].1 += delta.1;
+                inner_sums[x1].2 += delta.2;
+            }
 
-        //                 let left = (block[0], block[2]);
-        //                 let right = (block[1], block[3]);
+            // Correct for the fact that the batch size is padded to a power of two
+            // with all-0 circuits.
+            // TODO(moodlezoup): optimize this
+            for x in (self.values.dense_len..self.values.dense_len.next_power_of_two()).step_by(4) {
+                let block_index = x / 4;
+                let num_x1_bits = eq_poly.E1_len.log_2() - 1;
+                let x1_bitmask = (1 << num_x1_bits) - 1;
+                let x1 = block_index & x1_bitmask;
+                let x2 = block_index >> num_x1_bits;
+                let E2_eval = eq_poly.E2[x2];
 
-        //                 let m_left = left.1 - left.0;
-        //                 let m_right = right.1 - right.0;
+                inner_sums[x1].0 -= E2_eval;
+                inner_sums[x1].1 -= E2_eval;
+                inner_sums[x1].2 -= E2_eval;
+            }
 
-        //                 let left_eval_2 = left.1 + m_left;
-        //                 let left_eval_3 = left_eval_2 + m_left;
+            eq_poly.E1[..eq_poly.E1_len]
+                .par_chunks(2)
+                .zip(inner_sums.par_iter())
+                .map(|(E1_chunk, inner_sum)| {
+                    let E1_evals = {
+                        let eval_point_0 = E1_chunk[0];
+                        let m_eq = E1_chunk[1] - E1_chunk[0];
+                        let eval_point_2 = E1_chunk[1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    };
+                    (
+                        E1_evals.0 * inner_sum.0,
+                        E1_evals.1 * inner_sum.1,
+                        E1_evals.2 * inner_sum.2,
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+        };
 
-        //                 let right_eval_2 = right.1 + m_right;
-        //                 let right_eval_3 = right_eval_2 + m_right;
-
-        //                 // TODO(moodlezoup): is this correct?
-        //                 let x1_bitmask = (1 << (eq_poly.E1_len - 1)) - 1;
-        //                 let x1 = block_index & x1_bitmask;
-        //                 let x2_shift = eq_poly.E1_len - 1;
-        //                 let x2 = block_index >> x2_shift;
-
-        //                 let E2_eval = eq_poly.E2[x2];
-        //                 // TODO(moodlezoup): Can save a multiplication here
-        //                 deltas.push((
-        //                     E2_eval * (left.0 * right.0 - F::one()),
-        //                     E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-        //                     E2_eval * (left_eval_3 * right_eval_3 - F::one()),
-        //                     x1,
-        //                 ));
-        //             }
-
-        //             if window[1].index / 4 > window[0].index / 4 && window[1].index % 4 != 0 {
-        //                 let block_index = window[1].index / 4;
-        //                 let mut block = [F::one(), F::one(), F::one(), F::one()];
-        //                 for coeff in window {
-        //                     if coeff.index / 4 == block_index {
-        //                         block[coeff.index % 4] = coeff.value;
-        //                     }
-        //                 }
-
-        //                 let left = (block[0], block[2]);
-        //                 let right = (block[1], block[3]);
-
-        //                 let m_left = left.1 - left.0;
-        //                 let m_right = right.1 - right.0;
-
-        //                 let left_eval_2 = left.1 + m_left;
-        //                 let left_eval_3 = left_eval_2 + m_left;
-
-        //                 let right_eval_2 = right.1 + m_right;
-        //                 let right_eval_3 = right_eval_2 + m_right;
-
-        //                 // TODO(moodlezoup): is this correct?
-        //                 let x1_bitmask = (1 << (eq_poly.E1_len - 1)) - 1;
-        //                 let x1 = block_index & x1_bitmask;
-        //                 let x2_shift = eq_poly.E1_len - 1;
-        //                 let x2 = block_index >> x2_shift;
-
-        //                 let E2_eval = eq_poly.E2[x2];
-        //                 // TODO(moodlezoup): Can save a multiplication here
-        //                 deltas.push((
-        //                     E2_eval * (left.0 * right.0 - F::one()),
-        //                     E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-        //                     E2_eval * (left_eval_3 * right_eval_3 - F::one()),
-        //                     x1,
-        //                 ));
-        //             }
-
-        //             deltas
-        //         })
-        //         .collect();
-
-        //     let mut inner_sums: Vec<(F, F, F)> =
-        //         vec![(F::one(), F::one(), F::one()); eq_poly.E1_len / 2];
-        //     for delta in deltas.iter() {
-        //         let x1 = delta.3;
-        //         inner_sums[x1].0 += delta.0;
-        //         inner_sums[x1].1 += delta.1;
-        //         inner_sums[x1].2 += delta.2;
-        //     }
-
-        //     let cubic_evals = eq_poly.E1[..eq_poly.E1_len]
-        //         .par_chunks(2)
-        //         .zip(inner_sums.par_iter())
-        //         .map(|(E1_chunk, inner_sum)| {
-        //             let E1_evals = {
-        //                 let eval_point_0 = E1_chunk[0];
-        //                 let m_eq = E1_chunk[1] - E1_chunk[0];
-        //                 let eval_point_2 = E1_chunk[1] + m_eq;
-        //                 let eval_point_3 = eval_point_2 + m_eq;
-        //                 (eval_point_0, eval_point_2, eval_point_3)
-        //             };
-        //             (
-        //                 E1_evals.0 * inner_sum.0,
-        //                 E1_evals.1 * inner_sum.1,
-        //                 E1_evals.2 * inner_sum.2,
-        //             )
-        //         })
-        //         .reduce(
-        //             || (F::zero(), F::zero(), F::zero()),
-        //             |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-        //         );
-
-        //     let cubic_evals = [
-        //         cubic_evals.0,
-        //         previous_round_claim - cubic_evals.0,
-        //         cubic_evals.1,
-        //         cubic_evals.2,
-        //     ];
-        //     UniPoly::from_evals(&cubic_evals)
-        // }
+        let cubic_evals = [
+            cubic_evals.0,
+            previous_round_claim - cubic_evals.0,
+            cubic_evals.1,
+            cubic_evals.2,
+        ];
+        UniPoly::from_evals(&cubic_evals)
     }
 
     fn final_claims(&self) -> (F, F) {
@@ -1133,67 +1103,65 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn dense_sparse_compute_cubic_parity() {
-    //     const LAYER_SIZE: usize = 1 << 10;
-    //     const BATCH_SIZE: usize = 5;
-    //     let mut rng = test_rng();
+    #[test]
+    fn dense_sparse_compute_cubic_parity() {
+        const LAYER_SIZE: usize = 1 << 8;
+        const BATCH_SIZE: usize = 6;
+        let mut rng = test_rng();
 
-    //     let dense_layers: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-    //         let layer: DenseGrandProductLayer<Fr> = std::iter::repeat_with(|| {
-    //             if rng.next_u32() % 4 == 0 {
-    //                 Fr::random(&mut rng)
-    //             } else {
-    //                 Fr::one()
-    //             }
-    //         })
-    //         .take(LAYER_SIZE)
-    //         .collect::<Vec<_>>();
-    //         layer
-    //     })
-    //     .take(BATCH_SIZE)
-    //     .collect();
+        let dense_layers: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+            let layer: Vec<Fr> = std::iter::repeat_with(|| {
+                if rng.next_u32() % 4 == 0 {
+                    Fr::random(&mut rng)
+                } else {
+                    Fr::one()
+                }
+            })
+            .take(LAYER_SIZE)
+            .collect::<Vec<_>>();
+            layer
+        })
+        .take(BATCH_SIZE)
+        .collect();
 
-    //     let batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
+        let batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
 
-    //     let sparse_layers: Vec<DynamicDensityGrandProductLayer<Fr>> = dense_layers
-    //         .iter()
-    //         .map(|dense_layer| {
-    //             let mut sparse_layer = vec![];
-    //             for (i, val) in dense_layer.iter().enumerate() {
-    //                 if !val.is_one() {
-    //                     sparse_layer.push((i, *val));
-    //                 }
-    //             }
-    //             DynamicDensityGrandProductLayer::Sparse(sparse_layer)
-    //         })
-    //         .collect();
+        let sparse_coeffs: Vec<_> = dense_layers
+            .iter()
+            .enumerate()
+            .map(|(i, dense_layer)| {
+                let mut sparse_layer = vec![];
+                for (j, val) in dense_layer.iter().enumerate() {
+                    if !val.is_one() {
+                        sparse_layer.push((i * LAYER_SIZE + j, *val).into());
+                    }
+                }
+                sparse_layer
+            })
+            .collect();
+        let sparse_poly = SparseInterleavedPolynomial::new(sparse_coeffs, BATCH_SIZE * LAYER_SIZE);
+        let batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
+            BatchedSparseGrandProductLayer {
+                values: sparse_poly,
+            };
 
-    //     let batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
-    //         BatchedSparseGrandProductLayer {
-    //             layer_len: LAYER_SIZE,
-    //             batched_layer_len: (BATCH_SIZE * LAYER_SIZE).next_power_of_two(),
-    //             values: sparse_layers,
-    //             coalesced_layer: None,
-    //         };
+        for (dense, sparse) in batched_dense_layer
+            .iter()
+            .zip(condense(batched_sparse_layer.clone()).iter())
+        {
+            assert_eq!(dense, sparse);
+        }
 
-    //     for (dense, sparse) in batched_dense_layer
-    //         .iter()
-    //         .zip(condense(batched_sparse_layer.clone()).iter())
-    //     {
-    //         assert_eq!(dense, sparse);
-    //     }
+        let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take((BATCH_SIZE * LAYER_SIZE).next_power_of_two().log_2() - 1)
+            .collect::<Vec<_>>();
+        let eq_poly = SplitEqPolynomial::new(&r_eq);
+        let r = Fr::random(&mut rng);
 
-    //     let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
-    //         .take((BATCH_SIZE * LAYER_SIZE).next_power_of_two().log_2() - 1)
-    //         .collect::<Vec<_>>();
-    //     let eq_poly = SplitEqPolynomial::new(&r_eq);
-    //     let claim = Fr::random(&mut rng);
-
-    //     let dense_evals = batched_dense_layer.compute_cubic(&eq_poly, claim);
-    //     let sparse_evals = batched_sparse_layer.compute_cubic(&eq_poly, claim);
-    //     assert_eq!(dense_evals, sparse_evals);
-    // }
+        let dense_evals = batched_dense_layer.compute_cubic(&eq_poly, r);
+        let sparse_evals = batched_sparse_layer.compute_cubic(&eq_poly, r);
+        assert_eq!(dense_evals, sparse_evals);
+    }
 
     #[test]
     fn sparse_prove_verify() {

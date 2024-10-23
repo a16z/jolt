@@ -141,18 +141,13 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         }
     }
 
-    pub fn par_blocks(
-        &self,
-        block_size: usize,
-    ) -> impl ParallelIterator<Item = &[SparseCoefficient<F>]> {
-        if block_size != 2 && block_size != 4 {
-            panic!("unsupported block_size: {}", block_size);
-        }
-        self.coeffs.par_iter().flat_map(move |segment| {
-            segment.par_chunk_by(move |x, y| x.index / block_size == y.index / block_size)
-        })
+    pub fn par_blocks(&self) -> impl ParallelIterator<Item = &[SparseCoefficient<F>]> {
+        self.coeffs
+            .par_iter()
+            .flat_map(|segment| segment.par_chunk_by(|x, y| x.index / 4 == y.index / 4))
     }
 
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         if !self.coalesced.is_empty() {
             // Coalesced vector should be small enough that we can bind it serially

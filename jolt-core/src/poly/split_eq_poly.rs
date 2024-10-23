@@ -14,6 +14,7 @@ pub struct SplitEqPolynomial<F> {
 }
 
 impl<F: JoltField> SplitEqPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::new")]
     pub fn new(w: &[F]) -> Self {
         let m = w.len() / 2;
         let (w2, w1) = w.split_at(m);
@@ -41,6 +42,7 @@ impl<F: JoltField> SplitEqPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         if self.E1_len == 1 {
             // E_1 is already completely bound, so we bind E_2
