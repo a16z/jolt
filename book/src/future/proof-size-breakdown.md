@@ -1,3 +1,5 @@
+# Contributors to proof size
+
 With HyperKZG commitments, Jolt's proof size (with no composition/recursion) today (or in the very near term) is 35KB-200KB.
 
 Here is the breakdown of contributors to proof size:
@@ -24,13 +26,29 @@ two for Lasso lookups into the RISC-V bytecode, and two for the Spice read-write
 
   With a "hybrid" between the two that avoids a significant prover slowdown, the proof size is about 100 KB. 
 
-  Eventually, with modest engineering effort, we can reduce these 6 grand products down to 3 (or even to 1, though the
-  engineering pain of going that low would be higher). This would reduce proof size by another factor of 2 or so.
-
+  Eventually, with modest engineering effort, we can reduce these 6 grand products down to 3. 
+  This would reduce proof size by another factor of 2 or so. See bottom of this page for further details.
+  
 <LI> Spartan for R1CS involves only two sum-checks (soon to be reduced to one) so contributes about 
   7 KBs to the proof (soon to fall to 3-4 KBs) </LI>
-
-</LI>
-</LI>
   
 </OL>
+
+# Details on grand products
+The 6 grand product arguments run in Jolt stem from the following:
+<UL>
+  <LI> Two for instruction lookups (Lasso). </LI>
+  <LI> Two for read/write memory (Spice). </LI>
+  <LI> Two for bytecode lookups (Lasso). </LI>
+</UL>
+
+For each of the above, one grand product attests to the validity of reads and writes into the relevant memories,
+and one attests to the validity of initialization of memory plus a final pass over memory.
+The reason we do not run these grand products "together as one big grand product" is they are 
+each potentially of different sizes,
+and it is annoying (though possible) to "batch prove" differently-sized grand products together.
+However, a relatively easy way to get down to 3 grand prodcuts is to set the memory size
+in each of the three categories above to equal the number of reads/writes. This simply involves 
+padding the memory with zeros to make it equal in size to 
+the number of reads/writes into the memory (i.e., NUM_CYCLES). Doing this will not substantially increase
+prover time.
