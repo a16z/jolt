@@ -48,6 +48,18 @@ jobs:
       - name: cargo machete
         run: cargo machete --with-metadata
 
+  build-wasm:
+    name: Build Wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build Wasm
+        working-directory: ./jolt-core
+        run: cargo build --release --target wasm32-unknown-unknown
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -64,6 +76,7 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
+
   on-chain:
     name: Onchain Verifier Tests
     runs-on: ubuntu-latest
