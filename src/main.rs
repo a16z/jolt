@@ -103,6 +103,9 @@ fn create_guest_files(name: &str) -> Result<()> {
     let mut lib_file = File::create(format!("{}/guest/src/lib.rs", name))?;
     lib_file.write_all(GUEST_LIB.as_bytes())?;
 
+    let mut main_file = File::create(format!("{}/guest/src/main.rs", name))?;
+    main_file.write_all(GUEST_MAIN.as_bytes())?;
+
     Ok(())
 }
 
@@ -210,10 +213,6 @@ name = "guest"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "guest"
-path = "./src/lib.rs"
-
 [features]
 guest = []
 
@@ -222,7 +221,6 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
-#![no_main]
 
 #[jolt::provable]
 fn fib(n: u32) -> u128 {
@@ -237,4 +235,11 @@ fn fib(n: u32) -> u128 {
 
     b
 }
+"#;
+
+const GUEST_MAIN: &str = r#"#![cfg_attr(feature = "guest", no_std)]
+#![no_main]
+
+#[allow(unused_imports)]
+use fibonacci_guest::*;
 "#;
