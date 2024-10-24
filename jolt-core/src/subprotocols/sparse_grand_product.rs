@@ -1142,6 +1142,7 @@ mod tests {
             };
 
         for (dense, sparse) in batched_dense_layer
+            .values
             .iter()
             .zip(condense(batched_sparse_layer.clone()).iter())
         {
@@ -1162,6 +1163,7 @@ mod tests {
             assert_eq!(eq_poly_dense, eq_poly_sparse);
 
             for (dense, sparse) in batched_dense_layer
+                .values
                 .iter()
                 .zip(condense(batched_sparse_layer.clone()).iter())
             {
@@ -1213,6 +1215,7 @@ mod tests {
             };
 
         for (dense, sparse) in batched_dense_layer
+            .values
             .iter()
             .zip(condense(batched_sparse_layer.clone()).iter())
         {

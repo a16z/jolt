@@ -2,6 +2,7 @@ use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
@@ -224,42 +225,17 @@ pub trait BatchedGrandProductLayer<F: JoltField>:
 ///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
 #[derive(Debug, Clone)]
 pub struct BatchedDenseGrandProductLayer<F: JoltField> {
-    /// All the layers in the batch, flattened into a single vector.
-    values: Vec<F>,
-    /// Keeps track of the effective length of `values`. As the polynomials represented by `values` are bound,
-    /// we update `layer_len` instead of truncating `values`.
-    pub batched_layer_len: usize,
+    pub(crate) values: DenseInterleavedPolynomial<F>,
 }
 
 impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
     pub fn new(mut values: Vec<F>) -> Self {
         let layer_len = values.len().next_power_of_two();
         values.resize(layer_len, F::zero()); // TODO(moodlezoup): avoid resize
+
         Self {
-            values,
-            batched_layer_len: layer_len,
+            values: DenseInterleavedPolynomial::new(values),
         }
-    }
-
-    #[cfg(test)]
-    fn uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        let gap = self.values.len() / self.batched_layer_len;
-        let left_poly =
-            DensePolynomial::new(self.values.clone().into_iter().step_by(2 * gap).collect());
-        let right_poly = DensePolynomial::new(
-            self.values
-                .clone()
-                .into_iter()
-                .skip(gap)
-                .step_by(2 * gap)
-                .collect(),
-        );
-        (left_poly, right_poly)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &F> {
-        let gap = self.values.len() / self.batched_layer_len;
-        self.values.iter().step_by(gap)
     }
 }
 
@@ -267,13 +243,12 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedDenseGrandProductLayer
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> {
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        let gap = self.values.len() / self.batched_layer_len;
-
-        let left = self.values.iter().step_by(2 * gap);
-        let right = self.values.iter().skip(gap).step_by(2 * gap);
+        let (left, right) = self.values.uninterleave();
         let merged_eq = eq_poly.merge();
         let expected: F = left
-            .zip(right)
+            .evals()
+            .iter()
+            .zip(right.evals().iter())
             .zip(merged_eq.evals_ref().iter())
             .map(|((l, r), eq)| *eq * l * r)
             .sum();
@@ -294,19 +269,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     /// Left nodes have even indices, right nodes have odd indices.
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::bind")]
     fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F) {
-        // TODO(moodlezoup): Gap or scratch space approach?
-        let gap = self.values.len() / self.batched_layer_len;
-        debug_assert!(self.values.len() % gap == 0);
-
-        self.values.par_chunks_mut(4 * gap).for_each(|chunk| {
-            // Left
-            chunk[0] = chunk[0] + *r * (chunk[2 * gap] - chunk[0]);
-            // Right
-            chunk[2 * gap] = chunk[gap] + *r * (chunk[3 * gap] - chunk[gap]);
-        });
-        eq_poly.bind(*r);
-
-        self.batched_layer_len /= 2;
+        let _ = rayon::join(|| self.values.bind(*r), || eq_poly.bind(*r));
     }
 
     /// We want to compute the evaluations of the following univariate cubic polynomial at
@@ -325,12 +288,12 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        let gap = self.values.len() / self.batched_layer_len;
-        debug_assert!(self.values.len() % gap == 0);
-        debug_assert_eq!(self.batched_layer_len, 2 * eq_poly.len());
+        let gap = self.values.gap;
+        debug_assert_eq!(self.values.len(), 2 * eq_poly.len());
 
         let cubic_evals = if eq_poly.E1_len == 1 {
             self.values
+                .coeffs
                 .par_chunks(4 * gap)
                 .zip(eq_poly.E2.par_chunks(2))
                 .map(|(layer_chunk, eq_chunk)| {
@@ -379,6 +342,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                     .par_iter()
                     .zip(
                         self.values
+                            .coeffs
                             .par_chunks(4 * gap)
                             .skip(x1)
                             .step_by(num_E1_chunks),
@@ -425,9 +389,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     }
 
     fn final_claims(&self) -> (F, F) {
-        assert_eq!(self.batched_layer_len, 2);
-        let left_claim = self.values[0];
-        let right_claim = self.values[self.values.len() / 2];
+        assert_eq!(self.values.len(), 2);
+        let left_claim = self.values.coeffs[0];
+        let right_claim = self.values.coeffs[self.values.gap];
         (left_claim, right_claim)
     }
 }
@@ -466,6 +430,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             let previous_layer = &layers[i];
             let new_layer = previous_layer
                 .values
+                .coeffs
                 .par_chunks(2)
                 .map(|chunk| chunk[0] * chunk[1])
                 .collect();
@@ -488,7 +453,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         (0..self.batch_size)
             .map(|i| {
                 // left * right
-                last_layer.values[2 * i] * last_layer.values[2 * i + 1]
+                last_layer.values.coeffs[2 * i] * last_layer.values.coeffs[2 * i + 1]
             })
             .collect()
     }
@@ -529,7 +494,10 @@ mod tests {
         >>::construct((leaves.concat(), BATCH_SIZE));
 
         for layer in &batched_circuit.layers {
-            assert_eq!(layer.values.par_iter().product::<Fr>(), expected_product);
+            assert_eq!(
+                layer.values.coeffs.par_iter().product::<Fr>(),
+                expected_product
+            );
         }
 
         let claimed_outputs: Vec<Fr> = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
@@ -562,14 +530,14 @@ mod tests {
         );
         let r = Fr::random(&mut rng);
 
-        let (mut expected_left_poly, mut expected_right_poly) = layer.uninterleave();
+        let (mut expected_left_poly, mut expected_right_poly) = layer.values.uninterleave();
 
         layer.bind(&mut eq_poly, &r);
 
         expected_left_poly.bound_poly_var_bot(&r);
         expected_right_poly.bound_poly_var_bot(&r);
 
-        let (actual_left_poly, actual_right_poly) = layer.uninterleave();
+        let (actual_left_poly, actual_right_poly) = layer.values.uninterleave();
         assert_eq!(
             expected_left_poly.Z[..expected_left_poly.len()],
             actual_left_poly.Z[..actual_left_poly.len()]

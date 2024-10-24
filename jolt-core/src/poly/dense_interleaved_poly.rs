@@ -6,22 +6,18 @@ use super::dense_mlpoly::DensePolynomial;
 
 #[derive(Default, Debug, Clone)]
 pub struct DenseInterleavedPolynomial<F: JoltField> {
-    // num_vars: usize,
-    gap: usize, // TODO(moodlezoup): Gap or scratch space approach?
-    coeffs: Vec<F>,
+    pub(crate) gap: usize, // TODO(moodlezoup): Gap or scratch space approach?
+    pub(crate) coeffs: Vec<F>,
 }
 
 impl<F: JoltField> DenseInterleavedPolynomial<F> {
     pub fn new(coeffs: Vec<F>) -> Self {
         assert!(coeffs.len() % 2 == 0);
-        Self {
-            // num_vars: coeffs.len().next_power_of_two().log_2(),
-            gap: 1,
-            coeffs,
-        }
+        Self { gap: 1, coeffs }
     }
 
     pub fn len(&self) -> usize {
+        debug_assert!(self.coeffs.len().next_power_of_two() % self.gap == 0);
         self.coeffs.len().next_power_of_two() / self.gap
     }
 
