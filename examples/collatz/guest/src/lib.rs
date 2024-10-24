@@ -1,5 +1,4 @@
 #![cfg_attr(feature = "guest", no_std)]
-#![no_main]
 
 #[jolt::provable]
 fn collatz_convergence_range(start: u128, end: u128) -> u128 {
