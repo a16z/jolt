@@ -230,6 +230,38 @@ impl Mmu {
         }
     }
 
+    /// Asserts the validity of an effective memory address.
+    /// Panics if the address is invalid.
+    ///
+    /// # Arguments
+    /// * `effective_address` Effective memory address to validate
+    #[inline]
+    fn assert_effective_address(&self, effective_address: u64) {
+        if effective_address < DRAM_BASE {
+            // less then DRAM_BASE and greater then panic => zero_padding region
+            assert!(
+                effective_address <= self.jolt_device.memory_layout.termination,
+                "Stack overflow: Attempted to write to 0x{:X}",
+                effective_address
+            );
+            // less then panic => jolt_device region (i.e. input/output)
+            assert!(
+                self.jolt_device.is_output(effective_address)
+                    || self.jolt_device.is_panic(effective_address)
+                    || self.jolt_device.is_termination(effective_address),
+                "Unknown memory mapping: 0x{:X}",
+                effective_address
+            );
+        } else {
+            // greater then memory capacity
+            assert!(
+                self.memory.validate_address(effective_address),
+                "Heap overflow: Attempted to write to 0x{:X}",
+                effective_address
+            );
+        }
+    }
+
     /// Fetches an instruction byte. This method takes virtual address
     /// and translates into physical address inside.
     ///
@@ -540,24 +572,12 @@ impl Mmu {
     }
 
     fn trace_store(&mut self, effective_address: u64, value: u64) {
-        if effective_address < DRAM_BASE {
-            if self.jolt_device.is_output(effective_address)
-                || self.jolt_device.is_panic(effective_address)
-                || self.jolt_device.is_termination(effective_address)
-            {
-                self.tracer.push_memory(MemoryState::Write {
-                    address: effective_address,
-                    post_value: value,
-                });
-            } else {
-                panic!("Unknown memory mapping {:X}.", effective_address);
-            }
-        } else {
-            self.tracer.push_memory(MemoryState::Write {
-                address: effective_address,
-                post_value: value,
-            });
-        }
+        self.assert_effective_address(effective_address);
+
+        self.tracer.push_memory(MemoryState::Write {
+            address: effective_address,
+            post_value: value,
+        });
     }
 
     /// Loads two bytes from main memory or peripheral devices depending on
@@ -643,14 +663,8 @@ impl Mmu {
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
                 _ => {
-                    if self.jolt_device.is_output(effective_address)
-                        || self.jolt_device.is_panic(effective_address)
-                        || self.jolt_device.is_termination(effective_address)
-                    {
-                        self.jolt_device.store(effective_address, value);
-                    } else {
-                        panic!("Unknown memory mapping {:X}.", effective_address);
-                    }
+                    self.assert_effective_address(effective_address);
+                    self.jolt_device.store(effective_address, value);
                 }
             },
         };
@@ -1117,5 +1131,53 @@ impl MemoryWrapper {
 
     pub fn validate_address(&self, address: u64) -> bool {
         self.memory.validate_address(address - DRAM_BASE)
+    }
+}
+
+#[cfg(test)]
+mod test_mmu {
+    use super::*;
+    use crate::emulator::terminal::DummyTerminal;
+    use std::rc::Rc;
+
+    const MEM_CAPACITY: u64 = 1024 * 1024;
+
+    fn setup_mmu(capacity: u64) -> Mmu {
+        let terminal = Box::new(DummyTerminal::new());
+        let tracer = Rc::new(Tracer::new());
+        let mut mmu = Mmu::new(Xlen::Bit64, terminal, tracer);
+
+        mmu.init_memory(capacity);
+
+        mmu
+    }
+
+    #[test]
+    #[should_panic(expected = "Heap overflow")]
+    fn test_heap_overflow() {
+        let mut mmu = setup_mmu(MEM_CAPACITY);
+
+        // Try to write beyond the allocated memory
+        let overflow_address = DRAM_BASE + MEM_CAPACITY + 1;
+        mmu.trace_store(overflow_address, 0xc50513);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stack overflow")]
+    fn test_stack_overflow() {
+        let mut mmu = setup_mmu(MEM_CAPACITY);
+
+        // Try to write to an address below DRAM_BASE
+        let invalid_address = DRAM_BASE - 1;
+        mmu.trace_store(invalid_address, 0xc50513);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown memory mapping")]
+    fn test_unknown_memory_mapping() {
+        let mut mmu = setup_mmu(MEM_CAPACITY);
+
+        let invalid_address = 1234;
+        mmu.trace_store(invalid_address, 0xc50513);
     }
 }
