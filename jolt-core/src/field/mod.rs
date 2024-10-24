@@ -91,5 +91,4 @@ where
 }
 
 pub mod ark;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod binius;

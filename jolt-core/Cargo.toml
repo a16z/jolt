@@ -27,6 +27,7 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 ark-std = { version = "0.4.0" }
+binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field", default-features = false }
 clap = { version = "4.3.10", features = ["derive"] }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
@@ -103,8 +104,6 @@ host = ["dep:reqwest", "dep:tokio"]
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0"
 tokio = { version = "1.38.0", optional = true, features = ["rt-multi-thread"] }
-binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
-
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
