@@ -63,9 +63,13 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         }
     }
 
+    pub fn batch_size(&self) -> usize {
+        self.coeffs.len()
+    }
+
     pub fn to_dense(&self) -> DensePolynomial<F> {
         if !self.coalesced.is_empty() {
-            DensePolynomial::new_padded(self.coalesced.clone())
+            DensePolynomial::new_padded(self.coalesced[..self.dense_len].to_vec())
         } else {
             let mut dense_layer = vec![F::one(); self.dense_len];
             for coeff in self.coeffs.iter().flatten() {
@@ -123,8 +127,17 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 
     pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
         if !self.coalesced.is_empty() {
-            let left = self.coalesced.iter().step_by(2).cloned().collect();
-            let right = self.coalesced.iter().skip(1).step_by(2).cloned().collect();
+            let left = self.coalesced[..self.dense_len]
+                .iter()
+                .step_by(2)
+                .cloned()
+                .collect();
+            let right = self.coalesced[..self.dense_len]
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .cloned()
+                .collect();
             (left, right)
         } else {
             let mut left = vec![F::one(); self.dense_len / 2];
@@ -150,8 +163,16 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         if !self.coalesced.is_empty() {
+            let padded_len = self.dense_len.next_multiple_of(4);
+            if padded_len > self.coalesced.len() {
+                self.coalesced.resize(padded_len, F::zero());
+            }
+            for i in self.dense_len..padded_len {
+                self.coalesced[i] = F::zero();
+            }
+
             // Coalesced vector should be small enough that we can bind it serially
-            for i in 0..self.dense_len / 4 {
+            for i in 0..padded_len / 4 {
                 // left
                 self.coalesced[2 * i] =
                     self.coalesced[4 * i] + r * (self.coalesced[4 * i + 2] - self.coalesced[4 * i]);
@@ -159,7 +180,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 self.coalesced[2 * i + 1] = self.coalesced[4 * i + 1]
                     + r * (self.coalesced[4 * i + 3] - self.coalesced[4 * i + 1]);
             }
-            self.dense_len /= 2;
+            self.dense_len = padded_len / 2;
             return;
         }
 
@@ -267,7 +288,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
             });
 
         self.dense_len /= 2;
-        if (self.dense_len / self.coeffs.len()) == 2 {
+        if (self.dense_len / self.batch_size()) == 2 {
             // Coalesce
             self.coalesced = vec![F::one(); self.dense_len];
             self.coeffs
@@ -280,6 +301,12 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 
 #[cfg(test)]
 pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, r: F) {
+    if left.len() % 2 != 0 {
+        left.push(F::zero())
+    }
+    if right.len() % 2 != 0 {
+        right.push(F::zero())
+    }
     let mut left_poly = DensePolynomial::new_padded(left.clone());
     let mut right_poly = DensePolynomial::new_padded(right.clone());
     left_poly.bound_poly_var_bot(&r);
@@ -291,6 +318,8 @@ pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, 
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::math::Math;
+
     use super::*;
     use ark_bn254::Fr;
     use ark_std::{rand::Rng, test_rng, One};
@@ -395,7 +424,7 @@ mod tests {
                 SparseInterleavedPolynomial::interleave(&left, &right, batch_size)
             );
 
-            for i in 0..num_vars {
+            for _ in 0..num_vars + batch_size.log_2() - 1 {
                 let r = Fr::random(&mut rng);
                 interleaved.bind(r);
                 bind_left_and_right(&mut left, &mut right, r);
