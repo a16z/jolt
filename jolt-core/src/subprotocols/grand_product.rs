@@ -241,8 +241,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
         let (left, right) = self.values.uninterleave();
-        println!("left: {:?}", left);
-        println!("right: {:?}", right);
         let merged_eq = eq_poly.merge();
         let expected: F = left
             .iter()
@@ -455,12 +453,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             .par_chunks(2)
             .map(|chunk| chunk[0] * chunk[1])
             .collect()
-        // (0..self.batch_size)
-        // .map(|i| {
-        //     // left * right
-        //     last_layer.values.coeffs[2 * i] * last_layer.values.coeffs[2 * i + 1]
-        // })
-        // .collect()
     }
 
     fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
@@ -579,7 +571,6 @@ mod tests {
             .into_iter()
             .cartesian_product(BATCH_SIZE.into_iter())
         {
-            println!("{} {}", layer_size, batch_size);
             let leaves: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
                 std::iter::repeat_with(|| Fr::random(&mut rng))
                     .take(layer_size)
