@@ -2,8 +2,10 @@ use ark_bn254::Fr;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
+use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
+use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {
     std::iter::repeat_with(|| F::random(rng))
@@ -54,6 +56,62 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     );
 }
 
+fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch_size: usize) {
+    c.bench_function(
+        &format!(
+            "DensePolynomial::bind {} x {} variables",
+            batch_size, num_vars
+        ),
+        |b| {
+            b.iter_with_setup(
+                || {
+                    let mut rng = test_rng();
+                    let mut polys = vec![];
+                    for _ in 0..batch_size {
+                        let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                        polys.push(DensePolynomial::new(coeffs));
+                    }
+                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                        .take(num_vars)
+                        .collect();
+                    (polys, r)
+                },
+                |(mut polys, r)| {
+                    for i in 0..num_vars {
+                        polys
+                            .par_iter_mut()
+                            .for_each(|poly| poly.bound_poly_var_bot(&r[i]))
+                    }
+                },
+            );
+        },
+    );
+}
+
+fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize) {
+    c.bench_function(
+        &format!("DenseInterleavedPolynomial::bind {} variables", num_vars),
+        |b| {
+            b.iter_with_setup(
+                || {
+                    let mut rng = test_rng();
+                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let poly = DenseInterleavedPolynomial::new(coeffs);
+                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                        .take(num_vars)
+                        .collect();
+                    (poly, r)
+                },
+                |(mut poly, r)| {
+                    for i in 0..num_vars {
+                        criterion::black_box(poly.bind(r[i]));
+                    }
+                },
+            );
+        },
+    );
+}
+
 fn benchmark_sparse_interleaved<F: JoltField>(
     c: &mut Criterion,
     batch_size: usize,
@@ -94,17 +152,24 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
 
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
     // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 21, 0.1);
     // benchmark_sparse_interleaved::<Fr>(&mut criterion, 26, 0.1);
     // benchmark_sparse_interleaved::<Fr>(&mut criterion, 27, 0.1);
 
-    // benchmark_dense::<Fr>(&mut criterion, 25);
-    // benchmark_dense::<Fr>(&mut criterion, 26);
-    // benchmark_dense::<Fr>(&mut criterion, 27);
-    // benchmark_dense::<Fr>(&mut criterion, 28);
+    // benchmark_dense::<Fr>(&mut criterion, 20);
+    // benchmark_dense::<Fr>(&mut criterion, 22);
+    // benchmark_dense::<Fr>(&mut criterion, 24);
+
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
+
+    benchmark_dense_batch::<Fr>(&mut criterion, 20, 4);
+    benchmark_dense_batch::<Fr>(&mut criterion, 20, 8);
+    benchmark_dense_batch::<Fr>(&mut criterion, 20, 16);
 
     criterion.final_summary();
 }
