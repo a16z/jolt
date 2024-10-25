@@ -26,7 +26,7 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
     }
 
     #[cfg(test)]
-    pub fn interleave(left: &DensePolynomial<F>, right: &DensePolynomial<F>) -> Self {
+    pub fn interleave(left: &Vec<F>, right: &Vec<F>) -> Self {
         assert_eq!(left.len(), right.len());
         let mut interleaved = vec![];
         for i in 0..left.len() {
@@ -37,31 +37,42 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
     }
 
     #[cfg(test)]
-    pub fn uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        let left_poly = DensePolynomial::new_padded(
-            self.coeffs
-                .clone()
-                .into_iter()
-                .step_by(2 * self.gap)
-                .collect(),
-        );
-        let right_poly = DensePolynomial::new_padded(
-            self.coeffs
-                .clone()
-                .into_iter()
-                .skip(self.gap)
-                .step_by(2 * self.gap)
-                .collect(),
-        );
-        (left_poly, right_poly)
+    pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
+        let left: Vec<_> = self
+            .coeffs
+            .clone()
+            .into_iter()
+            .step_by(2 * self.gap)
+            .collect();
+        let mut right: Vec<_> = self
+            .coeffs
+            .clone()
+            .into_iter()
+            .skip(self.gap)
+            .step_by(2 * self.gap)
+            .collect();
+        if right.len() < left.len() {
+            right.resize(left.len(), F::zero());
+        }
+        (left, right)
     }
 
     pub fn bind(&mut self, r: F) {
+        let padded_len = self.coeffs.len().next_multiple_of(4 * self.gap);
+        if padded_len > self.coeffs.len() {
+            self.coeffs.resize(padded_len, F::zero());
+        }
         self.coeffs.par_chunks_mut(4 * self.gap).for_each(|chunk| {
+            let values = [
+                *chunk.get(0).unwrap_or(&F::zero()),
+                *chunk.get(self.gap).unwrap_or(&F::zero()),
+                *chunk.get(2 * self.gap).unwrap_or(&F::zero()),
+                *chunk.get(3 * self.gap).unwrap_or(&F::zero()),
+            ];
             // Left
-            chunk[0] = chunk[0] + r * (chunk[2 * self.gap] - chunk[0]);
+            chunk[0] = values[0] + r * (values[2] - values[0]);
             // Right
-            chunk[2 * self.gap] = chunk[self.gap] + r * (chunk[3 * self.gap] - chunk[self.gap]);
+            chunk[2 * self.gap] = values[1] + r * (values[3] - values[1]);
         });
 
         self.gap *= 2;
@@ -69,72 +80,105 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
 }
 
 #[cfg(test)]
+pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, r: F) {
+    if left.len() % 2 != 0 {
+        left.push(F::zero())
+    }
+    if right.len() % 2 != 0 {
+        right.push(F::zero())
+    }
+    let mut left_poly = DensePolynomial::new_padded(left.clone());
+    let mut right_poly = DensePolynomial::new_padded(right.clone());
+    left_poly.bound_poly_var_bot(&r);
+    right_poly.bound_poly_var_bot(&r);
+
+    *left = left_poly.Z[..left.len() / 2].to_vec();
+    *right = right_poly.Z[..right.len() / 2].to_vec();
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use itertools::Itertools;
 
     #[test]
     fn interleave_uninterleave() {
         let mut rng = test_rng();
-        const NUM_VARS: usize = 10;
-        let left: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(1 << NUM_VARS)
-            .collect();
-        let left = DensePolynomial::new(left);
-        let right: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(1 << NUM_VARS)
-            .collect();
-        let right = DensePolynomial::new(right);
+        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
 
-        let interleaved = DenseInterleavedPolynomial::interleave(&left, &right);
+        for (num_vars, batch_size) in NUM_VARS
+            .into_iter()
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            let left: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                .take(batch_size << num_vars)
+                .collect();
+            let right: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                .take(batch_size << num_vars)
+                .collect();
 
-        assert_eq!(interleaved.uninterleave(), (left, right));
+            let interleaved = DenseInterleavedPolynomial::interleave(&left, &right);
+            assert_eq!(interleaved.uninterleave(), (left, right));
+        }
     }
 
     #[test]
     fn uninterleave_interleave() {
         let mut rng = test_rng();
-        const NUM_VARS: usize = 10;
-        let coeffs: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(2 * (1 << NUM_VARS))
-            .collect();
-        let interleaved = DenseInterleavedPolynomial::new(coeffs);
-        let (left, right) = interleaved.uninterleave();
+        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
 
-        assert_eq!(
-            interleaved.iter().collect::<Vec<_>>(),
-            DenseInterleavedPolynomial::interleave(&left, &right)
-                .iter()
-                .collect::<Vec<_>>()
-        );
+        for (num_vars, batch_size) in NUM_VARS
+            .into_iter()
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            let coeffs: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                .take(2 * (batch_size << num_vars))
+                .collect();
+            let interleaved = DenseInterleavedPolynomial::new(coeffs);
+            let (left, right) = interleaved.uninterleave();
+
+            assert_eq!(
+                interleaved.iter().collect::<Vec<_>>(),
+                DenseInterleavedPolynomial::interleave(&left, &right)
+                    .iter()
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
     fn bind() {
         let mut rng = test_rng();
-        const NUM_VARS: usize = 10;
-        let left: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(1 << NUM_VARS)
-            .collect();
-        let mut left = DensePolynomial::new(left);
-        let right: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(1 << NUM_VARS)
-            .collect();
-        let mut right = DensePolynomial::new(right);
+        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
 
-        let mut interleaved = DenseInterleavedPolynomial::interleave(&left, &right);
+        for (num_vars, batch_size) in NUM_VARS
+            .into_iter()
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            let mut left: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                .take(batch_size << num_vars)
+                .collect();
+            let mut right: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                .take(batch_size << num_vars)
+                .collect();
 
-        let r = Fr::random(&mut rng);
-        interleaved.bind(r);
-        left.bound_poly_var_bot(&r);
-        right.bound_poly_var_bot(&r);
+            let mut interleaved = DenseInterleavedPolynomial::interleave(&left, &right);
 
-        assert_eq!(
-            interleaved.iter().collect::<Vec<_>>(),
-            DenseInterleavedPolynomial::interleave(&left, &right)
-                .iter()
-                .collect::<Vec<_>>()
-        );
+            let r = Fr::random(&mut rng);
+            interleaved.bind(r);
+            bind_left_and_right(&mut left, &mut right, r);
+
+            assert_eq!(
+                interleaved.iter().collect::<Vec<_>>(),
+                DenseInterleavedPolynomial::interleave(&left, &right)
+                    .iter()
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 }

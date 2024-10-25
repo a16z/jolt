@@ -229,10 +229,7 @@ pub struct BatchedDenseGrandProductLayer<F: JoltField> {
 }
 
 impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
-    pub fn new(mut values: Vec<F>) -> Self {
-        let layer_len = values.len().next_power_of_two();
-        values.resize(layer_len, F::zero()); // TODO(moodlezoup): avoid resize
-
+    pub fn new(values: Vec<F>) -> Self {
         Self {
             values: DenseInterleavedPolynomial::new(values),
         }
@@ -244,11 +241,12 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
         let (left, right) = self.values.uninterleave();
+        println!("left: {:?}", left);
+        println!("right: {:?}", right);
         let merged_eq = eq_poly.merge();
         let expected: F = left
-            .evals()
             .iter()
-            .zip(right.evals().iter())
+            .zip(right.iter())
             .zip(merged_eq.evals_ref().iter())
             .map(|((l, r), eq)| *eq * l * r)
             .sum();
@@ -304,8 +302,14 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                         let eval_point_3 = eval_point_2 + m_eq;
                         (eval_point_0, eval_point_2, eval_point_3)
                     };
-                    let left = (layer_chunk[0], layer_chunk[2 * gap]);
-                    let right = (layer_chunk[gap], layer_chunk[3 * gap]);
+                    let left = (
+                        *layer_chunk.get(0).unwrap_or(&F::zero()),
+                        *layer_chunk.get(2 * gap).unwrap_or(&F::zero()),
+                    );
+                    let right = (
+                        *layer_chunk.get(gap).unwrap_or(&F::zero()),
+                        *layer_chunk.get(3 * gap).unwrap_or(&F::zero()),
+                    );
 
                     let m_left = left.1 - left.0;
                     let m_right = right.1 - right.0;
@@ -348,8 +352,14 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                             .step_by(num_E1_chunks),
                     )
                     .map(|(E2_eval, P_x1)| {
-                        let left = (P_x1[0], P_x1[2 * gap]);
-                        let right = (P_x1[gap], P_x1[3 * gap]);
+                        let left = (
+                            *P_x1.get(0).unwrap_or(&F::zero()),
+                            *P_x1.get(2 * gap).unwrap_or(&F::zero()),
+                        );
+                        let right = (
+                            *P_x1.get(gap).unwrap_or(&F::zero()),
+                            *P_x1.get(3 * gap).unwrap_or(&F::zero()),
+                        );
 
                         let m_left = left.1 - left.0;
                         let m_right = right.1 - right.0;
@@ -469,125 +479,148 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly::commitment::zeromorph::Zeromorph;
+    use crate::poly::{
+        commitment::zeromorph::Zeromorph, dense_interleaved_poly::bind_left_and_right,
+    };
     use ark_bn254::{Bn254, Fr};
     use ark_std::{test_rng, One};
 
     #[test]
     fn dense_construct() {
-        const LAYER_SIZE: usize = 1 << 8;
-        const BATCH_SIZE: usize = 4;
         let mut rng = test_rng();
-        let leaves: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(LAYER_SIZE)
-                .collect::<Vec<_>>()
-        })
-        .take(BATCH_SIZE)
-        .collect();
+        const LAYER_SIZE: [usize; 8] = [
+            1 << 1,
+            1 << 2,
+            1 << 3,
+            1 << 4,
+            1 << 5,
+            1 << 6,
+            1 << 7,
+            1 << 8,
+        ];
+        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
 
-        let expected_product: Fr = leaves.par_iter().flatten().product();
+        for (layer_size, batch_size) in LAYER_SIZE
+            .into_iter()
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            let leaves: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+                std::iter::repeat_with(|| Fr::random(&mut rng))
+                    .take(layer_size)
+                    .collect::<Vec<_>>()
+            })
+            .take(batch_size)
+            .collect();
 
-        let batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::construct((leaves.concat(), BATCH_SIZE));
+            let expected_product: Fr = leaves.par_iter().flatten().product();
 
-        for layer in &batched_circuit.layers {
-            assert_eq!(
-                layer.values.coeffs.par_iter().product::<Fr>(),
-                expected_product
-            );
+            let batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::construct((leaves.concat(), batch_size));
+
+            for layer in &batched_circuit.layers {
+                assert_eq!(
+                    layer.values.coeffs.par_iter().product::<Fr>(),
+                    expected_product
+                );
+            }
+
+            let claimed_outputs: Vec<Fr> = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::claimed_outputs(&batched_circuit);
+            let expected_outputs: Vec<Fr> =
+                leaves.iter().map(|x| x.iter().product::<Fr>()).collect();
+            assert!(claimed_outputs == expected_outputs);
         }
-
-        let claimed_outputs: Vec<Fr> = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::claimed_outputs(&batched_circuit);
-        let expected_outputs: Vec<Fr> = leaves.iter().map(|x| x.iter().product::<Fr>()).collect();
-        assert!(claimed_outputs == expected_outputs);
     }
 
     #[test]
     fn dense_bind() {
-        const LAYER_SIZE: usize = 1 << 3;
-        const BATCH_SIZE: usize = 3;
         let mut rng = test_rng();
-        let values: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(LAYER_SIZE)
-                .collect::<Vec<_>>()
-        })
-        .take(BATCH_SIZE)
-        .collect();
+        const LAYER_SIZE: [usize; 7] = [1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7, 1 << 8];
+        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
 
-        let mut layer = BatchedDenseGrandProductLayer::<Fr>::new(values.concat());
+        for (layer_size, batch_size) in LAYER_SIZE
+            .into_iter()
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            let values: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+                std::iter::repeat_with(|| Fr::random(&mut rng))
+                    .take(layer_size)
+                    .collect::<Vec<_>>()
+            })
+            .take(batch_size)
+            .collect();
 
-        let mut eq_poly = SplitEqPolynomial::new(
-            &std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(BATCH_SIZE.next_power_of_two().log_2())
-                .collect::<Vec<Fr>>(),
-        );
-        let r = Fr::random(&mut rng);
+            let mut layer = BatchedDenseGrandProductLayer::<Fr>::new(values.concat());
 
-        let (mut expected_left_poly, mut expected_right_poly) = layer.values.uninterleave();
+            let mut eq_poly = SplitEqPolynomial::new(
+                &std::iter::repeat_with(|| Fr::random(&mut rng))
+                    .take(batch_size.next_power_of_two().log_2())
+                    .collect::<Vec<Fr>>(),
+            );
+            let r = Fr::random(&mut rng);
 
-        layer.bind(&mut eq_poly, &r);
+            let (mut expected_left_poly, mut expected_right_poly) = layer.values.uninterleave();
 
-        expected_left_poly.bound_poly_var_bot(&r);
-        expected_right_poly.bound_poly_var_bot(&r);
+            layer.bind(&mut eq_poly, &r);
+            bind_left_and_right(&mut expected_left_poly, &mut expected_right_poly, r);
 
-        let (actual_left_poly, actual_right_poly) = layer.values.uninterleave();
-        assert_eq!(
-            expected_left_poly.Z[..expected_left_poly.len()],
-            actual_left_poly.Z[..actual_left_poly.len()]
-        );
-        assert_eq!(
-            expected_right_poly.Z[..expected_right_poly.len()],
-            actual_right_poly.Z[..actual_right_poly.len()]
-        );
+            let (actual_left_poly, actual_right_poly) = layer.values.uninterleave();
+            assert_eq!(expected_left_poly, actual_left_poly);
+            assert_eq!(expected_right_poly, actual_right_poly);
+        }
     }
 
     #[test]
     fn dense_prove_verify() {
-        const LAYER_SIZE: usize = 1 << 8;
-        const BATCH_SIZE: usize = 3;
         let mut rng = test_rng();
-        let leaves: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(LAYER_SIZE)
-                .collect::<Vec<_>>()
-        })
-        .take(BATCH_SIZE)
-        .collect();
+        const LAYER_SIZE: [usize; 7] = [1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7, 1 << 8];
+        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
 
-        let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::construct((leaves.concat(), BATCH_SIZE));
-        let mut prover_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        for (layer_size, batch_size) in LAYER_SIZE
+            .into_iter()
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            println!("{} {}", layer_size, batch_size);
+            let leaves: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+                std::iter::repeat_with(|| Fr::random(&mut rng))
+                    .take(layer_size)
+                    .collect::<Vec<_>>()
+            })
+            .take(batch_size)
+            .collect();
 
-        // I love the rust type system
-        let claims =
-            <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::claimed_outputs(
-                &batched_circuit,
+            let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::construct((leaves.concat(), batch_size));
+            let mut prover_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+
+            // I love the rust type system
+            let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::claimed_outputs(&batched_circuit);
+            let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::prove_grand_product(
+                &mut batched_circuit, None, &mut prover_transcript, None
             );
-        let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::prove_grand_product(
-            &mut batched_circuit, None, &mut prover_transcript, None
-        );
 
-        let mut verifier_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        verifier_transcript.compare_to(prover_transcript);
-        let (_, r_verifier) = BatchedDenseGrandProduct::verify_grand_product(
-            &proof,
-            &claims,
-            None,
-            &mut verifier_transcript,
-            None,
-        );
-        assert_eq!(r_prover, r_verifier);
+            let mut verifier_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+            verifier_transcript.compare_to(prover_transcript);
+            let (_, r_verifier) = BatchedDenseGrandProduct::verify_grand_product(
+                &proof,
+                &claims,
+                None,
+                &mut verifier_transcript,
+                None,
+            );
+            assert_eq!(r_prover, r_verifier);
+        }
     }
 }
