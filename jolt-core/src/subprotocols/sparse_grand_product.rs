@@ -4,11 +4,12 @@ use super::grand_product::{
 use super::sumcheck::BatchedCubicSumcheck;
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
-use crate::utils::thread::drop_in_background_thread;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::ProofTranscript;
 use rayon::prelude::*;
 
@@ -22,18 +23,26 @@ pub struct BatchedSparseGrandProductLayer<F: JoltField> {
 
 impl<F: JoltField> BatchedSparseGrandProductLayer<F> {
     fn layer_output(&self) -> Self {
-        if !self.values.coalesced.is_empty() {
-            let mut coalesced = vec![F::one(); self.values.dense_len / 2];
-            for i in 0..self.values.dense_len / 4 {
-                coalesced[2 * i] = self.values.coalesced[4 * i] * self.values.coalesced[4 * i + 2];
-                coalesced[2 * i + 1] =
-                    self.values.coalesced[4 * i + 1] * self.values.coalesced[4 * i + 3];
-            }
+        if let Some(coalesced) = &self.values.coalesced {
+            let mut output = unsafe_allocate_zero_vec(coalesced.len().next_multiple_of(4) / 2);
+            output
+                .par_chunks_mut(2)
+                .zip(coalesced.par_chunks(4))
+                .for_each(|(output_chunk, input_chunk)| {
+                    let input_chunk = [
+                        *input_chunk.get(0).unwrap_or(&F::zero()),
+                        *input_chunk.get(1).unwrap_or(&F::zero()),
+                        *input_chunk.get(2).unwrap_or(&F::zero()),
+                        *input_chunk.get(3).unwrap_or(&F::zero()),
+                    ];
+                    output_chunk[0] = input_chunk[0] * input_chunk[2];
+                    output_chunk[1] = input_chunk[1] * input_chunk[3];
+                });
 
             let values = SparseInterleavedPolynomial {
                 dense_len: self.values.dense_len / 2,
-                coeffs: vec![vec![]; self.values.coeffs.len()],
-                coalesced,
+                coeffs: vec![vec![]; self.values.batch_size()],
+                coalesced: Some(DenseInterleavedPolynomial::new(output)),
             };
 
             Self { values }
@@ -155,10 +164,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         // debug_assert_eq!(self.values.dense_len, 2 * eq_poly.len());
 
         let cubic_evals = if eq_poly.E1_len == 1 {
-            if !self.values.coalesced.is_empty() {
+            if let Some(coalesced) = &self.values.coalesced {
                 println!("E1_len == 1, coaleseced");
-                self.values
-                    .coalesced
+                coalesced
                     .par_chunks(4)
                     .zip(eq_poly.E2.par_chunks(2))
                     .map(|(layer_chunk, eq_chunk)| {
@@ -259,7 +267,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 )
             }
         } else {
-            if !self.values.coalesced.is_empty() {
+            if let Some(coalesced) = &self.values.coalesced {
                 println!("E1_len != 1, coalesced");
                 let num_E1_chunks = eq_poly.E1_len / 2;
 
@@ -274,13 +282,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     };
                     let inner_sums = eq_poly.E2[..eq_poly.E2_len]
                         .par_iter()
-                        .zip(
-                            self.values
-                                .coalesced
-                                .par_chunks(4)
-                                .skip(x1)
-                                .step_by(num_E1_chunks),
-                        )
+                        .zip(coalesced.par_chunks(4).skip(x1).step_by(num_E1_chunks))
                         .map(|(E2_eval, P_x1)| {
                             let left = (P_x1[0], P_x1[2]);
                             let right = (P_x1[1], P_x1[3]);

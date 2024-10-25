@@ -11,6 +11,16 @@ pub struct DenseInterleavedPolynomial<F: JoltField> {
     binding_scratch_space: Vec<F>,
 }
 
+impl<F: JoltField> PartialEq for DenseInterleavedPolynomial<F> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len != other.len {
+            false
+        } else {
+            self.coeffs[..self.len] == other.coeffs[..other.len]
+        }
+    }
+}
+
 impl<F: JoltField> DenseInterleavedPolynomial<F> {
     pub fn new(coeffs: Vec<F>) -> Self {
         assert!(coeffs.len() % 2 == 0);
@@ -45,7 +55,6 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
         Self::new(interleaved)
     }
 
-    #[cfg(test)]
     pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
         let left: Vec<_> = self.coeffs[..self.len]
             .to_vec()

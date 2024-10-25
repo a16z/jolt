@@ -407,7 +407,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
 ///   o   o o   o  <- layers[layers.len() - 2]
 ///       ...
 pub struct BatchedDenseGrandProduct<F: JoltField> {
-    batch_size: usize,
     layers: Vec<BatchedDenseGrandProductLayer<F>>,
 }
 
@@ -438,7 +437,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             layers.push(BatchedDenseGrandProductLayer::new(new_layer));
         }
 
-        Self { layers, batch_size }
+        Self { layers }
     }
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct_with_config")]
     fn construct_with_config(leaves: Self::Leaves, _config: Self::Config) -> Self {
@@ -479,7 +478,7 @@ mod tests {
         commitment::zeromorph::Zeromorph, dense_interleaved_poly::bind_left_and_right,
     };
     use ark_bn254::{Bn254, Fr};
-    use ark_std::{test_rng, One};
+    use ark_std::test_rng;
 
     #[test]
     fn dense_construct() {
