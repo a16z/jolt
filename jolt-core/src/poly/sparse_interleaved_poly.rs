@@ -8,7 +8,7 @@ use crate::{
         grand_product::BatchedGrandProductLayer,
         sumcheck::{BatchedCubicSumcheck, Bindable},
     },
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    utils::math::Math,
 };
 use rayon::prelude::*;
 
@@ -93,12 +93,16 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
     }
 
     pub fn coalesce(&self) -> Vec<F> {
-        let mut coalesced = vec![F::one(); self.dense_len];
-        self.coeffs
-            .iter()
-            .flatten()
-            .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
-        coalesced
+        if let Some(coalesced) = &self.coalesced {
+            coalesced.coeffs.clone()
+        } else {
+            let mut coalesced = vec![F::one(); self.dense_len];
+            self.coeffs
+                .iter()
+                .flatten()
+                .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
+            coalesced
+        }
     }
 
     #[cfg(test)]
@@ -173,25 +177,10 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 
     pub fn layer_output(&self) -> Self {
         if let Some(coalesced) = &self.coalesced {
-            let mut output = unsafe_allocate_zero_vec(coalesced.len().next_multiple_of(4) / 2);
-            output
-                .par_chunks_mut(2)
-                .zip(coalesced.par_chunks(4))
-                .for_each(|(output_chunk, input_chunk)| {
-                    let input_chunk = [
-                        *input_chunk.get(0).unwrap_or(&F::zero()),
-                        *input_chunk.get(1).unwrap_or(&F::zero()),
-                        *input_chunk.get(2).unwrap_or(&F::zero()),
-                        *input_chunk.get(3).unwrap_or(&F::zero()),
-                    ];
-                    output_chunk[0] = input_chunk[0] * input_chunk[2];
-                    output_chunk[1] = input_chunk[1] * input_chunk[3];
-                });
-
             Self {
                 dense_len: self.dense_len / 2,
                 coeffs: vec![vec![]; self.batch_size()],
-                coalesced: Some(DenseInterleavedPolynomial::new(output)),
+                coalesced: Some(coalesced.layer_output()),
             }
         } else {
             let coeffs: Vec<Vec<_>> = self
@@ -199,28 +188,16 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 .par_iter()
                 .map(|segment| {
                     segment
-                        .par_chunk_by(move |x, y| x.index / 4 == y.index / 4)
-                        .flat_map_iter(|sparse_block| {
-                            let mut outputs: Vec<SparseCoefficient<F>> = vec![];
-
-                            let block_index = sparse_block[0].index / 4;
-                            let mut dense_block = [F::one(); 4];
+                        .par_chunk_by(move |x, y| x.index / 2 == y.index / 2)
+                        .map(|sparse_block| {
+                            let mut dense_block = [F::one(); 2];
                             for coeff in sparse_block {
-                                dense_block[coeff.index % 4] = coeff.value;
+                                dense_block[coeff.index % 2] = coeff.value;
                             }
 
-                            let left = dense_block[0].mul_1_optimized(dense_block[2]);
-                            let right = dense_block[1].mul_1_optimized(dense_block[3]);
-                            if !left.is_one() {
-                                let left_index = 2 * block_index;
-                                outputs.push((left_index, left).into());
-                            }
-                            if !right.is_one() {
-                                let right_index = 2 * block_index + 1;
-                                outputs.push((right_index, right).into());
-                            }
-
-                            outputs
+                            let output_index = sparse_block[0].index / 2;
+                            let output_value = dense_block[0].mul_1_optimized(dense_block[1]);
+                            (output_index, output_value).into()
                         })
                         .collect()
                 })
@@ -253,116 +230,115 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
             let padded_len = self.dense_len.next_multiple_of(4);
             coalesced.bind(r);
             self.dense_len = padded_len / 2;
-            return;
-        }
+        } else {
+            self.coeffs
+                .par_iter_mut()
+                .for_each(|segment: &mut Vec<SparseCoefficient<F>>| {
+                    let mut next_left_node_to_process = 0;
+                    let mut next_right_node_to_process = 0;
+                    let mut bound_index = 0;
 
-        self.coeffs
-            .par_iter_mut()
-            .for_each(|segment: &mut Vec<SparseCoefficient<F>>| {
-                let mut next_left_node_to_process = 0;
-                let mut next_right_node_to_process = 0;
-                let mut bound_index = 0;
-
-                for j in 0..segment.len() {
-                    let current = segment[j];
-                    if current.index % 2 == 0 && current.index < next_left_node_to_process {
-                        // This left node was already bound with its sibling in a previous iteration
-                        continue;
-                    }
-                    if current.index % 2 == 1 && current.index < next_right_node_to_process {
-                        // This right node was already bound with its sibling in a previous iteration
-                        continue;
-                    }
-
-                    let neighbors = [
-                        segment
-                            .get(j + 1)
-                            .cloned()
-                            .unwrap_or((current.index + 1, F::one()).into()),
-                        segment
-                            .get(j + 2)
-                            .cloned()
-                            .unwrap_or((current.index + 2, F::one()).into()),
-                    ];
-                    let find_neighbor = |query_index: usize| {
-                        neighbors
-                            .iter()
-                            .find_map(|neighbor| {
-                                if neighbor.index == query_index {
-                                    Some(neighbor.value)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(F::one())
-                    };
-
-                    match current.index % 4 {
-                        0 => {
-                            // Find sibling left node
-                            let sibling_value: F = find_neighbor(current.index + 2);
-                            segment[bound_index] = (
-                                current.index / 2,
-                                current.value + r * (sibling_value - current.value),
-                            )
-                                .into();
-                            next_left_node_to_process = current.index + 4;
+                    for j in 0..segment.len() {
+                        let current = segment[j];
+                        if current.index % 2 == 0 && current.index < next_left_node_to_process {
+                            // This left node was already bound with its sibling in a previous iteration
+                            continue;
                         }
-                        1 => {
-                            // Edge case: If this right node's neighbor is not 1 and has _not_
-                            // been bound yet, we need to bind the neighbor first to preserve
-                            // the monotonic ordering of the bound layer.
-                            if next_left_node_to_process <= current.index + 1 {
-                                let left_neighbor: F = find_neighbor(current.index + 1);
-                                if !left_neighbor.is_one() {
-                                    segment[bound_index] = (
-                                        current.index / 2,
-                                        F::one() + r * (left_neighbor - F::one()),
-                                    )
-                                        .into();
-                                    bound_index += 1;
-                                }
-                                next_left_node_to_process = current.index + 3;
-                            }
+                        if current.index % 2 == 1 && current.index < next_right_node_to_process {
+                            // This right node was already bound with its sibling in a previous iteration
+                            continue;
+                        }
 
-                            // Find sibling right node
-                            let sibling_value: F = find_neighbor(current.index + 2);
-                            segment[bound_index] = (
-                                current.index / 2 + 1,
-                                current.value + r * (sibling_value - current.value),
-                            )
-                                .into();
-                            next_right_node_to_process = current.index + 4;
-                        }
-                        2 => {
-                            // Sibling left node wasn't encountered in previous iteration,
-                            // so sibling must have value 1.
-                            segment[bound_index] = (
-                                current.index / 2 - 1,
-                                F::one() + r * (current.value - F::one()),
-                            )
-                                .into();
-                            next_left_node_to_process = current.index + 2;
-                        }
-                        3 => {
-                            // Sibling right node wasn't encountered in previous iteration,
-                            // so sibling must have value 1.
-                            segment[bound_index] =
-                                (current.index / 2, F::one() + r * (current.value - F::one()))
+                        let neighbors = [
+                            segment
+                                .get(j + 1)
+                                .cloned()
+                                .unwrap_or((current.index + 1, F::one()).into()),
+                            segment
+                                .get(j + 2)
+                                .cloned()
+                                .unwrap_or((current.index + 2, F::one()).into()),
+                        ];
+                        let find_neighbor = |query_index: usize| {
+                            neighbors
+                                .iter()
+                                .find_map(|neighbor| {
+                                    if neighbor.index == query_index {
+                                        Some(neighbor.value)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(F::one())
+                        };
+
+                        match current.index % 4 {
+                            0 => {
+                                // Find sibling left node
+                                let sibling_value: F = find_neighbor(current.index + 2);
+                                segment[bound_index] = (
+                                    current.index / 2,
+                                    current.value + r * (sibling_value - current.value),
+                                )
                                     .into();
-                            next_right_node_to_process = current.index + 2;
-                        }
-                        _ => unreachable!("?_?"),
-                    }
-                    bound_index += 1;
-                }
-                segment.truncate(bound_index);
-            });
+                                next_left_node_to_process = current.index + 4;
+                            }
+                            1 => {
+                                // Edge case: If this right node's neighbor is not 1 and has _not_
+                                // been bound yet, we need to bind the neighbor first to preserve
+                                // the monotonic ordering of the bound layer.
+                                if next_left_node_to_process <= current.index + 1 {
+                                    let left_neighbor: F = find_neighbor(current.index + 1);
+                                    if !left_neighbor.is_one() {
+                                        segment[bound_index] = (
+                                            current.index / 2,
+                                            F::one() + r * (left_neighbor - F::one()),
+                                        )
+                                            .into();
+                                        bound_index += 1;
+                                    }
+                                    next_left_node_to_process = current.index + 3;
+                                }
 
-        self.dense_len /= 2;
-        if (self.dense_len / self.batch_size()) == 2 {
-            // Coalesce
-            self.coalesced = Some(DenseInterleavedPolynomial::new(self.coalesce()));
+                                // Find sibling right node
+                                let sibling_value: F = find_neighbor(current.index + 2);
+                                segment[bound_index] = (
+                                    current.index / 2 + 1,
+                                    current.value + r * (sibling_value - current.value),
+                                )
+                                    .into();
+                                next_right_node_to_process = current.index + 4;
+                            }
+                            2 => {
+                                // Sibling left node wasn't encountered in previous iteration,
+                                // so sibling must have value 1.
+                                segment[bound_index] = (
+                                    current.index / 2 - 1,
+                                    F::one() + r * (current.value - F::one()),
+                                )
+                                    .into();
+                                next_left_node_to_process = current.index + 2;
+                            }
+                            3 => {
+                                // Sibling right node wasn't encountered in previous iteration,
+                                // so sibling must have value 1.
+                                segment[bound_index] =
+                                    (current.index / 2, F::one() + r * (current.value - F::one()))
+                                        .into();
+                                next_right_node_to_process = current.index + 2;
+                            }
+                            _ => unreachable!("?_?"),
+                        }
+                        bound_index += 1;
+                    }
+                    segment.truncate(bound_index);
+                });
+
+            self.dense_len /= 2;
+            if (self.dense_len / self.batch_size()) == 2 {
+                // Coalesce
+                self.coalesced = Some(DenseInterleavedPolynomial::new(self.coalesce()));
+            }
         }
 
         #[cfg(test)]
@@ -421,7 +397,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
         }
 
         let cubic_evals = if eq_poly.E1_len == 1 {
-            println!("E1_len == 1, not coaleseced");
             let eq_evals: Vec<(F, F, F)> = eq_poly
                 .E2
                 .par_chunks(2)
@@ -486,7 +461,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                 |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
             )
         } else {
-            println!("E1_len != 1, not coalesced");
             let deltas: Vec<(F, F, F, usize)> = self
                 .coeffs
                 .par_iter()
@@ -584,7 +558,16 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
             cubic_evals.2,
         ];
 
-        UniPoly::from_evals(&cubic_evals)
+        let cubic = UniPoly::from_evals(&cubic_evals);
+
+        #[cfg(test)]
+        {
+            let dense = DenseInterleavedPolynomial::new(self.coalesce());
+            let dense_cubic = dense.compute_cubic(eq_poly, previous_round_claim);
+            assert_eq!(cubic, dense_cubic);
+        }
+
+        cubic
     }
 
     fn final_claims(&self) -> (F, F) {

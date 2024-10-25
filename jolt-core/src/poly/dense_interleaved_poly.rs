@@ -80,6 +80,14 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
         }
         (left, right)
     }
+
+    pub fn layer_output(&self) -> Self {
+        let output = self
+            .par_chunks(2)
+            .map(|chunk| chunk[0] * chunk[1])
+            .collect();
+        Self::new(output)
+    }
 }
 
 impl<F: JoltField> Bindable<F> for DenseInterleavedPolynomial<F> {

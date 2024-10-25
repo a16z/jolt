@@ -247,11 +247,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 
         for i in 0..num_layers - 1 {
             let previous_layer = &layers[i];
-            let new_layer = previous_layer
-                .par_chunks(2)
-                .map(|chunk| chunk[0] * chunk[1])
-                .collect();
-            layers.push(DenseInterleavedPolynomial::new(new_layer));
+            let new_layer = previous_layer.layer_output();
+            layers.push(new_layer);
         }
 
         Self { layers }

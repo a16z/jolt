@@ -130,13 +130,6 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
         let sparse_poly = SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2);
         sparse_poly
-        // #[cfg(test)]
-        // let dense_poly = DenseInterleavedPolynomial::new(sparse_poly.coalesce());
-        // BatchedSparseGrandProductLayer {
-        //     values: sparse_poly,
-        //     #[cfg(test)]
-        //     reference: dense_poly,
-        // }
     }
 }
 
@@ -605,6 +598,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             layers.push(previous_layer.layer_output());
         }
 
+        println!("Sparse circuit: {:?}", layers);
+
         Self {
             toggle_layer,
             sparse_layers: layers,
@@ -679,8 +674,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly::{
-        commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
+    use crate::{
+        poly::{
+            commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
+        },
+        subprotocols::grand_product::BatchedDenseGrandProduct,
     };
     use ark_bn254::{Bn254, Fr};
     use ark_std::{rand::Rng, test_rng, One};
@@ -815,7 +813,7 @@ mod tests {
 
     #[test]
     fn sparse_prove_verify() {
-        const LAYER_SIZE: usize = 1 << 2;
+        const LAYER_SIZE: usize = 1 << 3;
         const BATCH_SIZE: usize = 2;
         let mut rng = test_rng();
 
@@ -844,6 +842,22 @@ mod tests {
             Fr,
             Zeromorph<Bn254>,
         >>::construct((flags, fingerprints));
+
+        let mut dense_circuit =
+            <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::construct(
+                (circuit.sparse_layers[0].coalesce(), BATCH_SIZE),
+            );
+        let dense_claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254>,
+        >>::claimed_outputs(&dense_circuit);
+        let mut dense_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+        let _ = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254>,
+        >>::prove_grand_product(
+            &mut dense_circuit, None, &mut dense_transcript, None
+        );
 
         let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
