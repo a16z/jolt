@@ -1,10 +1,10 @@
 use super::grand_product::{
-    BatchedDenseGrandProductLayer, BatchedGrandProduct, BatchedGrandProductLayer,
-    BatchedGrandProductProof,
+    BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
 };
 use super::sumcheck::SumcheckInstanceProof;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
+use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -28,7 +28,7 @@ pub struct QuarkGrandProductProof<PCS: CommitmentScheme> {
 
 pub struct QuarkGrandProduct<F: JoltField> {
     polynomials: Vec<Vec<F>>,
-    base_layers: Vec<BatchedDenseGrandProductLayer<F>>,
+    base_layers: Vec<DenseInterleavedPolynomial<F>>,
 }
 
 // #[derive(Clone, Copy, Debug, Default)]

@@ -13,9 +13,12 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use rayon::prelude::*;
 
+pub trait Bindable<F: JoltField>: Sync {
+    fn bind(&mut self, r: F);
+}
+
 /// Batched cubic sumcheck used in grand products
-pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
-    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F);
+pub trait BatchedCubicSumcheck<F: JoltField>: Bindable<F> {
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
 
@@ -49,7 +52,8 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
-            self.bind(eq_poly, &r_j);
+            self.bind(r_j);
+            eq_poly.bind(r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);

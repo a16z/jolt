@@ -1,435 +1,18 @@
 use super::grand_product::{
     BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductLayerProof,
 };
-use super::sumcheck::BatchedCubicSumcheck;
+use super::sumcheck::{BatchedCubicSumcheck, Bindable};
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
+#[cfg(test)]
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
-use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
+use crate::poly::unipoly::UniPoly;
 use crate::utils::math::Math;
-use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
 use rayon::prelude::*;
-
-/// Represents a batch of `DynamicDensityGrandProductLayer`, all of which have the same
-/// size `layer_len`. Note that within a single batch, some layers may be represented by
-/// sparse vectors and others by dense vectors.
-#[derive(Debug, Clone)]
-pub struct BatchedSparseGrandProductLayer<F: JoltField> {
-    pub values: SparseInterleavedPolynomial<F>,
-}
-
-impl<F: JoltField> BatchedSparseGrandProductLayer<F> {
-    fn layer_output(&self) -> Self {
-        if let Some(coalesced) = &self.values.coalesced {
-            let mut output = unsafe_allocate_zero_vec(coalesced.len().next_multiple_of(4) / 2);
-            output
-                .par_chunks_mut(2)
-                .zip(coalesced.par_chunks(4))
-                .for_each(|(output_chunk, input_chunk)| {
-                    let input_chunk = [
-                        *input_chunk.get(0).unwrap_or(&F::zero()),
-                        *input_chunk.get(1).unwrap_or(&F::zero()),
-                        *input_chunk.get(2).unwrap_or(&F::zero()),
-                        *input_chunk.get(3).unwrap_or(&F::zero()),
-                    ];
-                    output_chunk[0] = input_chunk[0] * input_chunk[2];
-                    output_chunk[1] = input_chunk[1] * input_chunk[3];
-                });
-
-            let values = SparseInterleavedPolynomial {
-                dense_len: self.values.dense_len / 2,
-                coeffs: vec![vec![]; self.values.batch_size()],
-                coalesced: Some(DenseInterleavedPolynomial::new(output)),
-            };
-
-            Self { values }
-        } else {
-            let coeffs: Vec<Vec<_>> = self
-                .values
-                .coeffs
-                .par_iter()
-                .map(|segment| {
-                    segment
-                        .par_chunk_by(move |x, y| x.index / 4 == y.index / 4)
-                        .flat_map_iter(|sparse_block| {
-                            let mut outputs = vec![];
-
-                            let block_index = sparse_block[0].index / 4;
-                            let mut dense_block = [F::one(); 4];
-                            for coeff in sparse_block {
-                                dense_block[coeff.index % 4] = coeff.value;
-                            }
-
-                            let left = dense_block[0].mul_1_optimized(dense_block[2]);
-                            let right = dense_block[1].mul_1_optimized(dense_block[3]);
-                            if !left.is_one() {
-                                let left_index = 2 * block_index;
-                                outputs.push((left_index, left).into());
-                            }
-                            if !right.is_one() {
-                                let right_index = 2 * block_index + 1;
-                                outputs.push((right_index, right).into());
-                            }
-
-                            outputs
-                        })
-                        .collect()
-                })
-                .collect();
-
-            Self {
-                values: SparseInterleavedPolynomial::new(coeffs, self.values.dense_len / 2),
-            }
-        }
-    }
-}
-
-impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedSparseGrandProductLayer<F> {}
-impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F> {
-    #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        let merged_eq = eq_poly.merge();
-        let (left, right) = self.values.uninterleave();
-        println!("sparse {:?}", self.values);
-        println!("spares left: {:?}", left);
-        println!("sparse right: {:?}", right);
-        let expected: F = left
-            .iter()
-            .zip(right.iter())
-            .zip(merged_eq.evals_ref().iter())
-            .map(|((l, r), eq)| *eq * l * r)
-            .sum();
-        assert_eq!(expected, round_claim);
-    }
-
-    /// Incrementally binds a variable of this batched layer's polynomials.
-    /// If `self` is dense, we bind as in `BatchedDenseGrandProductLayer`,
-    /// processing nodes 4 at a time to preserve the interleaved order:
-    ///   0'  1'     2'  3'
-    ///   |\ |\      |\ |\
-    ///   | \| \     | \| \
-    ///   |  \  \    |  \  \
-    ///   |  |\  \   |  |\  \
-    ///   0  1 2  3  4  5 6  7
-    /// Left nodes have even indices, right nodes have odd indices.
-    /// If `self` is sparse, we basically do the same thing but with more
-    /// cases to check 😬
-    #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::bind")]
-    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F) {
-        #[cfg(test)]
-        let (mut left_before_binding, mut right_before_binding) = self.values.uninterleave();
-
-        rayon::join(|| self.values.bind(*r), || eq_poly.bind(*r));
-
-        #[cfg(test)]
-        {
-            use crate::poly::sparse_interleaved_poly::bind_left_and_right;
-
-            let (left_after_binding, right_after_binding) = self.values.uninterleave();
-            bind_left_and_right(&mut left_before_binding, &mut right_before_binding, *r);
-
-            assert_eq!(
-                self.values,
-                SparseInterleavedPolynomial::interleave(
-                    &left_before_binding,
-                    &right_before_binding,
-                    self.values.batch_size()
-                )
-            );
-            assert_eq!(left_after_binding, left_before_binding);
-            assert_eq!(right_after_binding, right_before_binding);
-        }
-    }
-
-    /// We want to compute the evaluations of the following univariate cubic polynomial at
-    /// points {0, 1, 2, 3}:
-    ///     Σ eq(r, x) * left(x) * right(x)
-    /// where the inner summation is over all but the "least significant bit" of the multilinear
-    /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
-    ///
-    /// Computing these evaluations requires processing pairs of adjacent coefficients of
-    /// `eq`, `left`, and `right`.
-    /// If `self` is dense, we process each layer 4 values at a time:
-    ///                  layer = [L, R, L, R, L, R, ...]
-    ///                           |  |  |  |
-    ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
-    ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
-    /// If `self` is sparse, we basically do the same thing but with some fancy optimizations and
-    /// more cases to check 😬
-    #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        // debug_assert_eq!(self.values.dense_len, 2 * eq_poly.len());
-
-        let cubic_evals = if eq_poly.E1_len == 1 {
-            if let Some(coalesced) = &self.values.coalesced {
-                println!("E1_len == 1, coaleseced");
-                coalesced
-                    .par_chunks(4)
-                    .zip(eq_poly.E2.par_chunks(2))
-                    .map(|(layer_chunk, eq_chunk)| {
-                        let eq_evals = {
-                            let eval_point_0 = eq_chunk[0];
-                            let m_eq = eq_chunk[1] - eq_chunk[0];
-                            let eval_point_2 = eq_chunk[1] + m_eq;
-                            let eval_point_3 = eval_point_2 + m_eq;
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        };
-                        let left = (layer_chunk[0], layer_chunk[2]);
-                        let right = (layer_chunk[1], layer_chunk[3]);
-
-                        let m_left = left.1 - left.0;
-                        let m_right = right.1 - right.0;
-
-                        let left_eval_2 = left.1 + m_left;
-                        let left_eval_3 = left_eval_2 + m_left;
-
-                        let right_eval_2 = right.1 + m_right;
-                        let right_eval_3 = right_eval_2 + m_right;
-
-                        (
-                            eq_evals.0 * left.0 * right.0,
-                            eq_evals.1 * left_eval_2 * right_eval_2,
-                            eq_evals.2 * left_eval_3 * right_eval_3,
-                        )
-                    })
-                    .reduce(
-                        || (F::zero(), F::zero(), F::zero()),
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                    )
-            } else {
-                println!("E1_len == 1, not coaleseced");
-                let eq_evals: Vec<(F, F, F)> = eq_poly
-                    .E2
-                    .par_chunks(2)
-                    .map(|eq_chunk| {
-                        let eval_point_0 = eq_chunk[0];
-                        let m_eq = eq_chunk[1] - eq_chunk[0];
-                        let eval_point_2 = eq_chunk[1] + m_eq;
-                        let eval_point_3 = eval_point_2 + m_eq;
-                        (eval_point_0, eval_point_2, eval_point_3)
-                    })
-                    .collect();
-                // TODO(moodlezoup): Can more efficiently compute these
-                let eq_eval_sums: (F, F, F) = eq_evals
-                    .par_iter()
-                    .fold(
-                        || (F::zero(), F::zero(), F::zero()),
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                    )
-                    .reduce(
-                        || (F::zero(), F::zero(), F::zero()),
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                    );
-
-                let deltas: Vec<(F, F, F)> = self
-                    .values
-                    .coeffs
-                    .par_iter()
-                    .flat_map(|segment| {
-                        segment.par_chunk_by(|x, y| x.index / 4 == y.index / 4).map(
-                            |sparse_block| {
-                                let block_index = sparse_block[0].index / 4;
-                                let mut block = [F::one(); 4];
-                                for coeff in sparse_block {
-                                    block[coeff.index % 4] = coeff.value;
-                                }
-
-                                let left = (block[0], block[2]);
-                                let right = (block[1], block[3]);
-
-                                let m_left = left.1 - left.0;
-                                let m_right = right.1 - right.0;
-
-                                let left_eval_2 = left.1 + m_left;
-                                let left_eval_3 = left_eval_2 + m_left;
-
-                                let right_eval_2 = right.1 + m_right;
-                                let right_eval_3 = right_eval_2 + m_right;
-
-                                let E2_eval = eq_poly.E2[block_index];
-                                // TODO(moodlezoup): Can save a multiplication here
-                                (
-                                    E2_eval * (left.0 * right.0 - F::one()),
-                                    E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-                                    E2_eval * (left_eval_3 * right_eval_3 - F::one()),
-                                )
-                            },
-                        )
-                    })
-                    .collect();
-
-                deltas.into_par_iter().reduce(
-                    || eq_eval_sums,
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
-            }
-        } else {
-            if let Some(coalesced) = &self.values.coalesced {
-                println!("E1_len != 1, coalesced");
-                let num_E1_chunks = eq_poly.E1_len / 2;
-
-                let mut evals = (F::zero(), F::zero(), F::zero());
-                for (x1, E1_chunk) in eq_poly.E1[..eq_poly.E1_len].chunks(2).enumerate() {
-                    let E1_evals = {
-                        let eval_point_0 = E1_chunk[0];
-                        let m_eq = E1_chunk[1] - E1_chunk[0];
-                        let eval_point_2 = E1_chunk[1] + m_eq;
-                        let eval_point_3 = eval_point_2 + m_eq;
-                        (eval_point_0, eval_point_2, eval_point_3)
-                    };
-                    let inner_sums = eq_poly.E2[..eq_poly.E2_len]
-                        .par_iter()
-                        .zip(coalesced.par_chunks(4).skip(x1).step_by(num_E1_chunks))
-                        .map(|(E2_eval, P_x1)| {
-                            let left = (
-                                *P_x1.get(0).unwrap_or(&F::zero()),
-                                *P_x1.get(2).unwrap_or(&F::zero()),
-                            );
-                            let right = (
-                                *P_x1.get(1).unwrap_or(&F::zero()),
-                                *P_x1.get(3).unwrap_or(&F::zero()),
-                            );
-
-                            let m_left = left.1 - left.0;
-                            let m_right = right.1 - right.0;
-
-                            let left_eval_2 = left.1 + m_left;
-                            let left_eval_3 = left_eval_2 + m_left;
-
-                            let right_eval_2 = right.1 + m_right;
-                            let right_eval_3 = right_eval_2 + m_right;
-
-                            // TODO(moodlezoup): can save a mult by E2_eval here
-                            (
-                                *E2_eval * left.0 * right.0,
-                                *E2_eval * left_eval_2 * right_eval_2,
-                                *E2_eval * left_eval_3 * right_eval_3,
-                            )
-                        })
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                        );
-
-                    evals.0 += E1_evals.0 * inner_sums.0;
-                    evals.1 += E1_evals.1 * inner_sums.1;
-                    evals.2 += E1_evals.2 * inner_sums.2;
-                }
-                evals
-            } else {
-                println!("E1_len != 1, not coalesced");
-                let deltas: Vec<(F, F, F, usize)> = self
-                    .values
-                    .coeffs
-                    .par_iter()
-                    .flat_map(|segment| {
-                        segment.par_chunk_by(|x, y| x.index / 4 == y.index / 4).map(
-                            |sparse_block| {
-                                let block_index = sparse_block[0].index / 4;
-                                let mut block = [F::one(); 4];
-                                for coeff in sparse_block {
-                                    block[coeff.index % 4] = coeff.value;
-                                }
-
-                                let left = (block[0], block[2]);
-                                let right = (block[1], block[3]);
-
-                                let m_left = left.1 - left.0;
-                                let m_right = right.1 - right.0;
-
-                                let left_eval_2 = left.1 + m_left;
-                                let left_eval_3 = left_eval_2 + m_left;
-
-                                let right_eval_2 = right.1 + m_right;
-                                let right_eval_3 = right_eval_2 + m_right;
-
-                                let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-                                let x1_bitmask = (1 << num_x1_bits) - 1;
-                                let x1 = block_index & x1_bitmask;
-                                let x2 = block_index >> num_x1_bits;
-
-                                let E2_eval = eq_poly.E2[x2];
-                                // TODO(moodlezoup): Can save a multiplication here
-                                (
-                                    E2_eval * (left.0 * right.0 - F::one()),
-                                    E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-                                    E2_eval * (left_eval_3 * right_eval_3 - F::one()),
-                                    x1,
-                                )
-                            },
-                        )
-                    })
-                    .collect();
-
-                let mut inner_sums: Vec<(F, F, F)> =
-                    vec![(F::one(), F::one(), F::one()); eq_poly.E1_len / 2];
-                for delta in deltas.iter() {
-                    let x1 = delta.3;
-                    inner_sums[x1].0 += delta.0;
-                    inner_sums[x1].1 += delta.1;
-                    inner_sums[x1].2 += delta.2;
-                }
-
-                // Correct for the fact that the batch size is padded to a power of two
-                // with all-0 circuits.
-                // TODO(moodlezoup): optimize this
-                for x in
-                    (self.values.dense_len..self.values.dense_len.next_power_of_two()).step_by(4)
-                {
-                    let block_index = x / 4;
-                    let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-                    let x1_bitmask = (1 << num_x1_bits) - 1;
-                    let x1 = block_index & x1_bitmask;
-                    let x2 = block_index >> num_x1_bits;
-                    let E2_eval = eq_poly.E2[x2];
-
-                    inner_sums[x1].0 -= E2_eval;
-                    inner_sums[x1].1 -= E2_eval;
-                    inner_sums[x1].2 -= E2_eval;
-                }
-
-                eq_poly.E1[..eq_poly.E1_len]
-                    .par_chunks(2)
-                    .zip(inner_sums.par_iter())
-                    .map(|(E1_chunk, inner_sum)| {
-                        let E1_evals = {
-                            let eval_point_0 = E1_chunk[0];
-                            let m_eq = E1_chunk[1] - E1_chunk[0];
-                            let eval_point_2 = E1_chunk[1] + m_eq;
-                            let eval_point_3 = eval_point_2 + m_eq;
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        };
-                        (
-                            E1_evals.0 * inner_sum.0,
-                            E1_evals.1 * inner_sum.1,
-                            E1_evals.2 * inner_sum.2,
-                        )
-                    })
-                    .reduce(
-                        || (F::zero(), F::zero(), F::zero()),
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                    )
-            }
-        };
-
-        let cubic_evals = [
-            cubic_evals.0,
-            previous_round_claim - cubic_evals.0,
-            cubic_evals.1,
-            cubic_evals.2,
-        ];
-        UniPoly::from_evals(&cubic_evals)
-    }
-
-    fn final_claims(&self) -> (F, F) {
-        assert_eq!(self.values.dense_len, 2);
-        let dense = self.values.to_dense();
-        (dense[0], dense[1])
-    }
-}
 
 /// A special bottom layer of a grand product, where boolean flags are used to
 /// toggle the other inputs (fingerprints) going into the rest of the tree.
@@ -529,7 +112,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         }
     }
 
-    fn layer_output(&self) -> BatchedSparseGrandProductLayer<F> {
+    fn layer_output(&self) -> SparseInterleavedPolynomial<F> {
         let values: Vec<_> = self
             .fingerprints
             .par_iter()
@@ -544,27 +127,20 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
                 sparse_coeffs
             })
             .collect();
-        BatchedSparseGrandProductLayer {
-            values: SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2),
-        }
+
+        let sparse_poly = SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2);
+        sparse_poly
+        // #[cfg(test)]
+        // let dense_poly = DenseInterleavedPolynomial::new(sparse_poly.coalesce());
+        // BatchedSparseGrandProductLayer {
+        //     values: sparse_poly,
+        //     #[cfg(test)]
+        //     reference: dense_poly,
+        // }
     }
 }
 
-impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
-    #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
-        let (flags, fingerprints) = self.to_dense();
-        let merged_eq = eq_poly.merge();
-        let expected: F = flags
-            .evals_ref()
-            .iter()
-            .zip(fingerprints.evals_ref().iter())
-            .zip(merged_eq.evals_ref().iter())
-            .map(|((flag, fingerprint), eq)| *eq * (*flag * fingerprint + F::one() - flag))
-            .sum();
-        assert_eq!(expected, round_claim);
-    }
-
+impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
     /// Incrementally binds a variable of this batched layer's polynomials.
     /// Similar to `BatchedSparseGrandProductLayer::bind`, in that fingerprints use
     /// a sparse representation, but different in a couple of key ways:
@@ -578,7 +154,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     ///   that it has value 0. In other words, a flag with value 1 will be present in both
     ///   `self.flag_indices` and `self.flag_values`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::bind")]
-    fn bind(&mut self, eq_poly: &mut SplitEqPolynomial<F>, r: &F) {
+    fn bind(&mut self, r: F) {
         #[cfg(test)]
         let (mut flags_before_binding, mut fingerprints_before_binding) = self.to_dense();
 
@@ -586,7 +162,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             let mut bound_flags = vec![F::one(); coalesced_flags.len() / 2];
             for i in 0..bound_flags.len() {
                 bound_flags[i] = coalesced_flags[2 * i]
-                    + *r * (coalesced_flags[2 * i + 1] - coalesced_flags[2 * i]);
+                    + r * (coalesced_flags[2 * i + 1] - coalesced_flags[2 * i]);
             }
             self.coalesced_flags = Some(bound_flags);
 
@@ -594,18 +170,16 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             let mut bound_fingerprints = vec![F::zero(); coalesced_fingerpints.len() / 2];
             for i in 0..bound_fingerprints.len() {
                 bound_fingerprints[i] = coalesced_fingerpints[2 * i]
-                    + *r * (coalesced_fingerpints[2 * i + 1] - coalesced_fingerpints[2 * i]);
+                    + r * (coalesced_fingerpints[2 * i + 1] - coalesced_fingerpints[2 * i]);
             }
             self.coalesced_fingerprints = Some(bound_fingerprints);
-
-            eq_poly.bind(*r);
             self.batched_layer_len /= 2;
 
             #[cfg(test)]
             {
                 let (bound_flags, bound_fingerprints) = self.to_dense();
-                flags_before_binding.bound_poly_var_bot(r);
-                fingerprints_before_binding.bound_poly_var_bot(r);
+                flags_before_binding.bound_poly_var_bot(&r);
+                fingerprints_before_binding.bound_poly_var_bot(&r);
                 assert_eq!(
                     bound_flags.Z[..bound_flags.len()],
                     flags_before_binding.Z[..flags_before_binding.len()]
@@ -627,103 +201,97 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                 let n = self.layer_len / 4;
                 for i in 0..n {
                     // TODO(moodlezoup): Try mul_0_optimized here
-                    layer[i] = layer[2 * i] + *r * (layer[2 * i + 1] - layer[2 * i]);
+                    layer[i] = layer[2 * i] + r * (layer[2 * i + 1] - layer[2 * i]);
                 }
             });
 
-        rayon::join(
-            || {
-                let is_first_bind = self.flag_values.is_empty();
-                if is_first_bind {
-                    self.flag_values = vec![vec![]; self.flag_indices.len()];
+        let is_first_bind = self.flag_values.is_empty();
+        if is_first_bind {
+            self.flag_values = vec![vec![]; self.flag_indices.len()];
+        }
+
+        self.flag_indices
+            .par_iter_mut()
+            .zip(self.flag_values.par_iter_mut())
+            .for_each(|(flag_indices, flag_values)| {
+                let mut next_index_to_process = 0usize;
+
+                let mut bound_index = 0usize;
+                for j in 0..flag_indices.len() {
+                    let index = flag_indices[j];
+                    if index < next_index_to_process {
+                        // This flag was already bound with its sibling in the previous iteration.
+                        continue;
+                    }
+
+                    // Bind indices in place
+                    flag_indices[bound_index] = index / 2;
+
+                    if index % 2 == 0 {
+                        let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
+                        if neighbor == index + 1 {
+                            // Neighbor is flag's sibling
+
+                            if is_first_bind {
+                                // For first bind, all non-zero flag values are 1.
+                                // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
+                                //                = 1 - r * (1 - 1)
+                                //                = 1
+                                flag_values.push(F::one());
+                            } else {
+                                // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
+                                flag_values[bound_index] =
+                                    flag_values[j] + r * (flag_values[j + 1] - flag_values[j]);
+                            };
+                        } else {
+                            // This flag's sibling wasn't found, so it must have value 0.
+
+                            if is_first_bind {
+                                // For first bind, all non-zero flag values are 1.
+                                // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
+                                //                = flags[2 * i] - r * flags[2 * i]
+                                //                = 1 - r
+                                flag_values.push(F::one() - r);
+                            } else {
+                                // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
+                                //                = flags[2 * i] - r * flags[2 * i]
+                                flag_values[bound_index] = flag_values[j] - r * flag_values[j];
+                            };
+                        }
+                        next_index_to_process = index + 2;
+                    } else {
+                        // This flag's sibling wasn't encountered in a previous iteration,
+                        // so it must have had value 0.
+
+                        if is_first_bind {
+                            // For first bind, all non-zero flag values are 1.
+                            // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
+                            //                = r * flags[2 * i + 1]
+                            //                = r
+                            flag_values.push(r);
+                        } else {
+                            // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
+                            //                = r * flags[2 * i + 1]
+                            flag_values[bound_index] = r * flag_values[j];
+                        };
+                        next_index_to_process = index + 1;
+                    }
+
+                    bound_index += 1;
                 }
 
-                self.flag_indices
-                    .par_iter_mut()
-                    .zip(self.flag_values.par_iter_mut())
-                    .for_each(|(flag_indices, flag_values)| {
-                        let mut next_index_to_process = 0usize;
-
-                        let mut bound_index = 0usize;
-                        for j in 0..flag_indices.len() {
-                            let index = flag_indices[j];
-                            if index < next_index_to_process {
-                                // This flag was already bound with its sibling in the previous iteration.
-                                continue;
-                            }
-
-                            // Bind indices in place
-                            flag_indices[bound_index] = index / 2;
-
-                            if index % 2 == 0 {
-                                let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
-                                if neighbor == index + 1 {
-                                    // Neighbor is flag's sibling
-
-                                    if is_first_bind {
-                                        // For first bind, all non-zero flag values are 1.
-                                        // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                        //                = 1 - r * (1 - 1)
-                                        //                = 1
-                                        flag_values.push(F::one());
-                                    } else {
-                                        // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                        flag_values[bound_index] = flag_values[j]
-                                            + *r * (flag_values[j + 1] - flag_values[j]);
-                                    };
-                                } else {
-                                    // This flag's sibling wasn't found, so it must have value 0.
-
-                                    if is_first_bind {
-                                        // For first bind, all non-zero flag values are 1.
-                                        // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                        //                = flags[2 * i] - r * flags[2 * i]
-                                        //                = 1 - r
-                                        flag_values.push(F::one() - *r);
-                                    } else {
-                                        // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                        //                = flags[2 * i] - r * flags[2 * i]
-                                        flag_values[bound_index] =
-                                            flag_values[j] - *r * flag_values[j];
-                                    };
-                                }
-                                next_index_to_process = index + 2;
-                            } else {
-                                // This flag's sibling wasn't encountered in a previous iteration,
-                                // so it must have had value 0.
-
-                                if is_first_bind {
-                                    // For first bind, all non-zero flag values are 1.
-                                    // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                    //                = r * flags[2 * i + 1]
-                                    //                = r
-                                    flag_values.push(*r);
-                                } else {
-                                    // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                    //                = r * flags[2 * i + 1]
-                                    flag_values[bound_index] = *r * flag_values[j];
-                                };
-                                next_index_to_process = index + 1;
-                            }
-
-                            bound_index += 1;
-                        }
-
-                        flag_indices.truncate(bound_index);
-                        // We only ever use `flag_indices.len()`, so no need to truncate `flag_values`
-                        // flag_values.truncate(bound_index);
-                    });
-            },
-            || eq_poly.bind(*r),
-        );
+                flag_indices.truncate(bound_index);
+                // We only ever use `flag_indices.len()`, so no need to truncate `flag_values`
+                // flag_values.truncate(bound_index);
+            });
         self.layer_len /= 2;
         self.batched_layer_len /= 2;
 
         #[cfg(test)]
         {
             let (bound_flags, bound_fingerprints) = self.to_dense();
-            flags_before_binding.bound_poly_var_bot(r);
-            fingerprints_before_binding.bound_poly_var_bot(r);
+            flags_before_binding.bound_poly_var_bot(&r);
+            fingerprints_before_binding.bound_poly_var_bot(&r);
             assert_eq!(
                 bound_flags.Z[..bound_flags.len()],
                 flags_before_binding.Z[..flags_before_binding.len()]
@@ -775,6 +343,22 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                 );
             }
         }
+    }
+}
+
+impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
+    #[cfg(test)]
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
+        let (flags, fingerprints) = self.to_dense();
+        let merged_eq = eq_poly.merge();
+        let expected: F = flags
+            .evals_ref()
+            .iter()
+            .zip(fingerprints.evals_ref().iter())
+            .zip(merged_eq.evals_ref().iter())
+            .map(|((flag, fingerprint), eq)| *eq * (*flag * fingerprint + F::one() - flag))
+            .sum();
+        assert_eq!(expected, round_claim);
     }
 
     /// Similar to `BatchedSparseGrandProductLayer::compute_cubic`, but with changes to
@@ -998,7 +582,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
 
 pub struct ToggledBatchedGrandProduct<F: JoltField> {
     toggle_layer: BatchedGrandProductToggleLayer<F>,
-    sparse_layers: Vec<BatchedSparseGrandProductLayer<F>>,
+    sparse_layers: Vec<SparseInterleavedPolynomial<F>>,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
@@ -1013,7 +597,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         let num_layers = fingerprints[0].len().log_2();
 
         let toggle_layer = BatchedGrandProductToggleLayer::new(flags, fingerprints);
-        let mut layers: Vec<BatchedSparseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
+        let mut layers: Vec<SparseInterleavedPolynomial<F>> = Vec::with_capacity(num_layers);
         layers.push(toggle_layer.layer_output());
 
         for i in 0..num_layers - 1 {
@@ -1033,7 +617,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 
     fn claimed_outputs(&self) -> Vec<F> {
         let last_layer = self.sparse_layers.last().unwrap();
-        let (left, right) = last_layer.values.uninterleave();
+        let (left, right) = last_layer.uninterleave();
         left.iter().zip(right.iter()).map(|(l, r)| *l * r).collect()
     }
 
@@ -1095,9 +679,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        poly::commitment::zeromorph::Zeromorph,
-        subprotocols::grand_product::BatchedDenseGrandProductLayer,
+    use crate::poly::{
+        commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
     };
     use ark_bn254::{Bn254, Fr};
     use ark_std::{rand::Rng, test_rng, One};
@@ -1105,8 +688,8 @@ mod tests {
     use num_integer::Integer;
     use rand_core::RngCore;
 
-    fn condense(sparse_layer: BatchedSparseGrandProductLayer<Fr>) -> Vec<Fr> {
-        sparse_layer.values.to_dense().Z
+    fn condense(sparse_layer: SparseInterleavedPolynomial<Fr>) -> Vec<Fr> {
+        sparse_layer.to_dense().Z
     }
 
     #[test]
@@ -1135,8 +718,7 @@ mod tests {
             })
             .take(batch_size)
             .collect();
-
-            let mut batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
+            let mut dense_poly = DenseInterleavedPolynomial::new(dense_layers.concat());
 
             let sparse_coeffs: Vec<_> = dense_layers
                 .iter()
@@ -1151,39 +733,19 @@ mod tests {
                     sparse_layer
                 })
                 .collect();
-            let sparse_poly =
+            let mut sparse_poly =
                 SparseInterleavedPolynomial::new(sparse_coeffs, batch_size * layer_size);
-            let mut batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
-                BatchedSparseGrandProductLayer {
-                    values: sparse_poly,
-                };
 
-            for (dense, sparse) in batched_dense_layer
-                .values
-                .iter()
-                .zip(condense(batched_sparse_layer.clone()).iter())
-            {
+            for (dense, sparse) in dense_poly.iter().zip(condense(sparse_poly.clone()).iter()) {
                 assert_eq!(dense, sparse);
             }
 
             for _ in 0..(batch_size * layer_size).log_2() - 1 {
-                let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
-                    .take(4)
-                    .collect::<Vec<_>>();
-                let mut eq_poly_dense = SplitEqPolynomial::new(&r_eq);
-                let mut eq_poly_sparse = eq_poly_dense.clone();
-
                 let r = Fr::random(&mut rng);
-                batched_dense_layer.bind(&mut eq_poly_dense, &r);
-                batched_sparse_layer.bind(&mut eq_poly_sparse, &r);
+                dense_poly.bind(r);
+                sparse_poly.bind(r);
 
-                assert_eq!(eq_poly_dense, eq_poly_sparse);
-
-                for (dense, sparse) in batched_dense_layer
-                    .values
-                    .iter()
-                    .zip(condense(batched_sparse_layer.clone()).iter())
-                {
+                for (dense, sparse) in dense_poly.iter().zip(condense(sparse_poly.clone()).iter()) {
                     assert_eq!(dense, sparse);
                 }
             }
@@ -1217,8 +779,7 @@ mod tests {
             })
             .take(batch_size)
             .collect();
-
-            let batched_dense_layer = BatchedDenseGrandProductLayer::new(dense_layers.concat());
+            let dense_poly = DenseInterleavedPolynomial::new(dense_layers.concat());
 
             let sparse_coeffs: Vec<_> = dense_layers
                 .iter()
@@ -1235,16 +796,8 @@ mod tests {
                 .collect();
             let sparse_poly =
                 SparseInterleavedPolynomial::new(sparse_coeffs, batch_size * layer_size);
-            let batched_sparse_layer: BatchedSparseGrandProductLayer<Fr> =
-                BatchedSparseGrandProductLayer {
-                    values: sparse_poly,
-                };
 
-            for (dense, sparse) in batched_dense_layer
-                .values
-                .iter()
-                .zip(condense(batched_sparse_layer.clone()).iter())
-            {
+            for (dense, sparse) in dense_poly.iter().zip(condense(sparse_poly.clone()).iter()) {
                 assert_eq!(dense, sparse);
             }
 
@@ -1254,8 +807,8 @@ mod tests {
             let eq_poly = SplitEqPolynomial::new(&r_eq);
             let r = Fr::random(&mut rng);
 
-            let dense_evals = batched_dense_layer.compute_cubic(&eq_poly, r);
-            let sparse_evals = batched_sparse_layer.compute_cubic(&eq_poly, r);
+            let dense_evals = dense_poly.compute_cubic(&eq_poly, r);
+            let sparse_evals = sparse_poly.compute_cubic(&eq_poly, r);
             assert_eq!(dense_evals, sparse_evals);
         }
     }
@@ -1376,8 +929,8 @@ mod tests {
             >>::construct((flag_indices, fingerprints));
 
             for layers in &circuit.sparse_layers {
-                let dense = layers.values.to_dense();
-                let chunk_size = layers.values.dense_len / batch_size;
+                let dense = layers.to_dense();
+                let chunk_size = layers.dense_len / batch_size;
                 for (chunk, expected_product) in
                     dense.Z.chunks(chunk_size).zip(expected_outputs.iter())
                 {
