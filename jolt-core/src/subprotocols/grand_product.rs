@@ -286,13 +286,11 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        let gap = self.values.gap;
-        debug_assert_eq!(self.values.len(), 2 * eq_poly.len());
+        // debug_assert_eq!(self.values.len(), 2 * eq_poly.len());
 
         let cubic_evals = if eq_poly.E1_len == 1 {
             self.values
-                .coeffs
-                .par_chunks(4 * gap)
+                .par_chunks(4)
                 .zip(eq_poly.E2.par_chunks(2))
                 .map(|(layer_chunk, eq_chunk)| {
                     let eq_evals = {
@@ -304,11 +302,11 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                     };
                     let left = (
                         *layer_chunk.get(0).unwrap_or(&F::zero()),
-                        *layer_chunk.get(2 * gap).unwrap_or(&F::zero()),
+                        *layer_chunk.get(2).unwrap_or(&F::zero()),
                     );
                     let right = (
-                        *layer_chunk.get(gap).unwrap_or(&F::zero()),
-                        *layer_chunk.get(3 * gap).unwrap_or(&F::zero()),
+                        *layer_chunk.get(1).unwrap_or(&F::zero()),
+                        *layer_chunk.get(3).unwrap_or(&F::zero()),
                     );
 
                     let m_left = left.1 - left.0;
@@ -344,21 +342,15 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                 };
                 let inner_sums = eq_poly.E2[..eq_poly.E2_len]
                     .par_iter()
-                    .zip(
-                        self.values
-                            .coeffs
-                            .par_chunks(4 * gap)
-                            .skip(x1)
-                            .step_by(num_E1_chunks),
-                    )
+                    .zip(self.values.par_chunks(4).skip(x1).step_by(num_E1_chunks))
                     .map(|(E2_eval, P_x1)| {
                         let left = (
                             *P_x1.get(0).unwrap_or(&F::zero()),
-                            *P_x1.get(2 * gap).unwrap_or(&F::zero()),
+                            *P_x1.get(2).unwrap_or(&F::zero()),
                         );
                         let right = (
-                            *P_x1.get(gap).unwrap_or(&F::zero()),
-                            *P_x1.get(3 * gap).unwrap_or(&F::zero()),
+                            *P_x1.get(1).unwrap_or(&F::zero()),
+                            *P_x1.get(3).unwrap_or(&F::zero()),
                         );
 
                         let m_left = left.1 - left.0;
@@ -401,7 +393,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     fn final_claims(&self) -> (F, F) {
         assert_eq!(self.values.len(), 2);
         let left_claim = self.values.coeffs[0];
-        let right_claim = self.values.coeffs[self.values.gap];
+        let right_claim = self.values.coeffs[1];
         (left_claim, right_claim)
     }
 }
@@ -440,7 +432,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             let previous_layer = &layers[i];
             let new_layer = previous_layer
                 .values
-                .coeffs
                 .par_chunks(2)
                 .map(|chunk| chunk[0] * chunk[1])
                 .collect();
@@ -460,12 +451,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 
     fn claimed_outputs(&self) -> Vec<F> {
         let last_layer = &self.layers[self.layers.len() - 1];
-        (0..self.batch_size)
-            .map(|i| {
-                // left * right
-                last_layer.values.coeffs[2 * i] * last_layer.values.coeffs[2 * i + 1]
-            })
+        last_layer
+            .values
+            .par_chunks(2)
+            .map(|chunk| chunk[0] * chunk[1])
             .collect()
+        // (0..self.batch_size)
+        // .map(|i| {
+        //     // left * right
+        //     last_layer.values.coeffs[2 * i] * last_layer.values.coeffs[2 * i + 1]
+        // })
+        // .collect()
     }
 
     fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {

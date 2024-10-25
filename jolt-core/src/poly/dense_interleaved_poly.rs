@@ -1,28 +1,37 @@
-use crate::field::JoltField;
-use rayon::prelude::*;
+use crate::{field::JoltField, utils::thread::unsafe_allocate_zero_vec};
+use rayon::{prelude::*, slice::Chunks};
 
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
 
 #[derive(Default, Debug, Clone)]
 pub struct DenseInterleavedPolynomial<F: JoltField> {
-    pub(crate) gap: usize, // TODO(moodlezoup): Gap or scratch space approach?
     pub(crate) coeffs: Vec<F>,
+    len: usize,
+    binding_scratch_space: Vec<F>,
 }
 
 impl<F: JoltField> DenseInterleavedPolynomial<F> {
     pub fn new(coeffs: Vec<F>) -> Self {
         assert!(coeffs.len() % 2 == 0);
-        Self { gap: 1, coeffs }
+        let len = coeffs.len();
+        Self {
+            coeffs,
+            len,
+            binding_scratch_space: unsafe_allocate_zero_vec(len),
+        }
     }
 
     pub fn len(&self) -> usize {
-        debug_assert!(self.coeffs.len().next_power_of_two() % self.gap == 0);
-        self.coeffs.len().next_power_of_two() / self.gap
+        self.len
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &F> {
-        self.coeffs.iter().step_by(self.gap)
+        self.coeffs[..self.len].iter()
+    }
+
+    pub fn par_chunks(&self, chunk_size: usize) -> Chunks<'_, F> {
+        self.coeffs[..self.len].par_chunks(chunk_size)
     }
 
     #[cfg(test)]
@@ -38,18 +47,16 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
 
     #[cfg(test)]
     pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
-        let left: Vec<_> = self
-            .coeffs
-            .clone()
+        let left: Vec<_> = self.coeffs[..self.len]
+            .to_vec()
             .into_iter()
-            .step_by(2 * self.gap)
+            .step_by(2)
             .collect();
-        let mut right: Vec<_> = self
-            .coeffs
-            .clone()
+        let mut right: Vec<_> = self.coeffs[..self.len]
+            .to_vec()
             .into_iter()
-            .skip(self.gap)
-            .step_by(2 * self.gap)
+            .skip(1)
+            .step_by(2)
             .collect();
         if right.len() < left.len() {
             right.resize(left.len(), F::zero());
@@ -58,24 +65,24 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
     }
 
     pub fn bind(&mut self, r: F) {
-        let padded_len = self.coeffs.len().next_multiple_of(4 * self.gap);
-        if padded_len > self.coeffs.len() {
-            self.coeffs.resize(padded_len, F::zero());
-        }
-        self.coeffs.par_chunks_mut(4 * self.gap).for_each(|chunk| {
-            let values = [
-                *chunk.get(0).unwrap_or(&F::zero()),
-                *chunk.get(self.gap).unwrap_or(&F::zero()),
-                *chunk.get(2 * self.gap).unwrap_or(&F::zero()),
-                *chunk.get(3 * self.gap).unwrap_or(&F::zero()),
-            ];
-            // Left
-            chunk[0] = values[0] + r * (values[2] - values[0]);
-            // Right
-            chunk[2 * self.gap] = values[1] + r * (values[3] - values[1]);
-        });
+        let padded_len = self.len.next_multiple_of(4);
+        self.binding_scratch_space
+            .par_chunks_mut(2)
+            .zip(self.coeffs[..self.len].par_chunks(4))
+            .for_each(|(bound_chunk, unbound_chunk)| {
+                let unbound_chunk = [
+                    *unbound_chunk.get(0).unwrap_or(&F::zero()),
+                    *unbound_chunk.get(1).unwrap_or(&F::zero()),
+                    *unbound_chunk.get(2).unwrap_or(&F::zero()),
+                    *unbound_chunk.get(3).unwrap_or(&F::zero()),
+                ];
 
-        self.gap *= 2;
+                bound_chunk[0] = unbound_chunk[0] + r * (unbound_chunk[2] - unbound_chunk[0]);
+                bound_chunk[1] = unbound_chunk[1] + r * (unbound_chunk[3] - unbound_chunk[1]);
+            });
+
+        self.len = padded_len / 2;
+        std::mem::swap(&mut self.coeffs, &mut self.binding_scratch_space);
     }
 }
 

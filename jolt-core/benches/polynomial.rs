@@ -166,10 +166,12 @@ fn main() {
     benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
     benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
     benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 25);
 
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 4);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 8);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 16);
+    benchmark_dense_batch::<Fr>(&mut criterion, 20, 32);
 
     criterion.final_summary();
 }
