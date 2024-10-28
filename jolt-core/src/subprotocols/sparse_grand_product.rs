@@ -193,8 +193,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
             .for_each(|layer: &mut Vec<F>| {
                 let n = self.layer_len / 4;
                 for i in 0..n {
-                    // TODO(moodlezoup): Try mul_0_optimized here
-                    layer[i] = layer[2 * i] + r * (layer[2 * i + 1] - layer[2 * i]);
+                    layer[i] = layer[2 * i] + r.mul_0_optimized(layer[2 * i + 1] - layer[2 * i]);
                 }
             });
 
@@ -360,177 +359,470 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     /// for `BatchedGrandProductToggleLayer::bind`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        let eq_evals: Vec<(F, F, F)> = todo!();
-        // let eq_evals: Vec<(F, F, F)> = (0..eq_poly.len() / 2)
-        //     .into_par_iter()
-        //     .map(|i| {
-        //         let eval_point_0 = eq_poly[2 * i];
-        //         let m_eq = eq_poly[2 * i + 1] - eq_poly[2 * i];
-        //         let eval_point_2 = eq_poly[2 * i + 1] + m_eq;
-        //         let eval_point_3 = eval_point_2 + m_eq;
-        //         (eval_point_0, eval_point_2, eval_point_3)
-        //     })
-        //     .collect();
-
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();
 
-            let evals = eq_evals
-                .iter()
-                .zip(coalesced_flags.chunks(2))
-                .zip(coalesced_fingerpints.chunks(2))
-                .map(|((eq, flags), fingerprints)| {
-                    let m_flag = flags[1] - flags[0];
-                    let m_fingerprint = fingerprints[1] - fingerprints[0];
+            let cubic_evals = if eq_poly.E1_len == 1 {
+                println!("Toggle compute_cubic coalesced E1_len=1");
+                coalesced_flags
+                    .par_chunks(2)
+                    .zip(coalesced_fingerpints.par_chunks(2))
+                    .zip(eq_poly.E2.par_chunks(2))
+                    .map(|((flags, fingerprints), eq_chunk)| {
+                        let eq_evals = {
+                            let eval_point_0 = eq_chunk[0];
+                            let m_eq = eq_chunk[1] - eq_chunk[0];
+                            let eval_point_2 = eq_chunk[1] + m_eq;
+                            let eval_point_3 = eval_point_2 + m_eq;
+                            (eval_point_0, eval_point_2, eval_point_3)
+                        };
+                        let m_flag = flags[1] - flags[0];
+                        let m_fingerprint = fingerprints[1] - fingerprints[0];
 
-                    let flag_eval_2 = flags[1] + m_flag;
-                    let flag_eval_3 = flag_eval_2 + m_flag;
+                        let flag_eval_2 = flags[1] + m_flag;
+                        let flag_eval_3 = flag_eval_2 + m_flag;
 
-                    let fingerprint_eval_2 = fingerprints[1] + m_fingerprint;
-                    let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
+                        let fingerprint_eval_2 = fingerprints[1] + m_fingerprint;
+                        let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                    (
-                        eq.0 * (flags[0] * fingerprints[0] + F::one() - flags[0]),
-                        eq.1 * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2),
-                        eq.2 * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3),
+                        (
+                            eq_evals.0 * (flags[0] * fingerprints[0] + F::one() - flags[0]),
+                            eq_evals.1
+                                * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2),
+                            eq_evals.2
+                                * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3),
+                        )
+                    })
+                    .reduce(
+                        || (F::zero(), F::zero(), F::zero()),
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                     )
-                })
-                .fold(
-                    (F::zero(), F::zero(), F::zero()),
-                    |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                );
+            } else {
+                println!("Toggle compute_cubic coalesced E1_len!=1");
+                let num_E1_chunks = eq_poly.E1_len / 2;
 
-            let cubic_evals = [evals.0, previous_round_claim - evals.0, evals.1, evals.2];
+                let mut evals = (F::zero(), F::zero(), F::zero());
+                for (x1, E1_chunk) in eq_poly.E1[..eq_poly.E1_len].chunks(2).enumerate() {
+                    let E1_evals = {
+                        let eval_point_0 = E1_chunk[0];
+                        let m_eq = E1_chunk[1] - E1_chunk[0];
+                        let eval_point_2 = E1_chunk[1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    };
+                    let inner_sums = eq_poly.E2[..eq_poly.E2_len]
+                        .par_iter()
+                        .zip(
+                            coalesced_flags
+                                .par_chunks(2)
+                                .zip(coalesced_fingerpints.par_chunks(2))
+                                .skip(x1)
+                                .step_by(num_E1_chunks),
+                        )
+                        .map(|(E2_eval, (flags, fingerprints))| {
+                            let m_flag = flags[1] - flags[0];
+                            let m_fingerprint = fingerprints[1] - fingerprints[0];
+
+                            let flag_eval_2 = flags[1] + m_flag;
+                            let flag_eval_3 = flag_eval_2 + m_flag;
+
+                            let fingerprint_eval_2 = fingerprints[1] + m_fingerprint;
+                            let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
+
+                            // TODO(moodlezoup): can save a mult by E2_eval here
+                            (
+                                *E2_eval * (flags[0] * fingerprints[0] + F::one() - flags[0]),
+                                *E2_eval
+                                    * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2),
+                                *E2_eval
+                                    * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3),
+                            )
+                        })
+                        .reduce(
+                            || (F::zero(), F::zero(), F::zero()),
+                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                        );
+
+                    evals.0 += E1_evals.0 * inner_sums.0;
+                    evals.1 += E1_evals.1 * inner_sums.1;
+                    evals.2 += E1_evals.2 * inner_sums.2;
+                }
+                evals
+            };
+
+            let cubic_evals = [
+                cubic_evals.0,
+                previous_round_claim - cubic_evals.0,
+                cubic_evals.1,
+                cubic_evals.2,
+            ];
             return UniPoly::from_evals(&cubic_evals);
         }
-        debug_assert!(self.layer_len % 4 == 0);
 
-        let eq_chunk_size = self.layer_len / 4;
-        assert!(eq_chunk_size != 0);
+        // Non-coalesced case
+        let cubic_evals = if eq_poly.E1_len == 1 {
+            println!("Toggle compute_cubic non-coalesced E1_len=1");
+            let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
+                .par_chunks(2)
+                .map(|eq_chunk| {
+                    let eval_point_0 = eq_chunk[0];
+                    let m_eq = eq_chunk[1] - eq_chunk[0];
+                    let eval_point_2 = eq_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .collect();
+            // // TODO(moodlezoup): Can more efficiently compute these
+            // let eq_eval_sums: (F, F, F) = eq_evals
+            //     .par_iter()
+            //     .fold(
+            //         || (F::zero(), F::zero(), F::zero()),
+            //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            //     )
+            //     .reduce(
+            //         || (F::zero(), F::zero(), F::zero()),
+            //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            //     );
 
-        // This is what the cubic evals would be if a layer's flags were *all 0*
-        // We pre-emptively compute these sums as a starting point:
-        //     eq_eval_sum := Σ eq_evals[i]
-        // What we ultimately want to compute:
-        //     Σ eq_evals[i] * (flag[i] * fingerprint[i] + 1 - flag[i])
-        // Note that if flag[i] is all 1s, the inner sum is:
-        //     Σ eq_evals[i] = eq_eval_sum
-        // To recover the actual inner sum, we find all the non-zero flag[i] terms
-        // computes the delta:
-        //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j]))    ∀j where flag[j] ≠ 0
-        // Then we can compute:
-        //    eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
-        //                    = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
-        // ...which is exactly the summand we want.
-        let eq_eval_sums: (F, F, F) = eq_evals[..eq_chunk_size * self.fingerprints.len()]
-            .par_iter()
-            .fold(
+            let deltas: Vec<(F, F, F)> = (0..self.fingerprints.len())
+                .into_par_iter()
+                .map(|batch_index| {
+                    // Computes:
+                    //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
+                    // for the evaluation points {0, 2, 3}
+
+                    let fingerprints = &self.fingerprints[batch_index];
+                    let flag_indices = &self.flag_indices[batch_index / 2];
+
+                    let unbound = self.flag_values.is_empty();
+                    let mut delta = (F::zero(), F::zero(), F::zero());
+
+                    let mut next_index_to_process = 0usize;
+                    for (j, index) in flag_indices.iter().enumerate() {
+                        if *index < next_index_to_process {
+                            // This node was already processed in a previous iteration
+                            continue;
+                        }
+
+                        let (flags, fingerprints) = if index % 2 == 0 {
+                            let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
+                            let flags = if neighbor == index + 1 {
+                                // Neighbor is flag's sibling
+                                if unbound {
+                                    (F::one(), F::one())
+                                } else {
+                                    (
+                                        self.flag_values[batch_index / 2][j],
+                                        self.flag_values[batch_index / 2][j + 1],
+                                    )
+                                }
+                            } else {
+                                // This flag's sibling wasn't found, so it must have value 0.
+                                if unbound {
+                                    (F::one(), F::zero())
+                                } else {
+                                    (self.flag_values[batch_index / 2][j], F::zero())
+                                }
+                            };
+                            let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
+
+                            next_index_to_process = index + 2;
+                            (flags, fingerprints)
+                        } else {
+                            // This flag's sibling wasn't encountered in a previous iteration,
+                            // so it must have had value 0.
+                            let flags = if unbound {
+                                (F::zero(), F::one())
+                            } else {
+                                (F::zero(), self.flag_values[batch_index / 2][j])
+                            };
+                            let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
+
+                            next_index_to_process = index + 1;
+                            (flags, fingerprints)
+                        };
+
+                        let m_flag = flags.1 - flags.0;
+                        let m_fingerprint = fingerprints.1 - fingerprints.0;
+
+                        // If flags are still unbound, flag evals will mostly be 0s and 1s
+                        // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
+                        let flag_eval_2 = flags.1 + m_flag;
+                        let flag_eval_3 = flag_eval_2 + m_flag;
+
+                        let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
+                        let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
+
+                        let block_index = (self.layer_len * batch_index) / 4 + index / 2;
+                        let eq_evals = eq_evals[block_index];
+
+                        // println!(
+                        //     "Sparse: ({:?} {:?} {})",
+                        //     eq_evals.0, flags.0, fingerprints.0
+                        // );
+                        // println!(
+                        //     "Sparse: ({:?} {:?} {})",
+                        //     eq_evals.1, flag_eval_2, fingerprint_eval_2
+                        // );
+                        // println!(
+                        //     "Sparse: ({:?} {:?} {})",
+                        //     eq_evals.2, flag_eval_3, fingerprint_eval_3
+                        // );
+
+                        delta.0 += eq_evals.0.mul_0_optimized(
+                            flags.0.mul_01_optimized(fingerprints.0) + F::one() - flags.0,
+                        );
+                        delta.1 += eq_evals.1.mul_0_optimized(
+                            flag_eval_2.mul_01_optimized(fingerprint_eval_2) + F::one()
+                                - flag_eval_2,
+                        );
+                        delta.2 += eq_evals.2.mul_0_optimized(
+                            flag_eval_3.mul_01_optimized(fingerprint_eval_3) + F::one()
+                                - flag_eval_3,
+                        );
+                    }
+
+                    // println!("Sparse delta: {} {} {}", delta.0, delta.1, delta.2);
+
+                    (delta.0, delta.1, delta.2)
+                })
+                .collect();
+
+            // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
+            //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
+            deltas.into_par_iter().reduce(
                 || (F::zero(), F::zero(), F::zero()),
                 |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
             )
-            .reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            );
+        } else {
+            println!("Toggle compute_cubic non-coalesced E1_len!=1");
+            let deltas: Vec<(F, F, F, usize)> = (0..self.fingerprints.len())
+                .into_par_iter()
+                .flat_map(|batch_index| {
+                    // Computes:
+                    //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
+                    // for the evaluation points {0, 2, 3}
 
-        let deltas: Vec<(F, F, F)> = (0..self.fingerprints.len())
-            .into_par_iter()
-            .map(|batch_index| {
-                // Computes:
-                //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
-                // for the evaluation points {0, 2, 3}
+                    let fingerprints = &self.fingerprints[batch_index];
+                    let flag_indices = &self.flag_indices[batch_index / 2];
 
-                let fingerprints = &self.fingerprints[batch_index];
-                let flag_indices = &self.flag_indices[batch_index / 2];
+                    let unbound = self.flag_values.is_empty();
+                    let mut deltas: Vec<(F, F, F, usize)> = vec![];
 
-                let unbound = self.flag_values.is_empty();
-                let mut delta = (F::zero(), F::zero(), F::zero());
+                    let mut next_index_to_process = 0usize;
+                    for (j, index) in flag_indices.iter().enumerate() {
+                        if *index < next_index_to_process {
+                            // This node was already processed in a previous iteration
+                            continue;
+                        }
 
-                let mut next_index_to_process = 0usize;
-                for (j, index) in flag_indices.iter().enumerate() {
-                    if *index < next_index_to_process {
-                        // This node was already processed in a previous iteration
-                        continue;
+                        let (flags, fingerprints) = if index % 2 == 0 {
+                            let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
+                            let flags = if neighbor == index + 1 {
+                                // Neighbor is flag's sibling
+                                if unbound {
+                                    (F::one(), F::one())
+                                } else {
+                                    (
+                                        self.flag_values[batch_index / 2][j],
+                                        self.flag_values[batch_index / 2][j + 1],
+                                    )
+                                }
+                            } else {
+                                // This flag's sibling wasn't found, so it must have value 0.
+                                if unbound {
+                                    (F::one(), F::zero())
+                                } else {
+                                    (self.flag_values[batch_index / 2][j], F::zero())
+                                }
+                            };
+                            let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
+
+                            next_index_to_process = index + 2;
+                            (flags, fingerprints)
+                        } else {
+                            // This flag's sibling wasn't encountered in a previous iteration,
+                            // so it must have had value 0.
+                            let flags = if unbound {
+                                (F::zero(), F::one())
+                            } else {
+                                (F::zero(), self.flag_values[batch_index / 2][j])
+                            };
+                            let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
+
+                            next_index_to_process = index + 1;
+                            (flags, fingerprints)
+                        };
+
+                        let m_flag = flags.1 - flags.0;
+                        let m_fingerprint = fingerprints.1 - fingerprints.0;
+
+                        // If flags are still unbound, flag evals will mostly be 0s and 1s
+                        // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
+                        let flag_eval_2 = flags.1 + m_flag;
+                        let flag_eval_3 = flag_eval_2 + m_flag;
+
+                        let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
+                        let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
+
+                        let block_index = (self.layer_len * batch_index) / 4 + index / 2;
+                        // println!(
+                        //     "{} = ({} * {}) / 4 + {} / 2",
+                        //     block_index, self.layer_len, batch_index, index
+                        // );
+
+                        let num_x1_bits = eq_poly.E1_len.log_2() - 1;
+                        let x1_bitmask = (1 << num_x1_bits) - 1;
+                        let x1 = block_index & x1_bitmask;
+                        let x2 = block_index >> num_x1_bits;
+
+                        let E2_eval = eq_poly.E2[x2];
+
+                        deltas.push((
+                            E2_eval.mul_0_optimized(
+                                flags.0.mul_01_optimized(fingerprints.0) - flags.0,
+                            ),
+                            E2_eval.mul_0_optimized(
+                                flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
+                            ),
+                            E2_eval.mul_0_optimized(
+                                flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
+                            ),
+                            x1,
+                        ));
                     }
 
-                    let (flags, fingerprints) = if index % 2 == 0 {
-                        let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
-                        let flags = if neighbor == index + 1 {
-                            // Neighbor is flag's sibling
-                            if unbound {
-                                (F::one(), F::one())
-                            } else {
-                                (
-                                    self.flag_values[batch_index / 2][j],
-                                    self.flag_values[batch_index / 2][j + 1],
-                                )
-                            }
-                        } else {
-                            // This flag's sibling wasn't found, so it must have value 0.
-                            if unbound {
-                                (F::one(), F::zero())
-                            } else {
-                                (self.flag_values[batch_index / 2][j], F::zero())
-                            }
-                        };
-                        let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
+                    deltas
+                })
+                .collect();
 
-                        next_index_to_process = index + 2;
-                        (flags, fingerprints)
-                    } else {
-                        // This flag's sibling wasn't encountered in a previous iteration,
-                        // so it must have had value 0.
-                        let flags = if unbound {
-                            (F::zero(), F::one())
-                        } else {
-                            (F::zero(), self.flag_values[batch_index / 2][j])
-                        };
-                        let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
+            let mut inner_sums: Vec<(F, F, F)> =
+                vec![(F::one(), F::one(), F::one()); eq_poly.E1_len / 2];
+            for delta in deltas.iter() {
+                let x1 = delta.3;
+                inner_sums[x1].0 += delta.0;
+                inner_sums[x1].1 += delta.1;
+                inner_sums[x1].2 += delta.2;
+            }
 
-                        next_index_to_process = index + 1;
-                        (flags, fingerprints)
+            // Correct for the fact that the batch size is padded to a power of two
+            // with all-0 circuits.
+            // TODO(moodlezoup): optimize this
+            for x in (self.batched_layer_len..self.batched_layer_len.next_power_of_two()).step_by(4)
+            {
+                let block_index = x / 4;
+                let num_x1_bits = eq_poly.E1_len.log_2() - 1;
+                let x1_bitmask = (1 << num_x1_bits) - 1;
+                let x1 = block_index & x1_bitmask;
+                let x2 = block_index >> num_x1_bits;
+                let E2_eval = eq_poly.E2[x2];
+
+                inner_sums[x1].0 -= E2_eval;
+                inner_sums[x1].1 -= E2_eval;
+                inner_sums[x1].2 -= E2_eval;
+            }
+
+            eq_poly.E1[..eq_poly.E1_len]
+                .par_chunks(2)
+                .zip(inner_sums.par_iter())
+                .map(|(E1_chunk, inner_sum)| {
+                    let E1_evals = {
+                        let eval_point_0 = E1_chunk[0];
+                        let m_eq = E1_chunk[1] - E1_chunk[0];
+                        let eval_point_2 = E1_chunk[1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
                     };
+                    (
+                        E1_evals.0 * inner_sum.0,
+                        E1_evals.1 * inner_sum.1,
+                        E1_evals.2 * inner_sum.2,
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+        };
+
+        let cubic_evals = [
+            cubic_evals.0,
+            previous_round_claim - cubic_evals.0,
+            cubic_evals.1,
+            cubic_evals.2,
+        ];
+        let cubic = UniPoly::from_evals(&cubic_evals);
+
+        #[cfg(test)]
+        {
+            let (dense_flags, dense_fingerprints) = self.to_dense();
+            let eq_merged = eq_poly.merge();
+            let dense_cubic_evals = dense_flags
+                .evals()
+                .par_chunks(2)
+                .zip(dense_fingerprints.evals().par_chunks(2))
+                .zip(eq_merged.evals().par_chunks(2))
+                .map(|((flag_chunk, fingerprint_chunk), eq_chunk)| {
+                    let eq_evals = {
+                        let eval_point_0 = eq_chunk[0];
+                        let m_eq = eq_chunk[1] - eq_chunk[0];
+                        let eval_point_2 = eq_chunk[1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    };
+                    let flags = (
+                        *flag_chunk.get(0).unwrap_or(&F::one()),
+                        *flag_chunk.get(1).unwrap_or(&F::one()),
+                    );
+                    let fingerprints = (
+                        *fingerprint_chunk.get(0).unwrap_or(&F::zero()),
+                        *fingerprint_chunk.get(1).unwrap_or(&F::zero()),
+                    );
 
                     let m_flag = flags.1 - flags.0;
                     let m_fingerprint = fingerprints.1 - fingerprints.0;
 
-                    // If flags are still unbound, flag evals will mostly be 0s and 1s
-                    // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
                     let flag_eval_2 = flags.1 + m_flag;
                     let flag_eval_3 = flag_eval_2 + m_flag;
 
                     let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
                     let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                    let (eq_eval_0, eq_eval_2, eq_eval_3) =
-                        eq_evals[batch_index * eq_chunk_size + index / 2];
-                    delta.0 += eq_eval_0
-                        .mul_0_optimized(flags.0.mul_01_optimized(fingerprints.0) - flags.0);
-                    delta.1 += eq_eval_2.mul_0_optimized(
-                        flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
-                    );
-                    delta.2 += eq_eval_3.mul_0_optimized(
-                        flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
-                    );
-                }
+                    // println!("Dense: ({:?} {:?} {})", eq_evals.0, flags.0, fingerprints.0);
+                    // println!(
+                    //     "Dense: ({:?} {:?} {})",
+                    //     eq_evals.1, flag_eval_2, fingerprint_eval_2
+                    // );
+                    // println!(
+                    //     "Dense: ({:?} {:?} {})",
+                    //     eq_evals.2, flag_eval_3, fingerprint_eval_3
+                    // );
+                    // println!(
+                    //     "Dense delta: {} {} {}",
+                    //     eq_evals.0 * (flags.0 * fingerprints.0 - flags.0),
+                    //     eq_evals.1 * (flag_eval_2 * fingerprint_eval_2 - flag_eval_2),
+                    //     eq_evals.2 * (flag_eval_3 * fingerprint_eval_3 - flag_eval_3),
+                    // );
+                    (
+                        eq_evals.0 * (flags.0 * fingerprints.0 + F::one() - flags.0),
+                        eq_evals.1 * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2),
+                        eq_evals.2 * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3),
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
+            let dense_cubic_evals = [
+                dense_cubic_evals.0,
+                previous_round_claim - dense_cubic_evals.0,
+                dense_cubic_evals.1,
+                dense_cubic_evals.2,
+            ];
+            assert_eq!(dense_cubic_evals, cubic_evals);
+        }
 
-                // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
-                //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
-                (delta.0, delta.1, delta.2)
-            })
-            .collect();
-
-        let evals_combined_0 = eq_eval_sums.0 + deltas.iter().map(|eval| eval.0).sum::<F>();
-        let evals_combined_2 = eq_eval_sums.1 + deltas.iter().map(|eval| eval.1).sum::<F>();
-        let evals_combined_3 = eq_eval_sums.2 + deltas.iter().map(|eval| eval.2).sum::<F>();
-
-        let cubic_evals = [
-            evals_combined_0,
-            previous_round_claim - evals_combined_0,
-            evals_combined_2,
-            evals_combined_3,
-        ];
-        UniPoly::from_evals(&cubic_evals)
+        cubic
     }
 
     fn final_claims(&self) -> (F, F) {
@@ -597,8 +889,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
             let previous_layer = &layers[i];
             layers.push(previous_layer.layer_output());
         }
-
-        println!("Sparse circuit: {:?}", layers);
 
         Self {
             toggle_layer,
@@ -813,8 +1103,8 @@ mod tests {
 
     #[test]
     fn sparse_prove_verify() {
-        const LAYER_SIZE: usize = 1 << 3;
-        const BATCH_SIZE: usize = 2;
+        const LAYER_SIZE: usize = 1 << 8;
+        const BATCH_SIZE: usize = 6;
         let mut rng = test_rng();
 
         let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {

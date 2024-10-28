@@ -408,17 +408,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // TODO(moodlezoup): Can more efficiently compute these
-            let eq_eval_sums: (F, F, F) = eq_evals
-                .par_iter()
-                .fold(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                );
+            // // TODO(moodlezoup): Can more efficiently compute these
+            // let eq_eval_sums: (F, F, F) = eq_evals
+            //     .par_iter()
+            //     .fold(
+            //         || (F::zero(), F::zero(), F::zero()),
+            //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            //     )
+            //     .reduce(
+            //         || (F::zero(), F::zero(), F::zero()),
+            //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            //     );
 
             let deltas: Vec<(F, F, F)> = self
                 .coeffs
@@ -445,21 +445,29 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                             let right_eval_2 = right.1 + m_right;
                             let right_eval_3 = right_eval_2 + m_right;
 
-                            let E2_eval = eq_poly.E2[block_index];
-                            // TODO(moodlezoup): Can save a multiplication here
+                            let eq_evals = eq_evals[block_index];
                             (
-                                E2_eval * (left.0 * right.0 - F::one()),
-                                E2_eval * (left_eval_2 * right_eval_2 - F::one()),
-                                E2_eval * (left_eval_3 * right_eval_3 - F::one()),
+                                eq_evals.0 * (left.0 * right.0),
+                                eq_evals.1 * (left_eval_2 * right_eval_2),
+                                eq_evals.2 * (left_eval_3 * right_eval_3),
                             )
+                            // (
+                            //     eq_evals.0 * (left.0 * right.0 - F::one()),
+                            //     eq_evals.1 * (left_eval_2 * right_eval_2 - F::one()),
+                            //     eq_evals.2 * (left_eval_3 * right_eval_3 - F::one()),
+                            // )
                         })
                 })
                 .collect();
 
             deltas.into_par_iter().reduce(
-                || eq_eval_sums,
+                || (F::zero(), F::zero(), F::zero()),
                 |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
             )
+            // deltas.into_par_iter().reduce(
+            //     || eq_eval_sums,
+            //     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            // )
         } else {
             let deltas: Vec<(F, F, F, usize)> = self
                 .coeffs
