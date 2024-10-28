@@ -485,7 +485,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
-            let deltas: Vec<(F, F, F)> = (0..self.fingerprints.len())
+            let deltas: (F, F, F) = (0..self.fingerprints.len())
                 .into_par_iter()
                 .map(|batch_index| {
                     // Computes:
@@ -557,19 +557,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
                         let eq_evals = eq_evals[block_index];
 
-                        println!(
-                            "Sparse: ({:?} {:?} {})",
-                            eq_evals.0, flags.0, fingerprints.0
-                        );
-                        println!(
-                            "Sparse: ({:?} {:?} {})",
-                            eq_evals.1, flag_eval_2, fingerprint_eval_2
-                        );
-                        println!(
-                            "Sparse: ({:?} {:?} {})",
-                            eq_evals.2, flag_eval_3, fingerprint_eval_3
-                        );
-
                         delta.0 += eq_evals
                             .0
                             .mul_0_optimized(flags.0.mul_01_optimized(fingerprints.0) - flags.0);
@@ -581,22 +568,18 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         );
                     }
 
-                    // println!("Sparse delta: {} {} {}", delta.0, delta.1, delta.2);
-
                     (delta.0, delta.1, delta.2)
                 })
-                .collect();
-
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
             // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
             //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
-            let delta_sums = deltas.into_par_iter().reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            );
             (
-                eq_eval_sums.0 + delta_sums.0,
-                eq_eval_sums.1 + delta_sums.1,
-                eq_eval_sums.2 + delta_sums.2,
+                eq_eval_sums.0 + deltas.0,
+                eq_eval_sums.1 + deltas.1,
+                eq_eval_sums.2 + deltas.2,
             )
         } else {
             println!("Toggle compute_cubic non-coalesced E1_len!=1");
@@ -670,10 +653,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
-                        // println!(
-                        //     "{} = ({} * {}) / 4 + {} / 2",
-                        //     block_index, self.layer_len, batch_index, index
-                        // );
 
                         let num_x1_bits = eq_poly.E1_len.log_2() - 1;
                         let x1_bitmask = (1 << num_x1_bits) - 1;
@@ -792,21 +771,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
                     let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                    println!("Dense: ({:?} {:?} {})", eq_evals.0, flags.0, fingerprints.0);
-                    println!(
-                        "Dense: ({:?} {:?} {})",
-                        eq_evals.1, flag_eval_2, fingerprint_eval_2
-                    );
-                    println!(
-                        "Dense: ({:?} {:?} {})",
-                        eq_evals.2, flag_eval_3, fingerprint_eval_3
-                    );
-                    // println!(
-                    //     "Dense delta: {} {} {}",
-                    //     eq_evals.0 * (flags.0 * fingerprints.0 - flags.0),
-                    //     eq_evals.1 * (flag_eval_2 * fingerprint_eval_2 - flag_eval_2),
-                    //     eq_evals.2 * (flag_eval_3 * fingerprint_eval_3 - flag_eval_3),
-                    // );
                     (
                         eq_evals.0 * (flags.0 * fingerprints.0 + F::one() - flags.0),
                         eq_evals.1 * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2),
@@ -1117,7 +1081,6 @@ mod tests {
             .cartesian_product(DENSITY.into_iter())
             .cartesian_product(BATCH_SIZE.into_iter())
         {
-            println!("{} {} {}", num_vars, density, batch_size);
             let layer_size = 1 << num_vars;
             let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
                 let layer: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))

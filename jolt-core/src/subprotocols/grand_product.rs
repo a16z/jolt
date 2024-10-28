@@ -76,10 +76,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
 
-        let mut i = 0usize;
         for layer in self.layers() {
-            println!("layer {}", i);
-            i += 1;
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
         }
 

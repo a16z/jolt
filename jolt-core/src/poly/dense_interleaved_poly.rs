@@ -7,6 +7,7 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 use rayon::{prelude::*, slice::Chunks};
+use tracing::trace_span;
 
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
@@ -198,6 +199,8 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         let cubic_evals = if eq_poly.E1_len == 1 {
+            let _span = trace_span!("BatchedDenseGrandProductLayer::compute_cubic E1_len == 1");
+            let _enter = _span.enter();
             self.par_chunks(4)
                 .zip(eq_poly.E2.par_chunks(2))
                 .map(|(layer_chunk, eq_chunk)| {
@@ -237,6 +240,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         } else {
+            let _span = trace_span!("BatchedDenseGrandProductLayer::compute_cubic E1_len != 1");
+            let _enter = _span.enter();
+
             let num_E1_chunks = eq_poly.E1_len / 2;
 
             let mut evals = (F::zero(), F::zero(), F::zero());

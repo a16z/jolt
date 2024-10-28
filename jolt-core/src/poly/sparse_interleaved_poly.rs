@@ -390,7 +390,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     /// If `self` is sparse, we basically do the same thing but with some fancy optimizations and
     /// more cases to check 😬
-    #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::compute_cubic")]
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
             return coalesced.compute_cubic(eq_poly, previous_round_claim);
@@ -421,7 +421,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
-            let deltas: Vec<(F, F, F)> = self
+            let deltas: (F, F, F) = self
                 .coeffs
                 .par_iter()
                 .flat_map(|segment| {
@@ -447,11 +447,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                             let right_eval_3 = right_eval_2 + m_right;
 
                             let eq_evals = eq_evals[block_index];
-                            // (
-                            //     eq_evals.0 * (left.0 * right.0),
-                            //     eq_evals.1 * (left_eval_2 * right_eval_2),
-                            //     eq_evals.2 * (left_eval_3 * right_eval_3),
-                            // )
                             (
                                 eq_evals.0 * (left.0 * right.0 - F::one()),
                                 eq_evals.1 * (left_eval_2 * right_eval_2 - F::one()),
@@ -459,24 +454,15 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                             )
                         })
                 })
-                .collect();
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
 
-            // deltas.into_par_iter().reduce(
-            //     || (F::zero(), F::zero(), F::zero()),
-            //     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            // )
-            // deltas.into_par_iter().reduce(
-            //     || eq_eval_sums,
-            //     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            // )
-            let delta_sums = deltas.into_par_iter().reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            );
             (
-                eq_eval_sums.0 + delta_sums.0,
-                eq_eval_sums.1 + delta_sums.1,
-                eq_eval_sums.2 + delta_sums.2,
+                eq_eval_sums.0 + deltas.0,
+                eq_eval_sums.1 + deltas.1,
+                eq_eval_sums.2 + deltas.2,
             )
         } else {
             let deltas: Vec<(F, F, F, usize)> = self

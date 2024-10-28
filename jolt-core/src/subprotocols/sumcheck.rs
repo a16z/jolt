@@ -38,8 +38,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Bindable<F> {
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for _round in 0..num_rounds {
-            println!("sumcheck round {}", _round);
+        for _ in 0..num_rounds {
             #[cfg(test)]
             self.sumcheck_sanity_check(eq_poly, previous_claim);
 
