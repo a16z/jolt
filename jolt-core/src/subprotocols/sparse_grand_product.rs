@@ -464,6 +464,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             println!("Toggle compute_cubic non-coalesced E1_len=1");
             let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
                 .par_chunks(2)
+                .take(self.batched_layer_len / 4)
                 .map(|eq_chunk| {
                     let eval_point_0 = eq_chunk[0];
                     let m_eq = eq_chunk[1] - eq_chunk[0];
@@ -472,17 +473,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // // TODO(moodlezoup): Can more efficiently compute these
-            // let eq_eval_sums: (F, F, F) = eq_evals
-            //     .par_iter()
-            //     .fold(
-            //         || (F::zero(), F::zero(), F::zero()),
-            //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            //     )
-            //     .reduce(
-            //         || (F::zero(), F::zero(), F::zero()),
-            //         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            //     );
+            // TODO(moodlezoup): Can more efficiently compute these
+            let eq_eval_sums: (F, F, F) = eq_evals
+                .par_iter()
+                .fold(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
 
             let deltas: Vec<(F, F, F)> = (0..self.fingerprints.len())
                 .into_par_iter()
@@ -556,29 +557,27 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
                         let eq_evals = eq_evals[block_index];
 
-                        // println!(
-                        //     "Sparse: ({:?} {:?} {})",
-                        //     eq_evals.0, flags.0, fingerprints.0
-                        // );
-                        // println!(
-                        //     "Sparse: ({:?} {:?} {})",
-                        //     eq_evals.1, flag_eval_2, fingerprint_eval_2
-                        // );
-                        // println!(
-                        //     "Sparse: ({:?} {:?} {})",
-                        //     eq_evals.2, flag_eval_3, fingerprint_eval_3
-                        // );
-
-                        delta.0 += eq_evals.0.mul_0_optimized(
-                            flags.0.mul_01_optimized(fingerprints.0) + F::one() - flags.0,
+                        println!(
+                            "Sparse: ({:?} {:?} {})",
+                            eq_evals.0, flags.0, fingerprints.0
                         );
+                        println!(
+                            "Sparse: ({:?} {:?} {})",
+                            eq_evals.1, flag_eval_2, fingerprint_eval_2
+                        );
+                        println!(
+                            "Sparse: ({:?} {:?} {})",
+                            eq_evals.2, flag_eval_3, fingerprint_eval_3
+                        );
+
+                        delta.0 += eq_evals
+                            .0
+                            .mul_0_optimized(flags.0.mul_01_optimized(fingerprints.0) - flags.0);
                         delta.1 += eq_evals.1.mul_0_optimized(
-                            flag_eval_2.mul_01_optimized(fingerprint_eval_2) + F::one()
-                                - flag_eval_2,
+                            flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
                         );
                         delta.2 += eq_evals.2.mul_0_optimized(
-                            flag_eval_3.mul_01_optimized(fingerprint_eval_3) + F::one()
-                                - flag_eval_3,
+                            flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
                         );
                     }
 
@@ -590,9 +589,14 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
 
             // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
             //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
-            deltas.into_par_iter().reduce(
+            let delta_sums = deltas.into_par_iter().reduce(
                 || (F::zero(), F::zero(), F::zero()),
                 |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            );
+            (
+                eq_eval_sums.0 + delta_sums.0,
+                eq_eval_sums.1 + delta_sums.1,
+                eq_eval_sums.2 + delta_sums.2,
             )
         } else {
             println!("Toggle compute_cubic non-coalesced E1_len!=1");
@@ -788,15 +792,15 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
                     let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                    // println!("Dense: ({:?} {:?} {})", eq_evals.0, flags.0, fingerprints.0);
-                    // println!(
-                    //     "Dense: ({:?} {:?} {})",
-                    //     eq_evals.1, flag_eval_2, fingerprint_eval_2
-                    // );
-                    // println!(
-                    //     "Dense: ({:?} {:?} {})",
-                    //     eq_evals.2, flag_eval_3, fingerprint_eval_3
-                    // );
+                    println!("Dense: ({:?} {:?} {})", eq_evals.0, flags.0, fingerprints.0);
+                    println!(
+                        "Dense: ({:?} {:?} {})",
+                        eq_evals.1, flag_eval_2, fingerprint_eval_2
+                    );
+                    println!(
+                        "Dense: ({:?} {:?} {})",
+                        eq_evals.2, flag_eval_3, fingerprint_eval_3
+                    );
                     // println!(
                     //     "Dense delta: {} {} {}",
                     //     eq_evals.0 * (flags.0 * fingerprints.0 - flags.0),
@@ -1103,75 +1107,87 @@ mod tests {
 
     #[test]
     fn sparse_prove_verify() {
-        const LAYER_SIZE: usize = 1 << 8;
-        const BATCH_SIZE: usize = 6;
         let mut rng = test_rng();
+        const NUM_VARS: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
+        const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+        const BATCH_SIZE: [usize; 5] = [2, 4, 6, 8, 10];
 
-        let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-            let layer: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(LAYER_SIZE)
-                .collect::<Vec<_>>();
-            layer
-        })
-        .take(BATCH_SIZE)
-        .collect();
+        for ((num_vars, density), batch_size) in NUM_VARS
+            .into_iter()
+            .cartesian_product(DENSITY.into_iter())
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            println!("{} {} {}", num_vars, density, batch_size);
+            let layer_size = 1 << num_vars;
+            let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
+                let layer: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                    .take(layer_size)
+                    .collect::<Vec<_>>();
+                layer
+            })
+            .take(batch_size)
+            .collect();
 
-        let flags: Vec<Vec<usize>> = std::iter::repeat_with(|| {
-            let mut layer = vec![];
-            for i in 0..LAYER_SIZE {
-                if rng.next_u32().is_even() {
-                    layer.push(i);
+            let flags: Vec<Vec<usize>> = std::iter::repeat_with(|| {
+                let mut layer = vec![];
+                for i in 0..layer_size {
+                    if rng.gen_bool(density) {
+                        layer.push(i);
+                    }
                 }
-            }
-            layer
-        })
-        .take(BATCH_SIZE / 2)
-        .collect();
+                layer
+            })
+            .take(batch_size / 2)
+            .collect();
 
-        let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::construct((flags, fingerprints));
+            let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::construct((flags, fingerprints));
 
-        let mut dense_circuit =
-            <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::construct(
-                (circuit.sparse_layers[0].coalesce(), BATCH_SIZE),
+            //     let mut dense_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            //         Fr,
+            //         Zeromorph<Bn254>,
+            //     >>::construct((
+            //         circuit.sparse_layers[0].coalesce(),
+            //         batch_size,
+            //     ));
+            //     let dense_claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            //         Fr,
+            //         Zeromorph<Bn254>,
+            //     >>::claimed_outputs(&dense_circuit);
+            //     let mut dense_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+            //     let _ = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            //     Fr,
+            //     Zeromorph<Bn254>,
+            // >>::prove_grand_product(
+            //     &mut dense_circuit, None, &mut dense_transcript, None
+            // );
+
+            let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::claimed_outputs(&circuit);
+
+            let mut prover_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+            let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254>,
+            >>::prove_grand_product(
+                &mut circuit, None, &mut prover_transcript, None
             );
-        let dense_claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::claimed_outputs(&dense_circuit);
-        let mut dense_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        let _ = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::prove_grand_product(
-            &mut dense_circuit, None, &mut dense_transcript, None
-        );
 
-        let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::claimed_outputs(&circuit);
-
-        let mut prover_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-            Fr,
-            Zeromorph<Bn254>,
-        >>::prove_grand_product(
-            &mut circuit, None, &mut prover_transcript, None
-        );
-
-        let mut verifier_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-        verifier_transcript.compare_to(prover_transcript);
-        let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
-            &proof,
-            &claims,
-            None,
-            &mut verifier_transcript,
-            None,
-        );
-        assert_eq!(r_prover, r_verifier);
+            let mut verifier_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+            verifier_transcript.compare_to(prover_transcript);
+            let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
+                &proof,
+                &claims,
+                None,
+                &mut verifier_transcript,
+                None,
+            );
+            assert_eq!(r_prover, r_verifier);
+        }
     }
 
     #[test]
