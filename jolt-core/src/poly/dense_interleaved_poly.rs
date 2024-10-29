@@ -7,7 +7,6 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 use rayon::{prelude::*, slice::Chunks};
-use tracing::trace_span;
 
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
@@ -196,11 +195,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
     ///                           |  |  |  |
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
-    #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
+    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         let cubic_evals = if eq_poly.E1_len == 1 {
-            let _span = trace_span!("BatchedDenseGrandProductLayer::compute_cubic E1_len == 1");
-            let _enter = _span.enter();
             self.par_chunks(4)
                 .zip(eq_poly.E2.par_chunks(2))
                 .map(|(layer_chunk, eq_chunk)| {
@@ -240,33 +237,30 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         } else {
-            let _span = trace_span!("BatchedDenseGrandProductLayer::compute_cubic E1_len != 1");
-            let _enter = _span.enter();
-
-            let num_E1_chunks = eq_poly.E1_len / 2;
-
-            let mut evals = (F::zero(), F::zero(), F::zero());
-            for (x1, E1_chunk) in eq_poly.E1[..eq_poly.E1_len].chunks(2).enumerate() {
-                let E1_evals = {
-                    let eval_point_0 = E1_chunk[0];
-                    let m_eq = E1_chunk[1] - E1_chunk[0];
-                    let eval_point_2 = E1_chunk[1] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
-                };
-                let inner_sums = eq_poly.E2[..eq_poly.E2_len]
-                    .par_iter()
-                    .zip(self.par_chunks(4).skip(x1).step_by(num_E1_chunks))
-                    .map(|(E2_eval, P_x1)| {
+            let chunk_size = self.len.next_power_of_two() / eq_poly.E2_len;
+            eq_poly.E2[..eq_poly.E2_len]
+                .par_iter()
+                .zip(self.par_chunks(chunk_size))
+                .map(|(E2_eval, P_x2)| {
+                    let mut evals = (F::zero(), F::zero(), F::zero());
+                    for (E1_chunk, P_chunk) in
+                        eq_poly.E1[..eq_poly.E1_len].chunks(2).zip(P_x2.chunks(4))
+                    {
+                        let E1_evals = {
+                            let eval_point_0 = E1_chunk[0];
+                            let m_eq = E1_chunk[1] - E1_chunk[0];
+                            let eval_point_2 = E1_chunk[1] + m_eq;
+                            let eval_point_3 = eval_point_2 + m_eq;
+                            (eval_point_0, eval_point_2, eval_point_3)
+                        };
                         let left = (
-                            *P_x1.get(0).unwrap_or(&F::zero()),
-                            *P_x1.get(2).unwrap_or(&F::zero()),
+                            *P_chunk.get(0).unwrap_or(&F::zero()),
+                            *P_chunk.get(2).unwrap_or(&F::zero()),
                         );
                         let right = (
-                            *P_x1.get(1).unwrap_or(&F::zero()),
-                            *P_x1.get(3).unwrap_or(&F::zero()),
+                            *P_chunk.get(1).unwrap_or(&F::zero()),
+                            *P_chunk.get(3).unwrap_or(&F::zero()),
                         );
-
                         let m_left = left.1 - left.0;
                         let m_right = right.1 - right.0;
 
@@ -276,23 +270,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
                         let right_eval_2 = right.1 + m_right;
                         let right_eval_3 = right_eval_2 + m_right;
 
-                        // TODO(moodlezoup): can save a mult by E2_eval here
-                        (
-                            *E2_eval * left.0 * right.0,
-                            *E2_eval * left_eval_2 * right_eval_2,
-                            *E2_eval * left_eval_3 * right_eval_3,
-                        )
-                    })
-                    .reduce(
-                        || (F::zero(), F::zero(), F::zero()),
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                    );
+                        evals.0 += E1_evals.0 * left.0 * right.0;
+                        evals.1 += E1_evals.1 * left_eval_2 * right_eval_2;
+                        evals.2 += E1_evals.2 * left_eval_3 * right_eval_3;
+                    }
 
-                evals.0 += E1_evals.0 * inner_sums.0;
-                evals.1 += E1_evals.1 * inner_sums.1;
-                evals.2 += E1_evals.2 * inner_sums.2;
-            }
-            evals
+                    (*E2_eval * evals.0, *E2_eval * evals.1, *E2_eval * evals.2)
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
         };
 
         let cubic_evals = [
