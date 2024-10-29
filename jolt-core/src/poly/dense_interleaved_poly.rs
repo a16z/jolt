@@ -237,22 +237,24 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         } else {
+            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
+                .par_chunks(2)
+                .map(|E1_chunk| {
+                    let eval_point_0 = E1_chunk[0];
+                    let m_eq = E1_chunk[1] - E1_chunk[0];
+                    let eval_point_2 = E1_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .collect();
+
             let chunk_size = self.len.next_power_of_two() / eq_poly.E2_len;
             eq_poly.E2[..eq_poly.E2_len]
                 .par_iter()
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E2_eval, P_x2)| {
-                    let mut evals = (F::zero(), F::zero(), F::zero());
-                    for (E1_chunk, P_chunk) in
-                        eq_poly.E1[..eq_poly.E1_len].chunks(2).zip(P_x2.chunks(4))
-                    {
-                        let E1_evals = {
-                            let eval_point_0 = E1_chunk[0];
-                            let m_eq = E1_chunk[1] - E1_chunk[0];
-                            let eval_point_2 = E1_chunk[1] + m_eq;
-                            let eval_point_3 = eval_point_2 + m_eq;
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        };
+                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                    for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
                         let left = (
                             *P_chunk.get(0).unwrap_or(&F::zero()),
                             *P_chunk.get(2).unwrap_or(&F::zero()),
@@ -270,12 +272,16 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
                         let right_eval_2 = right.1 + m_right;
                         let right_eval_3 = right_eval_2 + m_right;
 
-                        evals.0 += E1_evals.0 * left.0 * right.0;
-                        evals.1 += E1_evals.1 * left_eval_2 * right_eval_2;
-                        evals.2 += E1_evals.2 * left_eval_3 * right_eval_3;
+                        inner_sum.0 += E1_evals.0 * left.0 * right.0;
+                        inner_sum.1 += E1_evals.1 * left_eval_2 * right_eval_2;
+                        inner_sum.2 += E1_evals.2 * left_eval_3 * right_eval_3;
                     }
 
-                    (*E2_eval * evals.0, *E2_eval * evals.1, *E2_eval * evals.2)
+                    (
+                        *E2_eval * inner_sum.0,
+                        *E2_eval * inner_sum.1,
+                        *E2_eval * inner_sum.2,
+                    )
                 })
                 .reduce(
                     || (F::zero(), F::zero(), F::zero()),
