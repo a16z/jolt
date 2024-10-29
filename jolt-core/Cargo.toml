@@ -97,6 +97,10 @@ harness = false
 name = "polynomial"
 harness = false
 
+[[bench]]
+name = "compute_cubic"
+harness = false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
