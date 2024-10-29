@@ -7,6 +7,7 @@ use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
+use jolt_core::utils::math::Math;
 use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {
@@ -81,7 +82,7 @@ fn benchmark_sparse_interleaved<F: JoltField>(
                     let coeffs = random_sparse_coeffs(&mut rng, batch_size, num_vars, density);
                     let poly = SparseInterleavedPolynomial::new(coeffs, batch_size << num_vars);
                     let r_eq: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
-                        .take(num_vars)
+                        .take((batch_size << num_vars).next_power_of_two().log_2())
                         .collect();
                     let eq_poly = SplitEqPolynomial::new(&r_eq);
                     let claim = F::random(&mut rng);
@@ -100,17 +101,17 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
 
-    benchmark_dense_interleaved::<Fr>(&mut criterion, 20);
-    benchmark_dense_interleaved::<Fr>(&mut criterion, 21);
-    benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
+    // benchmark_dense_interleaved::<Fr>(&mut criterion, 20);
+    // benchmark_dense_interleaved::<Fr>(&mut criterion, 21);
+    // benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 25);
 
-    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
-    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
-    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
-    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 21, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
+    benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 21, 0.1);
 
     criterion.final_summary();
 }
