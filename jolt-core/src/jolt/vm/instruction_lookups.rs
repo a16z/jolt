@@ -1,7 +1,7 @@
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
-use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -995,6 +995,9 @@ where
         let flag_evals = flag_polys_updated.iter().map(|poly| poly[0]).collect();
         let memory_evals = memory_polys_updated.iter().map(|poly| poly[0]).collect();
         let outputs_eval = lookup_outputs_poly[0];
+
+        drop_in_background_thread(flag_polys_updated);
+        drop_in_background_thread(memory_polys_updated);
 
         (
             SumcheckInstanceProof::new(compressed_polys),
