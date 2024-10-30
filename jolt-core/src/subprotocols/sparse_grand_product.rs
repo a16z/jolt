@@ -363,7 +363,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();
 
             let cubic_evals = if eq_poly.E1_len == 1 {
-                println!("Toggle compute_cubic coalesced E1_len=1");
                 coalesced_flags
                     .par_chunks(2)
                     .zip(coalesced_fingerpints.par_chunks(2))
@@ -398,56 +397,59 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                     )
             } else {
-                println!("Toggle compute_cubic coalesced E1_len!=1");
-                let num_E1_chunks = eq_poly.E1_len / 2;
-
-                let mut evals = (F::zero(), F::zero(), F::zero());
-                for (x1, E1_chunk) in eq_poly.E1[..eq_poly.E1_len].chunks(2).enumerate() {
-                    let E1_evals = {
+                let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
+                    .par_chunks(2)
+                    .map(|E1_chunk| {
                         let eval_point_0 = E1_chunk[0];
                         let m_eq = E1_chunk[1] - E1_chunk[0];
                         let eval_point_2 = E1_chunk[1] + m_eq;
                         let eval_point_3 = eval_point_2 + m_eq;
                         (eval_point_0, eval_point_2, eval_point_3)
-                    };
-                    let inner_sums = eq_poly.E2[..eq_poly.E2_len]
-                        .par_iter()
-                        .zip(
-                            coalesced_flags
-                                .par_chunks(2)
-                                .zip(coalesced_fingerpints.par_chunks(2))
-                                .skip(x1)
-                                .step_by(num_E1_chunks),
-                        )
-                        .map(|(E2_eval, (flags, fingerprints))| {
-                            let m_flag = flags[1] - flags[0];
-                            let m_fingerprint = fingerprints[1] - fingerprints[0];
+                    })
+                    .collect();
 
-                            let flag_eval_2 = flags[1] + m_flag;
+                let flag_chunk_size = coalesced_flags.len().next_power_of_two() / eq_poly.E2_len;
+                let fingerprint_chunk_size =
+                    coalesced_fingerpints.len().next_power_of_two() / eq_poly.E2_len;
+
+                eq_poly.E2[..eq_poly.E2_len]
+                    .par_iter()
+                    .zip(coalesced_flags.par_chunks(flag_chunk_size))
+                    .zip(coalesced_fingerpints.par_chunks(fingerprint_chunk_size))
+                    .map(|((E2_eval, flag_x2), fingerprint_x2)| {
+                        let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                        for ((E1_evals, flag_chunk), fingerprint_chunk) in E1_evals
+                            .iter()
+                            .zip(flag_x2.chunks(2))
+                            .zip(fingerprint_x2.chunks(2))
+                        {
+                            let m_flag = flag_chunk[1] - flag_chunk[0];
+                            let m_fingerprint = fingerprint_chunk[1] - fingerprint_chunk[0];
+
+                            let flag_eval_2 = flag_chunk[1] + m_flag;
                             let flag_eval_3 = flag_eval_2 + m_flag;
 
-                            let fingerprint_eval_2 = fingerprints[1] + m_fingerprint;
+                            let fingerprint_eval_2 = fingerprint_chunk[1] + m_fingerprint;
                             let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                            // TODO(moodlezoup): can save a mult by E2_eval here
-                            (
-                                *E2_eval * (flags[0] * fingerprints[0] + F::one() - flags[0]),
-                                *E2_eval
-                                    * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2),
-                                *E2_eval
-                                    * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3),
-                            )
-                        })
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                        );
+                            inner_sum.0 += E1_evals.0
+                                * (flag_chunk[0] * fingerprint_chunk[0] + F::one() - flag_chunk[0]);
+                            inner_sum.1 += E1_evals.1
+                                * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2);
+                            inner_sum.2 += E1_evals.2
+                                * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3);
+                        }
 
-                    evals.0 += E1_evals.0 * inner_sums.0;
-                    evals.1 += E1_evals.1 * inner_sums.1;
-                    evals.2 += E1_evals.2 * inner_sums.2;
-                }
-                evals
+                        (
+                            *E2_eval * inner_sum.0,
+                            *E2_eval * inner_sum.1,
+                            *E2_eval * inner_sum.2,
+                        )
+                    })
+                    .reduce(
+                        || (F::zero(), F::zero(), F::zero()),
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    )
             };
 
             let cubic_evals = [
@@ -461,7 +463,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
 
         // Non-coalesced case
         let cubic_evals = if eq_poly.E1_len == 1 {
-            println!("Toggle compute_cubic non-coalesced E1_len=1");
             let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
                 .par_chunks(2)
                 .take(self.batched_layer_len / 4)
@@ -473,7 +474,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // TODO(moodlezoup): Can more efficiently compute these
             let eq_eval_sums: (F, F, F) = eq_evals
                 .par_iter()
                 .fold(
@@ -582,10 +582,33 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                 eq_eval_sums.2 + deltas.2,
             )
         } else {
-            println!("Toggle compute_cubic non-coalesced E1_len!=1");
-            let deltas: Vec<(F, F, F, usize)> = (0..self.fingerprints.len())
+            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
+                .par_chunks(2)
+                .map(|E1_chunk| {
+                    let eval_point_0 = E1_chunk[0];
+                    let m_eq = E1_chunk[1] - E1_chunk[0];
+                    let eval_point_2 = E1_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .collect();
+            let E1_eval_sums: (F, F, F) = E1_evals
+                .par_iter()
+                .fold(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
+
+            let num_x1_bits = eq_poly.E1_len.log_2() - 1;
+            let x1_bitmask = (1 << num_x1_bits) - 1;
+
+            let deltas = (0..self.fingerprints.len())
                 .into_par_iter()
-                .flat_map(|batch_index| {
+                .map(|batch_index| {
                     // Computes:
                     //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
                     // for the evaluation points {0, 2, 3}
@@ -594,7 +617,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     let flag_indices = &self.flag_indices[batch_index / 2];
 
                     let unbound = self.flag_values.is_empty();
-                    let mut deltas: Vec<(F, F, F, usize)> = vec![];
+                    let mut delta = (F::zero(), F::zero(), F::zero());
+                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                    let mut prev_x2 = 0;
 
                     let mut next_index_to_process = 0usize;
                     for (j, index) in flag_indices.iter().enumerate() {
@@ -653,79 +678,80 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
-
-                        let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-                        let x1_bitmask = (1 << num_x1_bits) - 1;
-                        let x1 = block_index & x1_bitmask;
                         let x2 = block_index >> num_x1_bits;
+                        if x2 != prev_x2 {
+                            delta.0 += eq_poly.E2[prev_x2] * inner_sum.0;
+                            delta.1 += eq_poly.E2[prev_x2] * inner_sum.1;
+                            delta.2 += eq_poly.E2[prev_x2] * inner_sum.2;
+                            inner_sum = (F::zero(), F::zero(), F::zero());
+                            prev_x2 = x2;
+                        }
 
-                        let E2_eval = eq_poly.E2[x2];
-
-                        deltas.push((
-                            E2_eval.mul_0_optimized(
-                                flags.0.mul_01_optimized(fingerprints.0) - flags.0,
-                            ),
-                            E2_eval.mul_0_optimized(
-                                flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
-                            ),
-                            E2_eval.mul_0_optimized(
-                                flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
-                            ),
-                            x1,
-                        ));
+                        let x1 = block_index & x1_bitmask;
+                        inner_sum.0 += E1_evals[x1]
+                            .0
+                            .mul_0_optimized(flags.0.mul_01_optimized(fingerprints.0) - flags.0);
+                        inner_sum.1 += E1_evals[x1].1.mul_0_optimized(
+                            flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
+                        );
+                        inner_sum.2 += E1_evals[x1].2.mul_0_optimized(
+                            flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
+                        );
                     }
 
-                    deltas
-                })
-                .collect();
+                    delta.0 += eq_poly.E2[prev_x2] * inner_sum.0;
+                    delta.1 += eq_poly.E2[prev_x2] * inner_sum.1;
+                    delta.2 += eq_poly.E2[prev_x2] * inner_sum.2;
 
-            let mut inner_sums: Vec<(F, F, F)> =
-                vec![(F::one(), F::one(), F::one()); eq_poly.E1_len / 2];
-            for delta in deltas.iter() {
-                let x1 = delta.3;
-                inner_sums[x1].0 += delta.0;
-                inner_sums[x1].1 += delta.1;
-                inner_sums[x1].2 += delta.2;
-            }
-
-            // Correct for the fact that the batch size is padded to a power of two
-            // with all-0 circuits.
-            // TODO(moodlezoup): optimize this
-            for x in (self.batched_layer_len..self.batched_layer_len.next_power_of_two()).step_by(4)
-            {
-                let block_index = x / 4;
-                let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-                let x1_bitmask = (1 << num_x1_bits) - 1;
-                let x1 = block_index & x1_bitmask;
-                let x2 = block_index >> num_x1_bits;
-                let E2_eval = eq_poly.E2[x2];
-
-                inner_sums[x1].0 -= E2_eval;
-                inner_sums[x1].1 -= E2_eval;
-                inner_sums[x1].2 -= E2_eval;
-            }
-
-            eq_poly.E1[..eq_poly.E1_len]
-                .par_chunks(2)
-                .zip(inner_sums.par_iter())
-                .map(|(E1_chunk, inner_sum)| {
-                    let E1_evals = {
-                        let eval_point_0 = E1_chunk[0];
-                        let m_eq = E1_chunk[1] - E1_chunk[0];
-                        let eval_point_2 = E1_chunk[1] + m_eq;
-                        let eval_point_3 = eval_point_2 + m_eq;
-                        (eval_point_0, eval_point_2, eval_point_3)
-                    };
-                    (
-                        E1_evals.0 * inner_sum.0,
-                        E1_evals.1 * inner_sum.1,
-                        E1_evals.2 * inner_sum.2,
-                    )
+                    delta
                 })
                 .reduce(
                     || (F::zero(), F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
+                );
+
+            let evals_assuming_all_ones = if self.batched_layer_len.is_power_of_two() {
+                E1_eval_sums
+            } else {
+                let chunk_size = self.batched_layer_len.next_power_of_two() / eq_poly.E2_len;
+                let num_all_one_chunks = self.batched_layer_len / chunk_size;
+                let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
+                if self.batched_layer_len % chunk_size == 0 {
+                    (
+                        E2_sum * E1_eval_sums.0,
+                        E2_sum * E1_eval_sums.1,
+                        E2_sum * E1_eval_sums.2,
+                    )
+                } else {
+                    // The last "chunk" will have (self.dense_len % chunk_size) ones,
+                    // followed by (chunk_size - self.dense_len % chunk_size) zeros.
+                    // This handles this last chunk:
+                    let last_chunk_evals = E1_evals[..(self.batched_layer_len % chunk_size) / 4]
+                        .par_iter()
+                        .fold(
+                            || (F::zero(), F::zero(), F::zero()),
+                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                        )
+                        .reduce(
+                            || (F::zero(), F::zero(), F::zero()),
+                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                        );
+                    (
+                        E2_sum * E1_eval_sums.0
+                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.0,
+                        E2_sum * E1_eval_sums.1
+                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.1,
+                        E2_sum * E1_eval_sums.2
+                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.2,
+                    )
+                }
+            };
+
+            (
+                evals_assuming_all_ones.0 + deltas.0,
+                evals_assuming_all_ones.1 + deltas.1,
+                evals_assuming_all_ones.2 + deltas.2,
+            )
         };
 
         let cubic_evals = [
@@ -734,7 +760,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             cubic_evals.1,
             cubic_evals.2,
         ];
-        let cubic = UniPoly::from_evals(&cubic_evals);
 
         #[cfg(test)]
         {
@@ -790,7 +815,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             assert_eq!(dense_cubic_evals, cubic_evals);
         }
 
-        cubic
+        UniPoly::from_evals(&cubic_evals)
     }
 
     fn final_claims(&self) -> (F, F) {
@@ -932,17 +957,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        poly::{
-            commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
-        },
-        subprotocols::grand_product::BatchedDenseGrandProduct,
+    use crate::poly::{
+        commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
     };
     use ark_bn254::{Bn254, Fr};
     use ark_std::{rand::Rng, test_rng, One};
     use itertools::Itertools;
-    use num_integer::Integer;
-    use rand_core::RngCore;
 
     fn condense(sparse_layer: SparseInterleavedPolynomial<Fr>) -> Vec<Fr> {
         sparse_layer.to_dense().Z
@@ -1107,25 +1127,6 @@ mod tests {
                 Fr,
                 Zeromorph<Bn254>,
             >>::construct((flags, fingerprints));
-
-            //     let mut dense_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            //         Fr,
-            //         Zeromorph<Bn254>,
-            //     >>::construct((
-            //         circuit.sparse_layers[0].coalesce(),
-            //         batch_size,
-            //     ));
-            //     let dense_claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            //         Fr,
-            //         Zeromorph<Bn254>,
-            //     >>::claimed_outputs(&dense_circuit);
-            //     let mut dense_transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-            //     let _ = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-            //     Fr,
-            //     Zeromorph<Bn254>,
-            // >>::prove_grand_product(
-            //     &mut dense_circuit, None, &mut dense_transcript, None
-            // );
 
             let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
                 Fr,

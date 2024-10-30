@@ -475,7 +475,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // TODO(moodlezoup): Can more efficiently compute these
             let E1_eval_sums: (F, F, F) = E1_evals
                 .par_iter()
                 .fold(
