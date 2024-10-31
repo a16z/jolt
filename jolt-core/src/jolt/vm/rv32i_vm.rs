@@ -312,8 +312,14 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(artifact_guard);
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (proof, commitments, debug_info) =
             <RV32IJoltVM as Jolt<F, PCS, C, M, ProofTranscript>>::prove(
                 io_device,
@@ -371,8 +377,14 @@ mod tests {
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (jolt_proof, jolt_commitments, debug_info) =
             <RV32IJoltVM as Jolt<
                 _,
@@ -401,8 +413,14 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(guard);
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (jolt_proof, jolt_commitments, debug_info) =
             <RV32IJoltVM as Jolt<
                 _,
@@ -431,8 +449,14 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(guard);
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
             _,
             Zeromorph<Bn254, KeccakTranscript>,
@@ -462,8 +486,14 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(guard);
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
             _,
             HyperKZG<Bn254, KeccakTranscript>,
@@ -495,8 +525,14 @@ mod tests {
         io_device.outputs[0] = 0; // change the output to 0
         drop(artifact_guard);
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,

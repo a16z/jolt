@@ -181,9 +181,9 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
+    pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build();
-        let elf = self.elf.unwrap();
+        let elf = self.elf.clone().unwrap();
         let (raw_trace, io_device) =
             tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
 

@@ -199,11 +199,13 @@ impl MacroBuilder {
                 #set_std
                 #set_mem_size
                 let (bytecode, memory_init) = program.decode();
+                let (io_device, _trace) = program.trace();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript> =
                     RV32IJoltVM::preprocess(
                         bytecode,
+                        io_device.memory_layout.clone(),
                         memory_init,
                         1 << 20,
                         1 << 20,

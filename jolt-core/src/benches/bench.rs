@@ -131,7 +131,14 @@ where
         let (io_device, trace) = program.trace();
 
         let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+            RV32IJoltVM::preprocess(
+                bytecode.clone(),
+                io_device.memory_layout.clone(),
+                memory_init,
+                1 << 20,
+                1 << 20,
+                1 << 22,
+            );
 
         let (jolt_proof, jolt_commitments, _) =
             <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
@@ -187,7 +194,14 @@ where
         let (io_device, trace) = program.trace();
 
         let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+            RV32IJoltVM::preprocess(
+                bytecode.clone(),
+                io_device.memory_layout.clone(),
+                memory_init,
+                1 << 20,
+                1 << 20,
+                1 << 22,
+            );
 
         let (jolt_proof, jolt_commitments, _) =
             <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
