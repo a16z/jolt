@@ -92,6 +92,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::coalesce")]
     pub fn coalesce(&self) -> Vec<F> {
         if let Some(coalesced) = &self.coalesced {
             coalesced.coeffs.clone()
@@ -175,6 +176,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
             .flat_map(|segment| segment.par_chunk_by(|x, y| x.index / 4 == y.index / 4))
     }
 
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::layer_output")]
     pub fn layer_output(&self) -> Self {
         if let Some(coalesced) = &self.coalesced {
             Self {
@@ -188,7 +190,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 .par_iter()
                 .map(|segment| {
                     segment
-                        .par_chunk_by(move |x, y| x.index / 2 == y.index / 2)
+                        .chunk_by(|x, y| x.index / 2 == y.index / 2)
                         .map(|sparse_block| {
                             let mut dense_block = [F::one(); 2];
                             for coeff in sparse_block {
@@ -448,7 +450,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
 
                             let eq_evals = eq_evals[block_index];
                             (
-                                eq_evals.0 * (left.0 * right.0 - F::one()),
+                                eq_evals
+                                    .0
+                                    .mul_0_optimized(left.0.mul_1_optimized(right.0) - F::one()),
                                 eq_evals.1 * (left_eval_2 * right_eval_2 - F::one()),
                                 eq_evals.2 * (left_eval_3 * right_eval_3 - F::one()),
                             )
@@ -523,7 +527,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
 
                                 let x1 = block_index & x1_bitmask;
                                 let delta = (
-                                    E1_evals[x1].0 * (left.0 * right.0 - F::one()),
+                                    E1_evals[x1].0.mul_0_optimized(
+                                        left.0.mul_1_optimized(right.0) - F::one(),
+                                    ),
                                     E1_evals[x1].1 * (left_eval_2 * right_eval_2 - F::one()),
                                     E1_evals[x1].2 * (left_eval_3 * right_eval_3 - F::one()),
                                 );
