@@ -550,4 +550,44 @@ mod tests {
             verification_result.err()
         );
     }
+
+    #[test]
+    #[should_panic]
+    fn truncated_malicious_trace() {
+        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&1u8); // change input to 1 so that termination bit equal true
+        let (bytecode, memory_init) = program.decode();
+        let (mut io_device, mut trace) = program.trace();
+        let memory_layout = io_device.memory_layout.clone();
+        trace.truncate(100);
+        // change the output to the same as input to show that we can also forge the output value
+        io_device.outputs[0] = 1;
+        drop(artifact_guard);
+
+        // change memory address of output & termination bit to the same address as input
+        // changes here should not be able to spoof the verifier result
+        io_device.memory_layout.output_start = io_device.memory_layout.input_start;
+        io_device.memory_layout.output_end = io_device.memory_layout.input_end;
+        io_device.memory_layout.termination = io_device.memory_layout.input_start;
+
+        // Since the preprocessing is done with the original memory layout, the verifier should fail
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_layout, memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
+            Fr,
+            HyperKZG<Bn254, KeccakTranscript>,
+            C,
+            M,
+            KeccakTranscript,
+        >>::prove(
+            io_device, trace, preprocessing.clone()
+        );
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+        assert!(
+            verification_result.is_err(),
+            "Verification passed unexpectedly",
+        );
+    }
 }
