@@ -160,6 +160,7 @@ pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
 pub type R1CSCommitments<PCS: CommitmentScheme> = R1CSStuff<PCS::Commitment>;
 
 impl<F: JoltField> R1CSPolynomials<F> {
+    #[tracing::instrument(skip_all, name = "R1CSPolynomials::new")]
     pub fn new<
         const C: usize,
         const M: usize,

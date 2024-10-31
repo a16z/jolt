@@ -125,7 +125,7 @@ pub trait BatchedGrandProduct<F: JoltField, PCS: CommitmentScheme<Field = F>>: S
         // most of the positions and then we proceed with GKR on the remaining layers using the preset random values.
         // For default thaler '13 layered grand products this should be empty.
         let mut r_grand_product = r_start.clone();
-        let fixed_at_start = r_start.len(); // TODO(moodlezoup): fix?
+        let fixed_at_start = r_start.len();
 
         for (layer_index, layer_proof) in proof_layers.iter().enumerate() {
             let (sumcheck_claim, r_sumcheck) =

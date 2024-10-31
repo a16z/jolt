@@ -112,6 +112,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::layer_output")]
     fn layer_output(&self) -> SparseInterleavedPolynomial<F> {
         let values: Vec<_> = self
             .fingerprints
@@ -130,6 +131,33 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
         let sparse_poly = SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2);
         sparse_poly
+    }
+
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::coalesce")]
+    fn coalesce(&mut self) {
+        let mut coalesced_fingerprints: Vec<F> =
+            self.fingerprints.iter().map(|f| f[0]).collect::<Vec<_>>();
+        coalesced_fingerprints.resize(coalesced_fingerprints.len().next_power_of_two(), F::zero());
+
+        let mut coalesced_flags: Vec<_> = self
+            .flag_indices
+            .iter()
+            .zip(self.flag_values.iter())
+            .flat_map(|(indices, values)| {
+                debug_assert!(indices.len() <= 1);
+                let mut coalesced = [F::zero(), F::zero()];
+                for (index, value) in indices.iter().zip(values.iter()) {
+                    assert_eq!(*index, 0);
+                    coalesced[0] = *value;
+                    coalesced[1] = *value;
+                }
+                coalesced
+            })
+            .collect();
+        coalesced_flags.resize(coalesced_flags.len().next_power_of_two(), F::one());
+
+        self.coalesced_fingerprints = Some(coalesced_fingerprints);
+        self.coalesced_flags = Some(coalesced_flags);
     }
 }
 
@@ -297,30 +325,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
         if self.layer_len == 2 {
             assert!(self.coalesced_fingerprints.is_none());
             assert!(self.coalesced_flags.is_none());
-            let mut coalesced_fingerprints: Vec<F> =
-                self.fingerprints.iter().map(|f| f[0]).collect::<Vec<_>>();
-            coalesced_fingerprints
-                .resize(coalesced_fingerprints.len().next_power_of_two(), F::zero());
-
-            let mut coalesced_flags: Vec<_> = self
-                .flag_indices
-                .iter()
-                .zip(self.flag_values.iter())
-                .flat_map(|(indices, values)| {
-                    debug_assert!(indices.len() <= 1);
-                    let mut coalesced = [F::zero(), F::zero()];
-                    for (index, value) in indices.iter().zip(values.iter()) {
-                        assert_eq!(*index, 0);
-                        coalesced[0] = *value;
-                        coalesced[1] = *value;
-                    }
-                    coalesced
-                })
-                .collect();
-            coalesced_flags.resize(coalesced_flags.len().next_power_of_two(), F::one());
-
-            self.coalesced_fingerprints = Some(coalesced_fingerprints);
-            self.coalesced_flags = Some(coalesced_flags);
+            self.coalesce();
 
             #[cfg(test)]
             {
