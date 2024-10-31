@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
@@ -25,7 +25,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
-    utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
+    utils::{errors::ProofVerifyError, transcript::ProofTranscript},
 };
 
 use super::{JoltCommitments, JoltPolynomials, JoltStuff};
@@ -120,11 +120,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> TimestampValidityProof<F, P
         let M = read_timestamps[0].len();
 
         #[cfg(test)]
-        let mut init_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+        let mut init_tuples: HashSet<(u64, u64)> = HashSet::new();
         #[cfg(test)]
         {
             for i in 0..M {
-                init_tuples.insert((i as u64, i as u64, 0u64));
+                init_tuples.insert((i as u64, 0u64));
             }
         }
 
@@ -166,16 +166,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> TimestampValidityProof<F, P
                     ]
                     .iter()
                     {
-                        let mut read_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
-                        let mut write_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+                        let mut read_tuples: HashSet<(u64, u64)> = HashSet::new();
+                        let mut write_tuples: HashSet<(u64, u64)> = HashSet::new();
                         for (v, t) in lookup_indices.iter().zip(read_cts.iter()) {
-                            read_tuples.insert((*v, *v, *t));
-                            write_tuples.insert((*v, *v, *t + 1));
+                            read_tuples.insert((*v, *t));
+                            write_tuples.insert((*v, *t + 1));
                         }
 
-                        let mut final_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+                        let mut final_tuples: HashSet<(u64, u64)> = HashSet::new();
                         for (i, t) in final_cts.iter().enumerate() {
-                            final_tuples.insert((i as u64, i as u64, *t));
+                            final_tuples.insert((i as u64, *t));
                         }
 
                         let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
@@ -239,6 +239,7 @@ where
     type Openings = TimestampRangeCheckOpenings<F>;
     type Commitments = TimestampRangeCheckCommitments<PCS>;
     type ExogenousOpenings = ReadTimestampOpenings<F>;
+    type MemoryTuple = (F, F); // a = v for all range check tuples
 
     // Init/final grand products are batched together with read/write grand products
     type InitFinalGrandProduct = NoopGrandProduct;
@@ -254,9 +255,9 @@ where
         unimplemented!("Use TimestampValidityProof::prove instead");
     }
 
-    fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
-        let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - *tau
+    fn fingerprint(inputs: &(F, F), gamma: &F, tau: &F) -> F {
+        let (a, t) = *inputs;
+        a * gamma + t - *tau
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
@@ -277,7 +278,6 @@ where
         let read_timestamps = &jolt_polynomials.read_write_memory.t_read;
 
         let M = read_timestamps[0].len();
-        let gamma_squared = gamma.square();
 
         let read_write_leaves: Vec<Vec<F>> = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
@@ -286,15 +286,14 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let read_timestamp = read_timestamps[i][j];
-                        polynomials.read_cts_read_timestamp[i][j] * gamma_squared
-                            + read_timestamp * *gamma
-                            + read_timestamp
+                        gamma.mul_01_optimized(read_timestamp)
+                            + polynomials.read_cts_read_timestamp[i][j]
                             - *tau
                     })
                     .collect();
                 let write_fingeprints_0 = read_fingerprints_0
                     .par_iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .map(|read_fingerprint| *read_fingerprint + F::one())
                     .collect();
 
                 let read_fingerprints_1: Vec<F> = (0..M)
@@ -302,15 +301,13 @@ where
                     .map(|j| {
                         let global_minus_read =
                             F::from_u64(j as u64).unwrap() - read_timestamps[i][j];
-                        polynomials.read_cts_global_minus_read[i][j] * gamma_squared
-                            + global_minus_read * *gamma
-                            + global_minus_read
+                        global_minus_read * gamma + polynomials.read_cts_global_minus_read[i][j]
                             - *tau
                     })
                     .collect();
                 let write_fingeprints_1 = read_fingerprints_1
                     .par_iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .map(|read_fingerprint| *read_fingerprint + F::one())
                     .collect();
 
                 [
@@ -328,8 +325,8 @@ where
             .into_par_iter()
             .map(|i| {
                 let index = F::from_u64(i as u64).unwrap();
-                // 0 * gamma^2 +
-                index * *gamma + index - *tau
+                // t = 0
+                index * gamma - *tau
             })
             .collect();
 
@@ -339,22 +336,12 @@ where
                 .flat_map(|i| {
                     let final_fingerprints_0 = (0..M)
                         .into_par_iter()
-                        .map(|j| {
-                            mul_0_1_optimized(
-                                &polynomials.final_cts_read_timestamp[i][j],
-                                &gamma_squared,
-                            ) + init_leaves[j]
-                        })
+                        .map(|j| polynomials.final_cts_read_timestamp[i][j] + init_leaves[j])
                         .collect();
 
                     let final_fingerprints_1 = (0..M)
                         .into_par_iter()
-                        .map(|j| {
-                            mul_0_1_optimized(
-                                &polynomials.final_cts_global_minus_read[i][j],
-                                &gamma_squared,
-                            ) + init_leaves[j]
-                        })
+                        .map(|j| polynomials.final_cts_global_minus_read[i][j] + init_leaves[j])
                         .collect();
 
                     [final_fingerprints_0, final_fingerprints_1]
@@ -465,11 +452,9 @@ where
                 [
                     (
                         read_timestamp_openings[i],
-                        read_timestamp_openings[i],
                         openings.read_cts_read_timestamp[i],
                     ),
                     (
-                        openings.identity.unwrap() - read_timestamp_openings[i],
                         openings.identity.unwrap() - read_timestamp_openings[i],
                         openings.read_cts_global_minus_read[i],
                     ),
@@ -488,11 +473,9 @@ where
                 [
                     (
                         read_timestamp_openings[i],
-                        read_timestamp_openings[i],
                         openings.read_cts_read_timestamp[i] + F::one(),
                     ),
                     (
-                        openings.identity.unwrap() - read_timestamp_openings[i],
                         openings.identity.unwrap() - read_timestamp_openings[i],
                         openings.read_cts_global_minus_read[i] + F::one(),
                     ),
@@ -506,11 +489,7 @@ where
         openings: &Self::Openings,
         _: &[F; MEMORY_OPS_PER_INSTRUCTION],
     ) -> Vec<Self::MemoryTuple> {
-        vec![(
-            openings.identity.unwrap(),
-            openings.identity.unwrap(),
-            F::zero(),
-        )]
+        vec![(openings.identity.unwrap(), F::zero())]
     }
 
     fn final_tuples(
@@ -523,11 +502,9 @@ where
                 [
                     (
                         openings.identity.unwrap(),
-                        openings.identity.unwrap(),
                         openings.final_cts_read_timestamp[i],
                     ),
                     (
-                        openings.identity.unwrap(),
                         openings.identity.unwrap(),
                         openings.final_cts_global_minus_read[i],
                     ),
