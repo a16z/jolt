@@ -553,7 +553,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&1u8); // change input to 1 so that termination bit equal true
         let (bytecode, memory_init) = program.decode();
-        let (mut io_device, mut trace) = program.trace();
+        let (mut io_device, trace) = program.trace();
         let memory_layout = io_device.memory_layout.clone();
         drop(artifact_guard);
 
