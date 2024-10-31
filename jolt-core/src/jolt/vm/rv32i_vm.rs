@@ -572,8 +572,14 @@ mod tests {
         io_device.memory_layout.termination = io_device.memory_layout.input_start;
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_layout, memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            memory_layout,
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
         let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
