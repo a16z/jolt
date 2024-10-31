@@ -241,5 +241,5 @@ const GUEST_MAIN: &str = r#"#![cfg_attr(feature = "guest", no_std)]
 #![no_main]
 
 #[allow(unused_imports)]
-use fibonacci_guest::*;
+use guest::*;
 "#;
