@@ -32,11 +32,9 @@ pub fn main() {
 }
 
 fn handle_result(res: Result<(), Box<dyn Any + Send>>) {
-    match &res {
-        Err(e) => match e.downcast_ref::<String>() {
-            Some(msg) => println!("> Panic occurred with message: {}\n", msg),
-            _ => (),
-        },
-        _ => (),
+    if let Err(e) = &res {
+        if let Some(msg) = e.downcast_ref::<String>() {
+            println!("--> Panic occurred with message: {}\n", msg);
+        }
     }
 }
