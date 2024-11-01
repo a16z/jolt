@@ -178,6 +178,9 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
@@ -199,11 +202,13 @@ impl MacroBuilder {
                 #set_std
                 #set_mem_size
                 let (bytecode, memory_init) = program.decode();
+                let memory_layout = MemoryLayout::new(#max_input_size, #max_output_size);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript> =
                     RV32IJoltVM::preprocess(
                         bytecode,
+                        memory_layout,
                         memory_init,
                         1 << 20,
                         1 << 20,
@@ -409,6 +414,7 @@ impl MacroBuilder {
                 RV32IJoltProof,
                 BytecodeRow,
                 MemoryOp,
+                MemoryLayout,
                 MEMORY_OPS_PER_INSTRUCTION,
                 instruction::add::ADDInstruction,
                 tracer,

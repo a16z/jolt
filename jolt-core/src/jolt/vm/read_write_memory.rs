@@ -39,9 +39,9 @@ use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 pub struct ReadWriteMemoryPreprocessing {
     min_bytecode_address: u64,
     pub bytecode_bytes: Vec<u8>,
-    // HACK: The verifier will populate this field by copying it
-    // over from the `ReadWriteMemoryProof`. Having `program_io` in
-    // this preprocessing struct allows the verifier to access it
+    // HACK: The verifier will populate this field by copying inputs/outputs from the
+    // `ReadWriteMemoryProof` and the memory layout from preprocessing.
+    // Having `program_io` in this preprocessing struct allows the verifier to access it
     // to compute the v_init and v_final openings, with no impact
     // on existing function signatures.
     pub program_io: Option<JoltDevice>,
