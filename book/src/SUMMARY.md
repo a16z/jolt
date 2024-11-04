@@ -34,7 +34,7 @@
         - [Tools](./dev/tools.md)
     - [Roadmap](./tasks.md)
         - [Improvements to Jolt since initial release](./future/improvements-since-release.md)
-        - [Optimizations](./future/opts.md)
+        - [Proof size details (no recursion/composition)](./future/proof-size-breakdown.md)
         - [Zero Knowledge](./future/zk.md)
         - [On-chain verifier (no recursion/composition)](./future/on-chain-verifier.md)
         - [Groth16 Recursion](./future/groth-16.md)

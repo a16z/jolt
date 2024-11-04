@@ -8,7 +8,7 @@ use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumu
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::Transcript;
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::grand_product::{
@@ -34,7 +34,10 @@ pub struct MultisetHashes<F: JoltField> {
 }
 
 impl<F: JoltField> MultisetHashes<F> {
-    pub fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+    pub fn append_to_transcript<ProofTranscript: Transcript>(
+        &self,
+        transcript: &mut ProofTranscript,
+    ) {
         transcript.append_scalars(&self.read_hashes);
         transcript.append_scalars(&self.write_hashes);
         transcript.append_scalars(&self.init_hashes);
@@ -43,21 +46,22 @@ impl<F: JoltField> MultisetHashes<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, PCS, Openings, OtherOpenings>
+pub struct MemoryCheckingProof<F, PCS, Openings, OtherOpenings, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Openings: StructuredPolynomialData<F> + Sync + CanonicalSerialize + CanonicalDeserialize,
     OtherOpenings: ExogenousOpenings<F> + Sync,
+    ProofTranscript: Transcript,
 {
     /// Read/write/init/final multiset hashes for each memory
     pub multiset_hashes: MultisetHashes<F>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductProof<PCS>,
+    pub read_write_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductProof<PCS>,
+    pub init_final_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
     /// The openings associated with the grand products.
     pub openings: Openings,
     pub exogenous_openings: OtherOpenings,
@@ -198,15 +202,16 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
-pub trait MemoryCheckingProver<F, PCS>
+pub trait MemoryCheckingProver<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
     Self: Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
         BatchedDenseGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, PCS> + Send + 'static =
+    type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
     type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
@@ -226,9 +231,9 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
+    ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript> {
         let (
             read_write_grand_product,
             init_final_grand_product,
@@ -279,12 +284,12 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
         pcs_setup: &PCS::Setup,
     ) -> (
-        BatchedGrandProductProof<PCS>,
-        BatchedGrandProductProof<PCS>,
+        BatchedGrandProductProof<PCS, ProofTranscript>,
+        BatchedGrandProductProof<PCS, ProofTranscript>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
@@ -293,7 +298,8 @@ where
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         let (read_write_leaves, init_final_leaves) =
             Self::compute_leaves(preprocessing, polynomials, jolt_polynomials, &gamma, &tau);
@@ -332,7 +338,7 @@ where
 
     fn compute_openings(
         preprocessing: &Self::Preprocessing,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         polynomials: &Self::Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
         r_read_write: &[F],
@@ -399,7 +405,11 @@ where
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Self::Polynomials,
-        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
+        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+        >>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
         let claims = batched_circuit.claimed_outputs();
@@ -412,7 +422,11 @@ where
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Self::Polynomials,
-        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
+        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+        >>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
         let claims = batched_circuit.claimed_outputs();
@@ -494,8 +508,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
     );
 
     /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.
@@ -506,26 +520,35 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait MemoryCheckingVerifier<F, PCS>: MemoryCheckingProver<F, PCS>
+pub trait MemoryCheckingVerifier<F, PCS, ProofTranscript>:
+    MemoryCheckingProver<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
         pcs_setup: &PCS::Setup,
-        mut proof: MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings>,
+        mut proof: MemoryCheckingProof<
+            F,
+            PCS,
+            Self::Openings,
+            Self::ExogenousOpenings,
+            ProofTranscript,
+        >,
         commitments: &Self::Commitments,
-        jolt_commitments: &JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        jolt_commitments: &JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript(transcript);

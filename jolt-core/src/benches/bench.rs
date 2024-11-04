@@ -6,6 +6,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
+use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr, G1Projective};
 use serde::Serialize;
 
@@ -34,52 +35,71 @@ pub fn benchmarks(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
         PCSType::Hyrax => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, HyraxScheme<G1Projective>>(),
-            BenchType::Sha3 => sha3::<Fr, HyraxScheme<G1Projective>>(),
-            BenchType::Sha2Chain => sha2chain::<Fr, HyraxScheme<G1Projective>>(),
-            BenchType::Fibonacci => fibonacci::<Fr, HyraxScheme<G1Projective>>(),
+            BenchType::Sha2 => {
+                sha2::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
+            }
+            BenchType::Sha3 => {
+                sha3::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
+            }
+            BenchType::Sha2Chain => {
+                sha2chain::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
+            }
+            BenchType::Fibonacci => {
+                fibonacci::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
+            }
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::Zeromorph => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254>>(),
-            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254>>(),
-            BenchType::Sha2Chain => sha2chain::<Fr, Zeromorph<Bn254>>(),
-            BenchType::Fibonacci => fibonacci::<Fr, Zeromorph<Bn254>>(),
+            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha2Chain => {
+                sha2chain::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
+            }
+            BenchType::Fibonacci => {
+                fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
+            }
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254>>(),
-            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254>>(),
-            BenchType::Sha2Chain => sha2chain::<Fr, HyperKZG<Bn254>>(),
-            BenchType::Fibonacci => fibonacci::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha2Chain => {
+                sha2chain::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
+            }
+            BenchType::Fibonacci => {
+                fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
+            }
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
     }
 }
 
-fn fibonacci<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn fibonacci<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
-    prove_example::<u32, PCS, F>("fibonacci-guest", &9u32)
+    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &9u32)
 }
 
-fn sha2<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
-    prove_example::<Vec<u8>, PCS, F>("sha2-guest", &vec![5u8; 2048])
+    prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha2-guest", &vec![5u8; 2048])
 }
 
-fn sha3<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn sha3<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
-    prove_example::<Vec<u8>, PCS, F>("sha3-guest", &vec![5u8; 2048])
+    prove_example::<Vec<u8>, PCS, F, ProofTranscript>("sha3-guest", &vec![5u8; 2048])
 }
 
 #[allow(dead_code)]
@@ -93,13 +113,14 @@ fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSeri
     println!("{:<30} : {:.3} MB", name, file_size_mb);
 }
 
-fn prove_example<T: Serialize, PCS, F>(
+fn prove_example<T: Serialize, PCS, F, ProofTranscript>(
     example_name: &str,
     input: &T,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
@@ -109,11 +130,22 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
+            RV32IJoltVM::preprocess(
+                bytecode.clone(),
+                io_device.memory_layout.clone(),
+                memory_init,
+                1 << 20,
+                1 << 20,
+                1 << 22,
+            );
 
         let (jolt_proof, jolt_commitments, _) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
 
         println!("Proof sizing:");
         serialize_and_print_size("jolt_commitments", &jolt_commitments);
@@ -146,10 +178,11 @@ where
     tasks
 }
 
-fn sha2chain<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn sha2chain<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
@@ -160,11 +193,22 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS> =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
+            RV32IJoltVM::preprocess(
+                bytecode.clone(),
+                io_device.memory_layout.clone(),
+                memory_init,
+                1 << 20,
+                1 << 20,
+                1 << 22,
+            );
 
         let (jolt_proof, jolt_commitments, _) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(io_device, trace, preprocessing.clone());
+            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
         assert!(

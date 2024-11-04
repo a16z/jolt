@@ -8,7 +8,7 @@ use crate::{
         grand_product::BatchedGrandProductLayer,
         sumcheck::{BatchedCubicSumcheck, Bindable},
     },
-    utils::math::Math,
+    utils::{math::Math, transcript::Transcript},
 };
 use rayon::prelude::*;
 
@@ -362,8 +362,13 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
     }
 }
 
-impl<F: JoltField> BatchedGrandProductLayer<F> for SparseInterleavedPolynomial<F> {}
-impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
+    for SparseInterleavedPolynomial<F>
+{
+}
+impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
+    for SparseInterleavedPolynomial<F>
+{
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
         let merged_eq = eq_poly.merge();
@@ -395,7 +400,11 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
-            return coalesced.compute_cubic(eq_poly, previous_round_claim);
+            return BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
+                coalesced,
+                eq_poly,
+                previous_round_claim,
+            );
         }
 
         let cubic_evals = if eq_poly.E1_len == 1 {
@@ -607,7 +616,11 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for SparseInterleavedPolynomial<F> {
         #[cfg(test)]
         {
             let dense = DenseInterleavedPolynomial::new(self.coalesce());
-            let dense_cubic = dense.compute_cubic(eq_poly, previous_round_claim);
+            let dense_cubic = BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
+                &dense,
+                eq_poly,
+                previous_round_claim,
+            );
             assert_eq!(cubic, dense_cubic);
         }
 

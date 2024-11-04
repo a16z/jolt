@@ -9,8 +9,9 @@ use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
-use common::rv_trace::NUM_CIRCUIT_FLAGS;
+use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
@@ -31,7 +32,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
@@ -49,15 +50,17 @@ use self::read_write_memory::{
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
-pub struct JoltPreprocessing<const C: usize, F, PCS>
+pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     pub generators: PCS::Setup,
     pub instruction_lookups: InstructionLookupsPreprocessing<C, F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
+    pub memory_layout: MemoryLayout,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -68,9 +71,13 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
 }
 
-pub struct ProverDebugInfo<F: JoltField> {
+pub struct ProverDebugInfo<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
     pub(crate) transcript: ProofTranscript,
-    pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
+    pub(crate) opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
@@ -99,21 +106,31 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<const C: usize, const M: usize, I, F, PCS, InstructionSet, Subtables>
-where
+pub struct JoltProof<
+    const C: usize,
+    const M: usize,
+    I,
+    F,
+    PCS,
+    InstructionSet,
+    Subtables,
+    ProofTranscript,
+> where
     I: ConstraintInput,
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
+    ProofTranscript: Transcript,
 {
     pub trace_length: usize,
     pub program_io: JoltDevice,
-    pub bytecode: BytecodeProof<F, PCS>,
-    pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
-    pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
-    pub r1cs: UniformSpartanProof<C, I, F>,
-    pub opening_proof: ReducedOpeningProof<F, PCS>,
+    pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
+    pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+    pub instruction_lookups:
+        InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
+    pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
+    pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
 }
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -182,15 +199,17 @@ pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type JoltCommitments<PCS: CommitmentScheme> = JoltStuff<PCS::Commitment>;
+pub type JoltCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    JoltStuff<PCS::Commitment>;
 
 impl<
         const C: usize,
         T: CanonicalSerialize + CanonicalDeserialize + Default + Sync,
-        PCS: CommitmentScheme,
-    > Initializable<T, JoltPreprocessing<C, PCS::Field, PCS>> for JoltStuff<T>
+        PCS: CommitmentScheme<ProofTranscript>,
+        ProofTranscript: Transcript,
+    > Initializable<T, JoltPreprocessing<C, PCS::Field, PCS, ProofTranscript>> for JoltStuff<T>
 {
-    fn initialize(preprocessing: &JoltPreprocessing<C, PCS::Field, PCS>) -> Self {
+    fn initialize(preprocessing: &JoltPreprocessing<C, PCS::Field, PCS, ProofTranscript>) -> Self {
         Self {
             bytecode: BytecodeStuff::initialize(&preprocessing.bytecode),
             read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
@@ -207,11 +226,15 @@ impl<
 
 impl<F: JoltField> JoltPolynomials<F> {
     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-    pub fn commit<const C: usize, PCS: CommitmentScheme<Field = F>>(
+    pub fn commit<const C: usize, PCS, ProofTranscript>(
         &self,
-        preprocessing: &JoltPreprocessing<C, F, PCS>,
-    ) -> JoltCommitments<PCS> {
-        let mut commitments = JoltCommitments::<PCS>::initialize(preprocessing);
+        preprocessing: &JoltPreprocessing<C, F, PCS, ProofTranscript>,
+    ) -> JoltCommitments<PCS, ProofTranscript>
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
+        let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
         let trace_polys = self.read_write_values();
         let trace_comitments =
@@ -241,7 +264,12 @@ impl<F: JoltField> JoltPolynomials<F> {
     }
 }
 
-pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
+pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
     type Constraints: R1CSConstraints<C, F>;
@@ -249,19 +277,22 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
         bytecode: Vec<ELFInstruction>,
+        memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltPreprocessing<C, F, PCS> {
-        let bytecode_commitment_shapes =
-            BytecodeProof::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
+    ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
+        let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
+            max_bytecode_size,
+            max_trace_length,
+        );
         let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F>::commitment_shapes(
             max_memory_address,
             max_trace_length,
         );
         let timestamp_range_check_commitment_shapes =
-            TimestampValidityProof::<F, PCS>::commitment_shapes(max_trace_length);
+            TimestampValidityProof::<F, PCS, ProofTranscript>::commitment_shapes(max_trace_length);
 
         let instruction_lookups_commitment_shapes = InstructionLookupsProof::<
             C,
@@ -270,6 +301,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             PCS,
             Self::InstructionSet,
             Self::Subtables,
+            ProofTranscript,
         >::commitment_shapes(max_trace_length);
 
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
@@ -306,6 +338,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         JoltPreprocessing {
             generators,
+            memory_layout,
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
@@ -316,7 +349,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
-        preprocessing: JoltPreprocessing<C, F, PCS>,
+        preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             C,
@@ -326,9 +359,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             PCS,
             Self::InstructionSet,
             Self::Subtables,
+            ProofTranscript,
         >,
-        JoltCommitments<PCS>,
-        Option<ProverDebugInfo<F>>,
+        JoltCommitments<PCS, ProofTranscript>,
+        Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -336,18 +370,23 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
-
-        let instruction_polynomials = InstructionLookupsProof::<
-            C,
-            M,
-            F,
-            PCS,
-            Self::InstructionSet,
-            Self::Subtables,
-        >::generate_witness(
-            &preprocessing.instruction_lookups, &trace
+        Self::fiat_shamir_preamble(
+            &mut transcript,
+            &program_io,
+            &program_io.memory_layout,
+            trace_length,
         );
+
+        let instruction_polynomials =
+            InstructionLookupsProof::<
+                C,
+                M,
+                F,
+                PCS,
+                Self::InstructionSet,
+                Self::Subtables,
+                ProofTranscript,
+            >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
         let load_store_flags = &instruction_polynomials.instruction_flags[5..10];
         let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
@@ -358,8 +397,17 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
-            || BytecodeProof::<F, PCS>::generate_witness(&preprocessing.bytecode, &mut trace),
-            || TimestampValidityProof::<F, PCS>::generate_witness(&read_timestamps),
+            || {
+                BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
+                    &preprocessing.bytecode,
+                    &mut trace,
+                )
+            },
+            || {
+                TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(
+                    &read_timestamps,
+                )
+            },
         );
 
         let r1cs_builder = Self::Constraints::construct_constraints(
@@ -370,6 +418,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
+            ProofTranscript,
         >::setup(&r1cs_builder, padded_trace_length);
 
         let r1cs_polynomials = R1CSPolynomials::new::<
@@ -389,7 +438,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
-        let jolt_commitments = jolt_polynomials.commit::<C, PCS>(&preprocessing);
+        let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 
@@ -402,7 +451,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        let mut opening_accumulator: ProverOpeningAccumulator<F> = ProverOpeningAccumulator::new();
+        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+            ProverOpeningAccumulator::new();
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.generators,
@@ -434,6 +484,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
+            ProofTranscript,
         >::prove::<PCS>(
             &r1cs_builder,
             &spartan_key,
@@ -471,7 +522,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltPreprocessing<C, F, PCS>,
+        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
         proof: JoltProof<
             C,
             M,
@@ -480,12 +531,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             PCS,
             Self::InstructionSet,
             Self::Subtables,
+            ProofTranscript,
         >,
-        commitments: JoltCommitments<PCS>,
-        _debug_info: Option<ProverDebugInfo<F>>,
+        commitments: JoltCommitments<PCS, ProofTranscript>,
+        _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS> =
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
         #[cfg(test)]
@@ -494,19 +546,28 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             opening_accumulator
                 .compare_to(debug_info.opening_accumulator, &preprocessing.generators);
         }
-        Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
+        Self::fiat_shamir_preamble(
+            &mut transcript,
+            &proof.program_io,
+            &preprocessing.memory_layout,
+            proof.trace_length,
+        );
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
-        let memory_start = RAM_START_ADDRESS - proof.program_io.memory_layout.ram_witness_offset;
+        let memory_start = RAM_START_ADDRESS - preprocessing.memory_layout.ram_witness_offset;
         let r1cs_builder =
             Self::Constraints::construct_constraints(padded_trace_length, memory_start);
-        let spartan_key = spartan::UniformSpartanProof::setup(&r1cs_builder, padded_trace_length);
+        let spartan_key = spartan::UniformSpartanProof::<C, _, F, ProofTranscript>::setup(
+            &r1cs_builder,
+            padded_trace_length,
+        );
         transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {
             key: spartan_key,
             proof: proof.r1cs,
+            _marker: PhantomData,
         };
 
         commitments
@@ -537,6 +598,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         Self::verify_memory(
             &mut preprocessing.read_write_memory,
             &preprocessing.generators,
+            &preprocessing.memory_layout,
             proof.read_write_memory,
             &commitments,
             proof.program_io,
@@ -564,9 +626,17 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn verify_instruction_lookups<'a>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         generators: &PCS::Setup,
-        proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
-        commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        proof: InstructionLookupsProof<
+            C,
+            M,
+            F,
+            PCS,
+            Self::InstructionSet,
+            Self::Subtables,
+            ProofTranscript,
+        >,
+        commitments: &'a JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookupsProof::verify(
@@ -583,9 +653,9 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn verify_bytecode<'a>(
         preprocessing: &BytecodePreprocessing<F>,
         generators: &PCS::Setup,
-        proof: BytecodeProof<F, PCS>,
-        commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        proof: BytecodeProof<F, PCS, ProofTranscript>,
+        commitments: &'a JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
@@ -599,19 +669,27 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all)]
     fn verify_memory<'a>(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PCS::Setup,
-        proof: ReadWriteMemoryProof<F, PCS>,
-        commitment: &'a JoltCommitments<PCS>,
+        memory_layout: &MemoryLayout,
+        proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+        commitment: &'a JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
-        assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
-        preprocessing.program_io = Some(program_io);
+        assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
+        assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
+        // pair the memory layout with the program io from the proof
+        preprocessing.program_io = Some(JoltDevice {
+            inputs: program_io.inputs,
+            outputs: program_io.outputs,
+            panic: program_io.panic,
+            memory_layout: memory_layout.clone(),
+        });
 
         ReadWriteMemoryProof::verify(
             proof,
@@ -625,9 +703,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     #[tracing::instrument(skip_all)]
     fn verify_r1cs<'a>(
-        proof: R1CSProof<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
-        commitments: &'a JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        proof: R1CSProof<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            ProofTranscript,
+        >,
+        commitments: &'a JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
@@ -638,6 +721,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn fiat_shamir_preamble(
         transcript: &mut ProofTranscript,
         program_io: &JoltDevice,
+        memory_layout: &MemoryLayout,
         trace_length: usize,
     ) {
         transcript.append_u64(trace_length as u64);
@@ -645,8 +729,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         transcript.append_u64(M as u64);
         transcript.append_u64(Self::InstructionSet::COUNT as u64);
         transcript.append_u64(Self::Subtables::COUNT as u64);
-        transcript.append_u64(program_io.memory_layout.max_input_size);
-        transcript.append_u64(program_io.memory_layout.max_output_size);
+        transcript.append_u64(memory_layout.max_input_size);
+        transcript.append_u64(memory_layout.max_output_size);
         transcript.append_bytes(&program_io.inputs);
         transcript.append_bytes(&program_io.outputs);
         transcript.append_u64(program_io.panic as u64);

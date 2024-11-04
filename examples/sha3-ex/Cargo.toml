@@ -8,4 +8,3 @@ jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 guest = { package = "sha3-guest", path = "./guest" }
 
 hex = "0.4.3"
-sha3 = { version = "0.10.8", default-features = false }

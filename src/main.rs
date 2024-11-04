@@ -32,6 +32,8 @@ enum Command {
     },
     /// Installs the required RISC-V toolchains for Rust
     InstallToolchain,
+    /// Uninstalls the RISC-V toolchains for Rust
+    UninstallToolchain,
     /// Handles preprocessing and generates WASM compatible files
     BuildWasm,
 }
@@ -41,6 +43,7 @@ fn main() {
     match cli.command {
         Command::New { name, wasm } => create_project(name, wasm),
         Command::InstallToolchain => install_toolchain(),
+        Command::UninstallToolchain => uninstall_toolchain(),
         Command::BuildWasm => build_wasm(),
     }
 }
@@ -59,6 +62,12 @@ fn install_toolchain() {
         panic!("toolchain install failed: {}", err);
     }
     display_welcome();
+}
+
+fn uninstall_toolchain() {
+    if let Err(err) = toolchain::uninstall_toolchain() {
+        panic!("toolchain uninstall failed: {}", err);
+    }
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
@@ -93,6 +102,9 @@ fn create_guest_files(name: &str) -> Result<()> {
 
     let mut lib_file = File::create(format!("{}/guest/src/lib.rs", name))?;
     lib_file.write_all(GUEST_LIB.as_bytes())?;
+
+    let mut main_file = File::create(format!("{}/guest/src/main.rs", name))?;
+    main_file.write_all(GUEST_MAIN.as_bytes())?;
 
     Ok(())
 }
@@ -201,10 +213,6 @@ name = "guest"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "guest"
-path = "./src/lib.rs"
-
 [features]
 guest = []
 
@@ -213,7 +221,6 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
-#![no_main]
 
 #[jolt::provable]
 fn fib(n: u32) -> u128 {
@@ -228,4 +235,11 @@ fn fib(n: u32) -> u128 {
 
     b
 }
+"#;
+
+const GUEST_MAIN: &str = r#"#![cfg_attr(feature = "guest", no_std)]
+#![no_main]
+
+#[allow(unused_imports)]
+use guest::*;
 "#;

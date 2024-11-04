@@ -17,6 +17,7 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -25,7 +26,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
-    utils::{errors::ProofVerifyError, transcript::ProofTranscript},
+    utils::errors::ProofVerifyError,
 };
 
 use super::{JoltCommitments, JoltPolynomials, JoltStuff};
@@ -83,8 +84,10 @@ pub type TimestampRangeCheckOpenings<F: JoltField> = TimestampRangeCheckStuff<F>
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type TimestampRangeCheckCommitments<PCS: CommitmentScheme> =
-    TimestampRangeCheckStuff<PCS::Commitment>;
+pub type TimestampRangeCheckCommitments<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+> = TimestampRangeCheckStuff<PCS::Commitment>;
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, NoPreprocessing>
     for TimestampRangeCheckStuff<T>
@@ -112,7 +115,12 @@ impl<F: JoltField> ExogenousOpenings<F> for ReadTimestampOpenings<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> TimestampValidityProof<F, PCS> {
+impl<F, PCS, ProofTranscript> TimestampValidityProof<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     #[tracing::instrument(skip_all, name = "TimestampRangeCheckWitness::new")]
     pub fn generate_witness(
         read_timestamps: &[Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
@@ -230,14 +238,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> TimestampValidityProof<F, P
     }
 }
 
-impl<F, PCS> MemoryCheckingProver<F, PCS> for TimestampValidityProof<F, PCS>
+impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
+    for TimestampValidityProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type Polynomials = TimestampRangeCheckPolynomials<F>;
     type Openings = TimestampRangeCheckOpenings<F>;
-    type Commitments = TimestampRangeCheckCommitments<PCS>;
+    type Commitments = TimestampRangeCheckCommitments<PCS, ProofTranscript>;
     type ExogenousOpenings = ReadTimestampOpenings<F>;
     type MemoryTuple = (F, F); // a = v for all range check tuples
 
@@ -249,9 +259,9 @@ where
         _: &NoPreprocessing,
         _: &Self::Polynomials,
         _: &JoltPolynomials<F>,
-        _: &mut ProverOpeningAccumulator<F>,
+        _: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         _: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings> {
+    ) -> MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript> {
         unimplemented!("Use TimestampValidityProof::prove instead");
     }
 
@@ -421,10 +431,12 @@ where
     }
 }
 
-impl<F, PCS> MemoryCheckingVerifier<F, PCS> for TimestampValidityProof<F, PCS>
+impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
+    for TimestampValidityProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn compute_verifier_openings(_: &mut Self::Openings, _: &NoPreprocessing, _: &[F], _: &[F]) {
         unimplemented!("")
@@ -433,10 +445,16 @@ where
     fn verify_memory_checking(
         _: &NoPreprocessing,
         _: &PCS::Setup,
-        mut _proof: MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings>,
+        mut _proof: MemoryCheckingProof<
+            F,
+            PCS,
+            Self::Openings,
+            Self::ExogenousOpenings,
+            ProofTranscript,
+        >,
         _commitments: &Self::Commitments,
-        _: &JoltCommitments<PCS>,
-        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        _: &JoltCommitments<PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Use TimestampValidityProof::verify instead");
@@ -515,8 +533,11 @@ where
 }
 
 pub struct NoopGrandProduct;
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
-    for NoopGrandProduct
+impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript> for NoopGrandProduct
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type Leaves = ();
     type Config = ();
@@ -534,22 +555,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
         unimplemented!("init/final grand products are batched with read/write grand products");
     }
 
-    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
+    fn layers(
+        &'_ mut self,
+    ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>> {
         std::iter::empty() // Needed to compile
     }
 
     fn prove_grand_product(
         &mut self,
-        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F>>,
+        _opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
         _transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
-    ) -> (BatchedGrandProductProof<PCS>, Vec<F>) {
+    ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
     fn verify_grand_product(
-        _proof: &BatchedGrandProductProof<PCS>,
+        _proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         _claims: &[F],
-        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS>>,
+        _opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         _transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (F, Vec<F>) {
@@ -558,28 +581,30 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BatchedGrandProduct<F, PCS>
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct TimestampValidityProof<F, PCS>
+pub struct TimestampValidityProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     multiset_hashes: MultisetHashes<F>,
     openings: TimestampRangeCheckOpenings<F>,
     exogenous_openings: ReadTimestampOpenings<F>,
-    batched_grand_product: BatchedGrandProductProof<PCS>,
+    batched_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
 }
 
-impl<F, PCS> TimestampValidityProof<F, PCS>
+impl<F, PCS, ProofTranscript> TimestampValidityProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove<'a>(
         generators: &PCS::Setup,
         polynomials: &'a TimestampRangeCheckPolynomials<F>,
         jolt_polynomials: &'a JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
@@ -643,17 +668,22 @@ where
     fn prove_grand_products(
         polynomials: &TimestampRangeCheckPolynomials<F>,
         jolt_polynomials: &JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
         setup: &PCS::Setup,
-    ) -> (BatchedGrandProductProof<PCS>, MultisetHashes<F>, Vec<F>) {
+    ) -> (
+        BatchedGrandProductProof<PCS, ProofTranscript>,
+        MultisetHashes<F>,
+        Vec<F>,
+    ) {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
-        let (leaves, _) = TimestampValidityProof::<F, PCS>::compute_leaves(
+        let (leaves, _) = TimestampValidityProof::<F, PCS, ProofTranscript>::compute_leaves(
             &NoPreprocessing,
             polynomials,
             jolt_polynomials,
@@ -661,21 +691,26 @@ where
             &tau,
         );
 
-        let mut batched_circuit =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::construct(leaves);
+        let mut batched_circuit = <BatchedDenseGrandProduct<F> as BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+        >>::construct(leaves);
 
-        let hashes: Vec<F> =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, PCS>>::claimed_outputs(
-                &batched_circuit,
-            );
+        let hashes: Vec<F> = <BatchedDenseGrandProduct<F> as BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+        >>::claimed_outputs(&batched_circuit);
         let (read_write_hashes, init_final_hashes) =
             hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
-        let multiset_hashes = TimestampValidityProof::<F, PCS>::uninterleave_hashes(
-            &NoPreprocessing,
-            read_write_hashes.to_vec(),
-            init_final_hashes.to_vec(),
-        );
-        TimestampValidityProof::<F, PCS>::check_multiset_equality(
+        let multiset_hashes =
+            TimestampValidityProof::<F, PCS, ProofTranscript>::uninterleave_hashes(
+                &NoPreprocessing,
+                read_write_hashes.to_vec(),
+                init_final_hashes.to_vec(),
+            );
+        TimestampValidityProof::<F, PCS, ProofTranscript>::check_multiset_equality(
             &NoPreprocessing,
             &multiset_hashes,
         );
@@ -692,30 +727,32 @@ where
     pub fn verify(
         &mut self,
         generators: &PCS::Setup,
-        commitments: &JoltCommitments<PCS>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS>,
+        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
-        transcript.append_protocol_name(Self::protocol_name());
+        let protocol_name = Self::protocol_name();
+        transcript.append_message(protocol_name);
 
         // Multiset equality checks
-        TimestampValidityProof::<F, PCS>::check_multiset_equality(
+        TimestampValidityProof::<F, PCS, ProofTranscript>::check_multiset_equality(
             &NoPreprocessing,
             &self.multiset_hashes,
         );
         self.multiset_hashes.append_to_transcript(transcript);
 
-        let (read_write_hashes, init_final_hashes) = TimestampValidityProof::<F, PCS>::interleave(
-            &NoPreprocessing,
-            &self.multiset_hashes.read_hashes,
-            &self.multiset_hashes.write_hashes,
-            &self.multiset_hashes.init_hashes,
-            &self.multiset_hashes.final_hashes,
-        );
+        let (read_write_hashes, init_final_hashes) =
+            TimestampValidityProof::<F, PCS, ProofTranscript>::interleave(
+                &NoPreprocessing,
+                &self.multiset_hashes.read_hashes,
+                &self.multiset_hashes.write_hashes,
+                &self.multiset_hashes.init_hashes,
+                &self.multiset_hashes.final_hashes,
+            );
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let batch_size = concatenated_hashes.len();
         let (grand_product_claim, r_grand_product) = BatchedDenseGrandProduct::verify_grand_product(
@@ -747,46 +784,55 @@ where
 
         self.openings.identity = Some(IdentityPolynomial::new(r_opening.len()).evaluate(r_opening));
 
-        let read_hashes: Vec<_> = TimestampValidityProof::<F, PCS>::read_tuples(
+        let read_hashes: Vec<_> = TimestampValidityProof::<F, PCS, ProofTranscript>::read_tuples(
             &NoPreprocessing,
             &self.openings,
             &self.exogenous_openings,
         )
         .iter()
-        .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
+        .map(|tuple| {
+            TimestampValidityProof::<F, PCS, ProofTranscript>::fingerprint(tuple, &gamma, &tau)
+        })
         .collect();
-        let write_hashes: Vec<_> = TimestampValidityProof::<F, PCS>::write_tuples(
+        let write_hashes: Vec<_> = TimestampValidityProof::<F, PCS, ProofTranscript>::write_tuples(
             &NoPreprocessing,
             &self.openings,
             &self.exogenous_openings,
         )
         .iter()
-        .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
+        .map(|tuple| {
+            TimestampValidityProof::<F, PCS, ProofTranscript>::fingerprint(tuple, &gamma, &tau)
+        })
         .collect();
-        let init_hashes: Vec<_> = TimestampValidityProof::<F, PCS>::init_tuples(
+        let init_hashes: Vec<_> = TimestampValidityProof::<F, PCS, ProofTranscript>::init_tuples(
             &NoPreprocessing,
             &self.openings,
             &self.exogenous_openings,
         )
         .iter()
-        .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
+        .map(|tuple| {
+            TimestampValidityProof::<F, PCS, ProofTranscript>::fingerprint(tuple, &gamma, &tau)
+        })
         .collect();
-        let final_hashes: Vec<_> = TimestampValidityProof::<F, PCS>::final_tuples(
+        let final_hashes: Vec<_> = TimestampValidityProof::<F, PCS, ProofTranscript>::final_tuples(
             &NoPreprocessing,
             &self.openings,
             &self.exogenous_openings,
         )
         .iter()
-        .map(|tuple| TimestampValidityProof::<F, PCS>::fingerprint(tuple, &gamma, &tau))
+        .map(|tuple| {
+            TimestampValidityProof::<F, PCS, ProofTranscript>::fingerprint(tuple, &gamma, &tau)
+        })
         .collect();
 
-        let (read_write_hashes, init_final_hashes) = TimestampValidityProof::<F, PCS>::interleave(
-            &NoPreprocessing,
-            &read_hashes,
-            &write_hashes,
-            &init_hashes,
-            &final_hashes,
-        );
+        let (read_write_hashes, init_final_hashes) =
+            TimestampValidityProof::<F, PCS, ProofTranscript>::interleave(
+                &NoPreprocessing,
+                &read_hashes,
+                &write_hashes,
+                &init_hashes,
+                &final_hashes,
+            );
 
         let combined_hash: F = read_write_hashes
             .iter()

@@ -4,7 +4,7 @@ use crate::{
         grand_product::BatchedGrandProductLayer,
         sumcheck::{BatchedCubicSumcheck, Bindable},
     },
-    utils::thread::unsafe_allocate_zero_vec,
+    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use rayon::{prelude::*, slice::Chunks};
 
@@ -166,8 +166,13 @@ pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, 
 ///     / \      / \      / \      / \
 ///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
 ///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
-impl<F: JoltField> BatchedGrandProductLayer<F> for DenseInterleavedPolynomial<F> {}
-impl<F: JoltField> BatchedCubicSumcheck<F> for DenseInterleavedPolynomial<F> {
+impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
+    for DenseInterleavedPolynomial<F>
+{
+}
+impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTranscript>
+    for DenseInterleavedPolynomial<F>
+{
     #[cfg(test)]
     fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
         let (left, right) = self.uninterleave();

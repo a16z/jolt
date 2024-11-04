@@ -24,8 +24,8 @@ pub const fn virtual_register_index(index: u64) -> u64 {
 }
 
 // Layout of the witness (where || denotes concatenation):
-//     registers || inputs || outputs || panic || padding || RAM
+//     registers || virtual registers || inputs || outputs || panic || termination || padding || RAM
 // Layout of VM memory:
-//     peripheral devices || inputs || outputs || panic || padding || RAM
+//     peripheral devices || inputs || outputs || panic || termination || padding || RAM
 // Notably, we want to be able to map the VM memory address space to witness indices
 // using a constant shift, namely (RAM_WITNESS_OFFSET + RAM_START_ADDRESS)

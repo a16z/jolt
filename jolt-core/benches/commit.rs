@@ -5,6 +5,7 @@ use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitShape, Com
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::commitment::kzg::CommitMode;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -12,7 +13,7 @@ const SRS_SIZE: usize = 1 << 10;
 
 // Sets up the benchmark by generating leaves and computing known products
 // and allows configuring the percentage of ones in the leaves
-fn setup_bench<PCS, F>(
+fn setup_bench<PCS, F, ProofTranscript>(
     num_layers: usize,
     layer_size: usize,
     percentage_ones: u32,
@@ -24,8 +25,9 @@ fn setup_bench<PCS, F>(
     Vec<F>,
 )
 where
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
+    ProofTranscript: Transcript,
 {
     assert!(
         percentage_ones <= 100,
@@ -60,7 +62,7 @@ where
     (leaves, setup, known_products)
 }
 
-fn benchmark_commit<PCS, F>(
+fn benchmark_commit<PCS, F, ProofTranscript>(
     c: &mut Criterion,
     name: &str,
     num_layer: usize,
@@ -68,10 +70,12 @@ fn benchmark_commit<PCS, F>(
     threshold: u32,
     batch_type: BatchType,
 ) where
-    PCS: CommitmentScheme<Field = F>, // Generic over PCS implementing CommitmentScheme for field F
-    F: JoltField,                     // Generic over a field F
+    PCS: CommitmentScheme<ProofTranscript, Field = F>, // Generic over PCS implementing CommitmentScheme for field F
+    F: JoltField,                                      // Generic over a field F
+    ProofTranscript: Transcript,
 {
-    let (leaves, setup, _) = setup_bench::<PCS, F>(num_layer, layer_size, threshold);
+    let (leaves, setup, _) =
+        setup_bench::<PCS, F, ProofTranscript>(num_layer, layer_size, threshold);
     let leaves = leaves
         .iter()
         .map(|layer| layer.as_slice())
@@ -97,7 +101,7 @@ fn main() {
     let num_layers = 50;
     let layer_size = 1 << 10;
     // Zeromorph
-    benchmark_commit::<Zeromorph<Bn254>, Fr>(
+    benchmark_commit::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "Zeromorph",
         num_layers,
@@ -105,7 +109,7 @@ fn main() {
         90,
         BatchType::Big,
     );
-    benchmark_commit::<HyperKZG<Bn254>, Fr>(
+    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "HyperKZG",
         num_layers,
@@ -113,7 +117,7 @@ fn main() {
         90,
         BatchType::GrandProduct,
     );
-    benchmark_commit::<HyperKZG<Bn254>, Fr>(
+    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "HyperKZG",
         num_layers,

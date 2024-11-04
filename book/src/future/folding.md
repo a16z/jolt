@@ -56,7 +56,7 @@ may more than offset the extra work of committing to roughly one million extra f
 
 ## Going below 10 GBs via smaller chunks
 
-Projects focused on client-side proving may want space costs of 2 GBs (or even lower, as browsers often limit a single tab to 1 GB of space). One way to achieve that space bound is to use smaller chunks, of $2^{17}$ or $2^{18}$ cycles each rather than $2^{20}$. This is slightly smaller than the chunk sizes used by STARK-based zkVMs like SP1 and RISC Zero. With chunks of this size, the Jolt-with-folding prover (again, naively implemented) will be somewhat slower per cycle than "monolithic Jolt", perhaps by a factor of up to two or three. 
+Projects focused on client-side proving may want space costs of 2 GBs (or even lower, as browsers often limit a single tab to 1 GB of space, [especially](https://www.tigren.com/blog/progressive-web-app-limitations/) on [phones](https://web.dev/articles/storage-for-the-web)). One way to achieve that space bound is to use smaller chunks, of $2^{17}$ or $2^{18}$ cycles each rather than $2^{20}$. This is slightly smaller than the chunk sizes used by STARK-based zkVMs like SP1 and RISC Zero. With chunks of this size, the Jolt-with-folding prover (again, naively implemented) will be somewhat slower per cycle than "monolithic Jolt", perhaps by a factor of up to two or three. 
 
 This time overhead can be reduced with additional engineering/optimizations. For example: 
 
@@ -67,7 +67,9 @@ This time overhead can be reduced with additional engineering/optimizations. For
 <LI> For at least the first round of Spartan's sum-check, we could store only $32$ bits per entry of $a, b, c$ rather than 256, which could save another factor of two in space cost. Also, prover <i>speed</i> optimizations for applying sum-check to small values described in Bagad-Domb-Thaler can also lead to additional space improvements for Spartan. At some point, the space cost of computing grand product proofs would dominate the space cost of Spartan proving and it won't be worthwhile to cut Spartan proving space further. </LI>
 
 <LI> We can lower the size of Jolt proofs, and hence the time spent on recursive proving, by a factor of 2x-4x by 
-switching to the grand product argument from Quarks/Spartan. This does increase prover time "outside of recursion"
+switching to the grand product argument from Quarks/Spartan. For details, see https://jolt.a16zcrypto.com/future/proof-size-breakdown.html. 
+  
+  This would reduce the amount of extra field elements committed for "folding/recursion" from about 1 million down to a few hundred thousand or even lower. It would increase prover time "outside of recursion"
 since the Quarks/Spartan prover commits to random field elements, but for small shard sizes (i.e., very small prover space, around 1GB or so) it may lead to a faster prover overall.</LI>
 </UL>
 

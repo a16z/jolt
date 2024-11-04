@@ -164,7 +164,7 @@ impl Program {
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/{}/release/guest", target, toolchain);
+            let elf = format!("{}/{}/release/{}", target, toolchain, self.guest);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }
@@ -172,7 +172,8 @@ impl Program {
     pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         self.build();
         let elf = self.elf.as_ref().unwrap();
-        let mut elf_file = File::open(elf).unwrap();
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {:?}", elf));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         tracer::decode(&elf_contents)
@@ -180,9 +181,9 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
+    pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build();
-        let elf = self.elf.unwrap();
+        let elf = self.elf.clone().unwrap();
         let (raw_trace, io_device) =
             tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
 

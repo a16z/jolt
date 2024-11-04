@@ -20,12 +20,12 @@ use common::to_ram_address;
 
 use rayon::prelude::*;
 
+use super::{JoltPolynomials, JoltTraceStep};
+use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial},
 };
-
-use super::{JoltPolynomials, JoltTraceStep};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -59,7 +59,8 @@ pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-pub type BytecodeCommitments<PCS: CommitmentScheme> = BytecodeStuff<PCS::Commitment>;
+pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    BytecodeStuff<PCS::Commitment>;
 
 impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
     Initializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
@@ -92,8 +93,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
-pub type BytecodeProof<F, PCS> =
-    MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings>;
+pub type BytecodeProof<F, PCS, ProofTranscript> =
+    MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings, ProofTranscript>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -290,7 +291,12 @@ impl<F: JoltField> BytecodePreprocessing<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
+impl<F, PCS, ProofTranscript> BytecodeProof<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         preprocessing: &BytecodePreprocessing<F>,
@@ -469,14 +475,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> BytecodeProof<F, PCS> {
     }
 }
 
-impl<F, PCS> MemoryCheckingProver<F, PCS> for BytecodeProof<F, PCS>
+impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
+    for BytecodeProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type Polynomials = BytecodePolynomials<F>;
     type Openings = BytecodeOpenings<F>;
-    type Commitments = BytecodeCommitments<PCS>;
+    type Commitments = BytecodeCommitments<PCS, ProofTranscript>;
     type Preprocessing = BytecodePreprocessing<F>;
 
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]
@@ -597,10 +605,12 @@ where
     }
 }
 
-impl<F, PCS> MemoryCheckingVerifier<F, PCS> for BytecodeProof<F, PCS>
+impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
+    for BytecodeProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn compute_verifier_openings(
         openings: &mut BytecodeOpenings<F>,
@@ -696,6 +706,7 @@ mod tests {
     use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
 
     use super::*;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::{Fr, G1Projective};
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -745,7 +756,9 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
+        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
+            &program, &trace,
+        );
     }
 
     #[test]
@@ -761,6 +774,8 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
+        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
+            &program, &trace,
+        );
     }
 }
