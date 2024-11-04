@@ -129,8 +129,8 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             })
             .collect();
 
-        let sparse_poly = SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2);
-        sparse_poly
+        
+        SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2)
     }
 
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::coalesce")]
@@ -846,7 +846,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, Proo
         let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.prove_sumcheck(&claim, &mut eq_poly, transcript);
+            self.prove_sumcheck(claim, &mut eq_poly, transcript);
 
         drop_in_background_thread(eq_poly);
 

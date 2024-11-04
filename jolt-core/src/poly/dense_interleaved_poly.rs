@@ -64,14 +64,10 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
     }
 
     pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
-        let left: Vec<_> = self.coeffs[..self.len]
-            .to_vec()
-            .into_iter()
-            .step_by(2)
-            .collect();
-        let mut right: Vec<_> = self.coeffs[..self.len]
-            .to_vec()
-            .into_iter()
+        let left: Vec<F> = self.coeffs[..self.len].iter().copied().step_by(2).collect();
+        let mut right: Vec<F> = self.coeffs[..self.len]
+            .iter()
+            .copied()
             .skip(1)
             .step_by(2)
             .collect();
@@ -114,7 +110,7 @@ impl<F: JoltField> Bindable<F> for DenseInterleavedPolynomial<F> {
             .zip(self.coeffs[..self.len].par_chunks(4))
             .for_each(|(bound_chunk, unbound_chunk)| {
                 let unbound_chunk = [
-                    *unbound_chunk.get(0).unwrap_or(&F::zero()),
+                    *unbound_chunk.first().unwrap_or(&F::zero()),
                     *unbound_chunk.get(1).unwrap_or(&F::zero()),
                     *unbound_chunk.get(2).unwrap_or(&F::zero()),
                     *unbound_chunk.get(3).unwrap_or(&F::zero()),
@@ -214,7 +210,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         (eval_point_0, eval_point_2, eval_point_3)
                     };
                     let left = (
-                        *layer_chunk.get(0).unwrap_or(&F::zero()),
+                        *layer_chunk.first().unwrap_or(&F::zero()),
                         *layer_chunk.get(2).unwrap_or(&F::zero()),
                     );
                     let right = (
@@ -261,7 +257,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     let mut inner_sum = (F::zero(), F::zero(), F::zero());
                     for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
                         let left = (
-                            *P_chunk.get(0).unwrap_or(&F::zero()),
+                            *P_chunk.first().unwrap_or(&F::zero()),
                             *P_chunk.get(2).unwrap_or(&F::zero()),
                         );
                         let right = (

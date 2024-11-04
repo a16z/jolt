@@ -200,7 +200,7 @@ where
         let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.prove_sumcheck(&claim, &mut eq_poly, transcript);
+            self.prove_sumcheck(claim, &mut eq_poly, transcript);
 
         drop_in_background_thread(eq_poly);
 

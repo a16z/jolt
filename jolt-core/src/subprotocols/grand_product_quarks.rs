@@ -166,7 +166,7 @@ where
         let mut proof_layers = Vec::with_capacity(self.base_layers.len());
 
         let outputs: Vec<F> =
-            <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::claimed_outputs(&self);
+            <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::claimed_outputs(self);
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
         let r_outputs: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());

@@ -624,7 +624,7 @@ where
             + multiset_hashes.init_hashes.len()
             + multiset_hashes.final_hashes.len();
         let (_, r_opening) = r_grand_product.split_at(batch_size.next_power_of_two().log_2());
-        let chis = EqPolynomial::evals(&r_opening);
+        let chis = EqPolynomial::evals(r_opening);
 
         polynomials
             .read_write_values()
