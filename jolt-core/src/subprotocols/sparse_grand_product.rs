@@ -129,7 +129,6 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             })
             .collect();
 
-        
         SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2)
     }
 
