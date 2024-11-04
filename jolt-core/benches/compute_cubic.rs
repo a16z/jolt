@@ -8,6 +8,7 @@ use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterlea
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
 use jolt_core::utils::math::Math;
+use jolt_core::utils::transcript::KeccakTranscript;
 use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {
@@ -55,7 +56,11 @@ fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize)
                     (poly, eq_poly, claim)
                 },
                 |(poly, eq_poly, claim)| {
-                    criterion::black_box(poly.compute_cubic(&eq_poly, claim));
+                    criterion::black_box(
+                        BatchedCubicSumcheck::<F, KeccakTranscript>::compute_cubic(
+                            &poly, &eq_poly, claim,
+                        ),
+                    );
                 },
             );
         },
@@ -89,7 +94,11 @@ fn benchmark_sparse_interleaved<F: JoltField>(
                     (poly, eq_poly, claim)
                 },
                 |(poly, eq_poly, claim)| {
-                    criterion::black_box(poly.compute_cubic(&eq_poly, claim));
+                    criterion::black_box(
+                        BatchedCubicSumcheck::<F, KeccakTranscript>::compute_cubic(
+                            &poly, &eq_poly, claim,
+                        ),
+                    );
                 },
             );
         },

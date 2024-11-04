@@ -253,12 +253,12 @@ fn main() {
     benchmark_prove_and_verify::<
         HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        BatchedDenseGrandProduct<Fr, KeccakTranscript>,
+        BatchedDenseGrandProduct<Fr>,
         KeccakTranscript,
     >(
         &mut c,
         config,
-        <BatchedDenseGrandProduct<_, KeccakTranscript> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<_> as BatchedGrandProduct<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
             KeccakTranscript,
