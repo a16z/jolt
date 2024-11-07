@@ -6,6 +6,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use crate::{
@@ -19,7 +20,6 @@ use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::prelude::*;
-use std::iter::zip;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MultisetHashes<F: JoltField> {
@@ -199,7 +199,7 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
     }
 }
 
-// Empty struct to represent that no preprocessing data is used.
+/// Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
 pub trait MemoryCheckingProver<F, PCS, ProofTranscript>
@@ -210,9 +210,9 @@ where
     Self: Sync,
 {
     type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
-        BatchedDenseGrandProduct<F, ProofTranscript>;
+        BatchedDenseGrandProduct<F>;
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
-        BatchedDenseGrandProduct<F, ProofTranscript>;
+        BatchedDenseGrandProduct<F>;
 
     type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
@@ -222,7 +222,7 @@ where
     type Preprocessing = NoPreprocessing;
 
     /// The data associated with each memory slot. A triple (a, v, t) by default.
-    type MemoryTuple = (F, F, F);
+    type MemoryTuple: Copy + Clone = (F, F, F);
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
@@ -249,13 +249,26 @@ where
             pcs_setup,
         );
 
+        let read_write_batch_size =
+            multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
+        let init_final_batch_size =
+            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
+
+        // For a batch size of k, the first log2(k) elements of `r_read_write`/`r_init_final`
+        // form the point at which the output layer's MLE is evaluated. The remaining elements
+        // then form the point at which the leaf layer's polynomials are evaluated.
+        let (_, r_read_write_opening) =
+            r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
+        let (_, r_init_final_opening) =
+            r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
+
         let (openings, exogenous_openings) = Self::compute_openings(
             preprocessing,
             opening_accumulator,
             polynomials,
             jolt_polynomials,
-            &r_read_write,
-            &r_init_final,
+            r_read_write_opening,
+            r_init_final_opening,
             transcript,
         );
 
@@ -402,7 +415,7 @@ where
         >>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
-        let claims = batched_circuit.claims();
+        let claims = batched_circuit.claimed_outputs();
         (batched_circuit, claims)
     }
 
@@ -419,26 +432,21 @@ where
         >>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
-        let claims = batched_circuit.claims();
+        let claims = batched_circuit.claimed_outputs();
         (batched_circuit, claims)
     }
 
-    fn interleave_hashes(
+    fn interleave<T: Copy + Clone>(
         _preprocessing: &Self::Preprocessing,
-        multiset_hashes: &MultisetHashes<F>,
-    ) -> (Vec<F>, Vec<F>) {
-        let read_write_hashes = interleave(
-            multiset_hashes.read_hashes.clone(),
-            multiset_hashes.write_hashes.clone(),
-        )
-        .collect();
-        let init_final_hashes = interleave(
-            multiset_hashes.init_hashes.clone(),
-            multiset_hashes.final_hashes.clone(),
-        )
-        .collect();
+        read_values: &Vec<T>,
+        write_values: &Vec<T>,
+        init_values: &Vec<T>,
+        final_values: &Vec<T>,
+    ) -> (Vec<T>, Vec<T>) {
+        let read_write_values = interleave(read_values, write_values).cloned().collect();
+        let init_final_values = interleave(init_values, final_values).cloned().collect();
 
-        (read_write_hashes, init_final_hashes)
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
@@ -548,23 +556,38 @@ where
         Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript(transcript);
 
-        let (read_write_hashes, init_final_hashes) =
-            Self::interleave_hashes(preprocessing, &proof.multiset_hashes);
+        let (read_write_hashes, init_final_hashes) = Self::interleave(
+            preprocessing,
+            &proof.multiset_hashes.read_hashes,
+            &proof.multiset_hashes.write_hashes,
+            &proof.multiset_hashes.init_hashes,
+            &proof.multiset_hashes.final_hashes,
+        );
 
-        let (claims_read_write, r_read_write) = Self::ReadWriteGrandProduct::verify_grand_product(
+        let read_write_batch_size = read_write_hashes.len();
+        let (read_write_claim, r_read_write) = Self::ReadWriteGrandProduct::verify_grand_product(
             &proof.read_write_grand_product,
             &read_write_hashes,
             Some(opening_accumulator),
             transcript,
             Some(pcs_setup),
         );
-        let (claims_init_final, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
+        // For a batch size of k, the first log2(k) elements of `r_read_write`/`r_init_final`
+        // form the point at which the output layer's MLE is evaluated. The remaining elements
+        // then form the point at which the leaf layer's polynomials are evaluated.
+        let (r_read_write_batch_index, r_read_write_opening) =
+            r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
+
+        let init_final_batch_size = init_final_hashes.len();
+        let (init_final_claim, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
             &proof.init_final_grand_product,
             &init_final_hashes,
             Some(opening_accumulator),
             transcript,
             Some(pcs_setup),
         );
+        let (r_init_final_batch_index, r_init_final_opening) =
+            r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
 
         let read_write_commits: Vec<_> = [
             commitments.read_write_values(),
@@ -578,14 +601,14 @@ where
         .concat();
         opening_accumulator.append(
             &read_write_commits,
-            r_read_write.to_vec(),
+            r_read_write_opening.to_vec(),
             &read_write_claims,
             transcript,
         );
 
         opening_accumulator.append(
             &commitments.init_final_values(),
-            r_init_final.to_vec(),
+            r_init_final_opening.to_vec(),
             &proof.openings.init_final_values(),
             transcript,
         );
@@ -593,14 +616,16 @@ where
         Self::compute_verifier_openings(
             &mut proof.openings,
             preprocessing,
-            &r_read_write,
-            &r_init_final,
+            r_read_write_opening,
+            r_init_final_opening,
         );
 
         Self::check_fingerprints(
             preprocessing,
-            claims_read_write,
-            claims_init_final,
+            read_write_claim,
+            init_final_claim,
+            r_read_write_batch_index,
+            r_init_final_batch_index,
             &proof.openings,
             &proof.exogenous_openings,
             &gamma,
@@ -646,12 +671,14 @@ where
         exogenous_openings: &Self::ExogenousOpenings,
     ) -> Vec<Self::MemoryTuple>;
 
-    /// Checks that the claimed multiset hashes (output by grand product) are consistent with the
-    /// openings given by `read_write_openings` and `init_final_openings`.
+    /// Checks that the claims output by the grand products are consistent with the openings of
+    /// the polynomials comprising the input layers.
     fn check_fingerprints(
         preprocessing: &Self::Preprocessing,
-        claims_read_write: Vec<F>,
-        claims_init_final: Vec<F>,
+        read_write_claim: F,
+        init_final_claim: F,
+        r_read_write_batch_index: &[F],
+        r_init_final_batch_index: &[F],
         openings: &Self::Openings,
         exogenous_openings: &Self::ExogenousOpenings,
         gamma: &F,
@@ -673,29 +700,38 @@ where
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();
-        assert_eq!(
-            read_hashes.len() + write_hashes.len(),
-            claims_read_write.len()
-        );
-        assert_eq!(
-            init_hashes.len() + final_hashes.len(),
-            claims_init_final.len()
+
+        let (read_write_hashes, init_final_hashes) = Self::interleave(
+            preprocessing,
+            &read_hashes,
+            &write_hashes,
+            &init_hashes,
+            &final_hashes,
         );
 
-        let multiset_hashes = MultisetHashes {
-            read_hashes,
-            write_hashes,
-            init_hashes,
-            final_hashes,
-        };
-        let (read_write_hashes, init_final_hashes) =
-            Self::interleave_hashes(preprocessing, &multiset_hashes);
+        assert_eq!(
+            read_write_hashes.len().next_power_of_two(),
+            r_read_write_batch_index.len().pow2(),
+        );
+        assert_eq!(
+            init_final_hashes.len().next_power_of_two(),
+            r_init_final_batch_index.len().pow2()
+        );
 
-        for (claim, fingerprint) in zip(claims_read_write, read_write_hashes) {
-            assert_eq!(claim, fingerprint);
-        }
-        for (claim, fingerprint) in zip(claims_init_final, init_final_hashes) {
-            assert_eq!(claim, fingerprint);
-        }
+        // `r_read_write_batch_index`/`r_init_final_batch_index` are used to
+        // combine the k claims in the batch into a single claim.
+        let combined_read_write_hash: F = read_write_hashes
+            .iter()
+            .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
+            .map(|(hash, eq_eval)| *hash * eq_eval)
+            .sum();
+        assert_eq!(combined_read_write_hash, read_write_claim);
+
+        let combined_init_final_hash: F = init_final_hashes
+            .iter()
+            .zip(EqPolynomial::evals(r_init_final_batch_index).iter())
+            .map(|(hash, eq_eval)| *hash * eq_eval)
+            .sum();
+        assert_eq!(combined_init_final_hash, init_final_claim);
     }
 }

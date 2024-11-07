@@ -507,11 +507,11 @@ where
         _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
 
-        let read_leaves = (0..num_ops)
+        let read_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -531,7 +531,7 @@ where
             })
             .collect();
 
-        let init_leaves = (0..bytecode_size)
+        let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -593,9 +593,10 @@ where
             })
             .collect();
 
+        // TODO(moodlezoup): avoid concat
         (
-            vec![read_leaves, write_leaves],
-            vec![init_leaves, final_leaves],
+            ([read_leaves, write_leaves].concat(), 2),
+            ([init_leaves, final_leaves].concat(), 2),
         )
     }
 
@@ -738,65 +739,6 @@ mod tests {
         ];
         let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
         BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
-    }
-
-    #[test]
-    fn bytecode_poly_leaf_construction() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-        ];
-        let mut trace = vec![
-            trace_step(BytecodeRow::new(
-                to_ram_address(3),
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-                16u64,
-            )),
-            trace_step(BytecodeRow::new(
-                to_ram_address(2),
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-                8u64,
-            )),
-        ];
-
-        let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr> = BytecodeProof::<
-            Fr,
-            HyraxScheme<G1Projective, KeccakTranscript>,
-            KeccakTranscript,
-        >::generate_witness::<RV32I>(
-            &preprocessing, &mut trace
-        );
-
-        let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_write_leaves, init_final_leaves) = BytecodeProof::<
-            Fr,
-            HyraxScheme<G1Projective, KeccakTranscript>,
-            KeccakTranscript,
-        >::compute_leaves(
-            &preprocessing,
-            &polys,
-            &JoltPolynomials::default(),
-            gamma,
-            tau,
-        );
-        let init_leaves = &init_final_leaves[0];
-        let read_leaves = &read_write_leaves[0];
-        let write_leaves = &read_write_leaves[1];
-        let final_leaves = &init_final_leaves[1];
-
-        let read_final_leaves = [read_leaves.clone(), final_leaves.clone()].concat();
-        let init_write_leaves = [init_leaves.clone(), write_leaves.clone()].concat();
-        let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
-        assert_eq!(difference.len(), 0);
     }
 
     #[test]

@@ -119,11 +119,11 @@ where
         _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
 
-        let read_write_leaves = (0..Self::num_memories())
+        let read_write_leaves: Vec<_> = (0..Self::num_memories())
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
@@ -144,7 +144,7 @@ where
             })
             .collect();
 
-        let init_final_leaves = (0..Self::num_memories())
+        let init_final_leaves: Vec<_> = (0..Self::num_memories())
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
@@ -176,7 +176,11 @@ where
             })
             .collect();
 
-        (read_write_leaves, init_final_leaves)
+        // TODO(moodlezoup): avoid concat
+        (
+            (read_write_leaves.concat(), 2 * Self::num_memories()),
+            (init_final_leaves.concat(), 2 * Self::num_memories()),
+        )
     }
 
     fn protocol_name() -> &'static [u8] {

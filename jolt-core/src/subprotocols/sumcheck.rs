@@ -3,6 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
@@ -13,55 +14,57 @@ use ark_serialize::*;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 
+pub trait Bindable<F: JoltField>: Sync {
+    fn bind(&mut self, r: F);
+}
+
 /// Batched cubic sumcheck used in grand products
-pub trait BatchedCubicSumcheck<F, ProofTranscript>: Sync
+pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
 where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    fn num_rounds(&self) -> usize;
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
-    fn compute_cubic(
-        &self,
-        coeffs: &[F],
-        eq_poly: &DensePolynomial<F>,
-        previous_round_claim: F,
-    ) -> UniPoly<F>;
-    fn final_claims(&self) -> (Vec<F>, Vec<F>);
+    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
+    fn final_claims(&self) -> (F, F);
+
+    #[cfg(test)]
+    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F);
 
     #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
     fn prove_sumcheck(
         &mut self,
         claim: &F,
-        coeffs: &[F],
-        eq_poly: &mut DensePolynomial<F>,
+        eq_poly: &mut SplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
-    ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
-        Vec<F>,
-        (Vec<F>, Vec<F>),
-    ) {
-        debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F)) {
+        let num_rounds = eq_poly.get_num_vars();
 
         let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for _round in 0..self.num_rounds() {
-            let cubic_poly = self.compute_cubic(coeffs, eq_poly, previous_claim);
+        for _ in 0..num_rounds {
+            #[cfg(test)]
+            self.sumcheck_sanity_check(eq_poly, previous_claim);
+
+            let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
             let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
-            //derive the verifier's challenge for the next round
+            // derive the verifier's challenge for the next round
             let r_j = transcript.challenge_scalar();
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
-            self.bind(eq_poly, &r_j);
+            self.bind(r_j);
+            eq_poly.bind(r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);
         }
+
+        #[cfg(test)]
+        self.sumcheck_sanity_check(eq_poly, previous_claim);
 
         debug_assert_eq!(eq_poly.len(), 1);
 

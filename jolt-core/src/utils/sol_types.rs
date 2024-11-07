@@ -51,8 +51,8 @@ sol!(
 sol!(
     struct GKRLayer {
         SumcheckProof sumcheck;
-        uint256[] leftClaims;
-        uint256[] rightClaims;
+        uint256 leftClaim;
+        uint256 rightClaim;
     }
 );
 
@@ -184,12 +184,10 @@ impl<F: JoltField, ProofTranscript: Transcript> Into<GKRLayer>
     for BatchedGrandProductLayerProof<F, ProofTranscript>
 {
     fn into(self) -> GKRLayer {
-        let left = self.left_claims.into_iter().map(into_uint256).collect();
-        let right = self.right_claims.into_iter().map(into_uint256).collect();
         GKRLayer {
             sumcheck: (&self.proof).into(),
-            leftClaims: left,
-            rightClaims: right,
+            leftClaim: into_uint256(self.left_claim),
+            rightClaim: into_uint256(self.left_claim),
         }
     }
 }
@@ -198,7 +196,7 @@ impl<ProofTranscript: Transcript> Into<GrandProductProof>
     for BatchedGrandProductProof<HyperKZG<Bn254, ProofTranscript>, ProofTranscript>
 {
     fn into(self) -> GrandProductProof {
-        let layers: Vec<GKRLayer> = self.layers.into_iter().map(|i| i.into()).collect();
+        let layers: Vec<GKRLayer> = self.gkr_layers.into_iter().map(|i| i.into()).collect();
         assert!(self.quark_proof.is_none(), "Quarks are unsupported");
         GrandProductProof { layers }
     }

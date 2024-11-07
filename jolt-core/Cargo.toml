@@ -86,6 +86,14 @@ harness = false
 name = "commit"
 harness = false
 
+[[bench]]
+name = "binding"
+harness = false
+
+[[bench]]
+name = "compute_cubic"
+harness = false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"

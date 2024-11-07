@@ -76,7 +76,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rd_post_val: Some(q),
             },
             memory_state: None,
-            advice_value: Some(quotient), // What should advice value be here?
+            advice_value: Some(quotient),
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
@@ -96,7 +96,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rd_post_val: Some(r),
             },
             memory_state: None,
-            advice_value: Some(remainder), // What should advice value be here?
+            advice_value: Some(remainder),
         });
 
         let is_valid: u64 = AssertValidSignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();

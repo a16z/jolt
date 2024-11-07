@@ -13,22 +13,22 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 
-fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr, KeccakTranscript>) {
+fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
     let mut transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
 
     let (proof, r_prover) =
-        <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
             KeccakTranscript,
         >>::prove_grand_product(batched_circuit, None, &mut transcript, None);
-    let claims = <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
+    let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
         Fr,
         HyperKZG<Bn254, KeccakTranscript>,
         KeccakTranscript,
-    >>::claims(batched_circuit);
+    >>::claimed_outputs(batched_circuit);
 
-    //encoding the proof into abi
+    // encoding the proof into abi
 
     sol!(struct SolProductProofAndClaims{
         GrandProductProof encoded_proof;
@@ -73,12 +73,11 @@ fn main() {
     .take(BATCH_SIZE)
     .collect();
 
-    let mut batched_circuit =
-        <BatchedDenseGrandProduct<Fr, KeccakTranscript> as BatchedGrandProduct<
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::construct(leaves);
+    let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+        Fr,
+        HyperKZG<Bn254, KeccakTranscript>,
+        KeccakTranscript,
+    >>::construct((leaves.concat(), BATCH_SIZE));
 
     get_proof_data(&mut batched_circuit);
 }

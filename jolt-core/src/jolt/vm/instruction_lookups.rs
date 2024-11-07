@@ -1,5 +1,7 @@
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
+use crate::subprotocols::grand_product::BatchedGrandProduct;
+use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -163,7 +165,7 @@ where
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
-    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F, ProofTranscript>;
+    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
 
     type Polynomials = InstructionLookupPolynomials<F>;
     type Openings = InstructionLookupOpenings<F>;
@@ -174,11 +176,8 @@ where
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
     fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
-        let (a, v, t, flag) = *inputs;
-        match flag {
-            Some(val) => val * (t * gamma.square() + v * *gamma + a - *tau) + F::one() - val,
-            None => t * gamma.square() + v * *gamma + a - *tau,
-        }
+        let (a, v, t, _flag) = *inputs;
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
@@ -217,38 +216,34 @@ where
             })
             .collect();
 
-        let init_final_leaves: Vec<Vec<F>> = preprocessing
+        let init_final_leaves: Vec<F> = preprocessing
             .materialized_subtables
             .par_iter()
             .enumerate()
             .flat_map_iter(|(subtable_index, subtable)| {
-                let init_leaves: Vec<F> = (0..M)
-                    .map(|i| {
-                        let a = &F::from_u64(i as u64).unwrap();
-                        let v = &subtable[i];
-                        // let t = F::zero();
-                        // Compute h(a,v,t) where t == 0
-                        mul_0_1_optimized(v, gamma) + *a - *tau
-                    })
-                    .collect();
+                let mut leaves: Vec<F> = unsafe_allocate_zero_vec(
+                    M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1),
+                );
+                // Init leaves
+                (0..M).for_each(|i| {
+                    let a = &F::from_u64(i as u64).unwrap();
+                    let v = &subtable[i];
+                    // let t = F::zero();
+                    // Compute h(a,v,t) where t == 0
+                    leaves[i] = mul_0_1_optimized(v, gamma) + *a - *tau;
+                });
+                // Final leaves
+                let mut leaf_index = M;
+                for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
+                    let final_cts = &polynomials.final_cts[*memory_index];
+                    (0..M).for_each(|i| {
+                        leaves[leaf_index] =
+                            leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared);
+                        leaf_index += 1;
+                    });
+                }
 
-                let final_leaves: Vec<Vec<F>> = preprocessing.subtable_to_memory_indices
-                    [subtable_index]
-                    .iter()
-                    .map(|memory_index| {
-                        let final_cts = &polynomials.final_cts[*memory_index];
-                        (0..M)
-                            .map(|i| {
-                                init_leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared)
-                            })
-                            .collect()
-                    })
-                    .collect();
-
-                let mut polys = Vec::with_capacity(C + 1);
-                polys.push(init_leaves);
-                polys.extend(final_leaves);
-                polys
+                leaves
             })
             .collect();
 
@@ -257,33 +252,37 @@ where
             polynomials.instruction_flag_bitvectors.as_ref().unwrap(),
         );
 
-        ((memory_flags, read_write_leaves), init_final_leaves)
+        (
+            (memory_flags, read_write_leaves),
+            (
+                init_final_leaves,
+                // # init = # subtables; # final = # memories
+                Self::NUM_SUBTABLES + preprocessing.num_memories,
+            ),
+        )
     }
 
-    fn interleave_hashes(
+    fn interleave<T: Copy + Clone>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        multiset_hashes: &MultisetHashes<F>,
-    ) -> (Vec<F>, Vec<F>) {
+        read_values: &Vec<T>,
+        write_values: &Vec<T>,
+        init_values: &Vec<T>,
+        final_values: &Vec<T>,
+    ) -> (Vec<T>, Vec<T>) {
         // R W R W R W ...
-        let read_write_hashes = interleave(
-            multiset_hashes.read_hashes.clone(),
-            multiset_hashes.write_hashes.clone(),
-        )
-        .collect();
+        let read_write_values = interleave(read_values.clone(), write_values.clone()).collect();
 
         // I F F F F I F F F F ...
-        let mut init_final_hashes = Vec::with_capacity(
-            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len(),
-        );
+        let mut init_final_values = Vec::with_capacity(init_values.len() + final_values.len());
         for subtable_index in 0..Self::NUM_SUBTABLES {
-            init_final_hashes.push(multiset_hashes.init_hashes[subtable_index]);
+            init_final_values.push(init_values[subtable_index]);
             let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
             memory_indices
                 .iter()
-                .for_each(|i| init_final_hashes.push(multiset_hashes.final_hashes[*i]));
+                .for_each(|i| init_final_values.push(final_values[*i]));
         }
 
-        (read_write_hashes, init_final_hashes)
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
@@ -362,9 +361,6 @@ where
     fn protocol_name() -> &'static [u8] {
         b"Instruction lookups check"
     }
-
-    type InitFinalGrandProduct =
-        crate::subprotocols::grand_product::BatchedDenseGrandProduct<F, ProofTranscript>;
 }
 
 impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTranscript>
@@ -450,6 +446,107 @@ where
                 )
             })
             .collect()
+    }
+
+    /// Checks that the claims output by the grand products are consistent with the openings of
+    /// the polynomials comprising the input layers.
+    ///
+    /// Differs from the default `check_fingerprints` implementation because the input layer
+    /// of the read-write grand product is a `BatchedGrandProductToggleLayer`, so we need to
+    /// evaluate a multi-*quadratic* extension of the leaves rather than a multilinear extension.
+    /// This means we handle the openings a bit differently.
+    fn check_fingerprints(
+        preprocessing: &Self::Preprocessing,
+        read_write_claim: F,
+        init_final_claim: F,
+        r_read_write_batch_index: &[F],
+        r_init_final_batch_index: &[F],
+        openings: &Self::Openings,
+        exogenous_openings: &NoExogenousOpenings,
+        gamma: &F,
+        tau: &F,
+    ) {
+        let read_tuples: Vec<_> = Self::read_tuples(preprocessing, openings, exogenous_openings);
+        let write_tuples: Vec<_> = Self::write_tuples(preprocessing, openings, exogenous_openings);
+        let init_tuples: Vec<_> = Self::init_tuples(preprocessing, openings, exogenous_openings);
+        let final_tuples: Vec<_> = Self::final_tuples(preprocessing, openings, exogenous_openings);
+
+        let (read_write_tuples, init_final_tuples) = Self::interleave(
+            preprocessing,
+            &read_tuples,
+            &write_tuples,
+            &init_tuples,
+            &final_tuples,
+        );
+
+        assert_eq!(
+            read_write_tuples.len().next_power_of_two(),
+            r_read_write_batch_index.len().pow2(),
+        );
+        assert_eq!(
+            init_final_tuples.len().next_power_of_two(),
+            r_init_final_batch_index.len().pow2()
+        );
+
+        let mut read_write_flags: Vec<_> = read_write_tuples
+            .iter()
+            .map(|tuple| tuple.3.unwrap())
+            .collect();
+        // For the toggled grand product, the flags in the input layer are padded with 1s,
+        // while the fingerprints are padded with 0s, so that all subsequent padding layers
+        // are all 0s.
+        // To see why this is the case, observe that the input layer's gates will output
+        // flag * fingerprint + 1 - flag = 1 * 0 + 1 - 1 = 0.
+        // Then all subsequent layers will output gate values 0 * 0 = 0.
+        read_write_flags.resize(read_write_flags.len().next_power_of_two(), F::one());
+
+        // Let r' := r_read_write_batch_index
+        // and r'':= r_read_write_opening.
+        //
+        // Let k denote the batch size.
+        //
+        // The `read_write_flags` vector above contains the evaluations of the k individual
+        // flag MLEs at r''.
+        //
+        // What we want to compute is the evaluation of the MLE of ALL the flags, concatenated together,
+        // at (r', r''):
+        //
+        // flags(r', r'') = \sum_j eq(r', j) * flag_j(r'')
+        //
+        // where flag_j(r'') is what we already have in `read_write_flags`.
+        let combined_flags: F = read_write_flags
+            .iter()
+            .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
+            .map(|(flag, eq_eval)| *flag * eq_eval)
+            .sum();
+        // Similar thing for the fingerprints:
+        //
+        // fingerprints(r', r'') = \sum_j eq(r', j) * (t_j(r'') * \gamma^2 + v_j(r'') * \gamma + a_j(r'') - \tau)
+        let combined_read_write_fingerprint: F = read_write_tuples
+            .iter()
+            .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
+            .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
+            .sum();
+
+        // Now we combine flags(r', r'') and fingerprints(r', r'') to obtain the evaluation of the
+        // multi-*quadratic* extension W of the input layer at (r', r'')
+        //
+        // W(r', r'') = flags(r', r'') * fingerprints(r', r'') + 1 - flags(r', r'')
+        //
+        // and this should equal the claim output by the read-write grand product.
+        assert_eq!(
+            combined_flags * combined_read_write_fingerprint + F::one() - combined_flags,
+            read_write_claim
+        );
+
+        // The init-final grand product isn't toggled using flags (it's just a "normal" grand product)
+        // so we combine the openings the normal way.
+        let combined_init_final_fingerprint: F = init_final_tuples
+            .iter()
+            .zip(EqPolynomial::evals(r_init_final_batch_index).iter())
+            .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
+            .sum();
+        assert_eq!(combined_init_final_fingerprint, init_final_claim);
     }
 }
 
@@ -956,6 +1053,9 @@ where
         let flag_evals = flag_polys_updated.iter().map(|poly| poly[0]).collect();
         let memory_evals = memory_polys_updated.iter().map(|poly| poly[0]).collect();
         let outputs_eval = lookup_outputs_poly[0];
+
+        drop_in_background_thread(flag_polys_updated);
+        drop_in_background_thread(memory_polys_updated);
 
         (
             SumcheckInstanceProof::new(compressed_polys),

@@ -27,12 +27,12 @@ struct BenchConfig {
 // Sets up the benchmark by generating leaves and computing known products
 // and allows configuring the percentage of ones in the leaves
 fn setup_bench<PCS, F, ProofTranscript>(
-    num_batches: usize,
+    batch_size: usize,
     layer_size: usize,
-    threshold: u32,
+    percent_ones: u32,
 ) -> (
     // Leaves
-    Vec<Vec<F>>,
+    (Vec<F>, usize),
     PCS::Setup,
     // Products of leaves
     Vec<F>,
@@ -43,17 +43,17 @@ where
     ProofTranscript: Transcript,
 {
     assert!(
-        threshold <= 100,
+        percent_ones <= 100,
         "Threshold must be between 0 and 100, but got {}",
-        threshold
+        percent_ones
     );
 
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 
-    let threshold = ((threshold as u64 * u32::MAX as u64) / 100) as u32;
+    let threshold = ((percent_ones as u64 * u32::MAX as u64) / 100) as u32;
 
     // Generate leaves with percentage of ones
-    let leaves: Vec<Vec<F>> = (0..num_batches)
+    let leaves: Vec<Vec<F>> = (0..batch_size)
         .map(|_| {
             (0..layer_size)
                 .map(|_| {
@@ -72,7 +72,7 @@ where
 
     let setup = PCS::setup(&[CommitShape::new(SRS_SIZE, BatchType::Big)]);
 
-    (leaves, setup, known_products)
+    ((leaves.concat(), batch_size), setup, known_products)
 }
 
 fn benchmark_prove<PCS, F, G, ProofTranscript>(
@@ -82,7 +82,7 @@ fn benchmark_prove<PCS, F, G, ProofTranscript>(
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = Vec<Vec<F>>>,
+    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
     let (leaves, setup, _) = setup_bench::<PCS, F, ProofTranscript>(
@@ -123,7 +123,7 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = Vec<Vec<F>>>,
+    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
     let (leaves, setup, known_products) = setup_bench::<PCS, F, ProofTranscript>(
@@ -174,7 +174,7 @@ fn benchmark_prove_and_verify<PCS, F, G, ProofTranscript>(
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     F: JoltField,
-    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = Vec<Vec<F>>>,
+    G: BatchedGrandProduct<F, PCS, ProofTranscript, Leaves = (Vec<F>, usize)>,
     ProofTranscript: Transcript,
 {
     benchmark_prove::<PCS, F, G, ProofTranscript>(c, config, grand_product_config);
@@ -253,12 +253,12 @@ fn main() {
     benchmark_prove_and_verify::<
         HyperKZG<Bn254, KeccakTranscript>,
         Fr,
-        BatchedDenseGrandProduct<Fr, KeccakTranscript>,
+        BatchedDenseGrandProduct<Fr>,
         KeccakTranscript,
     >(
         &mut c,
         config,
-        <BatchedDenseGrandProduct<_, KeccakTranscript> as BatchedGrandProduct<
+        <BatchedDenseGrandProduct<_> as BatchedGrandProduct<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
             KeccakTranscript,
