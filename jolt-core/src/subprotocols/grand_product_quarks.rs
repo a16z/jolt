@@ -8,6 +8,7 @@ use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::subprotocols::QuarkHybridLayerDepth;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
@@ -27,7 +28,7 @@ pub struct QuarkGrandProductProof<
     g_r_sumcheck: PCS::Field,
     g_r_prime: (PCS::Field, PCS::Field),
     v_r_prime: (PCS::Field, PCS::Field),
-    num_vars: usize,
+    pub num_vars: usize,
 }
 
 pub struct QuarkGrandProduct<F: JoltField, ProofTranscript: Transcript> {
@@ -35,28 +36,6 @@ pub struct QuarkGrandProduct<F: JoltField, ProofTranscript: Transcript> {
     quark_poly: Vec<F>,
     base_layers: Vec<DenseInterleavedPolynomial<F>>,
     _marker: PhantomData<ProofTranscript>,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub enum QuarkHybridLayerDepth {
-    #[default]
-    Default,
-    Min,
-    Max,
-    Custom(usize),
-}
-
-impl QuarkHybridLayerDepth {
-    /// The depth in the binary tree of the GKR grand product at which the hybrid scheme
-    /// will switch to using Quarks Section 5 grand product argument.
-    pub fn get_crossover_depth(&self) -> usize {
-        match self {
-            QuarkHybridLayerDepth::Min => 0,
-            QuarkHybridLayerDepth::Default => 4,
-            QuarkHybridLayerDepth::Max => usize::MAX,
-            QuarkHybridLayerDepth::Custom(depth) => *depth,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -137,6 +116,14 @@ where
 
     /// The claimed outputs of the grand products.
     fn claimed_outputs(&self) -> Vec<F> {
+        if self.quark_poly.is_empty() {
+            let top_layer = &self.base_layers[self.base_layers.len() - 1];
+            return top_layer
+                .par_chunks(2)
+                .map(|chunk| chunk[0] * chunk[1])
+                .collect();
+        }
+
         let chunk_size = self.quark_poly.len() / self.batch_size;
         self.quark_poly
             .par_chunks(chunk_size)
@@ -172,10 +159,17 @@ where
         let r_outputs: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let claim = output_mle.evaluate(&r_outputs);
 
+<<<<<<< HEAD
         // For polynomials of size less than 16 we just use the GKR grand product
         let (quark_proof, mut random, mut claim) = if !self.quark_poly.is_empty() {
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is 4 layers deep in the tree
             // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via GKR layers that the random point opened
+=======
+        // For proofs of polynomials of size less than 16 we support these with no quark proof
+        let (quark_option, mut random, mut claim) = if !self.quark_poly.is_empty() {
+            // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is N layers deep in the tree
+            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
+>>>>>>> d3f608dd (feat: toggled quark hybrid grand product)
             // by the quark proof is in fact the folded result of the base layer.
             let (quark, random, quark_claim) =
                 QuarkGrandProductProof::<PCS, ProofTranscript>::prove(
@@ -234,7 +228,7 @@ where
                         transcript,
                         v_len,
                     )
-                    .unwrap()
+                    .unwrap_or_else(|e| panic!("quark verify error: {:?}", e))
             }
             None => {
                 // Otherwise we must check the actual claims and the preset random will be empty.
@@ -277,7 +271,7 @@ where
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
     /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
     /// Returns a random point and evaluation to be verified by the caller (which our hybrid prover does with GKR)
-    fn prove(
+    pub fn prove(
         v: &[PCS::Field],
         r_outputs: Vec<PCS::Field>,
         claim: PCS::Field,
@@ -288,8 +282,12 @@ where
         let v_length = v.len();
         let v_variables = v_length.log_2();
 
+<<<<<<< HEAD
         let v_polynomial = DensePolynomial::<PCS::Field>::new(v.to_vec());
         // Compute f(1, x), f(x, 0), and f(x, 1) from v(x)
+=======
+        let v_polynomial = DensePolynomial::<PCS::Field>::new_padded(v.to_vec());
+>>>>>>> d3f608dd (feat: toggled quark hybrid grand product)
         let (f_1x, f_x0, f_x1) = v_into_f::<PCS::Field>(&v_polynomial);
 
         let g_polynomial = f_1x.clone();
@@ -443,7 +441,7 @@ where
 
     /// Verifies the given grand product proof.
     #[allow(clippy::type_complexity)]
-    fn verify(
+    pub fn verify(
         &self,
         r_outputs: Vec<PCS::Field>,
         claim: PCS::Field,
