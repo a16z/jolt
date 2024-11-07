@@ -196,7 +196,7 @@ impl<ProofTranscript: Transcript> Into<GrandProductProof>
     for BatchedGrandProductProof<HyperKZG<Bn254, ProofTranscript>, ProofTranscript>
 {
     fn into(self) -> GrandProductProof {
-        let layers: Vec<GKRLayer> = self.layers.into_iter().map(|i| i.into()).collect();
+        let layers: Vec<GKRLayer> = self.gkr_layers.into_iter().map(|i| i.into()).collect();
         assert!(self.quark_proof.is_none(), "Quarks are unsupported");
         GrandProductProof { layers }
     }

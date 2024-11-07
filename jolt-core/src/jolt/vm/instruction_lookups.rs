@@ -256,6 +256,7 @@ where
             (memory_flags, read_write_leaves),
             (
                 init_final_leaves,
+                // # init = # subtables; # final = # memories
                 Self::NUM_SUBTABLES + preprocessing.num_memories,
             ),
         )
@@ -447,8 +448,13 @@ where
             .collect()
     }
 
-    /// Checks that the claimed multiset hashes (output by grand product) are consistent with the
-    /// openings given by `read_write_openings` and `init_final_openings`.
+    /// Checks that the claims output by the grand products are consistent with the openings of
+    /// the polynomials comprising the input layers.
+    ///
+    /// Differs from the default `check_fingerprints` implementation because the input layer
+    /// of the read-write grand product is a `BatchedGrandProductToggleLayer`, so we need to
+    /// evaluate a multi-*quadratic* extension of the leaves rather than a multilinear extension.
+    /// This means we handle the openings a bit differently.
     fn check_fingerprints(
         preprocessing: &Self::Preprocessing,
         read_write_claim: F,
@@ -486,22 +492,55 @@ where
             .iter()
             .map(|tuple| tuple.3.unwrap())
             .collect();
+        // For the toggled grand product, the flags in the input layer are padded with 1s,
+        // while the fingerprints are padded with 0s, so that all subsequent padding layers
+        // are all 0s.
+        // To see why this is the case, observe that the input layer's gates will output
+        // flag * fingerprint + 1 - flag = 1 * 0 + 1 - 1 = 0.
+        // Then all subsequent layers will output gate values 0 * 0 = 0.
         read_write_flags.resize(read_write_flags.len().next_power_of_two(), F::one());
+
+        // Let r' := r_read_write_batch_index
+        // and r'':= r_read_write_opening.
+        //
+        // Let k denote the batch size.
+        //
+        // The `read_write_flags` vector above contains the evaluations of the k individual
+        // flag MLEs at r''.
+        //
+        // What we want to compute is the evaluation of the MLE of ALL the flags, concatenated together,
+        // at (r', r''):
+        //
+        // flags(r', r'') = \sum_j eq(r', j) * flag_j(r'')
+        //
+        // where flag_j(r'') is what we already have in `read_write_flags`.
         let combined_flags: F = read_write_flags
             .iter()
             .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
             .map(|(flag, eq_eval)| *flag * eq_eval)
             .sum();
+        // Similar thing for the fingerprints:
+        //
+        // fingerprints(r', r'') = \sum_j eq(r', j) * (t_j(r'') * \gamma^2 + v_j(r'') * \gamma + a_j(r'') - \tau)
         let combined_read_write_fingerprint: F = read_write_tuples
             .iter()
             .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
             .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
             .sum();
+
+        // Now we combine flags(r', r'') and fingerprints(r', r'') to obtain the evaluation of the
+        // multi-*quadratic* extension W of the input layer at (r', r'')
+        //
+        // W(r', r'') = flags(r', r'') * fingerprints(r', r'') + 1 - flags(r', r'')
+        //
+        // and this should equal the claim output by the read-write grand product.
         assert_eq!(
             combined_flags * combined_read_write_fingerprint + F::one() - combined_flags,
             read_write_claim
         );
 
+        // The init-final grand product isn't toggled using flags (it's just a "normal" grand product)
+        // so we combine the openings the normal way.
         let combined_init_final_fingerprint: F = init_final_tuples
             .iter()
             .zip(EqPolynomial::evals(r_init_final_batch_index).iter())

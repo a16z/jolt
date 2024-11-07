@@ -26,18 +26,25 @@ use rayon::prelude::*;
 /// 🏴  o  🏳️ o  🏳️ o  🏴  o    toggle layer        ↓
 #[derive(Debug)]
 struct BatchedGrandProductToggleLayer<F: JoltField> {
-    /// The list of non-zero flag indices for each layer in the batch.
+    /// The list of non-zero flag indices for each circuit in the batch.
     flag_indices: Vec<Vec<usize>>,
-    /// The list of non-zero flag values for each layer in the batch.
+    /// The list of non-zero flag values for each circuit in the batch.
     /// Before the first binding iteration of sumcheck, this will be empty
     /// (we know that all non-zero, unbound flag values are 1).
     flag_values: Vec<Vec<F>>,
+    /// The Reed-Solomon fingerprints for each circuit in the batch.
     fingerprints: Vec<Vec<F>>,
-
+    /// Once the sparse flag/fingerprint vectors cannnot be bound further
+    /// (i.e. binding would require processing values in different vectors),
+    /// we switch to using `coalesced_flags` to represent the flag values.
     coalesced_flags: Option<Vec<F>>,
+    /// Once the sparse flag/fingerprint vectors cannnot be bound further
+    /// (i.e. binding would require processing values in different vectors),
+    /// we switch to using `coalesced_fingerprints` to represent the fingerprint values.
     coalesced_fingerprints: Option<Vec<F>>,
-
+    /// The length of a layer in one of the circuits in the batch.
     layer_len: usize,
+
     batched_layer_len: usize,
 }
 
@@ -60,6 +67,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
                         F::one();
                 }
             }
+            // Fingerprints are padded with 0s, flags are padded with 1s
             flags.resize(flags.len().next_power_of_two(), F::one());
 
             (
@@ -86,6 +94,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
                         *flag_value;
                 }
             }
+            // Fingerprints are padded with 0s, flags are padded with 1s
             flags.resize(flags.len().next_power_of_two(), F::one());
 
             (
@@ -112,6 +121,12 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         }
     }
 
+    /// Computes the grand product layer output by this one.
+    /// Since this is a toggle layer, most of the output values are 1s, so
+    /// the return type is a SparseInterleavedPolyomial
+    ///   o      o     o      o    <-  output layer
+    ///  / \    / \   / \    / \
+    /// 🏴  o  🏳️ o  🏳️ o  🏴  o  <- toggle layer
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::layer_output")]
     fn layer_output(&self) -> SparseInterleavedPolynomial<F> {
         let values: Vec<_> = self
@@ -132,6 +147,9 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2)
     }
 
+    /// Coalesces flags and fingerprints into one (dense) vector each.
+    /// After a certain number of bindings, we can no longer process the k
+    /// circuits in the batch in independently, at which point we coalesce.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::coalesce")]
     fn coalesce(&mut self) {
         let mut coalesced_fingerprints: Vec<F> =
@@ -153,6 +171,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
                 coalesced
             })
             .collect();
+        // Fingerprints are padded with 0s, flags are padded with 1s
         coalesced_flags.resize(coalesced_flags.len().next_power_of_two(), F::one());
 
         self.coalesced_fingerprints = Some(coalesced_fingerprints);
@@ -161,8 +180,8 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 }
 
 impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
-    /// Incrementally binds a variable of this batched layer's polynomials.
-    /// Similar to `BatchedSparseGrandProductLayer::bind`, in that fingerprints use
+    /// Incrementally binds a variable of the flag and fingerprint polynomials.
+    /// Similar to `SparseInterleavedPolynomial::bind`, in that flags use
     /// a sparse representation, but different in a couple of key ways:
     /// - flags use two separate vectors (for indices and values) rather than
     ///   a single vector of (index, value) pairs
@@ -179,6 +198,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
         let (mut flags_before_binding, mut fingerprints_before_binding) = self.to_dense();
 
         if let Some(coalesced_flags) = &mut self.coalesced_flags {
+            // Polynomials have already been coalesced, so bind the coalesced vectors.
             let mut bound_flags = vec![F::one(); coalesced_flags.len() / 2];
             for i in 0..bound_flags.len() {
                 bound_flags[i] = coalesced_flags[2 * i]
@@ -215,6 +235,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
 
         debug_assert!(self.layer_len % 4 == 0);
 
+        // Bind the fingerprints
         self.fingerprints
             .par_iter_mut()
             .for_each(|layer: &mut Vec<F>| {
@@ -229,6 +250,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
             self.flag_values = vec![vec![]; self.flag_indices.len()];
         }
 
+        // Bind the flags
         self.flag_indices
             .par_iter_mut()
             .zip(self.flag_values.par_iter_mut())
@@ -322,6 +344,7 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
         }
 
         if self.layer_len == 2 {
+            // Time to coalesce
             assert!(self.coalesced_fingerprints.is_none());
             assert!(self.coalesced_flags.is_none());
             self.coalesce();
@@ -359,16 +382,24 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         assert_eq!(expected, round_claim);
     }
 
-    /// Similar to `BatchedSparseGrandProductLayer::compute_cubic`, but with changes to
-    /// accomodate the differences between `BatchedSparseGrandProductLayer` and
+    /// Similar to `SparseInterleavedPolynomial::compute_cubic`, but with changes to
+    /// accomodate the differences between `SparseInterleavedPolynomial` and
     /// `BatchedGrandProductToggleLayer`. These differences are described in the doc comments
     /// for `BatchedGrandProductToggleLayer::bind`.
+    ///
+    /// Since we are using the Dao-Thaler EQ optimization, there are four cases to handle:
+    /// 1. Flags/fingerprints are coalesced, and E1 is fully bound
+    /// 2. Flags/fingerprints are coalesced, and E1 isn't fully bound
+    /// 3. Flags/fingerprints aren't coalesced, and E1 is fully bound
+    /// 4. Flags/fingerprints aren't coalesced, and E1 isn't fully bound
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();
 
             let cubic_evals = if eq_poly.E1_len == 1 {
+                // 1. Flags/fingerprints are coalesced, and E1 is fully bound
+                // This is similar to the if case of `DenseInterleavedPolynomial::compute_cubic`
                 coalesced_flags
                     .par_chunks(2)
                     .zip(coalesced_fingerpints.par_chunks(2))
@@ -403,6 +434,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                     )
             } else {
+                // 2. Flags/fingerprints are coalesced, and E1 isn't fully bound
+                // This is similar to the else case of `DenseInterleavedPolynomial::compute_cubic`
                 let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
                     .par_chunks(2)
                     .map(|E1_chunk| {
@@ -467,8 +500,9 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             return UniPoly::from_evals(&cubic_evals);
         }
 
-        // Non-coalesced case
         let cubic_evals = if eq_poly.E1_len == 1 {
+            // 3. Flags/fingerprints aren't coalesced, and E1 is fully bound
+            // This is similar to the if case of `SparseInterleavedPolynomial::compute_cubic`
             let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
                 .par_chunks(2)
                 .take(self.batched_layer_len / 4)
@@ -588,6 +622,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 eq_eval_sums.2 + deltas.2,
             )
         } else {
+            // 4. Flags/fingerprints aren't coalesced, and E1 isn't fully bound
+            // This is similar to the else case of `SparseInterleavedPolynomial::compute_cubic`
             let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
                 .par_chunks(2)
                 .map(|E1_chunk| {
@@ -716,21 +752,47 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
+            // The cubic evals assuming all the coefficients are ones is affected by the
+            // `batched_layer_len`, since we implicitly pad the `batched_layer_len` to a power of 2.
+            // By pad here we mean that flags are padded with 1s, and fingerprints are
+            // padded with 0s.
+            //
+            // As a refresher, the cubic evals we're computing are:
+            //
+            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
             let evals_assuming_all_ones = if self.batched_layer_len.is_power_of_two() {
+                // If `batched_layer_len` is a power of 2, there is no 0-padding.
+                //
+                // So we have:
+                // \sum_x2 (E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
+                //   = \sum_x2 (E2[x2] * \sum_x1 E1_evals[x1])
+                //   = (\sum_x2 E2[x2]) * (\sum_x1 E1_evals[x1])
+                //   = 1 * E1_eval_sums
                 E1_eval_sums
             } else {
                 let chunk_size = self.batched_layer_len.next_power_of_two() / eq_poly.E2_len;
                 let num_all_one_chunks = self.batched_layer_len / chunk_size;
                 let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
                 if self.batched_layer_len % chunk_size == 0 {
+                    // If `batched_layer_len` isn't a power of 2 but evenly divides `chunk_size`,
+                    // that means that for the last values of x2, we have:
+                    //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
+                    // due to the 0-padding.
+                    //
+                    // This makes the entire inner sum 0 for those values of x2.
+                    // So we can simply sum over E2 for the _other_ values of x2, and
+                    // multiply by `E1_eval_sums`.
                     (
                         E2_sum * E1_eval_sums.0,
                         E2_sum * E1_eval_sums.1,
                         E2_sum * E1_eval_sums.2,
                     )
                 } else {
-                    // The last "chunk" will have (self.dense_len % chunk_size) ones,
-                    // followed by (chunk_size - self.dense_len % chunk_size) zeros.
+                    // If `batched_layer_len` isn't a power of 2 and doesn't divide `chunk_size`,
+                    // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
+                    // followed by (chunk_size - self.dense_len % chunk_size) zeros,
+                    // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
+                    //
                     // This handles this last chunk:
                     let last_chunk_evals = E1_evals[..(self.batched_layer_len % chunk_size) / 4]
                         .par_iter()

@@ -199,7 +199,7 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
     }
 }
 
-// Empty struct to represent that no preprocessing data is used.
+/// Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
 pub trait MemoryCheckingProver<F, PCS, ProofTranscript>
@@ -254,6 +254,9 @@ where
         let init_final_batch_size =
             multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
 
+        // For a batch size of k, the first log2(k) elements of `r_read_write`/`r_init_final`
+        // form the point at which the output layer's MLE is evaluated. The remaining elements
+        // then form the point at which the leaf layer's polynomials are evaluated.
         let (_, r_read_write_opening) =
             r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
         let (_, r_init_final_opening) =
@@ -569,6 +572,9 @@ where
             transcript,
             Some(pcs_setup),
         );
+        // For a batch size of k, the first log2(k) elements of `r_read_write`/`r_init_final`
+        // form the point at which the output layer's MLE is evaluated. The remaining elements
+        // then form the point at which the leaf layer's polynomials are evaluated.
         let (r_read_write_batch_index, r_read_write_opening) =
             r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
 
@@ -665,8 +671,8 @@ where
         exogenous_openings: &Self::ExogenousOpenings,
     ) -> Vec<Self::MemoryTuple>;
 
-    /// Checks that the claimed multiset hashes (output by grand product) are consistent with the
-    /// openings given by `read_write_openings` and `init_final_openings`.
+    /// Checks that the claims output by the grand products are consistent with the openings of
+    /// the polynomials comprising the input layers.
     fn check_fingerprints(
         preprocessing: &Self::Preprocessing,
         read_write_claim: F,
@@ -712,6 +718,8 @@ where
             r_init_final_batch_index.len().pow2()
         );
 
+        // `r_read_write_batch_index`/`r_init_final_batch_index` are used to
+        // combine the k claims in the batch into a single claim.
         let combined_read_write_hash: F = read_write_hashes
             .iter()
             .zip(EqPolynomial::evals(r_read_write_batch_index).iter())

@@ -27,10 +27,41 @@ impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
     }
 }
 
+/// Represents a single layer of a sparse grand product circuit.
+/// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
+/// order in the visual representation of the circuit:
+///      Λ        Λ        Λ        Λ
+///     / \      / \      / \      /  \
+///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
+///
+/// Where SparseInterleavedPolynomial differs from DenseInterleavedPolynomial
+/// is that many of the coefficients are expected to be 1s, so the circuit may
+/// look something like this:
+///      Λ        Λ        Λ        Λ
+///     / \      / \      / \      /  \
+///    1   R0   1   1   L2   1    1    1
+///
+/// Instead of materializing all the 1s, we use a sparse vector to represent the layer,
+/// where each element of the vector contains the index and value of a non-one coefficient.
+/// So the above layer would be represented by:
+///   vec![(1, R0), (4, L2)]        (except with `SparseCoefficient` structs, not tuples)
+///
+/// In the context of a batched grand product (see sparse_grand_product.rs), there
+/// are k of these sparse vectors, where k is the batch size.
+/// For the first log2(n) rounds of binding, these k vectors can be processed in parallel.
+/// After that, they are "coalesced" into a single DenseInterleavedPolynomial for the
+/// remaining rounds of binding.
 #[derive(Default, Debug, Clone)]
 pub struct SparseInterleavedPolynomial<F: JoltField> {
+    /// A vector of sparse vectors representing the coefficients in a batched grand product
+    /// layer, where batch size = coeffs.len().
     pub(crate) coeffs: Vec<Vec<SparseCoefficient<F>>>,
+    /// Once `coeffs` cannot be bound further (i.e. binding would require processing values
+    /// in different vectors), we switch to using `coalesced` to represent the grand product
+    /// layer. See `SparseInterleavedPolynomial::coalesce()`.
     pub(crate) coalesced: Option<DenseInterleavedPolynomial<F>>,
+    /// The length of the layer if it were represented by a single dense vector.
     pub(crate) dense_len: usize,
 }
 
@@ -64,6 +95,8 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
             Self {
                 dense_len,
+                // The batch size is implied by coeffs.len(), so we must initialize this
+                // vector:
                 coeffs: vec![vec![]; batch_size],
                 coalesced: Some(DenseInterleavedPolynomial::new(coalesced)),
             }
@@ -80,19 +113,17 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         self.coeffs.len()
     }
 
+    /// Converts a `SparseInterleavedPolynomial` into the equivalent `DensePolynomial`.
     pub fn to_dense(&self) -> DensePolynomial<F> {
         if let Some(coalesced) = &self.coalesced {
             DensePolynomial::new_padded(coalesced.coeffs[..coalesced.len()].to_vec())
         } else {
-            let mut dense_layer = vec![F::one(); self.dense_len];
-            for coeff in self.coeffs.iter().flatten() {
-                dense_layer[coeff.index] = coeff.value;
-            }
-            DensePolynomial::new_padded(dense_layer)
+            DensePolynomial::new_padded(self.coalesce())
         }
     }
 
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::coalesce")]
+    /// Coalesces a `SparseInterleavedPolynomial` into a `DenseInterleavedPolynomial`.
     pub fn coalesce(&self) -> Vec<F> {
         if let Some(coalesced) = &self.coalesced {
             coalesced.coeffs.clone()
@@ -152,6 +183,8 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         Self::new(coeffs, left.len() + right.len())
     }
 
+    /// Uninterleaves a `SparseInterleavedPolynomial` into two vectors
+    /// containing the left and right coefficients.
     pub fn uninterleave(&self) -> (Vec<F>, Vec<F>) {
         if let Some(coalesced) = &self.coalesced {
             coalesced.uninterleave()
@@ -170,12 +203,11 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
         }
     }
 
-    pub fn par_blocks(&self) -> impl ParallelIterator<Item = &[SparseCoefficient<F>]> {
-        self.coeffs
-            .par_iter()
-            .flat_map(|segment| segment.par_chunk_by(|x, y| x.index / 4 == y.index / 4))
-    }
-
+    /// Computes the grand product layer output by this one.
+    ///     L0'      R0'      L1'      R1'     <- Output layer
+    ///      Λ        Λ        Λ        Λ
+    ///     / \      / \      / \      /  \
+    ///   L0   R0  L1   R1  L2   R2  L3   R3   <- This layer
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::layer_output")]
     pub fn layer_output(&self) -> Self {
         if let Some(coalesced) = &self.coalesced {
@@ -211,8 +243,8 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 }
 
 impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
-    /// Incrementally binds a variable of this batched layer's polynomials.
-    /// If `self` is dense, we bind as in `BatchedDenseGrandProductLayer`,
+    /// Incrementally binds a variable of the interleaved left and right polynomials.
+    /// If `self` is coalesced, we invoke `DenseInterleavedPolynomial::bind`,
     /// processing nodes 4 at a time to preserve the interleaved order:
     ///   0'  1'     2'  3'
     ///   |\ |\      |\ |\
@@ -221,8 +253,9 @@ impl<F: JoltField> Bindable<F> for SparseInterleavedPolynomial<F> {
     ///   |  |\  \   |  |\  \
     ///   0  1 2  3  4  5 6  7
     /// Left nodes have even indices, right nodes have odd indices.
-    /// If `self` is sparse, we basically do the same thing but with more
-    /// cases to check 😬
+    ///
+    /// If `self` is not coalesced, we basically do the same thing but with the
+    /// sparse vectors in `self.coeffs`, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind")]
     fn bind(&mut self, r: F) {
         #[cfg(test)]
@@ -390,13 +423,15 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///
     /// Computing these evaluations requires processing pairs of adjacent coefficients of
     /// `eq`, `left`, and `right`.
-    /// If `self` is dense, we process each layer 4 values at a time:
-    ///                  layer = [L, R, L, R, L, R, ...]
+    /// If `self` is coalesced, we invoke `DenseInterleavedPolynomial::compute_cubic`, processing
+    /// 4 values at a time:
+    ///                 coeffs = [L, R, L, R, L, R, ...]
     ///                           |  |  |  |
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
-    /// If `self` is sparse, we basically do the same thing but with some fancy optimizations and
-    /// more cases to check 😬
+    ///
+    /// If `self` is not coalesced, we basically do the same thing but with with the
+    /// sparse vectors in `self.coeffs`, some fancy optimizations, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
@@ -407,7 +442,13 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             );
         }
 
+        // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
+        // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
         let cubic_evals = if eq_poly.E1_len == 1 {
+            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
+            // would without the Dao-Thaler optimization, using the standard linear-time
+            // sumcheck algorithm with optimizations for sparsity.
+
             let eq_evals: Vec<(F, F, F)> = eq_poly
                 .E2
                 .par_chunks(2)
@@ -420,7 +461,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // TODO(moodlezoup): Can more efficiently compute these
+            // This is what Σ eq(r, x) * left(x) * right(x) would be if
+            // `left` and `right` were both all ones.
             let eq_eval_sums: (F, F, F) = eq_evals
                 .par_iter()
                 .fold(
@@ -431,7 +473,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     || (F::zero(), F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
-
+            // Now we compute the deltas, correcting `eq_eval_sums` for the
+            // elements of `left` and `right` that aren't ones.
             let deltas: (F, F, F) = self
                 .coeffs
                 .par_iter()
@@ -478,6 +521,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 eq_eval_sums.2 + deltas.2,
             )
         } else {
+            // This is a more complicated version of the `else` case in
+            // `DenseInterleavedPolynomial::compute_cubic`. Read that one first.
+
+            // We start by computing the E1 evals:
+            // (1 - j) * E1[0, x1] + j * E1[1, x1]
             let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
                 .par_chunks(2)
                 .map(|E1_chunk| {
@@ -488,6 +536,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
+            // Now compute \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1])
             let E1_eval_sums: (F, F, F) = E1_evals
                 .par_iter()
                 .fold(
@@ -502,6 +551,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             let num_x1_bits = eq_poly.E1_len.log_2() - 1;
             let x1_bitmask = (1 << num_x1_bits) - 1;
 
+            // Iterate over the non-one coefficients and compute the deltas (relative to
+            // what the cubic would be if all the coefficients were ones).
             let deltas = self
                 .coeffs
                 .par_iter()
@@ -560,21 +611,45 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
+            // The cubic evals assuming all the coefficients are ones is affected by the
+            // `dense_len`, since we implicitly 0-pad the `dense_len` to a power of 2.
+            //
+            // As a refresher, the cubic evals we're computing are:
+            //
+            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
             let evals_assuming_all_ones = if self.dense_len.is_power_of_two() {
+                // If `dense_len` is a power of 2, there is no 0-padding.
+                //
+                // So we have:
+                // \sum_x2 (E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
+                //   = \sum_x2 (E2[x2] * \sum_x1 E1_evals[x1])
+                //   = (\sum_x2 E2[x2]) * (\sum_x1 E1_evals[x1])
+                //   = 1 * E1_eval_sums
                 E1_eval_sums
             } else {
                 let chunk_size = self.dense_len.next_power_of_two() / eq_poly.E2_len;
                 let num_all_one_chunks = self.dense_len / chunk_size;
                 let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
                 if self.dense_len % chunk_size == 0 {
+                    // If `dense_len` isn't a power of 2 but evenly divides `chunk_size`,
+                    // that means that for the last values of x2, we have:
+                    //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
+                    // due to the 0-padding.
+                    //
+                    // This makes the entire inner sum 0 for those values of x2.
+                    // So we can simply sum over E2 for the _other_ values of x2, and
+                    // multiply by `E1_eval_sums`.
                     (
                         E2_sum * E1_eval_sums.0,
                         E2_sum * E1_eval_sums.1,
                         E2_sum * E1_eval_sums.2,
                     )
                 } else {
-                    // The last "chunk" will have (self.dense_len % chunk_size) ones,
-                    // followed by (chunk_size - self.dense_len % chunk_size) zeros.
+                    // If `dense_len` isn't a power of 2 and doesn't divide `chunk_size`,
+                    // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
+                    // followed by (chunk_size - self.dense_len % chunk_size) zeros,
+                    // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
+                    //
                     // This handles this last chunk:
                     let last_chunk_evals = E1_evals[..(self.dense_len % chunk_size) / 4]
                         .par_iter()

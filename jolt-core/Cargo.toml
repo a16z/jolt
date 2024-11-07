@@ -87,7 +87,7 @@ name = "commit"
 harness = false
 
 [[bench]]
-name = "polynomial"
+name = "binding"
 harness = false
 
 [[bench]]

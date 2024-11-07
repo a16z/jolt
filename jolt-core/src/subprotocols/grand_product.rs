@@ -40,7 +40,7 @@ where
     PCS: CommitmentScheme<ProofTranscript>,
     ProofTranscript: Transcript,
 {
-    pub layers: Vec<BatchedGrandProductLayerProof<PCS::Field, ProofTranscript>>,
+    pub gkr_layers: Vec<BatchedGrandProductLayerProof<PCS::Field, ProofTranscript>>,
     pub quark_proof: Option<QuarkGrandProductProof<PCS, ProofTranscript>>,
 }
 
@@ -81,6 +81,8 @@ where
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
 
+        // Evaluate the MLE of the output layer at a random point to reduce the outputs to
+        // a single claim.
         let outputs = self.claimed_outputs();
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
@@ -93,7 +95,7 @@ where
 
         (
             BatchedGrandProductProof {
-                layers: proof_layers,
+                gkr_layers: proof_layers,
                 quark_proof: None,
             },
             r,
@@ -101,7 +103,7 @@ where
     }
 
     /// Verifies that the `sumcheck_claim` output by sumcheck verification is consistent
-    /// with the `left_claims` and `right_claims` of corresponding `BatchedGrandProductLayerProof`.
+    /// with the `left_claim` and `right_claim` of corresponding `BatchedGrandProductLayerProof`.
     /// This function may be overridden if the layer isn't just multiplication gates, e.g. in the
     /// case of `ToggledBatchedGrandProduct`.
     fn verify_sumcheck_claim(
@@ -132,9 +134,9 @@ where
         transcript: &mut ProofTranscript,
         r_start: Vec<F>,
     ) -> (F, Vec<F>) {
-        // We allow a non empty start in this function call because the quark hybrid form provides prespecified random for
-        // most of the positions and then we proceed with GKR on the remaining layers using the preset random values.
-        // For default thaler '13 layered grand products this should be empty.
+        // `r_start` is the random point at which the MLE of the first layer of the grand product is evaluated.
+        // In the case of the Quarks hybrid grand product, this is obtained from the Quarks grand product sumcheck.
+        // In the case of Thaler'13 GKR-based grand products, this is from Fiat-Shamir.
         let mut r_grand_product = r_start.clone();
         let fixed_at_start = r_start.len();
 
@@ -175,12 +177,14 @@ where
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (F, Vec<F>) {
+        // Evaluate the MLE of the output layer at a random point to reduce the outputs to
+        // a single claim.
         transcript.append_scalars(claimed_outputs);
         let r: Vec<F> =
             transcript.challenge_vector(claimed_outputs.len().next_power_of_two().log_2());
         let claim = DensePolynomial::new_padded(claimed_outputs.to_vec()).evaluate(&r);
 
-        Self::verify_layers(&proof.layers, claim, transcript, r)
+        Self::verify_layers(&proof.gkr_layers, claim, transcript, r)
     }
 }
 
@@ -229,12 +233,12 @@ where
 
 /// A batched grand product circuit.
 /// Note that the circuit roots are not included in `self.layers`
-///        o
-///      /   \
-///     o     o  <- layers[layers.len() - 1]
-///    / \   / \
-///   o   o o   o  <- layers[layers.len() - 2]
-///       ...
+///        o            o
+///      /   \        /   \
+///     o     o      o     o  <- layers[layers.len() - 1]
+///    / \   / \    / \   / \
+///   o   o o   o  o   o o   o  <- layers[layers.len() - 2]
+///       ...          ...
 pub struct BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<DenseInterleavedPolynomial<F>>,
 }

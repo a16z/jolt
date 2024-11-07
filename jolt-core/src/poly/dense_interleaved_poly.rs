@@ -12,10 +12,26 @@ use rayon::{prelude::*, slice::Chunks};
 use super::dense_mlpoly::DensePolynomial;
 use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 
+/// Represents a single layer of a grand product circuit.
+/// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
+/// order in the visual representation of the circuit:
+///      Λ        Λ        Λ        Λ
+///     / \      / \      / \      /  \
+///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
 #[derive(Default, Debug, Clone)]
 pub struct DenseInterleavedPolynomial<F: JoltField> {
+    /// The coefficients for the "left" and "right" polynomials comprising a
+    /// dense grand product layer.
+    /// The coefficients are in interleaved order:
+    /// [L0, R0, L1, R1, L2, R2, L3, R3, ...]
     pub(crate) coeffs: Vec<F>,
+    /// The effective length of `coeffs`. When binding, we update this length
+    /// instead of truncating `coeffs`, which incurs the cost of dropping the
+    /// truncated values.
     len: usize,
+    /// A reused buffer where bound values are written to during `bind`.
+    /// With every bind, `coeffs` and `binding_scratch_space` are swapped.
     binding_scratch_space: Vec<F>,
 }
 
@@ -36,7 +52,7 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
         Self {
             coeffs,
             len,
-            binding_scratch_space: unsafe_allocate_zero_vec(len),
+            binding_scratch_space: unsafe_allocate_zero_vec(len.next_multiple_of(4) / 2),
         }
     }
 
@@ -87,11 +103,8 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
 }
 
 impl<F: JoltField> Bindable<F> for DenseInterleavedPolynomial<F> {
-    /// Incrementally binds a variable of this batched layer's polynomials.
-    /// Even though each layer is backed by a single Vec<F>, it represents two polynomials
-    /// one for the left nodes in the circuit, one for the right nodes in the circuit.
-    /// These two polynomials' coefficients are interleaved into one Vec<F>. To preserve
-    /// this interleaved order, we bind values like this:
+    /// Incrementally binds a variable of the interleaved left and right polynomials.
+    /// To preserve the interleaved order of coefficients, we bind values like this:
     ///   0'  1'     2'  3'
     ///   |\ |\      |\ |\
     ///   | \| \     | \| \
@@ -105,6 +118,9 @@ impl<F: JoltField> Bindable<F> for DenseInterleavedPolynomial<F> {
         let (mut left_before_binding, mut right_before_binding) = self.uninterleave();
 
         let padded_len = self.len.next_multiple_of(4);
+        // In order to parallelize binding while obeying Rust ownership rules, we
+        // must write to a different vector than we are reading from. `binding_scratch_space`
+        // serves this purpose.
         self.binding_scratch_space
             .par_chunks_mut(2)
             .zip(self.coeffs[..self.len].par_chunks(4))
@@ -121,6 +137,8 @@ impl<F: JoltField> Bindable<F> for DenseInterleavedPolynomial<F> {
             });
 
         self.len = padded_len / 2;
+        // Point `self.coeffs` to the bound coefficients, and `self.coeffs` will serve as the
+        // binding scratch space in the next invocation of `bind`.
         std::mem::swap(&mut self.coeffs, &mut self.binding_scratch_space);
 
         #[cfg(test)]
@@ -155,13 +173,6 @@ pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, 
     *right = right_poly.Z[..right.len() / 2].to_vec();
 }
 
-/// Represents a single layer of a batched grand product circuit.
-/// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
-/// order in the visual representation of the circuit:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      / \
-///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
-///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
 impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
     for DenseInterleavedPolynomial<F>
 {
@@ -190,15 +201,20 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///
     /// Computing these evaluations requires processing pairs of adjacent coefficients of
     /// `eq`, `left`, and `right`.
-    /// Recall that the `left` and `right` polynomials are interleaved in each layer of `self.layers`,
-    /// so we process each layer 4 values at a time:
-    ///                  layer = [L, R, L, R, L, R, ...]
+    /// Recall that the `left` and `right` polynomials are interleaved in `self.coeffs`,
+    /// so we process 4 values at a time:
+    ///                 coeffs = [L, R, L, R, L, R, ...]
     ///                           |  |  |  |
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+        // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
+        // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
         let cubic_evals = if eq_poly.E1_len == 1 {
+            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
+            // would without the Dao-Thaler optimization, using the standard linear-time
+            // sumcheck algorithm.
             self.par_chunks(4)
                 .zip(eq_poly.E2.par_chunks(2))
                 .map(|(layer_chunk, eq_chunk)| {
@@ -238,6 +254,22 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         } else {
+            // If `eq_poly.E1` has NOT been fully bound, we compute the cubic polynomial
+            // using the nested summation approach described in Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+            //
+            // Note, however, that we reverse the inner/outer summation compared to the
+            // description in the paper. I.e. instead of:
+            //
+            // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * (\sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            //
+            // we do:
+            //
+            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            //
+            // because it has better memory locality.
+
+            // We start by computing the E1 evals:
+            // (1 - j) * E1[0, x1] + j * E1[1, x1]
             let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
                 .par_chunks(2)
                 .map(|E1_chunk| {
@@ -254,6 +286,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .par_iter()
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E2_eval, P_x2)| {
+                    // The for-loop below corresponds to the inner sum:
+                    // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
                     let mut inner_sum = (F::zero(), F::zero(), F::zero());
                     for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
                         let left = (
@@ -278,6 +312,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         inner_sum.2 += E1_evals.2 * left_eval_3 * right_eval_3;
                     }
 
+                    // Multiply the inner sum by E2[x2]
                     (
                         *E2_eval * inner_sum.0,
                         *E2_eval * inner_sum.1,

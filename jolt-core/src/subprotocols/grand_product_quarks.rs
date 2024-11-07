@@ -47,7 +47,8 @@ pub enum QuarkHybridLayerDepth {
 }
 
 impl QuarkHybridLayerDepth {
-    // The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs
+    /// The depth in the binary tree of the GKR grand product at which the hybrid scheme
+    /// will switch to using Quarks Section 5 grand product argument.
     pub fn get_crossover_depth(&self) -> usize {
         match self {
             QuarkHybridLayerDepth::Min => 0,
@@ -99,7 +100,7 @@ where
             crossover
         };
 
-        // Taken 1 to 1 from the code in the BatchedDenseGrandProductLayer implementation
+        // Taken 1 to 1 from the code in the BatchedDenseGrandProduct implementation
         let mut layers = Vec::<DenseInterleavedPolynomial<F>>::new();
         layers.push(DenseInterleavedPolynomial::new(leaves));
 
@@ -109,7 +110,7 @@ where
             layers.push(new_layer);
         }
 
-        // If the tree depth is too small we return no quark poly and all base layers
+        // If the tree depth is too small we just do the GKR grand product
         if tree_depth <= num_layers {
             return Self {
                 batch_size,
@@ -129,10 +130,9 @@ where
             _marker: PhantomData,
         }
     }
-    /// The number of layers in the grand product, in this case it is the log of the quark layer size plus the gkr layer depth.
+
     fn num_layers(&self) -> usize {
-        todo!()
-        // self.quark_poly[0].len().log_2()
+        unimplemented!("Unused");
     }
 
     /// The claimed outputs of the grand products.
@@ -151,7 +151,7 @@ where
     fn layers(
         &'_ mut self,
     ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>> {
-        panic!("We don't use the default prover and so we don't need the generic iterator");
+        unimplemented!("We don't use the default prover and so we don't need the generic iterator");
         std::iter::empty()
     }
 
@@ -172,10 +172,10 @@ where
         let r_outputs: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let claim = output_mle.evaluate(&r_outputs);
 
-        // For proofs of polynomials of size less than 16 we support these with no quark proof
-        let (quark_option, mut random, mut claim) = if !self.quark_poly.is_empty() {
+        // For polynomials of size less than 16 we just use the GKR grand product
+        let (quark_proof, mut random, mut claim) = if !self.quark_poly.is_empty() {
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is 4 layers deep in the tree
-            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
+            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via GKR layers that the random point opened
             // by the quark proof is in fact the folded result of the base layer.
             let (quark, random, quark_claim) =
                 QuarkGrandProductProof::<PCS, ProofTranscript>::prove(
@@ -197,8 +197,8 @@ where
 
         (
             BatchedGrandProductProof {
-                layers: proof_layers,
-                quark_proof: quark_option,
+                gkr_layers: proof_layers,
+                quark_proof,
             },
             random,
         )
@@ -213,6 +213,8 @@ where
         transcript: &mut ProofTranscript,
         _setup: Option<&PCS::Setup>,
     ) -> (F, Vec<F>) {
+        // Evaluate the MLE of the output layer at a random point to reduce the outputs to
+        // a single claim.
         transcript.append_scalars(claimed_outputs);
         let r_outputs: Vec<F> =
             transcript.challenge_vector(claimed_outputs.len().next_power_of_two().log_2());
@@ -245,7 +247,7 @@ where
             PCS,
             ProofTranscript,
         >>::verify_layers(
-            &proof.layers, claim, transcript, rand
+            &proof.gkr_layers, claim, transcript, rand
         );
 
         (grand_product_claim, grand_product_r)
@@ -287,12 +289,13 @@ where
         let v_variables = v_length.log_2();
 
         let v_polynomial = DensePolynomial::<PCS::Field>::new(v.to_vec());
+        // Compute f(1, x), f(x, 0), and f(x, 1) from v(x)
         let (f_1x, f_x0, f_x1) = v_into_f::<PCS::Field>(&v_polynomial);
 
         let g_polynomial = f_1x.clone();
         let mut sumcheck_polys = vec![f_1x, f_x0, f_x1];
 
-        // We commit to f(1, x)
+        // We commit to g(x) = f(1, x)
         let g_commitment = PCS::commit(&g_polynomial, setup);
         g_commitment.append_to_transcript(transcript);
 
@@ -302,7 +305,33 @@ where
         // We add eq_tau as the second to last polynomial in the sumcheck
         sumcheck_polys.push(eq_tau);
 
-        // Next we calculate EQ(11...10 || r_outputs, x)
+        // This is where things start to deviate from the protocol described in
+        // Quarks Section 5.
+        //
+        // We batch our grand products by laying out the circuits side-by-side, and
+        // proving them together as one big circuit with k outputs, where k is the batch size.
+        // In `prove_grand_product`, we evaluate the MLE of these outputs at a random point,
+        //   claim := \tilde{outputs}(r_outputs)
+        //
+        // Quarks Section 5 assumes there's only one output, P = f(1, ..., 1, 0).
+        // But claim != f(1, ..., 1, 0), so we have to use a different sumcheck expression.
+        //
+        // If you closely examine `v_into_f` and work it out, you'll find that our k grand product
+        // outputs are contained in f(1, x) at x = (1, ..., 1, 0, b), where b \in {0, 1}^{log2(k)}.
+        // So we have:
+        //   claim = \tilde{outputs}(r_outputs)
+        //         = \sum_b EQ(r_outputs, b) * outputs(b)
+        //         = \sum_x EQ(1, ..., 1, 0, r_outputs, x) * f(1, x)        where r_outputs ∈ 𝔽^{log2(k)}, x ∈ {0, 1}^{log2(kn)}
+        //
+        // Modifying the sumcheck instance described in Section 5 of the Quarks paper, we will
+        // be proving:
+        //   claim = \sum_x (EQ(\tau, x) * (f(1, x) - f(x, 0) * f(x, 1)) + EQ(1, ..., 1, 0, r_outputs, x) * f(1, x))
+        //
+        // Note that the first half of the summand EQ(\tau, x) * (f(1, x) - f(x, 0) * f(x, 1))
+        // should equal 0 for all x ∈ {0, 1}^{log2(kn)}, ensuring that every output value f(1, x) is equal to the
+        // product of its input values f(x, 0) and f(x, 1).
+
+        // First we compute EQ(1, ..., 1, 0, r_outputs, x)
         let mut one_padded_r_outputs = vec![PCS::Field::one(); v_variables];
         let slice_index = one_padded_r_outputs.len() - r_outputs.len();
         one_padded_r_outputs[slice_index..].copy_from_slice(r_outputs.as_slice());
@@ -324,6 +353,8 @@ where
         // We add eq_output as the last polynomial in the sumcheck
         sumcheck_polys.push(eq_output);
 
+        // This is the sumcheck polynomial
+        //   EQ(\tau, x) * (f(1, x) - f(x, 0) * f(x, 1)) + EQ(1, ..., 1, 0, r_outputs, x) * f(1, x)
         let output_check_fn = |vals: &[PCS::Field]| -> PCS::Field {
             assert_eq!(vals.len(), 5);
             let f_1x = vals[0];
@@ -494,7 +525,8 @@ where
     }
 }
 
-// Computes slices of f for the sumcheck
+/// Computes the polynomials f(1, x), f(x, 0), and f(x, 1) from the v polynomial,
+/// as described in Lemma 5.1 of the Quarks paper.
 #[allow(clippy::type_complexity)]
 fn v_into_f<F: JoltField>(
     v: &DensePolynomial<F>,
