@@ -8,6 +8,7 @@ use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -121,51 +122,32 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
-        let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
+        let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let (mut az, mut bz, mut cz) =
             constraint_builder.compute_spartan_Az_Bz_Cz::<PCS, ProofTranscript>(&flattened_polys);
 
-        let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
-            // Below is an optimized form of: eq * (Az * Bz - Cz)
-            if az.is_zero() || bz.is_zero() {
-                if cz.is_zero() {
-                    F::zero()
-                } else {
-                    *eq * (-(*cz))
-                }
-            } else {
-                let inner = *az * *bz - *cz;
-                if inner.is_zero() {
-                    F::zero()
-                } else {
-                    *eq * inner
-                }
-            }
-        };
-
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_cubic::<_>(
+            SumcheckInstanceProof::prove_spartan_cubic(
                 &F::zero(), // claim is zero
                 num_rounds_x,
-                &mut poly_tau,
+                &mut eq_tau,
                 &mut az,
                 &mut bz,
                 &mut cz,
-                comb_func_outer,
                 transcript,
             );
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        drop_in_background_thread((az, bz, cz, poly_tau));
+        drop_in_background_thread((az, bz, cz, eq_tau));
 
+        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
+            outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
             outer_sumcheck_claims[2],
-            outer_sumcheck_claims[3],
         );
-        ProofTranscript::append_scalars(transcript, [claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
         let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
@@ -211,11 +193,11 @@ where
             transcript,
         );
 
-        // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
+        // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
+            outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
             outer_sumcheck_claims[2],
-            outer_sumcheck_claims[3],
         );
         Ok(UniformSpartanProof {
             _inputs: PhantomData,
