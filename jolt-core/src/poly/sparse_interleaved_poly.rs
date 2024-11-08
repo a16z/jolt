@@ -221,19 +221,37 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                 .coeffs
                 .par_iter()
                 .map(|segment| {
-                    segment
-                        .chunk_by(|x, y| x.index / 2 == y.index / 2)
-                        .map(|sparse_block| {
-                            let mut dense_block = [F::one(); 2];
-                            for coeff in sparse_block {
-                                dense_block[coeff.index % 2] = coeff.value;
+                    let mut output_segment: Vec<SparseCoefficient<F>> =
+                        Vec::with_capacity(segment.len());
+                    let mut next_index_to_process = 0usize;
+                    for (j, coeff) in segment.iter().enumerate() {
+                        if coeff.index < next_index_to_process {
+                            // Node was already multiplied with its sibling in a previous iteration
+                            continue;
+                        }
+                        if coeff.index % 2 == 0 {
+                            // Left node; try to find correspoding right node
+                            let right = segment
+                                .get(j + 1)
+                                .cloned()
+                                .unwrap_or((coeff.index + 1, F::one()).into());
+                            if right.index == coeff.index + 1 {
+                                // Corresponding right node was found; multiply them together
+                                output_segment
+                                    .push((coeff.index / 2, right.value * coeff.value).into());
+                            } else {
+                                // Corresponding right node not found, so it must be 1
+                                output_segment.push((coeff.index / 2, coeff.value).into());
                             }
-
-                            let output_index = sparse_block[0].index / 2;
-                            let output_value = dense_block[0].mul_1_optimized(dense_block[1]);
-                            (output_index, output_value).into()
-                        })
-                        .collect()
+                            next_index_to_process = coeff.index + 2;
+                        } else {
+                            // Right node; corresponding left node was not encountered in
+                            // previous iteration, so it must have value 1
+                            output_segment.push((coeff.index / 2, coeff.value).into());
+                            next_index_to_process = coeff.index + 1;
+                        }
+                    }
+                    output_segment
                 })
                 .collect();
 

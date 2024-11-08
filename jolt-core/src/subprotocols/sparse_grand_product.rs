@@ -135,7 +135,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             .enumerate()
             .map(|(batch_index, fingerprints)| {
                 let flag_indices = &self.flag_indices[batch_index / 2];
-                let mut sparse_coeffs = vec![];
+                let mut sparse_coeffs = Vec::with_capacity(self.layer_len);
                 for i in flag_indices {
                     sparse_coeffs
                         .push((batch_index * self.layer_len / 2 + i, fingerprints[*i]).into());
