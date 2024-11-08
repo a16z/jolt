@@ -7,6 +7,7 @@ use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -194,86 +195,197 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic"
     )]
     /// Binds from the bottom rather than the top.
-    pub fn compute_eval_points_spartan_cubic<Func>(
-        poly_eq: &DensePolynomial<F>,
+    pub fn compute_eval_points_spartan_cubic(
+        poly_eq: &SplitEqPolynomial<F>,
         poly_A: &SparsePolynomial<F>,
         poly_B: &SparsePolynomial<F>,
         poly_C: &SparsePolynomial<F>,
-        comb_func: &Func,
-    ) -> (F, F, F)
-    where
-        Func: Fn(&F, &F, &F, &F) -> F + Sync,
-    {
+    ) -> (F, F, F) {
+        let comb_func = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
+            // Below is an optimized form of: eq * (Az * Bz - Cz)
+            if az.is_zero() || bz.is_zero() {
+                if cz.is_zero() {
+                    F::zero()
+                } else {
+                    *eq * (-(*cz))
+                }
+            } else {
+                let inner = *az * *bz - *cz;
+                if inner.is_zero() {
+                    F::zero()
+                } else {
+                    *eq * inner
+                }
+            }
+        };
+
         // num_threads * 8 enables better work stealing
         let mut iterators =
             SparseTripleIterator::chunks(poly_A, poly_B, poly_C, rayon::current_num_threads() * 16);
-        iterators
-            .par_iter_mut()
-            .map(|iterator| {
-                let span = tracing::span!(tracing::Level::DEBUG, "eval_par_inner");
-                let _enter = span.enter();
-                let mut eval_point_0 = F::zero();
-                let mut eval_point_2 = F::zero();
-                let mut eval_point_3 = F::zero();
-                while iterator.has_next() {
-                    let (dense_index, a_low, a_high, b_low, b_high, c_low, c_high) =
-                        iterator.next_pairs();
-                    assert!(dense_index % 2 == 0);
 
-                    // eval 0: bound_func is A(low)
-                    eval_point_0 += comb_func(&poly_eq[dense_index], &a_low, &b_low, &c_low);
+        // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
+        // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+        if poly_eq.E1_len == 1 {
+            let eq_evals: Vec<(F, F, F)> = poly_eq.E2[..poly_eq.E2_len]
+                .par_chunks(2)
+                .map(|eq_chunk| {
+                    let eval_point_0 = eq_chunk[0];
+                    let m_eq = eq_chunk[1] - eq_chunk[0];
+                    let eval_point_2 = eq_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .collect();
 
-                    let m_eq = poly_eq[dense_index + 1] - poly_eq[dense_index];
-                    let m_A = a_high - a_low;
-                    let m_B = b_high - b_low;
-                    let m_C = c_high - c_low;
+            iterators
+                .par_iter_mut()
+                .map(|iterator| {
+                    let span = tracing::span!(tracing::Level::DEBUG, "eval_par_inner");
+                    let _enter = span.enter();
+                    let mut eval_point_0 = F::zero();
+                    let mut eval_point_2 = F::zero();
+                    let mut eval_point_3 = F::zero();
+                    while iterator.has_next() {
+                        let (dense_index, a_low, a_high, b_low, b_high, c_low, c_high) =
+                            iterator.next_pairs();
+                        assert!(dense_index % 2 == 0);
+                        let eq_evals = eq_evals[dense_index / 2];
 
-                    // eval 2
-                    let poly_eq_bound_point = poly_eq[dense_index + 1] + m_eq;
-                    let poly_A_bound_point = a_high + m_A;
-                    let poly_B_bound_point = b_high + m_B;
-                    let poly_C_bound_point = c_high + m_C;
-                    eval_point_2 += comb_func(
-                        &poly_eq_bound_point,
-                        &poly_A_bound_point,
-                        &poly_B_bound_point,
-                        &poly_C_bound_point,
-                    );
+                        // eval 0: bound_func is A(low)
+                        eval_point_0 += comb_func(&eq_evals.0, &a_low, &b_low, &c_low);
 
-                    // eval 3
-                    let poly_eq_bound_point = poly_eq_bound_point + m_eq;
-                    let poly_A_bound_point = poly_A_bound_point + m_A;
-                    let poly_B_bound_point = poly_B_bound_point + m_B;
-                    let poly_C_bound_point = poly_C_bound_point + m_C;
-                    eval_point_3 += comb_func(
-                        &poly_eq_bound_point,
-                        &poly_A_bound_point,
-                        &poly_B_bound_point,
-                        &poly_C_bound_point,
-                    );
-                }
-                (eval_point_0, eval_point_2, eval_point_3)
-            })
-            .reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
-            )
+                        let m_A = a_high - a_low;
+                        let m_B = b_high - b_low;
+                        let m_C = c_high - c_low;
+
+                        // eval 2
+                        let poly_A_bound_point = a_high + m_A;
+                        let poly_B_bound_point = b_high + m_B;
+                        let poly_C_bound_point = c_high + m_C;
+                        eval_point_2 += comb_func(
+                            &eq_evals.1,
+                            &poly_A_bound_point,
+                            &poly_B_bound_point,
+                            &poly_C_bound_point,
+                        );
+
+                        // eval 3
+                        let poly_A_bound_point = poly_A_bound_point + m_A;
+                        let poly_B_bound_point = poly_B_bound_point + m_B;
+                        let poly_C_bound_point = poly_C_bound_point + m_C;
+                        eval_point_3 += comb_func(
+                            &eq_evals.2,
+                            &poly_A_bound_point,
+                            &poly_B_bound_point,
+                            &poly_C_bound_point,
+                        );
+                    }
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+                )
+        } else {
+            // We start by computing the E1 evals:
+            // (1 - j) * E1[0, x1] + j * E1[1, x1]
+            let E1_evals: Vec<_> = poly_eq.E1[..poly_eq.E1_len]
+                .par_chunks(2)
+                .map(|E1_chunk| {
+                    let eval_point_0 = E1_chunk[0];
+                    let m_eq = E1_chunk[1] - E1_chunk[0];
+                    let eval_point_2 = E1_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .collect();
+
+            let num_x1_bits = poly_eq.E1_len.log_2() - 1;
+            let x1_bitmask = (1 << num_x1_bits) - 1;
+
+            iterators
+                .par_iter_mut()
+                .map(|iterator| {
+                    let span = tracing::span!(tracing::Level::DEBUG, "eval_par_inner");
+                    let _enter = span.enter();
+                    let mut eval_point_0 = F::zero();
+                    let mut eval_point_2 = F::zero();
+                    let mut eval_point_3 = F::zero();
+
+                    let mut inner_sums = (F::zero(), F::zero(), F::zero());
+                    let mut prev_x2 = 0;
+
+                    while iterator.has_next() {
+                        let (dense_index, a_low, a_high, b_low, b_high, c_low, c_high) =
+                            iterator.next_pairs();
+                        assert!(dense_index % 2 == 0);
+
+                        let x1 = (dense_index / 2) & x1_bitmask;
+                        let E1_evals = E1_evals[x1];
+                        let x2 = (dense_index / 2) >> num_x1_bits;
+
+                        if x2 != prev_x2 {
+                            eval_point_0 += poly_eq.E2[prev_x2] * inner_sums.0;
+                            eval_point_2 += poly_eq.E2[prev_x2] * inner_sums.1;
+                            eval_point_3 += poly_eq.E2[prev_x2] * inner_sums.2;
+
+                            inner_sums = (F::zero(), F::zero(), F::zero());
+                            prev_x2 = x2;
+                        }
+
+                        // eval 0: bound_func is A(low)
+                        inner_sums.0 += comb_func(&E1_evals.0, &a_low, &b_low, &c_low);
+
+                        let m_A = a_high - a_low;
+                        let m_B = b_high - b_low;
+                        let m_C = c_high - c_low;
+
+                        // eval 2
+                        let poly_A_bound_point = a_high + m_A;
+                        let poly_B_bound_point = b_high + m_B;
+                        let poly_C_bound_point = c_high + m_C;
+                        inner_sums.1 += comb_func(
+                            &E1_evals.1,
+                            &poly_A_bound_point,
+                            &poly_B_bound_point,
+                            &poly_C_bound_point,
+                        );
+
+                        // eval 3
+                        let poly_A_bound_point = poly_A_bound_point + m_A;
+                        let poly_B_bound_point = poly_B_bound_point + m_B;
+                        let poly_C_bound_point = poly_C_bound_point + m_C;
+                        inner_sums.2 += comb_func(
+                            &E1_evals.2,
+                            &poly_A_bound_point,
+                            &poly_B_bound_point,
+                            &poly_C_bound_point,
+                        );
+                    }
+
+                    eval_point_0 += poly_eq.E2[prev_x2] * inner_sums.0;
+                    eval_point_2 += poly_eq.E2[prev_x2] * inner_sums.1;
+                    eval_point_3 += poly_eq.E2[prev_x2] * inner_sums.2;
+
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+                )
+        }
     }
 
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
-    pub fn prove_spartan_cubic<Func>(
+    pub fn prove_spartan_cubic(
         claim: &F,
         num_rounds: usize,
-        poly_eq: &mut DensePolynomial<F>,
+        poly_eq: &mut SplitEqPolynomial<F>,
         poly_A: &mut SparsePolynomial<F>,
         poly_B: &mut SparsePolynomial<F>,
         poly_C: &mut SparsePolynomial<F>,
-        comb_func: Func,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>)
-    where
-        Func: Fn(&F, &F, &F, &F) -> F + Sync,
-    {
+    ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::new();
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
         let mut claim_per_round = *claim;
@@ -282,9 +394,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             let poly = {
                 // Make an iterator returning the contributions to the evaluations
                 let (eval_point_0, eval_point_2, eval_point_3) =
-                    Self::compute_eval_points_spartan_cubic(
-                        poly_eq, poly_A, poly_B, poly_C, &comb_func,
-                    );
+                    Self::compute_eval_points_spartan_cubic(poly_eq, poly_A, poly_B, poly_C);
 
                 let evals = [
                     eval_point_0,
@@ -310,7 +420,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             claim_per_round = poly.evaluate(&r_i);
 
             // bound all tables to the verifier's challenege
-            poly_eq.bound_poly_var_bot_01_optimized(&r_i);
+            poly_eq.bind(r_i);
             poly_A.bound_poly_var_bot_par(&r_i);
             poly_B.bound_poly_var_bot_par(&r_i);
             poly_C.bound_poly_var_bot_par(&r_i);
@@ -320,7 +430,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             SumcheckInstanceProof::new(polys),
             r,
             vec![
-                poly_eq[0],
                 poly_A.final_eval(),
                 poly_B.final_eval(),
                 poly_C.final_eval(),
@@ -459,7 +568,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             // Set up next round
             claim_per_round = poly.evaluate(&r_i);
 
-            // bound all tables to the verifier's challenege
+            // bound all tables to the verifier's challenge
             rayon::join(
                 || poly_A.bound_poly_var_top_zero_optimized(&r_i),
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
