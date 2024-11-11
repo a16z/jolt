@@ -186,6 +186,10 @@ where
 
         Self::verify_layers(&proof.gkr_layers, claim, transcript, r)
     }
+
+    fn quark_poly(&self) -> Option<&[F]> {
+        None
+    }
 }
 
 pub trait BatchedGrandProductLayer<F, ProofTranscript>:

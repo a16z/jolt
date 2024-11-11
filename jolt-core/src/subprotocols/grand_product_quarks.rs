@@ -33,7 +33,7 @@ pub struct QuarkGrandProductProof<
 
 pub struct QuarkGrandProduct<F: JoltField, ProofTranscript: Transcript> {
     batch_size: usize,
-    quark_poly: Vec<F>,
+    quark_poly: Option<Vec<F>>,
     base_layers: Vec<DenseInterleavedPolynomial<F>>,
     _marker: PhantomData<ProofTranscript>,
 }
@@ -93,7 +93,7 @@ where
         if tree_depth <= num_layers {
             return Self {
                 batch_size,
-                quark_poly: Vec::new(),
+                quark_poly: None,
                 base_layers: layers,
                 _marker: PhantomData,
             };
@@ -104,45 +104,49 @@ where
         let quark_poly = layers.pop().unwrap().coeffs;
         Self {
             batch_size,
-            quark_poly,
+            quark_poly: Some(quark_poly),
             base_layers: layers,
             _marker: PhantomData,
         }
     }
 
     fn num_layers(&self) -> usize {
-        unimplemented!("Unused");
+        self.base_layers.len()
     }
 
     /// The claimed outputs of the grand products.
     fn claimed_outputs(&self) -> Vec<F> {
-        if self.quark_poly.is_empty() {
+        if let Some(quark_poly) = &self.quark_poly {
+            let chunk_size = quark_poly.len() / self.batch_size;
+            quark_poly
+                .par_chunks(chunk_size)
+                .map(|chunk| chunk.iter().product())
+                .collect()
+        } else {
             let top_layer = &self.base_layers[self.base_layers.len() - 1];
-            return top_layer
+            top_layer
                 .par_chunks(2)
                 .map(|chunk| chunk[0] * chunk[1])
-                .collect();
+                .collect()
         }
-
-        let chunk_size = self.quark_poly.len() / self.batch_size;
-        self.quark_poly
-            .par_chunks(chunk_size)
-            .map(|chunk| chunk.iter().product())
-            .collect()
     }
 
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
     /// of proving.
-    #[allow(unreachable_code)]
     fn layers(
         &'_ mut self,
     ) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F, ProofTranscript>> {
-        unimplemented!("We don't use the default prover and so we don't need the generic iterator");
-        std::iter::empty()
+        self.base_layers
+            .iter_mut()
+            .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F, ProofTranscript>)
+            .rev()
     }
 
-    /// Computes a batched grand product proof, layer by layer.
+    fn quark_poly(&self) -> Option<&[F]> {
+        self.quark_poly.as_deref()
+    }
+
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
@@ -150,30 +154,64 @@ where
         transcript: &mut ProofTranscript,
         setup: Option<&PCS::Setup>,
     ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
-        let mut proof_layers = Vec::with_capacity(self.base_layers.len());
+        QuarkGrandProductBase::prove_quark_grand_product(
+            self,
+            opening_accumulator,
+            transcript,
+            setup,
+        )
+    }
 
-        let outputs: Vec<F> =
-            <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::claimed_outputs(self);
+    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::verify_grand_product")]
+    fn verify_grand_product(
+        proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
+        claimed_outputs: &[F],
+        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        transcript: &mut ProofTranscript,
+        _setup: Option<&PCS::Setup>,
+    ) -> (F, Vec<F>) {
+        QuarkGrandProductBase::verify_quark_grand_product::<Self, PCS>(
+            proof,
+            claimed_outputs,
+            opening_accumulator,
+            transcript,
+        )
+    }
+}
+
+pub struct QuarkGrandProductBase<F: JoltField, ProofTranscript: Transcript> {
+    _marker: PhantomData<(F, ProofTranscript)>,
+}
+
+impl<F, ProofTranscript> QuarkGrandProductBase<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    /// Computes a batched grand product proof, layer by layer.
+    #[tracing::instrument(skip_all, name = "QuarkGrandProduct::prove_grand_product")]
+    pub fn prove_quark_grand_product<PCS: CommitmentScheme<ProofTranscript, Field = F>>(
+        grand_product: &mut impl BatchedGrandProduct<F, PCS, ProofTranscript>,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        transcript: &mut ProofTranscript,
+        setup: Option<&PCS::Setup>,
+    ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
+        let mut proof_layers = Vec::with_capacity(grand_product.num_layers());
+
+        let outputs: Vec<F> = grand_product.claimed_outputs();
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
         let r_outputs: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let claim = output_mle.evaluate(&r_outputs);
 
-<<<<<<< HEAD
         // For polynomials of size less than 16 we just use the GKR grand product
-        let (quark_proof, mut random, mut claim) = if !self.quark_poly.is_empty() {
-            // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is 4 layers deep in the tree
-            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via GKR layers that the random point opened
-=======
-        // For proofs of polynomials of size less than 16 we support these with no quark proof
-        let (quark_option, mut random, mut claim) = if !self.quark_poly.is_empty() {
+        let (quark_option, mut random, mut claim) = if grand_product.quark_poly().is_some() {
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is N layers deep in the tree
             // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
->>>>>>> d3f608dd (feat: toggled quark hybrid grand product)
             // by the quark proof is in fact the folded result of the base layer.
             let (quark, random, quark_claim) =
                 QuarkGrandProductProof::<PCS, ProofTranscript>::prove(
-                    &self.quark_poly,
+                    grand_product.quark_poly().unwrap(),
                     r_outputs,
                     claim,
                     opening_accumulator.unwrap(),
@@ -185,7 +223,7 @@ where
             (None, r_outputs, claim)
         };
 
-        for layer in self.base_layers.iter_mut().rev() {
+        for layer in grand_product.layers() {
             proof_layers.push(layer.prove_layer(&mut claim, &mut random, transcript));
         }
 
@@ -199,16 +237,17 @@ where
     }
 
     /// Verifies the given grand product proof.
-    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::verify_grand_product")]
-    fn verify_grand_product(
+    #[tracing::instrument(skip_all, name = "QuarkGrandProduct::verify_grand_product")]
+    pub fn verify_quark_grand_product<G, PCS>(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],
         opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&PCS::Setup>,
-    ) -> (F, Vec<F>) {
-        // Evaluate the MLE of the output layer at a random point to reduce the outputs to
-        // a single claim.
+    ) -> (F, Vec<F>)
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        G: BatchedGrandProduct<F, PCS, ProofTranscript>,
+    {
         transcript.append_scalars(claimed_outputs);
         let r_outputs: Vec<F> =
             transcript.challenge_vector(claimed_outputs.len().next_power_of_two().log_2());
@@ -234,14 +273,9 @@ where
                 (claim, r_outputs)
             }
         };
-
-        let (grand_product_claim, grand_product_r) = <Self as BatchedGrandProduct<
-            F,
-            PCS,
-            ProofTranscript,
-        >>::verify_layers(
-            &proof.gkr_layers, claim, transcript, rand
-        );
+        
+        let (grand_product_claim, grand_product_r) =
+            G::verify_layers(&proof.gkr_layers, claim, transcript, rand);
 
         (grand_product_claim, grand_product_r)
     }
@@ -281,12 +315,8 @@ where
         let v_length = v.len();
         let v_variables = v_length.log_2();
 
-<<<<<<< HEAD
-        let v_polynomial = DensePolynomial::<PCS::Field>::new(v.to_vec());
         // Compute f(1, x), f(x, 0), and f(x, 1) from v(x)
-=======
         let v_polynomial = DensePolynomial::<PCS::Field>::new_padded(v.to_vec());
->>>>>>> d3f608dd (feat: toggled quark hybrid grand product)
         let (f_1x, f_x0, f_x1) = v_into_f::<PCS::Field>(&v_polynomial);
 
         let g_polynomial = f_1x.clone();
@@ -678,7 +708,7 @@ mod quark_grand_product_tests {
             &known_products,
             Some(&mut verifier_accumulator),
             &mut verifier_transcript,
-            Some(&setup),
+            None,
         );
         assert!(verifier_accumulator
             .reduce_and_verify(&setup, &batched_proof, &mut verifier_transcript)

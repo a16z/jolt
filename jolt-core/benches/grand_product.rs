@@ -153,7 +153,7 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
                 transcript = ProofTranscript::new(b"test_transcript");
                 let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
                     VerifierOpeningAccumulator::new();
-                let (_, r_verifier) = QuarkGrandProduct::verify_grand_product(
+                let (_, r_verifier) = QuarkGrandProduct::verify_quark_grand_product(
                     &proof,
                     &known_products,
                     Some(&mut verifier_accumulator),
