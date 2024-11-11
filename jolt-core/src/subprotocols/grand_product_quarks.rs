@@ -219,7 +219,6 @@ where
             Some(quark) => {
                 // In this case we verify the quark which fixes the first log(n)-4 vars in the random eval point.
                 let v_len = quark.num_vars;
-                // Todo (aleph_v) - bubble up errors
                 quark
                     .verify(
                         r_outputs,

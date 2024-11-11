@@ -940,7 +940,7 @@ impl Default for SparseGrandProductConfig {
     fn default() -> Self {
         Self {
             // Quarks are not used by default
-            hybrid_layer_depth: QuarkHybridLayerDepth::Default,
+            hybrid_layer_depth: QuarkHybridLayerDepth::Max,
         }
     }
 }
@@ -984,11 +984,6 @@ where
             tree_depth - 1
         };
 
-        println!(
-            "Debug: uses_quarks? = {}, tree_depth = {}, crossover = {}, num_sparse_layers = {}",
-            uses_quarks, tree_depth, crossover, num_sparse_layers
-        );
-
         let toggle_layer = BatchedGrandProductToggleLayer::new(flags, fingerprints);
         let mut layers: Vec<_> = Vec::with_capacity(1 + num_sparse_layers);
         layers.push(toggle_layer.layer_output());
@@ -998,7 +993,7 @@ where
             layers.push(previous_layer.layer_output());
         }
 
-        // Only set the Quark polynomial if there are more layers than the crossover depth
+        // Set the Quark polynomial only if the number of layers exceeds the crossover depth
         let quark_poly = if uses_quarks {
             Some(layers.pop().unwrap().coalesce())
         } else {
@@ -1084,11 +1079,6 @@ where
         };
 
         let layers_iter = <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::layers(self);
-        // // Ignore the first layer since that's the quark layer we've already handled above
-        // if uses_quarks {
-        //     layers_iter.next();
-        // }
-
         for layer in layers_iter {
             proof_layers.push(layer.prove_layer(&mut claim, &mut random, transcript));
         }

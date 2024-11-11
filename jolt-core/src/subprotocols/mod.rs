@@ -18,9 +18,9 @@ impl QuarkHybridLayerDepth {
     // The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs
     pub fn get_crossover_depth(&self) -> usize {
         match self {
-            QuarkHybridLayerDepth::Min => 0,
+            QuarkHybridLayerDepth::Min => 0, // Always use quarks
             QuarkHybridLayerDepth::Default => 4,
-            QuarkHybridLayerDepth::Max => usize::MAX,
+            QuarkHybridLayerDepth::Max => usize::MAX, // Never use quarks
             QuarkHybridLayerDepth::Custom(depth) => *depth,
         }
     }
