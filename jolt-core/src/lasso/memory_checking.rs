@@ -362,7 +362,7 @@ where
                     .zip_eq(exogenous_openings.openings_mut().into_par_iter()),
             )
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_at_chi(&eq_read_write);
+                let claim = poly.evaluate_at_chi_low_optimized(&eq_read_write);
                 *opening = claim;
             });
 
@@ -387,7 +387,7 @@ where
             .par_iter()
             .zip_eq(openings.init_final_values_mut().into_par_iter())
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_at_chi(&eq_init_final);
+                let claim = poly.evaluate_at_chi_low_optimized(&eq_init_final);
                 *opening = claim;
             });
 

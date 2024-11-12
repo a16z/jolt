@@ -636,7 +636,7 @@ where
                     .zip(timestamp_openings.openings_mut().into_par_iter()),
             )
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_at_chi(&chis);
+                let claim = poly.evaluate_at_chi_low_optimized(&chis);
                 *opening = claim;
             });
 
