@@ -205,7 +205,7 @@ where
         let claim = output_mle.evaluate(&r_outputs);
 
         // For polynomials of size less than 16 we just use the GKR grand product
-        let (quark_option, mut random, mut claim) = if grand_product.quark_poly().is_some() {
+        let (quark_proof, mut random, mut claim) = if grand_product.quark_poly().is_some() {
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is N layers deep in the tree
             // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
             // by the quark proof is in fact the folded result of the base layer.
@@ -273,7 +273,7 @@ where
                 (claim, r_outputs)
             }
         };
-        
+
         let (grand_product_claim, grand_product_r) =
             G::verify_layers(&proof.gkr_layers, claim, transcript, rand);
 

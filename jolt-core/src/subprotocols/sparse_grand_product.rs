@@ -5,6 +5,8 @@ use super::grand_product::{
 use super::sumcheck::{BatchedCubicSumcheck, Bindable};
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(test)]
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
@@ -15,8 +17,6 @@ use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use rayon::prelude::*;
-#[cfg(test)]
-use crate::poly::dense_mlpoly::DensePolynomial;
 
 /// A special bottom layer of a grand product, where boolean flags are used to
 /// toggle the other inputs (fingerprints) going into the rest of the tree.
