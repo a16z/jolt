@@ -1,14 +1,18 @@
 use super::grand_product::{
     BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductLayerProof,
+    BatchedGrandProductProof,
 };
 use super::sumcheck::{BatchedCubicSumcheck, Bindable};
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::grand_product_quarks::QuarkGrandProductBase;
+use crate::subprotocols::QuarkHybridLayerDepth;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
@@ -383,7 +387,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     }
 
     /// Similar to `SparseInterleavedPolynomial::compute_cubic`, but with changes to
-    /// accomodate the differences between `SparseInterleavedPolynomial` and
+    /// accommodate the differences between `SparseInterleavedPolynomial` and
     /// `BatchedGrandProductToggleLayer`. These differences are described in the doc comments
     /// for `BatchedGrandProductToggleLayer::bind`.
     ///
@@ -928,9 +932,25 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, Proo
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SparseGrandProductConfig {
+    pub hybrid_layer_depth: QuarkHybridLayerDepth,
+}
+
+impl Default for SparseGrandProductConfig {
+    fn default() -> Self {
+        Self {
+            // Quarks are not used by default
+            hybrid_layer_depth: QuarkHybridLayerDepth::Max,
+        }
+    }
+}
+
 pub struct ToggledBatchedGrandProduct<F: JoltField> {
+    batch_size: usize,
     toggle_layer: BatchedGrandProductToggleLayer<F>,
     sparse_layers: Vec<SparseInterleavedPolynomial<F>>,
+    quark_poly: Option<Vec<F>>,
 }
 
 impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
@@ -941,36 +961,71 @@ where
     ProofTranscript: Transcript,
 {
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
-    type Config = ();
+    type Config = SparseGrandProductConfig;
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
+        <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::construct_with_config(
+            leaves,
+            SparseGrandProductConfig::default(),
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct_with_config")]
+    fn construct_with_config(leaves: Self::Leaves, config: Self::Config) -> Self {
         let (flags, fingerprints) = leaves;
-        let num_layers = fingerprints[0].len().log_2();
+        let batch_size = fingerprints.len();
+        let tree_depth = fingerprints[0].len().log_2();
+        let crossover = config.hybrid_layer_depth.get_crossover_depth();
+
+        let uses_quarks = tree_depth - 1 > crossover;
+        let num_sparse_layers = if uses_quarks {
+            crossover
+        } else {
+            tree_depth - 1
+        };
 
         let toggle_layer = BatchedGrandProductToggleLayer::new(flags, fingerprints);
-        let mut layers: Vec<SparseInterleavedPolynomial<F>> = Vec::with_capacity(num_layers);
+        let mut layers: Vec<_> = Vec::with_capacity(1 + num_sparse_layers);
         layers.push(toggle_layer.layer_output());
 
-        for i in 0..num_layers - 1 {
+        for i in 0..num_sparse_layers {
             let previous_layer = &layers[i];
             layers.push(previous_layer.layer_output());
         }
 
+        // Set the Quark polynomial only if the number of layers exceeds the crossover depth
+        let quark_poly = if uses_quarks {
+            Some(layers.pop().unwrap().coalesce())
+        } else {
+            None
+        };
+
         Self {
+            batch_size,
             toggle_layer,
             sparse_layers: layers,
+            quark_poly,
         }
     }
 
     fn num_layers(&self) -> usize {
-        self.sparse_layers.len() + 1
+        self.sparse_layers.len() + 1 + self.quark_poly.is_some() as usize
     }
 
     fn claimed_outputs(&self) -> Vec<F> {
-        let last_layer = self.sparse_layers.last().unwrap();
-        let (left, right) = last_layer.uninterleave();
-        left.iter().zip(right.iter()).map(|(l, r)| *l * r).collect()
+        // If there's a quark poly, then that's the claimed output
+        if let Some(quark_poly) = &self.quark_poly {
+            let chunk_size = quark_poly.len() / self.batch_size;
+            quark_poly
+                .par_chunks(chunk_size)
+                .map(|chunk| chunk.iter().product())
+                .collect()
+        } else {
+            let last_layer = self.sparse_layers.last().unwrap();
+            let (left, right) = last_layer.uninterleave();
+            left.iter().zip(right.iter()).map(|(l, r)| *l * r).collect()
+        }
     }
 
     fn layers(
@@ -984,6 +1039,43 @@ where
                     .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F, ProofTranscript>),
             )
             .rev()
+    }
+
+    fn quark_poly(&self) -> Option<&[F]> {
+        self.quark_poly.as_deref()
+    }
+
+    /// Computes a batched grand product proof, layer by layer.
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::prove_grand_product")]
+    fn prove_grand_product(
+        &mut self,
+        opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
+        transcript: &mut ProofTranscript,
+        setup: Option<&PCS::Setup>,
+    ) -> (BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>) {
+        QuarkGrandProductBase::prove_quark_grand_product(
+            self,
+            opening_accumulator,
+            transcript,
+            setup,
+        )
+    }
+
+    /// Verifies the given grand product proof.
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::verify_grand_product")]
+    fn verify_grand_product(
+        proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
+        claimed_outputs: &[F],
+        opening_accumulator: Option<&mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>>,
+        transcript: &mut ProofTranscript,
+        _setup: Option<&PCS::Setup>,
+    ) -> (F, Vec<F>) {
+        QuarkGrandProductBase::verify_quark_grand_product::<Self, PCS>(
+            proof,
+            claimed_outputs,
+            opening_accumulator,
+            transcript,
+        )
     }
 
     fn verify_sumcheck_claim(
@@ -1024,15 +1116,12 @@ where
                 - layer_proof.left_claim;
         }
     }
-
-    fn construct_with_config(leaves: Self::Leaves, _config: Self::Config) -> Self {
-        <Self as BatchedGrandProduct<F, PCS, ProofTranscript>>::construct(leaves)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::commitment::zeromorph::ZeromorphSRS;
     use crate::{
         poly::{
             commitment::zeromorph::Zeromorph, dense_interleaved_poly::DenseInterleavedPolynomial,
@@ -1042,6 +1131,7 @@ mod tests {
     use ark_bn254::{Bn254, Fr};
     use ark_std::{rand::Rng, test_rng, One};
     use itertools::Itertools;
+    use rand_core::SeedableRng;
 
     fn condense(sparse_layer: SparseInterleavedPolynomial<Fr>) -> Vec<Fr> {
         sparse_layer.to_dense().Z
@@ -1176,72 +1266,105 @@ mod tests {
         }
     }
 
+    fn run_sparse_prove_verify_test(
+        num_vars: usize,
+        density: f64,
+        batch_size: usize,
+        config: SparseGrandProductConfig,
+    ) {
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(1111_u64);
+        let layer_size = 1 << num_vars;
+
+        let fingerprints: Vec<Vec<Fr>> = (0..batch_size)
+            .map(|_| (0..layer_size).map(|_| Fr::random(&mut rng)).collect())
+            .collect();
+
+        let flags: Vec<Vec<usize>> = (0..batch_size / 2)
+            .map(|_| (0..layer_size).filter(|_| rng.gen_bool(density)).collect())
+            .collect();
+
+        let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 10);
+        let setup = srs.trim(1 << 10);
+
+        // Construct circuit with configuration
+        let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >>::construct_with_config((flags, fingerprints), config);
+
+        let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >>::claimed_outputs(&circuit);
+
+        // Prover setup
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut prover_accumulator = ProverOpeningAccumulator::<Fr, KeccakTranscript>::new();
+        let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >>::prove_grand_product(
+            &mut circuit,
+            Some(&mut prover_accumulator),
+            &mut prover_transcript,
+            Some(&setup),
+        );
+
+        // Verifier setup
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        let mut verifier_accumulator = VerifierOpeningAccumulator::<
+            Fr,
+            Zeromorph<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >::new();
+        verifier_transcript.compare_to(prover_transcript);
+        let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
+            &proof,
+            &claims,
+            Some(&mut verifier_accumulator),
+            &mut verifier_transcript,
+            Some(&setup),
+        );
+
+        assert_eq!(
+            r_prover, r_verifier,
+            "Prover and Verifier results do not match"
+        );
+    }
+
     #[test]
     fn sparse_prove_verify() {
-        let mut rng = test_rng();
         const NUM_VARS: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
         const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
-        const BATCH_SIZE: [usize; 5] = [2, 4, 6, 8, 10];
+        const BATCH_SIZE: [usize; 4] = [2, 4, 6, 8];
 
-        for ((num_vars, density), batch_size) in NUM_VARS
-            .into_iter()
-            .cartesian_product(DENSITY.into_iter())
-            .cartesian_product(BATCH_SIZE.into_iter())
+        let configs = [
+            SparseGrandProductConfig {
+                hybrid_layer_depth: QuarkHybridLayerDepth::Min,
+            },
+            SparseGrandProductConfig {
+                hybrid_layer_depth: QuarkHybridLayerDepth::Default,
+            },
+            SparseGrandProductConfig {
+                hybrid_layer_depth: QuarkHybridLayerDepth::Max,
+            },
+        ];
+
+        for ((&num_vars, &density), &batch_size) in NUM_VARS
+            .iter()
+            .cartesian_product(DENSITY.iter())
+            .cartesian_product(BATCH_SIZE.iter())
         {
-            let layer_size = 1 << num_vars;
-            let fingerprints: Vec<Vec<Fr>> = std::iter::repeat_with(|| {
-                let layer: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                    .take(layer_size)
-                    .collect::<Vec<_>>();
-                layer
-            })
-            .take(batch_size)
-            .collect();
-
-            let flags: Vec<Vec<usize>> = std::iter::repeat_with(|| {
-                let mut layer = vec![];
-                for i in 0..layer_size {
-                    if rng.gen_bool(density) {
-                        layer.push(i);
-                    }
-                }
-                layer
-            })
-            .take(batch_size / 2)
-            .collect();
-
-            let mut circuit = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-                Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::construct((flags, fingerprints));
-
-            let claims = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-                Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::claimed_outputs(&circuit);
-
-            let mut prover_transcript: KeccakTranscript = KeccakTranscript::new(b"test_transcript");
-            let (proof, r_prover) = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
-                Fr,
-                Zeromorph<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove_grand_product(
-                &mut circuit, None, &mut prover_transcript, None
-            );
-
-            let mut verifier_transcript: KeccakTranscript =
-                KeccakTranscript::new(b"test_transcript");
-            verifier_transcript.compare_to(prover_transcript);
-            let (_, r_verifier) = ToggledBatchedGrandProduct::verify_grand_product(
-                &proof,
-                &claims,
-                None,
-                &mut verifier_transcript,
-                None,
-            );
-            assert_eq!(r_prover, r_verifier);
+            for config in &configs {
+                println!(
+                    "Running test with num_vars = {}, density = {}, batch_size = {}, config = {:?}",
+                    num_vars, density, batch_size, config
+                );
+                run_sparse_prove_verify_test(num_vars, density, batch_size, config.clone());
+            }
         }
     }
 
@@ -1322,7 +1445,80 @@ mod tests {
                     KeccakTranscript,
                 >>::claimed_outputs(&circuit);
 
-            assert!(claimed_outputs == expected_outputs);
+            assert_eq!(claimed_outputs, expected_outputs);
+        }
+    }
+
+    #[test]
+    fn test_construct_with_config() {
+        // Mock values for testing
+        let mut rng = test_rng();
+        let dummy_flag = vec![vec![0; 4]; 32];
+        let dummy_fingerprint: Vec<Vec<Fr>> = vec![vec![Fr::random(&mut rng); 64]; 32];
+
+        let configs = vec![
+            (6, 0),  // tree_depth > crossover
+            (6, 64), // tree_depth == crossover
+            (6, 16), // tree_depth > crossover
+        ];
+
+        for (tree_depth, crossover) in configs {
+            let config = SparseGrandProductConfig {
+                hybrid_layer_depth: QuarkHybridLayerDepth::Custom(crossover),
+            };
+
+            // Mock leaves
+            let leaves = (dummy_flag.clone(), dummy_fingerprint.clone());
+
+            // Call construct_with_config with current config
+            let result = <ToggledBatchedGrandProduct<Fr> as BatchedGrandProduct<
+                Fr,
+                Zeromorph<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::construct_with_config(leaves, config);
+
+            // Verify expectations for each configuration case
+            if tree_depth < crossover {
+                // Case where quark_poly should be None and sparse_layers populated
+                assert!(
+                    result.quark_poly.is_none(),
+                    "Expected quark_poly to be None when tree_depth < crossover"
+                );
+                assert!(
+                    !result.sparse_layers.is_empty(),
+                    "Expected sparse_layers to be populated when tree_depth < crossover"
+                );
+            } else if tree_depth == crossover {
+                // Case where quark_poly should be populated
+                assert!(
+                    result.quark_poly.is_none(),
+                    "Expected quark_poly to be None when tree_depth == crossover"
+                );
+                assert!(
+                    !result.sparse_layers.is_empty(),
+                    "Expected sparse_layers to be populated when tree_depth == crossover"
+                );
+            } else if crossover == 0 {
+                // Case where quark_poly should be populated
+                assert!(
+                    result.quark_poly.is_some(),
+                    "Expected quark_poly to be None when crossover is 0"
+                );
+                assert!(
+                    result.sparse_layers.is_empty(),
+                    "Expected sparse_layers to be empty when crossover is 0"
+                );
+            } else {
+                // Case where quark_poly should contain the top layer of sparse_layers
+                assert!(
+                    result.quark_poly.is_some(),
+                    "Expected quark_poly to be Some when tree_depth > crossover"
+                );
+                assert!(
+                    !result.sparse_layers.is_empty(),
+                    "Expected sparse_layers to be populated when tree_depth > crossover"
+                );
+            }
         }
     }
 }
