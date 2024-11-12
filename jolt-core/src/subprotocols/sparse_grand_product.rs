@@ -386,8 +386,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         assert_eq!(expected, round_claim);
     }
 
-    /// Similar to `BatchedSparseGrandProductLayer::compute_cubic`, but with changes to
-    /// accommodate the differences between `BatchedSparseGrandProductLayer` and
+    /// Similar to `SparseInterleavedPolynomial::compute_cubic`, but with changes to
+    /// accommodate the differences between `SparseInterleavedPolynomial` and
     /// `BatchedGrandProductToggleLayer`. These differences are described in the doc comments
     /// for `BatchedGrandProductToggleLayer::bind`.
     ///
@@ -1046,7 +1046,7 @@ where
     }
 
     /// Computes a batched grand product proof, layer by layer.
-    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
         opening_accumulator: Option<&mut ProverOpeningAccumulator<F, ProofTranscript>>,
@@ -1062,7 +1062,7 @@ where
     }
 
     /// Verifies the given grand product proof.
-    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::verify_grand_product")]
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::verify_grand_product")]
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<PCS, ProofTranscript>,
         claimed_outputs: &[F],

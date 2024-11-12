@@ -207,7 +207,7 @@ where
         // For polynomials of size less than 16 we just use the GKR grand product
         let (quark_proof, mut random, mut claim) = if grand_product.quark_poly().is_some() {
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is N layers deep in the tree
-            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
+            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via GKR layers that the random point opened
             // by the quark proof is in fact the folded result of the base layer.
             let (quark, random, quark_claim) =
                 QuarkGrandProductProof::<PCS, ProofTranscript>::prove(
@@ -315,8 +315,8 @@ where
         let v_length = v.len();
         let v_variables = v_length.log_2();
 
-        // Compute f(1, x), f(x, 0), and f(x, 1) from v(x)
         let v_polynomial = DensePolynomial::<PCS::Field>::new_padded(v.to_vec());
+        // Compute f(1, x), f(x, 0), and f(x, 1) from v(x)
         let (f_1x, f_x0, f_x1) = v_into_f::<PCS::Field>(&v_polynomial);
 
         let g_polynomial = f_1x.clone();
