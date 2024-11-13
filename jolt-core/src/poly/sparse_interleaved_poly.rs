@@ -115,18 +115,14 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 
     /// Converts a `SparseInterleavedPolynomial` into the equivalent `DensePolynomial`.
     pub fn to_dense(&self) -> DensePolynomial<F> {
-        if let Some(coalesced) = &self.coalesced {
-            DensePolynomial::new_padded(coalesced.coeffs[..coalesced.len()].to_vec())
-        } else {
-            DensePolynomial::new_padded(self.coalesce())
-        }
+        DensePolynomial::new_padded(self.coalesce())
     }
 
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::coalesce")]
     /// Coalesces a `SparseInterleavedPolynomial` into a `DenseInterleavedPolynomial`.
     pub fn coalesce(&self) -> Vec<F> {
         if let Some(coalesced) = &self.coalesced {
-            coalesced.coeffs.clone()
+            coalesced.coeffs[..coalesced.len()].to_vec()
         } else {
             let mut coalesced = vec![F::one(); self.dense_len];
             self.coeffs
