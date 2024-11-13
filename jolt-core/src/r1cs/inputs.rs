@@ -33,7 +33,6 @@ use strum_macros::EnumIter;
 pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub left_lookup_operand: T,
     pub right_lookup_operand: T,
-    pub imm_signed: T,
     pub product: T,
     pub relevant_y_chunks: Vec<T>,
     pub write_lookup_output_to_rd: T,
@@ -61,7 +60,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
         let mut values = vec![
             &self.left_lookup_operand,
             &self.right_lookup_operand,
-            &self.imm_signed,
             &self.product,
         ];
         values.extend(self.relevant_y_chunks.iter());
@@ -79,7 +77,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
         let mut values = vec![
             &mut self.left_lookup_operand,
             &mut self.right_lookup_operand,
-            &mut self.imm_signed,
             &mut self.product,
         ];
         values.extend(self.relevant_y_chunks.iter_mut());
@@ -323,7 +320,6 @@ pub enum AuxVariable {
     #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
     LeftLookupOperand,
     RightLookupOperand,
-    ImmSigned,
     Product,
     RelevantYChunk(usize),
     WriteLookupOutputToRD,
@@ -389,7 +385,6 @@ impl ConstraintInput for JoltR1CSInputs {
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,
                 AuxVariable::RightLookupOperand => &aux_polynomials.right_lookup_operand,
-                AuxVariable::ImmSigned => &aux_polynomials.imm_signed,
                 AuxVariable::Product => &aux_polynomials.product,
                 AuxVariable::RelevantYChunk(i) => &aux_polynomials.relevant_y_chunks[*i],
                 AuxVariable::WriteLookupOutputToRD => &aux_polynomials.write_lookup_output_to_rd,
@@ -410,7 +405,6 @@ impl ConstraintInput for JoltR1CSInputs {
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &mut aux_polynomials.left_lookup_operand,
                 AuxVariable::RightLookupOperand => &mut aux_polynomials.right_lookup_operand,
-                AuxVariable::ImmSigned => &mut aux_polynomials.imm_signed,
                 AuxVariable::Product => &mut aux_polynomials.product,
                 AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
                 AuxVariable::WriteLookupOutputToRD => {

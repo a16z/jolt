@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
+use tracer::RV32IM;
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
@@ -109,7 +110,7 @@ pub struct BytecodeRow {
     /// Index of the second source register for this instruction (0 if register is unused).
     rs2: u64,
     /// "Immediate" value for this instruction (0 if unused).
-    imm: u64,
+    imm: i64,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -119,7 +120,7 @@ pub struct BytecodeRow {
 }
 
 impl BytecodeRow {
-    pub fn new(address: usize, bitflags: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
+    pub fn new(address: usize, bitflags: u64, rd: u64, rs1: u64, rs2: u64, imm: i64) -> Self {
         Self {
             address,
             bitflags,
@@ -150,7 +151,7 @@ impl BytecodeRow {
             rd: rng.next_u64() % REGISTER_COUNT,
             rs1: rng.next_u64() % REGISTER_COUNT,
             rs2: rng.next_u64() % REGISTER_COUNT,
-            imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
+            imm: (rng.next_u64() % (1 << 20)) as i64, // U-format instructions have 20-bit imm values
             virtual_sequence_remaining: None,
         }
     }
@@ -187,13 +188,35 @@ impl BytecodeRow {
     where
         InstructionSet: JoltInstructionSet,
     {
+        // The load, store, and branch instructions need to do
+        // field arithmetic with `imm` in constraints.rs,
+        // whereas all other instructions operate on the raw bits
+        // of `imm` (via lookup queries).
+        let imm = match instruction.opcode {
+            RV32IM::LB
+            | RV32IM::LH
+            | RV32IM::LW
+            | RV32IM::LBU
+            | RV32IM::LHU
+            | RV32IM::SB
+            | RV32IM::SH
+            | RV32IM::SW
+            | RV32IM::BEQ
+            | RV32IM::BNE
+            | RV32IM::BLT
+            | RV32IM::BGE
+            | RV32IM::BLTU
+            | RV32IM::BGEU => instruction.imm.unwrap_or(0),
+            _ => instruction.imm.unwrap_or(0) & u32::MAX as i64,
+        };
+
         Self {
             address: instruction.address as usize,
             bitflags: Self::bitflags::<InstructionSet>(instruction),
             rd: instruction.rd.unwrap_or(0),
             rs1: instruction.rs1.unwrap_or(0),
             rs2: instruction.rs2.unwrap_or(0),
-            imm: instruction.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
+            imm,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining,
         }
     }
@@ -271,7 +294,7 @@ impl<F: JoltField> BytecodePreprocessing<F> {
             rd.push(F::from_u64(instruction.rd).unwrap());
             rs1.push(F::from_u64(instruction.rs1).unwrap());
             rs2.push(F::from_u64(instruction.rs2).unwrap());
-            imm.push(F::from_u64(instruction.imm).unwrap());
+            imm.push(F::from_i64(instruction.imm));
         }
 
         let v_init_final = [
@@ -346,7 +369,7 @@ where
             rd.push(F::from_u64(step.bytecode_row.rd).unwrap());
             rs1.push(F::from_u64(step.bytecode_row.rs1).unwrap());
             rs2.push(F::from_u64(step.bytecode_row.rs2).unwrap());
-            imm.push(F::from_u64(step.bytecode_row.imm).unwrap());
+            imm.push(F::from_i64(step.bytecode_row.imm));
         }
 
         let v_read_write = [
@@ -361,66 +384,66 @@ where
         let t_final: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts);
 
         #[cfg(test)]
-        let mut init_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+        let mut init_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
         #[cfg(test)]
-        let mut final_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+        let mut final_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
 
         #[cfg(test)]
         for (a, t) in t_final.Z.iter().enumerate() {
             init_tuples.insert((
                 a as u64,
                 [
-                    preprocessing.v_init_final[0][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[1][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[2][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[3][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[4][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[5][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[0][a],
+                    preprocessing.v_init_final[1][a],
+                    preprocessing.v_init_final[2][a],
+                    preprocessing.v_init_final[3][a],
+                    preprocessing.v_init_final[4][a],
+                    preprocessing.v_init_final[5][a],
                 ],
                 0,
             ));
             final_tuples.insert((
                 a as u64,
                 [
-                    preprocessing.v_init_final[0][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[1][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[2][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[3][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[4][a].to_u64().unwrap(),
-                    preprocessing.v_init_final[5][a].to_u64().unwrap(),
+                    preprocessing.v_init_final[0][a],
+                    preprocessing.v_init_final[1][a],
+                    preprocessing.v_init_final[2][a],
+                    preprocessing.v_init_final[3][a],
+                    preprocessing.v_init_final[4][a],
+                    preprocessing.v_init_final[5][a],
                 ],
                 t.to_u64().unwrap(),
             ));
         }
 
         #[cfg(test)]
-        let mut read_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+        let mut read_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
         #[cfg(test)]
-        let mut write_tuples: HashSet<(u64, [u64; 6], u64)> = HashSet::new();
+        let mut write_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
 
         #[cfg(test)]
         for (i, a) in a_read_write_usize.iter().enumerate() {
             read_tuples.insert((
                 *a as u64,
                 [
-                    v_read_write[0][i].to_u64().unwrap(),
-                    v_read_write[1][i].to_u64().unwrap(),
-                    v_read_write[2][i].to_u64().unwrap(),
-                    v_read_write[3][i].to_u64().unwrap(),
-                    v_read_write[4][i].to_u64().unwrap(),
-                    v_read_write[5][i].to_u64().unwrap(),
+                    v_read_write[0][i],
+                    v_read_write[1][i],
+                    v_read_write[2][i],
+                    v_read_write[3][i],
+                    v_read_write[4][i],
+                    v_read_write[5][i],
                 ],
                 t_read[i].to_u64().unwrap(),
             ));
             write_tuples.insert((
                 *a as u64,
                 [
-                    v_read_write[0][i].to_u64().unwrap(),
-                    v_read_write[1][i].to_u64().unwrap(),
-                    v_read_write[2][i].to_u64().unwrap(),
-                    v_read_write[3][i].to_u64().unwrap(),
-                    v_read_write[4][i].to_u64().unwrap(),
-                    v_read_write[5][i].to_u64().unwrap(),
+                    v_read_write[0][i],
+                    v_read_write[1][i],
+                    v_read_write[2][i],
+                    v_read_write[3][i],
+                    v_read_write[4][i],
+                    v_read_write[5][i],
                 ],
                 t_read[i].to_u64().unwrap() + 1,
             ));
@@ -732,10 +755,10 @@ mod tests {
     #[test]
     fn bytecode_stuff_ordering() {
         let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2i64),
+            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4i64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
+            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
         ];
         let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
         BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
@@ -745,16 +768,16 @@ mod tests {
     #[should_panic]
     fn bytecode_validation_fake_trace() {
         let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
+            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2i64),
+            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4i64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
+            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
+            BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32i64),
         ];
         let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
+            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
+            BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0i64), // no_op: shouldn't exist in pgoram
         ];
         BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
             &program, &trace,
@@ -765,14 +788,14 @@ mod tests {
     #[should_panic]
     fn bytecode_validation_bad_prog_increment() {
         let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(4), 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
+            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2i64),
+            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4i64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
+            BytecodeRow::new(to_ram_address(4), 16u64, 16u64, 16u64, 16u64, 16i64), // Increment by 2
         ];
         let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
+            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
         ];
         BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
             &program, &trace,

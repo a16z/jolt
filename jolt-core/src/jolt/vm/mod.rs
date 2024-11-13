@@ -245,12 +245,6 @@ impl<F: JoltField> JoltPolynomials<F> {
             .zip(trace_comitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
 
-        println!(
-            "# commitments: {} + {}",
-            commitments.read_write_values().len(),
-            commitments.init_final_values().len(),
-        );
-
         commitments.bytecode.t_final =
             PCS::commit(&self.bytecode.t_final, &preprocessing.generators);
         (

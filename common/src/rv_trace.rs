@@ -222,7 +222,7 @@ pub struct ELFInstruction {
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
-    pub imm: Option<u32>,
+    pub imm: Option<i64>,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -253,8 +253,6 @@ pub enum CircuitFlags {
     Branch,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
-    /// Used in load/store and branch instructions where the immediate value used as an offset
-    ImmSignBit,
     /// Indicates whether the instruction performs a concat-type lookup.
     ConcatLookupQueryChunks,
     /// 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
@@ -334,9 +332,6 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
         );
 
-        let mask = 1u32 << 31;
-        flags[CircuitFlags::ImmSignBit as usize] = matches!(self.imm, Some(imm) if imm & mask == mask);
-
         flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
             self.opcode,
             RV32IM::XOR
@@ -410,9 +405,18 @@ impl RVTraceRow {
             RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64,
             RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64,
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
-            // UJ-type instructions point to address offsets: even numbers.
-            // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent.
             RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn imm_u32(&self) -> u32 {
+        match self.instruction.opcode.instruction_type() {
+            RV32InstructionFormat::R => unimplemented!("R type does not use imm u32"),
+            RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64 as u32,
+            RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64 as u32,
+            RV32InstructionFormat::S => unimplemented!("S type does not use imm u32"),
+            RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64 as u32,
             _ => unimplemented!(),
         }
     }
@@ -589,7 +593,7 @@ impl RV32IM {
             RV32IM::FENCE        |
             RV32IM::SLTIU        |
             RV32IM::VIRTUAL_MOVE |
-            RV32IM::VIRTUAL_MOVSIGN=> RV32InstructionFormat::I,
+            RV32IM::VIRTUAL_MOVSIGN => RV32InstructionFormat::I,
 
             RV32IM::LB  |
             RV32IM::LH  |

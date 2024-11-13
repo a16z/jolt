@@ -87,21 +87,12 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             JoltR1CSInputs::RS2_Read,
         );
 
-        // Converts from unsigned to twos-complement representation
-        let signed_output = JoltR1CSInputs::Bytecode_Imm - (0xffffffffi64 + 1i64);
-        let imm_signed = cs.allocate_if_else(
-            JoltR1CSInputs::Aux(AuxVariable::ImmSigned),
-            JoltR1CSInputs::OpFlags(CircuitFlags::ImmSignBit),
-            signed_output,
-            JoltR1CSInputs::Bytecode_Imm,
-        );
-
         let is_load_or_store = JoltR1CSInputs::OpFlags(CircuitFlags::Load)
             + JoltR1CSInputs::OpFlags(CircuitFlags::Store);
         let memory_start: i64 = memory_start.try_into().unwrap();
         cs.constrain_eq_conditional(
             is_load_or_store,
-            JoltR1CSInputs::RS1_Read + imm_signed,
+            JoltR1CSInputs::RS1_Read + JoltR1CSInputs::Bytecode_Imm,
             JoltR1CSInputs::RAM_A + memory_start,
         );
 
@@ -242,7 +233,9 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let _next_pc = cs.allocate_if_else(
             JoltR1CSInputs::Aux(AuxVariable::NextPC),
             should_branch,
-            4 * JoltR1CSInputs::Bytecode_ELFAddress + PC_START_ADDRESS + imm_signed,
+            4 * JoltR1CSInputs::Bytecode_ELFAddress
+                + PC_START_ADDRESS
+                + JoltR1CSInputs::Bytecode_Imm,
             next_pc_jump,
         );
     }
