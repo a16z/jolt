@@ -574,8 +574,19 @@ impl Mmu {
     fn trace_store(&mut self, effective_address: u64, value: u64) {
         self.assert_effective_address(effective_address);
 
+        let bytes = match self.xlen {
+            Xlen::Bit32 => 4,
+            Xlen::Bit64 => 8,
+        };
+        let mut value_bytes = [0u8; 8];
+        for i in 0..bytes {
+            value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+        }
+        let pre_value = u64::from_le_bytes(value_bytes);
+
         self.tracer.push_memory(MemoryState::Write {
             address: effective_address,
+            pre_value,
             post_value: value,
         });
     }

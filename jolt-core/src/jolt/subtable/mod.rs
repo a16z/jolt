@@ -47,7 +47,6 @@ pub mod sra_sign;
 pub mod srl;
 pub mod truncate_overflow;
 pub mod xor;
-pub mod zero_lsb;
 
 #[cfg(test)]
 pub mod test;

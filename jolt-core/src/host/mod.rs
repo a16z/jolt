@@ -118,6 +118,8 @@ impl Program {
                 "strip=symbols",
                 "-C",
                 "opt-level=z",
+                "-C",
+                "target-feature=+strict-align",
             ];
 
             let toolchain = if self.std {

@@ -63,6 +63,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             }) => panic!("Unexpected MemoryState::Read"),
             Some(MemoryState::Write {
                 address: _,
+                pre_value: _,
                 post_value,
             }) => (post_value >> (index * 8)) as u8,
             None => panic!("Memory state not found"),
@@ -394,8 +395,15 @@ pub struct RegisterState {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
-    Read { address: u64, value: u64 },
-    Write { address: u64, post_value: u64 },
+    Read {
+        address: u64,
+        value: u64,
+    },
+    Write {
+        address: u64,
+        pre_value: u64,
+        post_value: u64,
+    },
 }
 
 impl RVTraceRow {
