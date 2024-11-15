@@ -7,14 +7,13 @@ use jolt_core::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAc
 use jolt_core::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
 };
-use jolt_core::subprotocols::grand_product_quarks::{
-    QuarkGrandProduct, QuarkGrandProductConfig, QuarkHybridLayerDepth,
-};
+use jolt_core::subprotocols::grand_product_quarks::{QuarkGrandProduct, QuarkGrandProductConfig};
+use jolt_core::subprotocols::QuarkHybridLayerDepth;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-const SRS_SIZE: usize = 1 << 10;
+const SRS_SIZE: usize = 1 << 16;
 
 #[derive(Clone, Copy)]
 struct BenchConfig {
@@ -153,7 +152,7 @@ fn benchmark_verify<PCS, F, G, ProofTranscript>(
                 transcript = ProofTranscript::new(b"test_transcript");
                 let mut verifier_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
                     VerifierOpeningAccumulator::new();
-                let (_, r_verifier) = QuarkGrandProduct::verify_quark_grand_product(
+                let (_, r_verifier) = QuarkGrandProduct::verify_grand_product(
                     &proof,
                     &known_products,
                     Some(&mut verifier_accumulator),
@@ -186,7 +185,7 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
     let num_layers = 50;
-    let layer_size = 1 << 10;
+    let layer_size = 1 << 8;
     let mut config = BenchConfig {
         name: "",
         num_layers,

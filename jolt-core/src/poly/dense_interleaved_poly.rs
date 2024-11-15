@@ -281,7 +281,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 })
                 .collect();
 
-            let chunk_size = self.len.next_power_of_two() / eq_poly.E2_len;
+            let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
             eq_poly.E2[..eq_poly.E2_len]
                 .par_iter()
                 .zip(self.par_chunks(chunk_size))
