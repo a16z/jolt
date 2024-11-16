@@ -377,6 +377,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_halfword(&mut self, v_address: u64) -> Result<u16, Trap> {
         let effective_address = self.get_effective_address(v_address);
+        assert!(effective_address % 2 == 0, "Unaligned load_halfword");
         self.trace_load(effective_address, 2);
         match self.load_bytes(v_address, 2) {
             Ok(data) => Ok(data as u16),
@@ -391,6 +392,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_word(&mut self, v_address: u64) -> Result<u32, Trap> {
         let effective_address = self.get_effective_address(v_address);
+        assert!(effective_address % 4 == 0, "Unaligned load_word");
         self.trace_load(effective_address, 4);
         match self.load_bytes(v_address, 4) {
             Ok(data) => Ok(data as u32),
@@ -405,6 +407,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
         let effective_address = self.get_effective_address(v_address);
+        assert!(effective_address % 8 == 0, "Unaligned load_doubleword");
         self.trace_load(effective_address, 8);
         match self.load_bytes(v_address, 8) {
             Ok(data) => Ok(data),
@@ -485,7 +488,8 @@ impl Mmu {
     /// * `value` data written
     pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store(effective_address, value as u64);
+        assert!(effective_address % 2 == 0, "Unaligned store_halfword");
+        self.trace_store_fork(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 2)
     }
 
@@ -497,6 +501,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
+        assert!(effective_address % 4 == 0, "Unaligned store_word");
         self.trace_store(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 4)
     }
@@ -509,6 +514,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
+        assert!(effective_address % 8 == 0, "Unaligned store_doubleword");
         self.trace_store(effective_address, value);
         self.store_bytes(v_address, value, 8)
     }
@@ -571,24 +577,90 @@ impl Mmu {
         }
     }
 
-    fn trace_store(&mut self, effective_address: u64, value: u64) {
+    fn trace_store_fork(&mut self, effective_address: u64, value: u64) {
         self.assert_effective_address(effective_address);
-
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
             Xlen::Bit64 => 8,
         };
-        let mut value_bytes = [0u8; 8];
-        for i in 0..bytes {
-            value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
-        }
-        let pre_value = u64::from_le_bytes(value_bytes);
+        let word_address = (effective_address >> 2) << 2;
 
-        self.tracer.push_memory(MemoryState::Write {
-            address: effective_address,
-            pre_value,
-            post_value: value,
-        });
+        if effective_address < DRAM_BASE {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.jolt_device.load(word_address + i);
+            }
+            let pre_value = u64::from_le_bytes(pre_value_bytes);
+
+            let post_value = if effective_address % 4 == 2 {
+                (value << 16) | (pre_value & 0xffff)
+            } else if effective_address % 4 == 0 {
+                value | (pre_value & 0xffff0000)
+            } else {
+                panic!("Unaligned store {:x}", effective_address);
+            };
+
+            println!("{} => {}", pre_value, post_value);
+
+            self.tracer.push_memory(MemoryState::Write {
+                address: word_address,
+                pre_value,
+                post_value,
+            });
+        } else {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
+            }
+            let pre_value = u64::from_le_bytes(pre_value_bytes);
+            let post_value = if effective_address % 4 == 2 {
+                (value << 16) | (pre_value & 0xffff)
+            } else if effective_address % 4 == 0 {
+                value | (pre_value & 0xffff0000)
+            } else {
+                panic!("Unaligned store {:x}", effective_address);
+            };
+
+            println!("{} => {}", pre_value, post_value);
+            self.tracer.push_memory(MemoryState::Write {
+                address: word_address,
+                pre_value,
+                post_value,
+            });
+        }
+    }
+
+    fn trace_store(&mut self, effective_address: u64, value: u64) {
+        self.assert_effective_address(effective_address);
+        let bytes = match self.xlen {
+            Xlen::Bit32 => 4,
+            Xlen::Bit64 => 8,
+        };
+
+        if effective_address < DRAM_BASE {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+            }
+            let pre_value = u64::from_le_bytes(pre_value_bytes);
+
+            self.tracer.push_memory(MemoryState::Write {
+                address: effective_address,
+                pre_value,
+                post_value: value,
+            });
+        } else {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
+            }
+            let pre_value = u64::from_le_bytes(pre_value_bytes);
+            self.tracer.push_memory(MemoryState::Write {
+                address: effective_address,
+                pre_value,
+                post_value: value,
+            });
+        }
     }
 
     /// Loads two bytes from main memory or peripheral devices depending on

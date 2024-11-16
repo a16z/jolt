@@ -514,6 +514,39 @@ mod tests {
     }
 
     #[test]
+    fn memory_ops_e2e_hyperkzg() {
+        let mut program = host::Program::new("memory-ops-guest");
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace) = program.trace();
+
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
+        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
+            _,
+            HyperKZG<Bn254, KeccakTranscript>,
+            C,
+            M,
+            KeccakTranscript,
+        >>::prove(
+            io_device, trace, preprocessing.clone()
+        );
+
+        let verification_result =
+            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
     #[should_panic]
     fn truncated_trace() {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();

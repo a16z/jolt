@@ -47,6 +47,7 @@ use self::read_write_memory::{
     ReadWriteMemoryStuff,
 };
 
+use super::instruction::virtual_sh::VirtualSHInstruction;
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
@@ -321,6 +322,7 @@ where
                 tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SH => VirtualSHInstruction::<32>::virtual_sequence(instruction),
                 _ => vec![instruction],
             })
             .map(|instruction| BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction))

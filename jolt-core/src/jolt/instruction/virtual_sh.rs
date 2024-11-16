@@ -10,7 +10,7 @@ use crate::jolt::instruction::{
 pub struct VirtualSHInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction<WORD_SIZE> {
-    const SEQUENCE_LENGTH: usize = 12;
+    const SEQUENCE_LENGTH: usize = 11;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         assert_eq!(trace_row.instruction.opcode, RV32IM::SH);
@@ -57,6 +57,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction
             memory_state: None,
             advice_value: None,
         });
+        // TODO(moodlezoup): Assert aligned memory access
 
         let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
         let word_address =
@@ -90,7 +91,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction
                 pre_value,
                 post_value,
             } => {
-                assert_eq!(address, word_address);
+                if address != 0 {
+                    // HACK: Don't check this if `virtual_trace`
+                    // is being invoked by `virtual_sequence`, which
+                    // passes in a dummy `trace_row`
+                    assert_eq!(address, word_address);
+                }
                 (pre_value, post_value)
             }
         };
@@ -116,39 +122,19 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction
             advice_value: None,
         });
 
-        let byte_shift = XORInstruction::<WORD_SIZE>(ram_address, 0b10).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::XORI,
-                rs1: v_address,
-                rs2: None,
-                rd: v_shift,
-                imm: Some(0b10),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(ram_address),
-                rs2_val: None,
-                rd_post_val: Some(byte_shift),
-            },
-            memory_state: None,
-            advice_value: None,
-        });
-
         let bit_shift = SLLInstruction::<WORD_SIZE>(ram_address, 3).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::SLLI,
-                rs1: v_shift,
+                rs1: v_address,
                 rs2: None,
                 rd: v_shift,
                 imm: Some(3),
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
-                rs1_val: Some(byte_shift),
+                rs1_val: Some(ram_address),
                 rs2_val: None,
                 rd_post_val: Some(bit_shift),
             },
@@ -292,13 +278,13 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction
                 rs1: v_word_address,
                 rs2: v_word,
                 rd: None,
-                imm: None,
+                imm: Some(0),
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(word_address),
-                rs2_val: Some(masked),
-                rd_post_val: Some(result),
+                rs2_val: Some(result), // Lookup query
+                rd_post_val: None,
             },
             memory_state: Some(MemoryState::Write {
                 address: word_address,
@@ -313,6 +299,27 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction
 
     fn sequence_output(_: u64, _: u64) -> u64 {
         unimplemented!("SH does not write to a destination register")
+    }
+
+    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
+        let dummy_trace_row = RVTraceRow {
+            instruction,
+            register_state: RegisterState {
+                rs1_val: Some(0),
+                rs2_val: Some(0),
+                rd_post_val: Some(0),
+            },
+            memory_state: Some(MemoryState::Write {
+                address: 0,
+                pre_value: 0,
+                post_value: 0,
+            }),
+            advice_value: None,
+        };
+        Self::virtual_trace(dummy_trace_row)
+            .into_iter()
+            .map(|trace_row| trace_row.instruction)
+            .collect()
     }
 }
 
