@@ -228,7 +228,15 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
     }
 
     fn sequence_output(x: u64, y: u64) -> u64 {
-        x / y
+        if y == 0 {
+            match WORD_SIZE {
+                32 => u32::MAX as u64,
+                64 => u64::MAX,
+                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            }
+        } else {
+            x / y
+        }
     }
 }
 
@@ -238,7 +246,7 @@ mod test {
     use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
-    fn div_virtual_sequence_32() {
+    fn divu_virtual_sequence_32() {
         jolt_virtual_sequence_test!(DIVUInstruction::<32>, RV32IM::DIVU);
     }
 }
