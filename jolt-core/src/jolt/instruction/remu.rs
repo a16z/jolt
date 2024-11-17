@@ -215,8 +215,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
         } else {
             x / y
         };
-         
-        if y == 0 { x } else { x - quotient * y }
+
+        if y == 0 {
+            x
+        } else {
+            x - quotient * y
+        }
     }
 }
 
