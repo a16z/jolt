@@ -423,7 +423,7 @@ impl Mmu {
     /// * `value`
     pub fn store(&mut self, v_address: u64, value: u8) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store(effective_address, value as u64);
+        self.trace_store_byte(effective_address, value as u64);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
             Ok(p_address) => {
                 self.store_raw(p_address, value);
@@ -489,7 +489,7 @@ impl Mmu {
     pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 2 == 0, "Unaligned store_halfword");
-        self.trace_store_fork(effective_address, value as u64);
+        self.trace_store_halfword(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 2)
     }
 
@@ -577,7 +577,7 @@ impl Mmu {
         }
     }
 
-    fn trace_store_fork(&mut self, effective_address: u64, value: u64) {
+    fn trace_store_byte(&mut self, effective_address: u64, value: u64) {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -585,49 +585,72 @@ impl Mmu {
         };
         let word_address = (effective_address >> 2) << 2;
 
-        if effective_address < DRAM_BASE {
+        let pre_value = if effective_address < DRAM_BASE {
             let mut pre_value_bytes = [0u8; 8];
             for i in 0..bytes {
                 pre_value_bytes[i as usize] = self.jolt_device.load(word_address + i);
             }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
-
-            let post_value = if effective_address % 4 == 2 {
-                (value << 16) | (pre_value & 0xffff)
-            } else if effective_address % 4 == 0 {
-                value | (pre_value & 0xffff0000)
-            } else {
-                panic!("Unaligned store {:x}", effective_address);
-            };
-
-            println!("{} => {}", pre_value, post_value);
-
-            self.tracer.push_memory(MemoryState::Write {
-                address: word_address,
-                pre_value,
-                post_value,
-            });
+            u64::from_le_bytes(pre_value_bytes)
         } else {
             let mut pre_value_bytes = [0u8; 8];
             for i in 0..bytes {
                 pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
             }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
-            let post_value = if effective_address % 4 == 2 {
-                (value << 16) | (pre_value & 0xffff)
-            } else if effective_address % 4 == 0 {
-                value | (pre_value & 0xffff0000)
-            } else {
-                panic!("Unaligned store {:x}", effective_address);
-            };
+            u64::from_le_bytes(pre_value_bytes)
+        };
 
-            println!("{} => {}", pre_value, post_value);
-            self.tracer.push_memory(MemoryState::Write {
-                address: word_address,
-                pre_value,
-                post_value,
-            });
-        }
+        // Mask the value into the word
+        let post_value = match effective_address % 4 {
+            0 => value | (pre_value & 0xffffff00),
+            1 => (value << 8) | (pre_value & 0xffff00ff),
+            2 => (value << 16) | (pre_value & 0xff00ffff),
+            3 => (value << 24) | (pre_value & 0x00ffffff),
+            _ => unreachable!(),
+        };
+
+        self.tracer.push_memory(MemoryState::Write {
+            address: word_address,
+            pre_value,
+            post_value,
+        });
+    }
+
+    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) {
+        self.assert_effective_address(effective_address);
+        let bytes = match self.xlen {
+            Xlen::Bit32 => 4,
+            Xlen::Bit64 => 8,
+        };
+        let word_address = (effective_address >> 2) << 2;
+
+        let pre_value = if effective_address < DRAM_BASE {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.jolt_device.load(word_address + i);
+            }
+            u64::from_le_bytes(pre_value_bytes)
+        } else {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
+            }
+            u64::from_le_bytes(pre_value_bytes)
+        };
+
+        // Mask the value into the word
+        let post_value = if effective_address % 4 == 2 {
+            (value << 16) | (pre_value & 0xffff)
+        } else if effective_address % 4 == 0 {
+            value | (pre_value & 0xffff0000)
+        } else {
+            panic!("Unaligned store {:x}", effective_address);
+        };
+
+        self.tracer.push_memory(MemoryState::Write {
+            address: word_address,
+            pre_value,
+            post_value,
+        });
     }
 
     fn trace_store(&mut self, effective_address: u64, value: u64) {

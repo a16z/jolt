@@ -664,11 +664,26 @@ impl JoltDevice {
     }
 
     pub fn load(&self, address: u64) -> u8 {
-        let internal_address = self.convert_read_address(address);
-        if self.inputs.len() <= internal_address {
-            0
+        if self.is_panic(address) {
+            self.panic as u8
+        } else if self.is_termination(address) {
+            0 // Termination bit should never be loaded after it is set
+        } else if self.is_input(address) {
+            let internal_address = self.convert_read_address(address);
+            if self.inputs.len() <= internal_address {
+                0
+            } else {
+                self.inputs[internal_address]
+            }
+        } else if self.is_output(address) {
+            let internal_address = self.convert_write_address(address);
+            if self.outputs.len() <= internal_address {
+                0
+            } else {
+                self.outputs[internal_address]
+            }
         } else {
-            self.inputs[internal_address]
+            0 // zero-padding
         }
     }
 

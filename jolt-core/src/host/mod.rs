@@ -26,7 +26,8 @@ use crate::{
         instruction::{
             div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
             mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-            virtual_sh::VirtualSHInstruction, VirtualInstructionSequence,
+            virtual_sb::VirtualSBInstruction, virtual_sh::VirtualSHInstruction,
+            VirtualInstructionSequence,
         },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
@@ -197,6 +198,7 @@ impl Program {
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
                 tracer::RV32IM::SH => VirtualSHInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::SB => VirtualSBInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {
