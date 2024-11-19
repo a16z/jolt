@@ -317,7 +317,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load(&mut self, v_address: u64) -> Result<u8, Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_load(effective_address, 1);
+        self.trace_load(effective_address);
         match self.translate_address(effective_address, &MemoryAccessType::Read) {
             Ok(p_address) => Ok(self.load_raw(p_address)),
             Err(()) => Err(Trap {
@@ -378,7 +378,7 @@ impl Mmu {
     pub fn load_halfword(&mut self, v_address: u64) -> Result<u16, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 2 == 0, "Unaligned load_halfword");
-        self.trace_load(effective_address, 2);
+        self.trace_load(effective_address);
         match self.load_bytes(v_address, 2) {
             Ok(data) => Ok(data as u16),
             Err(e) => Err(e),
@@ -393,7 +393,7 @@ impl Mmu {
     pub fn load_word(&mut self, v_address: u64) -> Result<u32, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 4 == 0, "Unaligned load_word");
-        self.trace_load(effective_address, 4);
+        self.trace_load(effective_address);
         match self.load_bytes(v_address, 4) {
             Ok(data) => Ok(data as u32),
             Err(e) => Err(e),
@@ -408,7 +408,7 @@ impl Mmu {
     pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 8 == 0, "Unaligned load_doubleword");
-        self.trace_load(effective_address, 8);
+        self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
             Ok(data) => Ok(data),
             Err(e) => Err(e),
@@ -549,29 +549,34 @@ impl Mmu {
         }
     }
 
-    fn trace_load(&mut self, effective_address: u64, bytes: u64) {
-        if effective_address < DRAM_BASE {
-            if self.jolt_device.is_input(effective_address) {
+    fn trace_load(&mut self, effective_address: u64) {
+        let word_address = (effective_address >> 2) << 2;
+        let bytes = match self.xlen {
+            Xlen::Bit32 => 4,
+            Xlen::Bit64 => 8,
+        };
+        if word_address < DRAM_BASE {
+            if self.jolt_device.is_input(word_address) {
                 let mut value_bytes = [0u8; 8];
                 for i in 0..bytes {
-                    value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+                    value_bytes[i as usize] = self.jolt_device.load(word_address + i);
                 }
                 let value = u64::from_le_bytes(value_bytes);
                 self.tracer.push_memory(MemoryState::Read {
-                    address: effective_address,
+                    address: word_address,
                     value,
                 });
             } else {
-                panic!("Unknown memory mapping {:X}.", effective_address);
+                panic!("Unknown memory mapping {:X}.", word_address);
             }
         } else {
             let mut value_bytes = [0u8; 8];
             for i in 0..bytes {
-                value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
+                value_bytes[i as usize] = self.memory.read_byte(word_address + i);
             }
             let value = u64::from_le_bytes(value_bytes);
             self.tracer.push_memory(MemoryState::Read {
-                address: effective_address,
+                address: word_address,
                 value,
             });
         }

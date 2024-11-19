@@ -382,7 +382,8 @@ mod test {
                 advice_value: None,
             };
 
-            let _ = VirtualSHInstruction::<32>::virtual_trace(sh_trace_row);
+            let trace = VirtualSHInstruction::<32>::virtual_trace(sh_trace_row);
+            assert_eq!(trace.len(), VirtualSHInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }

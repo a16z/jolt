@@ -26,6 +26,8 @@ use crate::{
         instruction::{
             div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
             mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
+            virtual_lb::VirtualLBInstruction, virtual_lbu::VirtualLBUInstruction,
+            virtual_lh::VirtualLHInstruction, virtual_lhu::VirtualLHUInstruction,
             virtual_sb::VirtualSBInstruction, virtual_sh::VirtualSHInstruction,
             VirtualInstructionSequence,
         },
@@ -199,6 +201,10 @@ impl Program {
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
                 tracer::RV32IM::SH => VirtualSHInstruction::<32>::virtual_trace(row),
                 tracer::RV32IM::SB => VirtualSBInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LBU => VirtualLBUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LHU => VirtualLHUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LB => VirtualLBInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LH => VirtualLHInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {

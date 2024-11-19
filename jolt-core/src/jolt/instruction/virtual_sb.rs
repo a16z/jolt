@@ -13,7 +13,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSBInstruction
     const SEQUENCE_LENGTH: usize = 11;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        // println!("Before: {:?}", trace_row);
         assert_eq!(trace_row.instruction.opcode, RV32IM::SB);
         // SB source registers
         let r_dest = trace_row.instruction.rs1;
@@ -389,7 +388,8 @@ mod test {
                 advice_value: None,
             };
 
-            let _ = VirtualSBInstruction::<32>::virtual_trace(sb_trace_row);
+            let trace = VirtualSBInstruction::<32>::virtual_trace(sb_trace_row);
+            assert_eq!(trace.len(), VirtualSBInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }

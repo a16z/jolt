@@ -74,6 +74,7 @@ macro_rules! jolt_virtual_sequence_test {
         };
 
         let virtual_sequence = <$instr_type>::virtual_trace(trace_row);
+        assert_eq!(virtual_sequence.len(), <$instr_type>::SEQUENCE_LENGTH);
 
         for row in virtual_sequence {
             if let Some(rs1_val) = row.register_state.rs1_val {
