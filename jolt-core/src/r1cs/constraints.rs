@@ -1,4 +1,4 @@
-use common::{constants::RAM_OPS_PER_INSTRUCTION, rv_trace::CircuitFlags};
+use common::{constants::REGISTER_COUNT, rv_trace::CircuitFlags};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -93,24 +93,18 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         cs.constrain_eq_conditional(
             is_load_or_store,
             JoltR1CSInputs::RS1_Read + JoltR1CSInputs::Bytecode_Imm,
-            JoltR1CSInputs::RAM_A + memory_start,
+            4 * JoltR1CSInputs::RAM_Address + memory_start - 4 * REGISTER_COUNT as i64,
         );
 
-        for i in 0..RAM_OPS_PER_INSTRUCTION {
-            cs.constrain_eq_conditional(
-                JoltR1CSInputs::OpFlags(CircuitFlags::Load),
-                JoltR1CSInputs::RAM_Read(i),
-                JoltR1CSInputs::RAM_Write(i),
-            );
-        }
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load),
+            JoltR1CSInputs::RAM_Read,
+            JoltR1CSInputs::RAM_Write,
+        );
 
-        let ram_writes = (0..RAM_OPS_PER_INSTRUCTION)
-            .map(|i| Variable::Input(JoltR1CSInputs::RAM_Write(i).to_index::<C>()))
-            .collect();
-        let packed_load_store = R1CSBuilder::<C, F, JoltR1CSInputs>::pack_le(ram_writes, 8);
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Store),
-            packed_load_store.clone(),
+            JoltR1CSInputs::RAM_Write,
             JoltR1CSInputs::LookupOutput,
         );
 
@@ -145,7 +139,7 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Load),
             packed_query.clone(),
-            packed_load_store,
+            JoltR1CSInputs::RAM_Write,
         );
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Store),

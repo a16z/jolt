@@ -107,11 +107,12 @@ impl<F: JoltField> ExogenousOpenings<F> for ReadTimestampOpenings<F> {
     fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
         polys_or_commitments: &JoltStuff<T>,
     ) -> Vec<&T> {
-        polys_or_commitments
-            .read_write_memory
-            .t_read
-            .iter()
-            .collect()
+        vec![
+            &polys_or_commitments.read_write_memory.t_read_rd,
+            &polys_or_commitments.read_write_memory.t_read_rs1,
+            &polys_or_commitments.read_write_memory.t_read_rs2,
+            &polys_or_commitments.read_write_memory.t_read_ram,
+        ]
     }
 }
 
@@ -285,7 +286,12 @@ where
         gamma: &F,
         tau: &F,
     ) -> ((Vec<F>, usize), ()) {
-        let read_timestamps = &jolt_polynomials.read_write_memory.t_read;
+        let read_timestamps = [
+            &jolt_polynomials.read_write_memory.t_read_rd,
+            &jolt_polynomials.read_write_memory.t_read_rs1,
+            &jolt_polynomials.read_write_memory.t_read_rs2,
+            &jolt_polynomials.read_write_memory.t_read_ram,
+        ];
 
         let M = read_timestamps[0].len();
 
@@ -770,7 +776,7 @@ where
                 .timestamp_range_check
                 .read_write_values()
                 .into_iter()
-                .chain(commitments.read_write_memory.t_read.iter())
+                .chain(ReadTimestampOpenings::<F>::exogenous_data(commitments))
                 .collect::<Vec<_>>(),
             r_opening.to_vec(),
             &self

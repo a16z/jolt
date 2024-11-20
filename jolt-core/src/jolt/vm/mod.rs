@@ -8,7 +8,6 @@ use crate::poly::opening_proof::{
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::RAM_START_ADDRESS;
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -95,10 +94,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
                 MemoryOp::noop_read(),  // rs1
                 MemoryOp::noop_read(),  // rs2
                 MemoryOp::noop_write(), // rd is write-only
-                MemoryOp::noop_read(),  // RAM byte 1
-                MemoryOp::noop_read(),  // RAM byte 2
-                MemoryOp::noop_read(),  // RAM byte 3
-                MemoryOp::noop_read(),  // RAM byte 4
+                MemoryOp::noop_read(),  // RAM
             ],
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
@@ -401,10 +397,8 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        let load_store_flags = &instruction_polynomials.instruction_flags[5..10];
         let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
-            load_store_flags,
             &preprocessing.read_write_memory,
             &trace,
         );
@@ -425,7 +419,7 @@ where
 
         let r1cs_builder = Self::Constraints::construct_constraints(
             padded_trace_length,
-            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
+            program_io.memory_layout.input_start,
         );
         let spartan_key = spartan::UniformSpartanProof::<
             C,
@@ -568,7 +562,7 @@ where
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
-        let memory_start = RAM_START_ADDRESS - preprocessing.memory_layout.ram_witness_offset;
+        let memory_start = preprocessing.memory_layout.input_start;
         let r1cs_builder =
             Self::Constraints::construct_constraints(padded_trace_length, memory_start);
         let spartan_key = spartan::UniformSpartanProof::<C, _, F, ProofTranscript>::setup(

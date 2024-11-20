@@ -21,7 +21,6 @@ use super::spartan::{SpartanError, UniformSpartanProof};
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::RAM_OPS_PER_INSTRUCTION;
 use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -296,14 +295,13 @@ pub enum JoltR1CSInputs {
     Bytecode_RD,
     Bytecode_Imm,
 
-    RAM_A,
-    // Ram_V
+    RAM_Address,
     RS1_Read,
     RS2_Read,
     RD_Read,
-    RAM_Read(usize),
+    RAM_Read,
     RD_Write,
-    RAM_Write(usize),
+    RAM_Write,
 
     ChunksQuery(usize),
     LookupOutput,
@@ -334,8 +332,6 @@ impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
-                Self::RAM_Read(_) => (0..RAM_OPS_PER_INSTRUCTION).map(Self::RAM_Read).collect(),
-                Self::RAM_Write(_) => (0..RAM_OPS_PER_INSTRUCTION).map(Self::RAM_Write).collect(),
                 Self::ChunksQuery(_) => (0..C).map(Self::ChunksQuery).collect(),
                 Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
                 Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
@@ -367,13 +363,13 @@ impl ConstraintInput for JoltR1CSInputs {
             JoltR1CSInputs::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
             JoltR1CSInputs::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
             JoltR1CSInputs::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
-            JoltR1CSInputs::RAM_A => &jolt.read_write_memory.a_ram,
-            JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read[0],
-            JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read[1],
-            JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read[2],
-            JoltR1CSInputs::RAM_Read(i) => &jolt.read_write_memory.v_read[3 + i],
+            JoltR1CSInputs::RAM_Address => &jolt.read_write_memory.a_ram,
+            JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read_rs1,
+            JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read_rs2,
+            JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read_rd,
+            JoltR1CSInputs::RAM_Read => &jolt.read_write_memory.v_read_ram,
             JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
-            JoltR1CSInputs::RAM_Write(i) => &jolt.read_write_memory.v_write_ram[*i],
+            JoltR1CSInputs::RAM_Write => &jolt.read_write_memory.v_write_ram,
             JoltR1CSInputs::ChunksQuery(i) => &jolt.instruction_lookups.dim[*i],
             JoltR1CSInputs::LookupOutput => &jolt.instruction_lookups.lookup_outputs,
             JoltR1CSInputs::ChunksX(i) => &jolt.r1cs.chunks_x[*i],

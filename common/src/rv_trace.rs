@@ -56,7 +56,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             )
         };
 
-        let ram_byte_written = |index: usize| match val.memory_state {
+        let ram_write_value = || match val.memory_state {
             Some(MemoryState::Read {
                 address: _,
                 value: _,
@@ -65,7 +65,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 address: _,
                 pre_value: _,
                 post_value,
-            }) => (post_value >> (index * 8)) as u8,
+            }) => post_value,
             None => panic!("Memory state not found"),
         };
 
@@ -87,22 +87,11 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
 
         // Validation: Number of ops should be a multiple of 7
         match instruction_type {
-            RV32InstructionFormat::R => [
-                rs1_read(),
-                rs2_read(),
-                rd_write(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-            ],
+            RV32InstructionFormat::R => [rs1_read(), rs2_read(), rd_write(), MemoryOp::noop_read()],
             RV32InstructionFormat::U => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
             ],
             RV32InstructionFormat::I => match val.instruction.opcode {
@@ -110,10 +99,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT => [
                     rs1_read(),
                     MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
+                    MemoryOp::noop_write(),
                     MemoryOp::noop_read(),
                 ],
                 RV32IM::ADDI
@@ -132,94 +118,40 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     MemoryOp::noop_read(),
                     rd_write(),
                     MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::LB | RV32IM::LBU => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::Read(rs1_offset()),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::LH | RV32IM::LHU => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::Read(rs1_offset()),
-                    MemoryOp::Read(rs1_offset() + 1),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
                 ],
                 RV32IM::LW => [
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
                     MemoryOp::Read(rs1_offset()),
-                    MemoryOp::Read(rs1_offset() + 1),
-                    MemoryOp::Read(rs1_offset() + 2),
-                    MemoryOp::Read(rs1_offset() + 3),
                 ],
                 RV32IM::FENCE => [
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_write(),
                     MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
                 ],
                 _ => unreachable!("{val:?}"),
             },
             RV32InstructionFormat::S => match val.instruction.opcode {
-                RV32IM::SB => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::SH => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
                 RV32IM::SW => [
                     rs1_read(),
                     rs2_read(),
                     MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
-                    MemoryOp::Write(rs1_offset() + 2, ram_byte_written(2) as u64),
-                    MemoryOp::Write(rs1_offset() + 3, ram_byte_written(3) as u64),
+                    MemoryOp::Write(rs1_offset(), ram_write_value()),
                 ],
-                _ => unreachable!(),
+                _ => unreachable!("{val:?}"),
             },
             RV32InstructionFormat::UJ => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
                 MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
             ],
             RV32InstructionFormat::SB => [
                 rs1_read(),
                 rs2_read(),
                 MemoryOp::noop_write(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
             ],
         }
@@ -757,7 +689,6 @@ impl JoltDevice {
     Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
-    pub ram_witness_offset: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
     pub input_start: u64,
@@ -769,46 +700,37 @@ pub struct MemoryLayout {
 }
 
 impl MemoryLayout {
-    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
-        Self {
-            ram_witness_offset: ram_witness_offset(max_input_size, max_output_size),
+    pub fn new(mut max_input_size: u64, mut max_output_size: u64) -> Self {
+        // Must be word-aligned
+        max_input_size = max_input_size.next_multiple_of(4);
+        max_output_size = max_output_size.next_multiple_of(4);
+
+        // Adds 8 to account for panic bit and termination bit
+        // (they each occupy one full 4-byte word)
+        let io_region_num_bytes = max_input_size + max_output_size + 8;
+
+        // Padded so that the witness index corresponding to `RAM_START_ADDRESS`
+        // is a power of 2
+        let io_region_num_words =
+            (REGISTER_COUNT + io_region_num_bytes / 4).next_power_of_two() - REGISTER_COUNT;
+        let input_start = RAM_START_ADDRESS - io_region_num_words * 4;
+        let input_end = input_start + max_input_size;
+        let output_start = input_end;
+        let output_end = output_start + max_output_size;
+        let panic = output_end;
+        let termination = panic + 4;
+
+        let layout = Self {
             max_input_size,
             max_output_size,
-            input_start: input_start(max_input_size, max_output_size),
-            input_end: input_end(max_input_size, max_output_size),
-            output_start: output_start(max_input_size, max_output_size),
-            output_end: output_end(max_input_size, max_output_size),
-            panic: panic_address(max_input_size, max_output_size),
-            termination: termination_address(max_input_size, max_output_size),
-        }
+            input_start,
+            input_end,
+            output_start,
+            output_end,
+            panic,
+            termination,
+        };
+
+        layout
     }
-}
-
-pub fn ram_witness_offset(max_input: u64, max_output: u64) -> u64 {
-    // Adds 2 to account for panic bit and termination bit
-    (REGISTER_COUNT + max_input + max_output + 2).next_power_of_two()
-}
-
-fn input_start(max_input: u64, max_output: u64) -> u64 {
-    RAM_START_ADDRESS - ram_witness_offset(max_input, max_output) + REGISTER_COUNT
-}
-
-fn input_end(max_input: u64, max_output: u64) -> u64 {
-    input_start(max_input, max_output) + max_input
-}
-
-fn output_start(max_input: u64, max_output: u64) -> u64 {
-    input_end(max_input, max_output) + 1
-}
-
-fn output_end(max_input: u64, max_output: u64) -> u64 {
-    output_start(max_input, max_output) + max_output
-}
-
-fn panic_address(max_input: u64, max_output: u64) -> u64 {
-    output_end(max_input, max_output) + 1
-}
-
-fn termination_address(max_input: u64, max_output: u64) -> u64 {
-    panic_address(max_input, max_output) + 1
 }
