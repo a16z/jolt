@@ -36,6 +36,7 @@ pub mod eq_abs;
 pub mod identity;
 pub mod left_is_zero;
 pub mod left_msb;
+pub mod low_bit;
 pub mod lt_abs;
 pub mod ltu;
 pub mod or;

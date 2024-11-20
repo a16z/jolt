@@ -1,8 +1,10 @@
 use crate::field::JoltField;
+use crate::jolt::instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
+use crate::jolt::subtable::low_bit::LowBitSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
@@ -19,9 +21,8 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use super::{Jolt, JoltCommitments, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    mul::MULInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction,
-    sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction, slt::SLTInstruction,
+    bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+    mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
     sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
     sw::SWInstruction, virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
     virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
@@ -111,10 +112,6 @@ instruction_set!(
   AND: ANDInstruction<WORD_SIZE>,
   OR: ORInstruction<WORD_SIZE>,
   XOR: XORInstruction<WORD_SIZE>,
-  LB: LBInstruction<WORD_SIZE>,
-  LH: LHInstruction<WORD_SIZE>,
-  SB: SBInstruction<WORD_SIZE>,
-  SH: SHInstruction<WORD_SIZE>,
   SW: SWInstruction<WORD_SIZE>,
   BEQ: BEQInstruction<WORD_SIZE>,
   BGE: BGEInstruction<WORD_SIZE>,
@@ -134,7 +131,9 @@ instruction_set!(
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>
+  VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertAlignedMemoryAccessInstruction<WORD_SIZE, 2>,
+  VIRTUAL_ASSERT_WORD_ALIGNMENT: AssertAlignedMemoryAccessInstruction<WORD_SIZE, 4>
 );
 subtable_enum!(
   RV32ISubtables,
@@ -147,7 +146,6 @@ subtable_enum!(
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
   OR: OrSubtable<F>,
-  SIGN_EXTEND_8: SignExtendSubtable<F, 8>,
   SIGN_EXTEND_16: SignExtendSubtable<F, 16>,
   SLL0: SllSubtable<F, 0, WORD_SIZE>,
   SLL1: SllSubtable<F, 1, WORD_SIZE>,
@@ -159,11 +157,12 @@ subtable_enum!(
   SRL2: SrlSubtable<F, 2, WORD_SIZE>,
   SRL3: SrlSubtable<F, 3, WORD_SIZE>,
   TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
-  TRUNCATE_BYTE: TruncateOverflowSubtable<F, 8>,
   XOR: XorSubtable<F>,
   LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
   RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
-  DIV_BY_ZERO: DivByZeroSubtable<F>
+  DIV_BY_ZERO: DivByZeroSubtable<F>,
+  LSB: LowBitSubtable<F, 0>,
+  SECOND_LEAST_SIGNIFICANT_BIT: LowBitSubtable<F, 1>
 );
 
 // ==================== JOLT ====================
