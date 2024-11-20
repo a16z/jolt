@@ -95,7 +95,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
                 } else {
                     let remainder_sign = remainder >> 31;
                     let divisor_sign = divisor >> 31;
-                    (remainder.abs() < divisor.abs() && remainder_sign == divisor_sign).into()
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
                 }
             }
             64 => {
@@ -109,7 +111,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
                 } else {
                     let remainder_sign = remainder >> 63;
                     let divisor_sign = divisor >> 63;
-                    (remainder.abs() < divisor.abs() && remainder_sign == divisor_sign).into()
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
                 }
             }
             _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
@@ -161,6 +165,7 @@ mod test {
 
         // Edge cases
         let u32_max: u64 = u32::MAX as u64;
+        let i32_min: u64 = i32::MIN as u32 as u64;
         let instructions = vec![
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(100, 0),
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(0, 100),
@@ -170,6 +175,8 @@ mod test {
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(u32_max, u32_max),
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(u32_max, 1 << 8),
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(1 << 8, u32_max),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(4294967295, 3909118204),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(i32_min, i32_min),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
@@ -199,6 +206,7 @@ mod test {
 
         // Edge cases
         let u64_max: u64 = u64::MAX;
+        let i64_min: u64 = i64::MIN as u64;
         let instructions = vec![
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(100, 0),
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(0, 100),
@@ -210,6 +218,7 @@ mod test {
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(1 << 8, u64_max),
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, 1 << 40),
             AssertValidSignedRemainderInstruction::<WORD_SIZE>(u64_max, u64_max - 1),
+            AssertValidSignedRemainderInstruction::<WORD_SIZE>(i64_min, i64_min),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
