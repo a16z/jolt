@@ -206,10 +206,14 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
     }
 
     fn sequence_output(x: u64, y: u64) -> u64 {
-        match WORD_SIZE {
-            32 => (x as u32 % y as u32) as u64,
-            64 => x % y,
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+        if y == 0 {
+            x
+        } else {
+            match WORD_SIZE {
+                32 => (x as u32 % y as u32) as u64,
+                64 => x % y,
+                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            }
         }
     }
 }
