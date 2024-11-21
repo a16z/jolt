@@ -15,9 +15,8 @@ use crate::lasso::memory_checking::{
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
-use common::to_ram_address;
 
 use rayon::prelude::*;
 
@@ -144,18 +143,6 @@ impl BytecodeRow {
         }
     }
 
-    pub fn random(index: usize, rng: &mut StdRng) -> Self {
-        Self {
-            address: to_ram_address(index),
-            bitflags: rng.next_u32() as u64, // Roughly how many flags there are
-            rd: rng.next_u64() % REGISTER_COUNT,
-            rs1: rng.next_u64() % REGISTER_COUNT,
-            rs2: rng.next_u64() % REGISTER_COUNT,
-            imm: (rng.next_u64() % (1 << 20)) as i64, // U-format instructions have 20-bit imm values
-            virtual_sequence_remaining: None,
-        }
-    }
-
     /// Packs the instruction's circuit flags and instruction flags into a single u64 bitvector.
     /// The layout is:
     ///     circuit flags || instruction flags
@@ -193,13 +180,7 @@ impl BytecodeRow {
         // whereas all other instructions operate on the raw bits
         // of `imm` (via lookup queries).
         let imm = match instruction.opcode {
-            RV32IM::LB
-            | RV32IM::LH
-            | RV32IM::LW
-            | RV32IM::LBU
-            | RV32IM::LHU
-            | RV32IM::SB
-            | RV32IM::SH
+            RV32IM::LW
             | RV32IM::SW
             | RV32IM::BEQ
             | RV32IM::BNE
@@ -750,6 +731,10 @@ mod tests {
             bytecode_row,
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
+    }
+
+    fn to_ram_address(index: usize) -> usize {
+        index * BYTES_PER_INSTRUCTION + RAM_START_ADDRESS as usize
     }
 
     #[test]

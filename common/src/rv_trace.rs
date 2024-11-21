@@ -186,9 +186,9 @@ pub enum CircuitFlags {
     LeftOperandIsPC,
     /// 1 if the second lookup operand is `imm`; 0 otherwise (second lookup operand is RS2 value).
     RightOperandIsImm,
-    /// 1 if the instruction is a load (i.e. `LB`, `LH`, etc.)
+    /// 1 if the instruction is a load (i.e. `LW`)
     Load,
-    /// 1 if the instruction is a store (i.e. `SB`, `SH`, etc.)
+    /// 1 if the instruction is a store (i.e. `SW`)
     Store,
     /// 1 if the instruction is a jump (i.e. `JAL`, `JALR`)
     Jump,
@@ -235,12 +235,12 @@ impl ELFInstruction {
 
         flags[CircuitFlags::Load as usize] = matches!(
             self.opcode,
-            RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU,
+            RV32IM::LW,
         );
 
         flags[CircuitFlags::Store as usize] = matches!(
             self.opcode,
-            RV32IM::SB | RV32IM::SH | RV32IM::SW,
+            RV32IM::SW,
         );
 
         flags[CircuitFlags::Jump as usize] = matches!(
@@ -253,12 +253,11 @@ impl ELFInstruction {
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
-        // loads, stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
+        // Stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = !matches!(
             self.opcode,
-            RV32IM::SB
-            | RV32IM::SH
-            | RV32IM::SW
+            RV32IM::SW
+            | RV32IM::LW
             | RV32IM::BEQ
             | RV32IM::BNE
             | RV32IM::BLT

@@ -261,7 +261,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                 MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
             })
             .max()
-            .unwrap_or(0);
+            .unwrap();
 
         let memory_size = max_trace_address.next_power_of_two() as usize;
         let mut v_init: Vec<u64> = vec![0; memory_size];

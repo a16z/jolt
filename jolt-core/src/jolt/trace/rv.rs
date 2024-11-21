@@ -13,7 +13,6 @@ use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
-use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction;
 use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
@@ -63,9 +62,6 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::JAL   => Ok(ADDInstruction::default().into()),
             RV32IM::JALR  => Ok(ADDInstruction::default().into()),
             RV32IM::AUIPC => Ok(ADDInstruction::default().into()),
-
-            RV32IM::SW => Ok(SWInstruction::default().into()),
-            RV32IM::LW => Ok(SWInstruction::default().into()),
 
             RV32IM::MUL => Ok(MULInstruction::default().into()),
             RV32IM::MULU => Ok(MULUInstruction::default().into()),
@@ -124,9 +120,6 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address, row.imm_u32() as u64).into()),
             RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address, row.imm_u32() as u64).into()),
-
-            RV32IM::SW => Ok(SWInstruction(row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::LW => Ok(SWInstruction(load_value(row)).into()),
 
             RV32IM::MUL => Ok(MULInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),

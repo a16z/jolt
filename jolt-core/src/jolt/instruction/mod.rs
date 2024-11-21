@@ -169,7 +169,6 @@ pub mod sltu;
 pub mod sra;
 pub mod srl;
 pub mod sub;
-pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_assert_aligned_memory_access;
 pub mod virtual_assert_lte;
