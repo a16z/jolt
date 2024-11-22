@@ -46,12 +46,12 @@ use self::read_write_memory::{
     ReadWriteMemoryStuff,
 };
 
-use super::instruction::virtual_lb::VirtualLBInstruction;
-use super::instruction::virtual_lbu::VirtualLBUInstruction;
-use super::instruction::virtual_lh::VirtualLHInstruction;
-use super::instruction::virtual_lhu::VirtualLHUInstruction;
-use super::instruction::virtual_sb::VirtualSBInstruction;
-use super::instruction::virtual_sh::VirtualSHInstruction;
+use super::instruction::lb::LBInstruction;
+use super::instruction::lbu::LBUInstruction;
+use super::instruction::lh::LHInstruction;
+use super::instruction::lhu::LHUInstruction;
+use super::instruction::sb::SBInstruction;
+use super::instruction::sh::SHInstruction;
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
@@ -323,12 +323,12 @@ where
                 tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::SH => VirtualSHInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::SB => VirtualSBInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LBU => VirtualLBUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LHU => VirtualLHUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LB => VirtualLBInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LH => VirtualLHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
                 _ => vec![instruction],
             })
             .map(|instruction| BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction))

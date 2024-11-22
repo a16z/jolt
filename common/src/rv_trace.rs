@@ -356,26 +356,11 @@ pub enum MemoryState {
 
 impl RVTraceRow {
     pub fn imm_u64(&self) -> u64 {
-        match self.instruction.opcode.instruction_type() {
-            RV32InstructionFormat::R => unimplemented!("R type does not use imm u64"),
-            RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64,
-            RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64,
-            RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
-            RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64,
-            _ => unimplemented!(),
-        }
+        self.instruction.imm.unwrap() as u64
     }
 
     pub fn imm_u32(&self) -> u32 {
         self.instruction.imm.unwrap() as u64 as u32
-        // match self.instruction.opcode.instruction_type() {
-        //     RV32InstructionFormat::R => unimplemented!("R type does not use imm u32"),
-        //     RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64 as u32,
-        //     RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64 as u32,
-        //     RV32InstructionFormat::S => unimplemented!("S type does not use imm u32"),
-        //     RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64 as u32,
-        //     _ => unimplemented!(),
-        // }
     }
 }
 

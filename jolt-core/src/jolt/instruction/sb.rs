@@ -7,9 +7,9 @@ use crate::jolt::instruction::{
     JoltInstruction,
 };
 /// Stores a byte in memory
-pub struct VirtualSBInstruction<const WORD_SIZE: usize>;
+pub struct SBInstruction<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSBInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_SIZE> {
     const SEQUENCE_LENGTH: usize = 11;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
@@ -388,8 +388,8 @@ mod test {
                 advice_value: None,
             };
 
-            let trace = VirtualSBInstruction::<32>::virtual_trace(sb_trace_row);
-            assert_eq!(trace.len(), VirtualSBInstruction::<32>::SEQUENCE_LENGTH);
+            let trace = SBInstruction::<32>::virtual_trace(sb_trace_row);
+            assert_eq!(trace.len(), SBInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }

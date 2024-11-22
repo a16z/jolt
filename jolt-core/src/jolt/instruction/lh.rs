@@ -8,9 +8,9 @@ use crate::jolt::instruction::{
     xor::XORInstruction, JoltInstruction,
 };
 /// Loads a halfword from memory and sign-extends it
-pub struct VirtualLHInstruction<const WORD_SIZE: usize>;
+pub struct LHInstruction<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualLHInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHInstruction<WORD_SIZE> {
     const SEQUENCE_LENGTH: usize = 8;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
@@ -304,8 +304,8 @@ mod test {
                 advice_value: None,
             };
 
-            let trace = VirtualLHInstruction::<32>::virtual_trace(lh_trace_row);
-            assert_eq!(trace.len(), VirtualLHInstruction::<32>::SEQUENCE_LENGTH);
+            let trace = LHInstruction::<32>::virtual_trace(lh_trace_row);
+            assert_eq!(trace.len(), LHInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }

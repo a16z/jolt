@@ -7,9 +7,9 @@ use crate::jolt::instruction::{
     JoltInstruction,
 };
 /// Stores a halfword in memory
-pub struct VirtualSHInstruction<const WORD_SIZE: usize>;
+pub struct SHInstruction<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualSHInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_SIZE> {
     const SEQUENCE_LENGTH: usize = 11;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
@@ -382,8 +382,8 @@ mod test {
                 advice_value: None,
             };
 
-            let trace = VirtualSHInstruction::<32>::virtual_trace(sh_trace_row);
-            assert_eq!(trace.len(), VirtualSHInstruction::<32>::SEQUENCE_LENGTH);
+            let trace = SHInstruction::<32>::virtual_trace(sh_trace_row);
+            assert_eq!(trace.len(), SHInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }
