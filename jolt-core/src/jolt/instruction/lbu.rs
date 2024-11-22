@@ -3,19 +3,19 @@ use tracer::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction, sra::SRAInstruction,
+    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction, srl::SRLInstruction,
     xor::XORInstruction, JoltInstruction,
 };
-/// Loads a byte from memory and sign-extends it
-pub struct LBInstruction<const WORD_SIZE: usize>;
+/// Loads a byte from memory and zero-extends it
+pub struct LBUInstruction<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBUInstruction<WORD_SIZE> {
     const SEQUENCE_LENGTH: usize = 7;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        assert_eq!(trace_row.instruction.opcode, RV32IM::LB);
+        assert_eq!(trace_row.instruction.opcode, RV32IM::LBU);
         let expected_rd_post_val = trace_row.register_state.rd_post_val.unwrap();
-        // LB source registers
+        // LBU source registers
         let rs1 = trace_row.instruction.rs1;
         let rd = trace_row.instruction.rd;
         // Virtual registers used in sequence
@@ -23,7 +23,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
         let v_word_address = Some(virtual_register_index(1));
         let v_word = Some(virtual_register_index(2));
         let v_shift = Some(virtual_register_index(3));
-        // LB operands
+        // LBU operands
         let rs1_val = trace_row.register_state.rs1_val.unwrap();
         let offset = trace_row.instruction.imm.unwrap();
 
@@ -175,12 +175,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             advice_value: None,
         });
 
-        let sign_extended_byte = SRAInstruction::<WORD_SIZE>(left_aligned_byte, 24).lookup_entry();
-        assert_eq!(sign_extended_byte, expected_rd_post_val);
+        let zero_extended_byte = SRLInstruction::<WORD_SIZE>(left_aligned_byte, 24).lookup_entry();
+        assert_eq!(zero_extended_byte, expected_rd_post_val);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::SRAI,
+                opcode: RV32IM::SRLI,
                 rs1: rd,
                 rs2: None,
                 rd,
@@ -190,7 +190,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             register_state: RegisterState {
                 rs1_val: Some(left_aligned_byte),
                 rs2_val: None,
-                rd_post_val: Some(sign_extended_byte),
+                rd_post_val: Some(zero_extended_byte),
             },
             memory_state: None,
             advice_value: None,
@@ -232,7 +232,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn lb_virtual_sequence_32() {
+    fn lbu_virtual_sequence_32() {
         let mut rng = test_rng();
         for _ in 0..256 {
             let rs1 = rng.next_u64() % 32;
@@ -257,12 +257,12 @@ mod test {
                 2 => (word & 0x00ff0000) >> 16,
                 3 => (word & 0xff000000) >> 24,
                 _ => unreachable!(),
-            } as u8 as i8 as i32 as u32 as u64; // sign-extend
+            };
 
-            let lb_trace_row = RVTraceRow {
+            let lbu_trace_row = RVTraceRow {
                 instruction: ELFInstruction {
                     address: rng.next_u64(),
-                    opcode: RV32IM::LB,
+                    opcode: RV32IM::LBU,
                     rs1: Some(rs1),
                     rs2: None,
                     rd: Some(rd),
@@ -281,8 +281,8 @@ mod test {
                 advice_value: None,
             };
 
-            let trace = LBInstruction::<32>::virtual_trace(lb_trace_row);
-            assert_eq!(trace.len(), LBInstruction::<32>::SEQUENCE_LENGTH);
+            let trace = LBUInstruction::<32>::virtual_trace(lbu_trace_row);
+            assert_eq!(trace.len(), LBUInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }

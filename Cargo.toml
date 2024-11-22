@@ -48,8 +48,8 @@ members = [
     "examples/muldiv/guest",
     "examples/overflow",
     "examples/overflow/guest",
-
-
+    "examples/memory-ops",
+    "examples/memory-ops/guest",
 ]
 
 [features]

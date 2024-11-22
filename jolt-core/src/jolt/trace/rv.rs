@@ -3,22 +3,18 @@ use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
-use crate::jolt::instruction::lb::LBInstruction;
-use crate::jolt::instruction::lh::LHInstruction;
 use crate::jolt::instruction::mul::MULInstruction;
 use crate::jolt::instruction::mulhu::MULHUInstruction;
 use crate::jolt::instruction::mulu::MULUInstruction;
 use crate::jolt::instruction::or::ORInstruction;
-use crate::jolt::instruction::sb::SBInstruction;
-use crate::jolt::instruction::sh::SHInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::slt::SLTInstruction;
 use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
-use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
+use crate::jolt::instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction;
 use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction;
@@ -27,7 +23,7 @@ use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, virtual_movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
-use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RV32IM};
+use common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
 
 impl TryFrom<&ELFInstruction> for RV32I {
     type Error = &'static str;
@@ -67,16 +63,6 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::JALR  => Ok(ADDInstruction::default().into()),
             RV32IM::AUIPC => Ok(ADDInstruction::default().into()),
 
-            RV32IM::SB => Ok(SBInstruction::default().into()),
-            RV32IM::SH => Ok(SHInstruction::default().into()),
-            RV32IM::SW => Ok(SWInstruction::default().into()),
-
-            RV32IM::LB => Ok(LBInstruction::default().into()),
-            RV32IM::LH => Ok(LHInstruction::default().into()),
-            RV32IM::LW => Ok(SWInstruction::default().into()),
-            RV32IM::LBU => Ok(SBInstruction::default().into()),
-            RV32IM::LHU => Ok(SHInstruction::default().into()),
-
             RV32IM::MUL => Ok(MULInstruction::default().into()),
             RV32IM::MULU => Ok(MULUInstruction::default().into()),
             RV32IM::MULHU => Ok(MULHUInstruction::default().into()),
@@ -89,6 +75,10 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>::default().into()),
+
+            RV32IM::LW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>::default().into()),
+            RV32IM::SW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>::default().into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
@@ -112,15 +102,15 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::SLT  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::SLTU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
-            RV32IM::ADDI  => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::XORI  => Ok(XORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::ORI   => Ok(ORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::ANDI  => Ok(ANDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::SLLI  => Ok(SLLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::SRLI  => Ok(SRLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::SRAI  => Ok(SRAInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::SLTI  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::SLTIU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
+            RV32IM::ADDI  => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::XORI  => Ok(XORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::ORI   => Ok(ORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::ANDI  => Ok(ANDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::SLLI  => Ok(SLLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::SRLI  => Ok(SRLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::SRAI  => Ok(SRAInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::SLTI  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::SLTIU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
 
             RV32IM::BEQ  => Ok(BEQInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::BNE  => Ok(BNEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
@@ -129,19 +119,9 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::BGE  => Ok(BGEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::BGEU => Ok(BGEUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
-            RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address, row.imm_u64()).into()),
-            RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address, row.imm_u64()).into()),
-
-            RV32IM::SB => Ok(SBInstruction(row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SH => Ok(SHInstruction(row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SW => Ok(SWInstruction(row.register_state.rs2_val.unwrap()).into()),
-
-            RV32IM::LB => Ok(LBInstruction(load_value(row)).into()),
-            RV32IM::LH => Ok(LHInstruction(load_value(row)).into()),
-            RV32IM::LW => Ok(SWInstruction(load_value(row)).into()),
-            RV32IM::LBU => Ok(SBInstruction(load_value(row)).into()),
-            RV32IM::LHU => Ok(SHInstruction(load_value(row)).into()),
+            RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address, row.imm_u32() as u64).into()),
+            RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address, row.imm_u32() as u64).into()),
 
             RV32IM::MUL => Ok(MULInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
@@ -155,15 +135,12 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+
+            RV32IM::LW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::SW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
-    }
-}
-
-fn load_value(row: &RVTraceRow) -> u64 {
-    match row.memory_state.as_ref().unwrap() {
-        MemoryState::Read { address: _, value } => *value,
-        _ => panic!("Unexpected Write"),
     }
 }

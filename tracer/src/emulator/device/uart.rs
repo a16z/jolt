@@ -152,16 +152,15 @@ impl Uart {
         //println!("UART Store AD:{:X} VAL:{:X}", address, value);
         match address {
             // Transfer Holding Register
-            0x10000000 => match (self.lcr >> 7) == 0 {
-                true => {
+            0x10000000 => {
+                if (self.lcr >> 7) == 0 {
                     self.thr = value;
                     self.lsr &= !LSR_THR_EMPTY;
                     self.update_iir();
-                }
-                false => {} // @TODO: Implement properly
-            },
-            0x10000001 => match (self.lcr >> 7) == 0 {
-                true => {
+                } // @TODO: Implement else properly
+            }
+            0x10000001 => {
+                if (self.lcr >> 7) == 0 {
                     // This bahavior isn't written in the data sheet
                     // but some drivers seem to rely on it.
                     if (self.ier & IER_THREINT_BIT) == 0
@@ -172,9 +171,8 @@ impl Uart {
                     }
                     self.ier = value;
                     self.update_iir();
-                }
-                false => {} // @TODO: Implement properly
-            },
+                } // @TODO: Implement else properly
+            }
             0x10000003 => {
                 self.lcr = value;
             }

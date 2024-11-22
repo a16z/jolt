@@ -56,15 +56,16 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             )
         };
 
-        let ram_byte_written = |index: usize| match val.memory_state {
+        let ram_write_value = || match val.memory_state {
             Some(MemoryState::Read {
                 address: _,
                 value: _,
             }) => panic!("Unexpected MemoryState::Read"),
             Some(MemoryState::Write {
                 address: _,
+                pre_value: _,
                 post_value,
-            }) => (post_value >> (index * 8)) as u8,
+            }) => post_value,
             None => panic!("Memory state not found"),
         };
 
@@ -86,25 +87,20 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
 
         // Validation: Number of ops should be a multiple of 7
         match instruction_type {
-            RV32InstructionFormat::R => [
-                rs1_read(),
-                rs2_read(),
-                rd_write(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-            ],
+            RV32InstructionFormat::R => [rs1_read(), rs2_read(), rd_write(), MemoryOp::noop_read()],
             RV32InstructionFormat::U => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
                 MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
             ],
             RV32InstructionFormat::I => match val.instruction.opcode {
+                RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => [
+                    rs1_read(),
+                    MemoryOp::noop_read(),
+                    MemoryOp::noop_write(),
+                    MemoryOp::noop_read(),
+                ],
                 RV32IM::ADDI
                 | RV32IM::SLLI
                 | RV32IM::SRLI
@@ -121,94 +117,40 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     MemoryOp::noop_read(),
                     rd_write(),
                     MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::LB | RV32IM::LBU => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::Read(rs1_offset()),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::LH | RV32IM::LHU => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::Read(rs1_offset()),
-                    MemoryOp::Read(rs1_offset() + 1),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
                 ],
                 RV32IM::LW => [
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
                     MemoryOp::Read(rs1_offset()),
-                    MemoryOp::Read(rs1_offset() + 1),
-                    MemoryOp::Read(rs1_offset() + 2),
-                    MemoryOp::Read(rs1_offset() + 3),
                 ],
                 RV32IM::FENCE => [
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_write(),
                     MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
                 ],
                 _ => unreachable!("{val:?}"),
             },
             RV32InstructionFormat::S => match val.instruction.opcode {
-                RV32IM::SB => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::SH => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
                 RV32IM::SW => [
                     rs1_read(),
                     rs2_read(),
                     MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
-                    MemoryOp::Write(rs1_offset() + 2, ram_byte_written(2) as u64),
-                    MemoryOp::Write(rs1_offset() + 3, ram_byte_written(3) as u64),
+                    MemoryOp::Write(rs1_offset(), ram_write_value()),
                 ],
-                _ => unreachable!(),
+                _ => unreachable!("{val:?}"),
             },
             RV32InstructionFormat::UJ => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
                 MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
             ],
             RV32InstructionFormat::SB => [
                 rs1_read(),
                 rs2_read(),
                 MemoryOp::noop_write(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
             ],
         }
@@ -222,7 +164,7 @@ pub struct ELFInstruction {
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
-    pub imm: Option<u32>,
+    pub imm: Option<i64>,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -243,9 +185,9 @@ pub enum CircuitFlags {
     LeftOperandIsPC,
     /// 1 if the second lookup operand is `imm`; 0 otherwise (second lookup operand is RS2 value).
     RightOperandIsImm,
-    /// 1 if the instruction is a load (i.e. `LB`, `LH`, etc.)
+    /// 1 if the instruction is a load (i.e. `LW`)
     Load,
-    /// 1 if the instruction is a store (i.e. `SB`, `SH`, etc.)
+    /// 1 if the instruction is a store (i.e. `SW`)
     Store,
     /// 1 if the instruction is a jump (i.e. `JAL`, `JALR`)
     Jump,
@@ -253,8 +195,6 @@ pub enum CircuitFlags {
     Branch,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
-    /// Used in load/store and branch instructions where the immediate value used as an offset
-    ImmSignBit,
     /// Indicates whether the instruction performs a concat-type lookup.
     ConcatLookupQueryChunks,
     /// 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
@@ -289,17 +229,20 @@ impl ELFInstruction {
             | RV32IM::SLTIU
             | RV32IM::AUIPC
             | RV32IM::JAL
-            | RV32IM::JALR,
+            | RV32IM::JALR
+            | RV32IM::SW
+            | RV32IM::LW
+            | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
         );
 
         flags[CircuitFlags::Load as usize] = matches!(
             self.opcode,
-            RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU,
+            RV32IM::LW,
         );
 
         flags[CircuitFlags::Store as usize] = matches!(
             self.opcode,
-            RV32IM::SB | RV32IM::SH | RV32IM::SW,
+            RV32IM::SW,
         );
 
         flags[CircuitFlags::Jump as usize] = matches!(
@@ -312,12 +255,11 @@ impl ELFInstruction {
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
-        // loads, stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
+        // Stores, branches, jumps, and asserts do not store the lookup output to rd (they may update rd in other ways)
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = !matches!(
             self.opcode,
-            RV32IM::SB
-            | RV32IM::SH
-            | RV32IM::SW
+            RV32IM::SW
+            | RV32IM::LW
             | RV32IM::BEQ
             | RV32IM::BNE
             | RV32IM::BLT
@@ -331,11 +273,9 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_LTE
             | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
             | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
-            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
+            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
         );
-
-        let mask = 1u32 << 31;
-        flags[CircuitFlags::ImmSignBit as usize] = matches!(self.imm, Some(imm) if imm & mask == mask);
 
         flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
             self.opcode,
@@ -373,9 +313,13 @@ impl ELFInstruction {
         flags[CircuitFlags::Assert as usize] = matches!(self.opcode,
             RV32IM::VIRTUAL_ASSERT_EQ                        |
             RV32IM::VIRTUAL_ASSERT_LTE                       |
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT        |
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
-            RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0                |
+            // SW and LW perform a `AssertAlignedMemoryAccessInstruction` lookup
+            RV32IM::SW                                       |
+            RV32IM::LW
         );
 
         // All instructions in virtual sequence are mapped from the same
@@ -399,22 +343,24 @@ pub struct RegisterState {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
-    Read { address: u64, value: u64 },
-    Write { address: u64, post_value: u64 },
+    Read {
+        address: u64,
+        value: u64,
+    },
+    Write {
+        address: u64,
+        pre_value: u64,
+        post_value: u64,
+    },
 }
 
 impl RVTraceRow {
     pub fn imm_u64(&self) -> u64 {
-        match self.instruction.opcode.instruction_type() {
-            RV32InstructionFormat::R => unimplemented!("R type does not use imm u64"),
-            RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64,
-            RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64,
-            RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
-            // UJ-type instructions point to address offsets: even numbers.
-            // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent.
-            RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64,
-            _ => unimplemented!(),
-        }
+        self.instruction.imm.unwrap() as u64
+    }
+
+    pub fn imm_u32(&self) -> u32 {
+        self.instruction.imm.unwrap() as u64 as u32
     }
 }
 
@@ -482,6 +428,7 @@ pub enum RV32IM {
     VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER,
     VIRTUAL_ASSERT_EQ,
     VIRTUAL_ASSERT_VALID_DIV0,
+    VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
 }
 
 impl FromStr for RV32IM {
@@ -589,7 +536,8 @@ impl RV32IM {
             RV32IM::FENCE        |
             RV32IM::SLTIU        |
             RV32IM::VIRTUAL_MOVE |
-            RV32IM::VIRTUAL_MOVSIGN=> RV32InstructionFormat::I,
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT |
+            RV32IM::VIRTUAL_MOVSIGN => RV32InstructionFormat::I,
 
             RV32IM::LB  |
             RV32IM::LH  |
@@ -627,6 +575,7 @@ impl RV32IM {
     }
 }
 
+#[allow(clippy::too_long_first_doc_paragraph)]
 /// Represented as a "peripheral device" in the RISC-V emulator, this captures
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
@@ -652,11 +601,26 @@ impl JoltDevice {
     }
 
     pub fn load(&self, address: u64) -> u8 {
-        let internal_address = self.convert_read_address(address);
-        if self.inputs.len() <= internal_address {
-            0
+        if self.is_panic(address) {
+            self.panic as u8
+        } else if self.is_termination(address) {
+            0 // Termination bit should never be loaded after it is set
+        } else if self.is_input(address) {
+            let internal_address = self.convert_read_address(address);
+            if self.inputs.len() <= internal_address {
+                0
+            } else {
+                self.inputs[internal_address]
+            }
+        } else if self.is_output(address) {
+            let internal_address = self.convert_write_address(address);
+            if self.outputs.len() <= internal_address {
+                0
+            } else {
+                self.outputs[internal_address]
+            }
         } else {
-            self.inputs[internal_address]
+            0 // zero-padding
         }
     }
 
@@ -712,7 +676,6 @@ impl JoltDevice {
     Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
-    pub ram_witness_offset: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
     pub input_start: u64,
@@ -724,46 +687,35 @@ pub struct MemoryLayout {
 }
 
 impl MemoryLayout {
-    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
+    pub fn new(mut max_input_size: u64, mut max_output_size: u64) -> Self {
+        // Must be word-aligned
+        max_input_size = max_input_size.next_multiple_of(4);
+        max_output_size = max_output_size.next_multiple_of(4);
+
+        // Adds 8 to account for panic bit and termination bit
+        // (they each occupy one full 4-byte word)
+        let io_region_num_bytes = max_input_size + max_output_size + 8;
+
+        // Padded so that the witness index corresponding to `RAM_START_ADDRESS`
+        // is a power of 2
+        let io_region_num_words =
+            (REGISTER_COUNT + io_region_num_bytes / 4).next_power_of_two() - REGISTER_COUNT;
+        let input_start = RAM_START_ADDRESS - io_region_num_words * 4;
+        let input_end = input_start + max_input_size;
+        let output_start = input_end;
+        let output_end = output_start + max_output_size;
+        let panic = output_end;
+        let termination = panic + 4;
+
         Self {
-            ram_witness_offset: ram_witness_offset(max_input_size, max_output_size),
             max_input_size,
             max_output_size,
-            input_start: input_start(max_input_size, max_output_size),
-            input_end: input_end(max_input_size, max_output_size),
-            output_start: output_start(max_input_size, max_output_size),
-            output_end: output_end(max_input_size, max_output_size),
-            panic: panic_address(max_input_size, max_output_size),
-            termination: termination_address(max_input_size, max_output_size),
+            input_start,
+            input_end,
+            output_start,
+            output_end,
+            panic,
+            termination,
         }
     }
-}
-
-pub fn ram_witness_offset(max_input: u64, max_output: u64) -> u64 {
-    // Adds 2 to account for panic bit and termination bit
-    (REGISTER_COUNT + max_input + max_output + 2).next_power_of_two()
-}
-
-fn input_start(max_input: u64, max_output: u64) -> u64 {
-    RAM_START_ADDRESS - ram_witness_offset(max_input, max_output) + REGISTER_COUNT
-}
-
-fn input_end(max_input: u64, max_output: u64) -> u64 {
-    input_start(max_input, max_output) + max_input
-}
-
-fn output_start(max_input: u64, max_output: u64) -> u64 {
-    input_end(max_input, max_output) + 1
-}
-
-fn output_end(max_input: u64, max_output: u64) -> u64 {
-    output_start(max_input, max_output) + max_output
-}
-
-fn panic_address(max_input: u64, max_output: u64) -> u64 {
-    output_end(max_input, max_output) + 1
-}
-
-fn termination_address(max_input: u64, max_output: u64) -> u64 {
-    panic_address(max_input, max_output) + 1
 }

@@ -1476,7 +1476,7 @@ pub struct Instruction {
 struct FormatB {
     rs1: usize,
     rs2: usize,
-    imm: u64,
+    imm: i64,
 }
 
 fn parse_format_b(word: u32) -> FormatB {
@@ -1492,7 +1492,7 @@ fn parse_format_b(word: u32) -> FormatB {
 			((word >> 20) & 0x000007e0) | // imm[10:5] = [30:25]
 			((word >> 7) & 0x0000001e)
             // imm[4:1] = [11:8]
-        ) as i32 as i64 as u64,
+        ) as i32 as i64,
     }
 }
 
@@ -1507,7 +1507,7 @@ fn dump_format_b(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> Stri
     if evaluate {
         s += &format!(":{:x}", cpu.x[f.rs2]);
     }
-    s += &format!(",{:x}", address.wrapping_add(f.imm));
+    s += &format!(",{:x}", address as i64 + f.imm);
     s
 }
 
@@ -1597,7 +1597,7 @@ fn dump_format_i_mem(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) ->
 
 struct FormatJ {
     rd: usize,
-    imm: u64,
+    imm: i64,
 }
 
 fn parse_format_j(word: u32) -> FormatJ {
@@ -1612,7 +1612,7 @@ fn parse_format_j(word: u32) -> FormatJ {
 			((word & 0x00100000) >> 9) | // imm[11] = [20]
 			((word & 0x7fe00000) >> 20)
             // imm[10:1] = [30:21]
-        ) as i32 as i64 as u64,
+        ) as i32 as i64,
     }
 }
 
@@ -1623,7 +1623,7 @@ fn dump_format_j(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> Stri
     if evaluate {
         s += &format!(":{:x}", cpu.x[f.rd]);
     }
-    s += &format!(",{:x}", address.wrapping_add(f.imm));
+    s += &format!(",{:x}", address as i64 + f.imm);
     s
 }
 
@@ -1737,7 +1737,7 @@ fn dump_format_s(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> Str
 
 struct FormatU {
     rd: usize,
-    imm: u64,
+    imm: i64,
 }
 
 fn parse_format_u(word: u32) -> FormatU {
@@ -1750,7 +1750,7 @@ fn parse_format_u(word: u32) -> FormatU {
 			} | // imm[63:32] = [31]
 			((word as u64) & 0xfffff000)
             // imm[31:12] = [31:12]
-        ),
+        ) as i32 as i64,
     }
 }
 
@@ -1815,25 +1815,6 @@ fn normalize_u64(value: u64, width: &Xlen) -> u64 {
     }
 }
 
-fn normalize_is_imm(value: i64) -> u32 {
-    value as u32
-}
-
-fn normalize_b_imm(value: u64) -> u32 {
-    // TODO(JOLT-89): Hack – value should be unnormalized in the tracer
-    (value as i32) as u32
-    // ((value as i32) >> 1) as u32
-}
-
-fn normalize_u_imm(value: u64) -> u32 {
-    value as i32 as u32
-}
-
-fn normalize_j_imm(value: u64) -> u32 {
-    // TODO(JOLT-89): Hack – value should be unnormalized in the tracer
-    value as u32
-}
-
 fn normalize_register(value: usize) -> u64 {
     value.try_into().unwrap()
 }
@@ -1856,7 +1837,7 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        imm: Some(normalize_is_imm(f.imm)),
+        imm: Some(f.imm),
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
         rd: Some(normalize_register(f.rd)),
@@ -1869,7 +1850,7 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        imm: Some(normalize_is_imm(f.imm)),
+        imm: Some(f.imm),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
@@ -1882,7 +1863,7 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        imm: Some(normalize_b_imm(f.imm)),
+        imm: Some(f.imm),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
@@ -1895,7 +1876,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        imm: Some(normalize_u_imm(f.imm)),
+        imm: Some(f.imm),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
@@ -1909,7 +1890,7 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        imm: Some(normalize_j_imm(f.imm)),
+        imm: Some(f.imm),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
@@ -2228,7 +2209,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "AUIPC",
         operation: |cpu, word, address| {
             let f = parse_format_u(word);
-            cpu.x[f.rd] = cpu.sign_extend(address.wrapping_add(f.imm) as i64);
+            cpu.x[f.rd] = cpu.sign_extend(address as i64 + f.imm);
             Ok(())
         },
         disassemble: dump_format_u,
@@ -2241,7 +2222,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_b(word);
             if cpu.sign_extend(cpu.x[f.rs1]) == cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = address.wrapping_add(f.imm);
+                cpu.pc = (address as i64 + f.imm) as u64;
             }
             Ok(())
         },
@@ -2255,7 +2236,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_b(word);
             if cpu.sign_extend(cpu.x[f.rs1]) >= cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = address.wrapping_add(f.imm);
+                cpu.pc = (address as i64 + f.imm) as u64;
             }
             Ok(())
         },
@@ -2269,7 +2250,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_b(word);
             if cpu.unsigned_data(cpu.x[f.rs1]) >= cpu.unsigned_data(cpu.x[f.rs2]) {
-                cpu.pc = address.wrapping_add(f.imm);
+                cpu.pc = (address as i64 + f.imm) as u64;
             }
             Ok(())
         },
@@ -2283,7 +2264,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_b(word);
             if cpu.sign_extend(cpu.x[f.rs1]) < cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = address.wrapping_add(f.imm);
+                cpu.pc = (address as i64 + f.imm) as u64;
             }
             Ok(())
         },
@@ -2297,7 +2278,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_b(word);
             if cpu.unsigned_data(cpu.x[f.rs1]) < cpu.unsigned_data(cpu.x[f.rs2]) {
-                cpu.pc = address.wrapping_add(f.imm);
+                cpu.pc = (address as i64 + f.imm) as u64;
             }
             Ok(())
         },
@@ -2311,7 +2292,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_b(word);
             if cpu.sign_extend(cpu.x[f.rs1]) != cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = address.wrapping_add(f.imm);
+                cpu.pc = (address as i64 + f.imm) as u64;
             }
             Ok(())
         },
@@ -2921,7 +2902,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, address| {
             let f = parse_format_j(word);
             cpu.x[f.rd] = cpu.sign_extend(cpu.pc as i64);
-            cpu.pc = address.wrapping_add(f.imm);
+            cpu.pc = (address as i64 + f.imm) as u64;
             Ok(())
         },
         disassemble: dump_format_j,

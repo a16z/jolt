@@ -70,17 +70,20 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 }
 
 /// Note –– F: JoltField bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type TimestampRangeCheckPolynomials<F: JoltField> =
     TimestampRangeCheckStuff<DensePolynomial<F>>;
 /// Note –– F: JoltField bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type TimestampRangeCheckOpenings<F: JoltField> = TimestampRangeCheckStuff<F>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
@@ -107,11 +110,12 @@ impl<F: JoltField> ExogenousOpenings<F> for ReadTimestampOpenings<F> {
     fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
         polys_or_commitments: &JoltStuff<T>,
     ) -> Vec<&T> {
-        polys_or_commitments
-            .read_write_memory
-            .t_read
-            .iter()
-            .collect()
+        vec![
+            &polys_or_commitments.read_write_memory.t_read_rd,
+            &polys_or_commitments.read_write_memory.t_read_rs1,
+            &polys_or_commitments.read_write_memory.t_read_rs2,
+            &polys_or_commitments.read_write_memory.t_read_ram,
+        ]
     }
 }
 
@@ -285,7 +289,12 @@ where
         gamma: &F,
         tau: &F,
     ) -> ((Vec<F>, usize), ()) {
-        let read_timestamps = &jolt_polynomials.read_write_memory.t_read;
+        let read_timestamps = [
+            &jolt_polynomials.read_write_memory.t_read_rd,
+            &jolt_polynomials.read_write_memory.t_read_rs1,
+            &jolt_polynomials.read_write_memory.t_read_rs2,
+            &jolt_polynomials.read_write_memory.t_read_ram,
+        ];
 
         let M = read_timestamps[0].len();
 
@@ -770,7 +779,7 @@ where
                 .timestamp_range_check
                 .read_write_values()
                 .into_iter()
-                .chain(commitments.read_write_memory.t_read.iter())
+                .chain(ReadTimestampOpenings::<F>::exogenous_data(commitments))
                 .collect::<Vec<_>>(),
             r_opening.to_vec(),
             &self

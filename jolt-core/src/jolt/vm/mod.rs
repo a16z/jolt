@@ -8,7 +8,6 @@ use crate::poly::opening_proof::{
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::RAM_START_ADDRESS;
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -47,6 +46,12 @@ use self::read_write_memory::{
     ReadWriteMemoryStuff,
 };
 
+use super::instruction::lb::LBInstruction;
+use super::instruction::lbu::LBUInstruction;
+use super::instruction::lh::LHInstruction;
+use super::instruction::lhu::LHUInstruction;
+use super::instruction::sb::SBInstruction;
+use super::instruction::sh::SHInstruction;
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
@@ -89,10 +94,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
                 MemoryOp::noop_read(),  // rs1
                 MemoryOp::noop_read(),  // rs2
                 MemoryOp::noop_write(), // rd is write-only
-                MemoryOp::noop_read(),  // RAM byte 1
-                MemoryOp::noop_read(),  // RAM byte 2
-                MemoryOp::noop_read(),  // RAM byte 3
-                MemoryOp::noop_read(),  // RAM byte 4
+                MemoryOp::noop_read(),  // RAM
             ],
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
         }
@@ -191,11 +193,13 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 }
 
 /// Note –– F: JoltField bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
@@ -244,12 +248,6 @@ impl<F: JoltField> JoltPolynomials<F> {
             .into_iter()
             .zip(trace_comitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
-
-        println!(
-            "# commitments: {} + {}",
-            commitments.read_write_values().len(),
-            commitments.init_final_values().len(),
-        );
 
         commitments.bytecode.t_final =
             PCS::commit(&self.bytecode.t_final, &preprocessing.generators);
@@ -327,6 +325,12 @@ where
                 tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
                 _ => vec![instruction],
             })
             .map(|instruction| BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction))
@@ -395,10 +399,8 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        let load_store_flags = &instruction_polynomials.instruction_flags[5..10];
         let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
-            load_store_flags,
             &preprocessing.read_write_memory,
             &trace,
         );
@@ -419,7 +421,7 @@ where
 
         let r1cs_builder = Self::Constraints::construct_constraints(
             padded_trace_length,
-            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
+            program_io.memory_layout.input_start,
         );
         let spartan_key = spartan::UniformSpartanProof::<
             C,
@@ -562,7 +564,7 @@ where
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
-        let memory_start = RAM_START_ADDRESS - preprocessing.memory_layout.ram_witness_offset;
+        let memory_start = preprocessing.memory_layout.input_start;
         let r1cs_builder =
             Self::Constraints::construct_constraints(padded_trace_length, memory_start);
         let spartan_key = spartan::UniformSpartanProof::<C, _, F, ProofTranscript>::setup(

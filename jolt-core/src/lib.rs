@@ -10,6 +10,7 @@
 #![allow(long_running_const_eval)]
 #![allow(clippy::len_without_is_empty)]
 #![allow(type_alias_bounds)]
+#![allow(clippy::too_long_first_doc_paragraph)]
 
 #[cfg(feature = "host")]
 pub mod benches;

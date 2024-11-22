@@ -1,7 +1,10 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use binius_field::{BinaryField128b, BinaryField128bPolyval};
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::{
+    hash::Hash,
+    ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 
 use super::{FieldOps, JoltField};
 
@@ -99,6 +102,12 @@ impl<'b, F: BiniusSpecific> Div<&'b BiniusField<F>> for BiniusField<F> {
     fn div(self, other: &'b BiniusField<F>) -> BiniusField<F> {
         #[allow(clippy::suspicious_arithmetic_impl)] // clippy doesn't know algebra
         BiniusField(self.0 * other.0.invert().unwrap())
+    }
+}
+
+impl<F: BiniusSpecific> Hash for BiniusField<F> {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {
+        todo!()
     }
 }
 

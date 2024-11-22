@@ -24,9 +24,10 @@ use crate::{
     field::JoltField,
     jolt::{
         instruction::{
-            div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
+            div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
+            lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction,
             mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-            VirtualInstructionSequence,
+            sb::SBInstruction, sh::SHInstruction, VirtualInstructionSequence,
         },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
@@ -196,6 +197,12 @@ impl Program {
                 tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
+                tracer::RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {

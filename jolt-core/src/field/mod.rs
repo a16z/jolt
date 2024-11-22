@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -36,6 +37,7 @@ pub trait JoltField:
     + Default
     + CanonicalSerialize
     + CanonicalDeserialize
+    + Hash
 {
     const NUM_BYTES: usize;
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;

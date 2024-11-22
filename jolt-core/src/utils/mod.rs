@@ -85,7 +85,7 @@ pub fn mul_0_optimized<F: JoltField>(likely_zero: &F, x: &F) -> F {
 
 /// Checks if `num` is a power of 2.
 pub fn is_power_of_two(num: usize) -> bool {
-    num != 0 && (num & (num - 1)) == 0
+    num != 0 && num.is_power_of_two()
 }
 
 /// Take the first two `num_bits` chunks of `item` (from the right / LSB) and return them as a tuple `(high_chunk, low_chunk)`.

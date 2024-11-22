@@ -450,7 +450,7 @@ impl VirtioBlockDisk {
     fn get_base_used_address(&self) -> u64 {
         let align = self.queue_align as u64;
         let queue_size = self.queue_size as u64;
-        ((self.get_base_avail_address() + 4 + queue_size * 2 + align - 1) / align) * align
+        (self.get_base_avail_address() + 4 + queue_size * 2).div_ceil(align) * align
     }
 
     // @TODO: Follow the virtio block specification more propertly.

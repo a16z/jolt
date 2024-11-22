@@ -28,6 +28,7 @@ impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
 }
 
 /// Represents a single layer of a sparse grand product circuit.
+///
 /// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
 /// order in the visual representation of the circuit:
 ///      Λ        Λ        Λ        Λ

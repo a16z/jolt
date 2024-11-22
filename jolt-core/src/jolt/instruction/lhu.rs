@@ -3,19 +3,20 @@ use tracer::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction, sra::SRAInstruction,
+    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction, srl::SRLInstruction,
+    virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction,
     xor::XORInstruction, JoltInstruction,
 };
-/// Loads a byte from memory and sign-extends it
-pub struct LBInstruction<const WORD_SIZE: usize>;
+/// Loads a halfword from memory and zero-extends it
+pub struct LHUInstruction<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_SIZE> {
-    const SEQUENCE_LENGTH: usize = 7;
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_SIZE> {
+    const SEQUENCE_LENGTH: usize = 8;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        assert_eq!(trace_row.instruction.opcode, RV32IM::LB);
+        assert_eq!(trace_row.instruction.opcode, RV32IM::LHU);
         let expected_rd_post_val = trace_row.register_state.rd_post_val.unwrap();
-        // LB source registers
+        // LHU source registers
         let rs1 = trace_row.instruction.rs1;
         let rd = trace_row.instruction.rd;
         // Virtual registers used in sequence
@@ -23,7 +24,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
         let v_word_address = Some(virtual_register_index(1));
         let v_word = Some(virtual_register_index(2));
         let v_shift = Some(virtual_register_index(3));
-        // LB operands
+        // LHU operands
         let rs1_val = trace_row.register_state.rs1_val.unwrap();
         let offset = trace_row.instruction.imm.unwrap();
 
@@ -34,6 +35,29 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             64 => offset as u64,
             _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
         };
+
+        let is_aligned =
+            AssertAlignedMemoryAccessInstruction::<WORD_SIZE, 2>(rs1_val, offset_unsigned)
+                .lookup_entry();
+        debug_assert_eq!(is_aligned, 1);
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+                rs1,
+                rs2: None,
+                rd: None,
+                imm: Some(offset),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(rs1_val),
+                rs2_val: None,
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
 
         let ram_address = ADDInstruction::<WORD_SIZE>(rs1_val, offset_unsigned).lookup_entry();
         virtual_trace.push(RVTraceRow {
@@ -115,7 +139,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             advice_value: None,
         });
 
-        let byte_shift = XORInstruction::<WORD_SIZE>(ram_address, 0b11).lookup_entry();
+        let byte_shift = XORInstruction::<WORD_SIZE>(ram_address, 0b10).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -123,7 +147,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
                 rs1: v_address,
                 rs2: None,
                 rd: v_shift,
-                imm: Some(0b11),
+                imm: Some(0b10),
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
@@ -175,22 +199,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             advice_value: None,
         });
 
-        let sign_extended_byte = SRAInstruction::<WORD_SIZE>(left_aligned_byte, 24).lookup_entry();
-        assert_eq!(sign_extended_byte, expected_rd_post_val);
+        let zero_extended_halfword =
+            SRLInstruction::<WORD_SIZE>(left_aligned_byte, 16).lookup_entry();
+        assert_eq!(zero_extended_halfword, expected_rd_post_val);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::SRAI,
+                opcode: RV32IM::SRLI,
                 rs1: rd,
                 rs2: None,
                 rd,
-                imm: Some(24),
+                imm: Some(16),
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: Some(left_aligned_byte),
                 rs2_val: None,
-                rd_post_val: Some(sign_extended_byte),
+                rd_post_val: Some(zero_extended_halfword),
             },
             memory_state: None,
             advice_value: None,
@@ -232,7 +257,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn lb_virtual_sequence_32() {
+    fn lhu_virtual_sequence_32() {
         let mut rng = test_rng();
         for _ in 0..256 {
             let rs1 = rng.next_u64() % 32;
@@ -241,8 +266,8 @@ mod test {
             let mut rs1_val = rng.next_u32() as u64;
             let mut imm = rng.next_u64() as i64 % (1 << 12);
 
-            // Reroll rs1_val and imm until dest is valid
-            while (rs1_val as i64 + imm as i64) < 0 {
+            // Reroll rs1_val and imm until dest is aligned to a halfword
+            while (rs1_val as i64 + imm as i64) % 2 != 0 || (rs1_val as i64 + imm as i64) < 0 {
                 rs1_val = rng.next_u32() as u64;
                 imm = rng.next_u64() as i64 % (1 << 12);
             }
@@ -251,18 +276,16 @@ mod test {
             let word_address = (address >> 2) << 2;
             let word = rng.next_u32() as u64;
 
-            let byte = match address % 4 {
-                0 => word & 0x000000ff,
-                1 => (word & 0x0000ff00) >> 8,
-                2 => (word & 0x00ff0000) >> 16,
-                3 => (word & 0xff000000) >> 24,
+            let halfword = match address % 4 {
+                0 => word & 0x0000ffff,
+                2 => (word & 0xffff0000) >> 16,
                 _ => unreachable!(),
-            } as u8 as i8 as i32 as u32 as u64; // sign-extend
+            };
 
-            let lb_trace_row = RVTraceRow {
+            let lhu_trace_row = RVTraceRow {
                 instruction: ELFInstruction {
                     address: rng.next_u64(),
-                    opcode: RV32IM::LB,
+                    opcode: RV32IM::LHU,
                     rs1: Some(rs1),
                     rs2: None,
                     rd: Some(rd),
@@ -272,7 +295,7 @@ mod test {
                 register_state: RegisterState {
                     rs1_val: Some(rs1_val),
                     rs2_val: None,
-                    rd_post_val: Some(byte),
+                    rd_post_val: Some(halfword),
                 },
                 memory_state: Some(MemoryState::Read {
                     address: word_address,
@@ -281,8 +304,8 @@ mod test {
                 advice_value: None,
             };
 
-            let trace = LBInstruction::<32>::virtual_trace(lb_trace_row);
-            assert_eq!(trace.len(), LBInstruction::<32>::SEQUENCE_LENGTH);
+            let trace = LHUInstruction::<32>::virtual_trace(lhu_trace_row);
+            assert_eq!(trace.len(), LHUInstruction::<32>::SEQUENCE_LENGTH);
         }
     }
 }
