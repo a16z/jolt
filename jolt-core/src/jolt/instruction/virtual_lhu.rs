@@ -36,6 +36,29 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualLHUInstructio
             _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
         };
 
+        let is_aligned =
+            AssertAlignedMemoryAccessInstruction::<WORD_SIZE, 2>(rs1_val, offset_unsigned)
+                .lookup_entry();
+        debug_assert_eq!(is_aligned, 1);
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+                rs1,
+                rs2: None,
+                rd: None,
+                imm: Some(offset),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(rs1_val),
+                rs2_val: None,
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
+
         let ram_address = ADDInstruction::<WORD_SIZE>(rs1_val, offset_unsigned).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
@@ -51,28 +74,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for VirtualLHUInstructio
                 rs1_val: Some(rs1_val),
                 rs2_val: None,
                 rd_post_val: Some(ram_address),
-            },
-            memory_state: None,
-            advice_value: None,
-        });
-
-        let is_aligned =
-            AssertAlignedMemoryAccessInstruction::<WORD_SIZE, 2>(ram_address).lookup_entry();
-        debug_assert_eq!(is_aligned, 1);
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
-                rs1: v_address,
-                rs2: None,
-                rd: None,
-                imm: None,
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(ram_address),
-                rs2_val: None,
-                rd_post_val: None,
             },
             memory_state: None,
             advice_value: None,

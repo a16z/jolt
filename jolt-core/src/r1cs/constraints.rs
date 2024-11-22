@@ -119,11 +119,14 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let packed_query =
             R1CSBuilder::<C, F, JoltR1CSInputs>::pack_be(query_chunks.clone(), LOG_M);
 
-        cs.constrain_eq_conditional(
-            JoltR1CSInputs::InstructionFlags(ADDInstruction::default().into()),
-            packed_query.clone(),
-            x + y,
-        );
+        let add_operands = JoltR1CSInputs::InstructionFlags(ADDInstruction::default().into())
+            + JoltR1CSInputs::InstructionFlags(
+                AssertAlignedMemoryAccessInstruction::<32, 2>::default().into(),
+            )
+            + JoltR1CSInputs::InstructionFlags(
+                AssertAlignedMemoryAccessInstruction::<32, 4>::default().into(),
+            );
+        cs.constrain_eq_conditional(add_operands, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(
             JoltR1CSInputs::InstructionFlags(SUBInstruction::default().into()),
@@ -137,13 +140,7 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
         cs.constrain_eq_conditional(
             JoltR1CSInputs::InstructionFlags(MOVSIGNInstruction::default().into())
-                + JoltR1CSInputs::InstructionFlags(MOVEInstruction::default().into())
-                + JoltR1CSInputs::InstructionFlags(
-                    AssertAlignedMemoryAccessInstruction::<32, 2>::default().into(),
-                )
-                + JoltR1CSInputs::InstructionFlags(
-                    AssertAlignedMemoryAccessInstruction::<32, 4>::default().into(),
-                ),
+                + JoltR1CSInputs::InstructionFlags(MOVEInstruction::default().into()),
             packed_query.clone(),
             x,
         );
