@@ -13,6 +13,7 @@ use super::dense_mlpoly::DensePolynomial;
 use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 
 /// Represents a single layer of a grand product circuit.
+///
 /// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
 /// order in the visual representation of the circuit:
 ///      Λ        Λ        Λ        Λ

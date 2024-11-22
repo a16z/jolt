@@ -136,7 +136,7 @@ impl<F: JoltField> AuxComputation<F> {
 
         let mut aux_poly: Vec<F> = unsafe_allocate_zero_vec(batch_size);
         let num_threads = rayon::current_num_threads();
-        let chunk_size = (batch_size + num_threads - 1) / num_threads;
+        let chunk_size = batch_size.div_ceil(num_threads);
 
         aux_poly
             .par_chunks_mut(chunk_size)
@@ -180,7 +180,7 @@ impl<F: JoltField> AuxComputation<F> {
         // in the batch to a buffer owend by each thread's chunk to minimize allocs.
 
         let num_threads = rayon::current_num_threads();
-        let chunk_size = (batch_size + num_threads - 1) / num_threads;
+        let chunk_size = batch_size.div_ceil(num_threads);
         let mut results: Vec<F> = unsafe_allocate_zero_vec(batch_size);
 
         results

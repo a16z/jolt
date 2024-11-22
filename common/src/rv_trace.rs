@@ -575,6 +575,7 @@ impl RV32IM {
     }
 }
 
+#[allow(clippy::too_long_first_doc_paragraph)]
 /// Represented as a "peripheral device" in the RISC-V emulator, this captures
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
@@ -706,7 +707,7 @@ impl MemoryLayout {
         let panic = output_end;
         let termination = panic + 4;
 
-        let layout = Self {
+        Self {
             max_input_size,
             max_output_size,
             input_start,
@@ -715,8 +716,6 @@ impl MemoryLayout {
             output_end,
             panic,
             termination,
-        };
-
-        layout
+        }
     }
 }

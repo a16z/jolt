@@ -236,6 +236,7 @@ where
 }
 
 /// A batched grand product circuit.
+///
 /// Note that the circuit roots are not included in `self.layers`
 ///        o            o
 ///      /   \        /   \

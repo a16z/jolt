@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "guest", no_std)]
+#![allow(unused_assignments, asm_sub_register)]
 
 #[jolt::provable]
 fn memory_ops() -> (i32, u32, i32, u32) {
@@ -12,7 +13,7 @@ fn memory_ops() -> (i32, u32, i32, u32) {
         asm!(
             "sb {value}, 0({ptr})",
             ptr = in(reg) ptr,
-            value = in(reg) 0x12u8,
+            value = in(reg) 0x12,
         );
 
         // Load Byte Signed (LB instruction)
@@ -35,7 +36,7 @@ fn memory_ops() -> (i32, u32, i32, u32) {
         asm!(
             "sh {value}, 2({ptr})",
             ptr = in(reg) ptr,
-            value = in(reg) 0x3456u16,
+            value = in(reg) 0x3456,
         );
 
         // Load Halfword Signed (LH instruction)

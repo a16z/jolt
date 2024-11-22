@@ -25,6 +25,7 @@ use crate::{
 };
 
 /// An opening computed by the prover.
+///
 /// May be a batched opening, where multiple polynomials opened
 /// at the *same* point are reduced to a single polynomial opened
 /// at the (same) point.
@@ -49,6 +50,7 @@ pub struct ProverOpening<F: JoltField> {
 }
 
 /// An opening that the verifier must verify.
+///
 /// May be a batched opening, where multiple polynomials opened
 /// at the *same* point are reduced to a single polynomial opened
 /// at the (same) point.

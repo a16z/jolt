@@ -48,7 +48,7 @@ pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usi
 ///
 /// ```
 /// use jolt_core::utils::instruction_utils::chunk_operand;
-
+///
 /// // Normal usage
 /// let x = 0b1100_1010_1111_0000;
 /// assert_eq!(chunk_operand(x, 4, 4), vec![12, 10, 15, 0]);
@@ -76,7 +76,7 @@ pub fn chunk_operand(x: u64, C: usize, chunk_len: usize) -> Vec<u64> {
 ///
 /// ```
 /// use jolt_core::utils::instruction_utils::chunk_operand_usize;
-
+///
 /// // Normal usage
 /// let x = 0b1100_1010_1111_0000;
 /// assert_eq!(chunk_operand_usize(x, 4, 4), vec![12, 10, 15, 0]);

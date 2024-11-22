@@ -78,7 +78,7 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
     };
 
     let num_bits = max_num_bits;
-    let digits_count = (num_bits + c - 1) / c;
+    let digits_count = num_bits.div_ceil(c);
     let scalar_digits = scalars
         .into_par_iter()
         .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
@@ -235,7 +235,7 @@ fn make_digits_bigint(
     } else {
         num_bits
     };
-    let digits_count = (num_bits + w - 1) / w;
+    let digits_count = num_bits.div_ceil(w);
     (0..digits_count).map(move |i| {
         // Construct a buffer of bits of the scalar, starting at `bit_offset`.
         let bit_offset = i * w;
@@ -277,7 +277,7 @@ fn msm_u64_wnaf<V: VariableBaseMSM>(
         ln_without_floats(bases.len()) + 2
     };
 
-    let digits_count = (max_num_bits + c - 1) / c;
+    let digits_count = max_num_bits.div_ceil(c);
     let scalar_digits = scalars
         .into_par_iter()
         .flat_map_iter(|s| make_digits_u64(*s, c, max_num_bits))
@@ -451,7 +451,7 @@ fn make_digits_u64(scalar: u64, w: usize, num_bits: usize) -> impl Iterator<Item
     let window_mask: u64 = radix - 1;
     let mut carry = 0u64;
 
-    let digits_count = (num_bits + w - 1) / w;
+    let digits_count = num_bits.div_ceil(w);
     (0..digits_count).map(move |i| {
         // Construct a buffer of bits of the scalar, starting at `bit_offset`.
         let bit_offset = i * w;

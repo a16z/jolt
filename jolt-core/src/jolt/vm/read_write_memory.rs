@@ -183,16 +183,19 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 }
 
 /// Note –– F: JoltField bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
 /// Note –– F: JoltField bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
+///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
@@ -246,7 +249,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        trace: &Vec<JoltTraceStep<InstructionSet>>,
+        trace: &[JoltTraceStep<InstructionSet>],
     ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
@@ -284,7 +287,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let word = u32::from_le_bytes(word);
             v_init[v_init_index] = word as u64;
             v_init_index += 1;
         }
@@ -710,19 +713,19 @@ where
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
         let mut v_init_index =
-            memory_address_to_witness_index(preprocessing.min_bytecode_address, &memory_layout);
+            memory_address_to_witness_index(preprocessing.min_bytecode_address, memory_layout);
         for word in preprocessing.bytecode_words.iter() {
             v_init[v_init_index] = *word as u64;
             v_init_index += 1;
         }
         // Copy input bytes
-        v_init_index = memory_address_to_witness_index(memory_layout.input_start, &memory_layout);
+        v_init_index = memory_address_to_witness_index(memory_layout.input_start, memory_layout);
         for chunk in preprocessing.program_io.as_ref().unwrap().inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let word = u32::from_le_bytes(word);
             v_init[v_init_index] = word as u64;
             v_init_index += 1;
         }
@@ -867,7 +870,7 @@ where
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let word = u32::from_le_bytes(word);
             v_io[input_index] = word as u64;
             input_index += 1;
         }
@@ -881,7 +884,7 @@ where
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let word = u32::from_le_bytes(word);
             v_io[output_index] = word as u64;
             output_index += 1;
         }
@@ -993,7 +996,7 @@ where
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let word = u32::from_le_bytes(word);
             v_io[input_index] = word as u64;
             input_index += 1;
         }
@@ -1005,7 +1008,7 @@ where
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let word = u32::from_le_bytes(word);
             v_io[output_index] = word as u64;
             output_index += 1;
         }
