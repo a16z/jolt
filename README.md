@@ -25,7 +25,7 @@ The Jolt [paper](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Aru
 ## Quickstart
 
 > [!NOTE]
-> Jolt is in alpha and is not suitable for production use yet.
+> Jolt is in alpha and is not suitable for production use at this time.
 
 For developers looking to build using Jolt, check out the [Quickstart guide](https://jolt.a16zcrypto.com/usage/quickstart.html).
 
@@ -36,8 +36,9 @@ For developers looking to contribute to Jolt, follow the instructions below.
 You will need Rust [nightly](./rust-toolchain.toml).
 
 If you have `rustup` installed, you do not need to do anything as it will
-automatically install the right toolchain and install additional target on the
+automatically install the correct toolchain and any additional targets on the
 first `cargo` invocation.
+
 
 Clone this repo:
 
