@@ -296,8 +296,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             advice_value: None,
         });
 
-        // println!("After: {:?}", virtual_trace.last().unwrap());
-
         virtual_trace
     }
 

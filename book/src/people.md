@@ -2,7 +2,7 @@
   - Michael Zhu
   - Sam Ragsdale
   - Arasu Arun
-  - Noah Cintron
+  - Noah Citron
   - Justin Thaler
   - Srinath Setty
 
