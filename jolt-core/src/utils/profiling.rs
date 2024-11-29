@@ -1,18 +1,14 @@
 #[cfg(not(target_arch = "wasm32"))]
 use memory_stats::memory_stats;
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
-lazy_static::lazy_static! {
-    static ref MEMORY_USAGE_MAP: Mutex<HashMap<&'static str, f64>> = {
-        let m = HashMap::new();
-        Mutex::new(m)
-    };
-
-    static ref MEMORY_DELTA_MAP: Mutex<HashMap<&'static str, f64>> = {
-        let m = HashMap::new();
-        Mutex::new(m)
-    };
-}
+static MEMORY_USAGE_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MEMORY_DELTA_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn start_memory_tracing_span(label: &'static str) {
