@@ -78,7 +78,7 @@ contract SpartanVerifier is HyperKZG {
         Fr claim_inner_join =
             claim_Az + r_inner_sumcheck_RLC * claim_Bz + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
 
-        // Validate the the inner sumcheck
+        // Validate the inner sumcheck
         (Fr claim_inner, Fr[] memory r_y) =
             SumcheckVerifier.verify_sumcheck(transcript, proof.inner, claim_inner_join, log_cols, 2);
         // The n prefix is key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1; and in our system it's initialized to 8
