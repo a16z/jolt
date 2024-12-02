@@ -9,16 +9,17 @@
 //! and within the KZG commitment scheme implementation itself).
 use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
-    kzg,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
-use crate::field;
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitShape;
+use crate::poly::commitment::kzg::CommitMode;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::Transcript;
+use crate::{field, into_optimal_iter};
 use crate::{
-    msm::VariableBaseMSM,
+    msm::{Icicle, VariableBaseMSM},
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
@@ -34,10 +35,18 @@ use rayon::iter::{
 use std::{marker::PhantomData, sync::Arc};
 use tracing::trace_span;
 
-pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
+pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>)
+where
+    P::G1: Icicle;
 
-impl<P: Pairing> HyperKZGSRS<P> {
-    pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self {
+impl<P: Pairing> HyperKZGSRS<P>
+where
+    P::G1: Icicle,
+{
+    pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self
+    where
+        P::ScalarField: JoltField,
+    {
         Self(Arc::new(SRS::setup(rng, max_degree, 2)))
     }
 
@@ -48,7 +57,10 @@ impl<P: Pairing> HyperKZGSRS<P> {
 }
 
 #[derive(Clone, Debug)]
-pub struct HyperKZGProverKey<P: Pairing> {
+pub struct HyperKZGProverKey<P: Pairing>
+where
+    P::G1: Icicle,
+{
     pub kzg_pk: KZGProverKey<P>,
 }
 
@@ -57,7 +69,7 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
     pub kzg_vk: KZGVerifierKey<P>,
 }
 
-#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 
 impl<P: Pairing> Default for HyperKZGCommitment<P> {
@@ -99,6 +111,7 @@ fn kzg_open_no_rem<P: Pairing>(
 ) -> P::G1Affine
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let h = compute_witness_polynomial::<P>(f, u);
     UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(h)).unwrap()
@@ -128,6 +141,7 @@ fn scalar_vector_muladd<P: Pairing>(
     s: P::ScalarField,
 ) where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     assert!(a.len() >= v.len());
     for i in 0..v.len() {
@@ -141,6 +155,7 @@ fn kzg_compute_batch_polynomial<P: Pairing>(
 ) -> Vec<P::ScalarField>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let k = f.len(); // Number of polynomials we're batching
 
@@ -161,6 +176,7 @@ fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let k = f.len();
     let t = u.len();
@@ -182,8 +198,7 @@ where
     let B = kzg_compute_batch_polynomial::<P>(f, q_powers);
 
     // Now open B at u0, ..., u_{t-1}
-    let w = u
-        .into_par_iter()
+    let w = into_optimal_iter!(u)
         .map(|ui| kzg_open_no_rem(&B, *ui, pk))
         .collect::<Vec<P::G1Affine>>();
 
@@ -206,6 +221,7 @@ fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
 ) -> bool
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     let k = C.len();
     let t = u.len();
@@ -258,6 +274,7 @@ where
 
     let L = <P::G1 as VariableBaseMSM>::msm(
         &[&C[..k], &[W[0], W[1], W[2], vk.kzg_vk.g1]].concat(),
+        None,
         &[
             &q_powers_multiplied[..k],
             &[
@@ -285,6 +302,7 @@ pub struct HyperKZG<P: Pairing, ProofTranscript: Transcript> {
 impl<P: Pairing, ProofTranscript: Transcript> HyperKZG<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"HyperKZG"
@@ -320,11 +338,13 @@ where
         // Phase 1  -- create commitments com_1, ..., com_\ell
         // We do not compute final Pi (and its commitment) as it is constant and equals to 'eval'
         // also known to verifier, so can be derived on its side as well
+        let span = trace_span!("phase_1");
+        let _enter = span.enter();
         let mut polys: Vec<Vec<P::ScalarField>> = Vec::new();
         polys.push(poly.Z.to_vec());
         for i in 0..ell - 1 {
             let Pi_len = polys[i].len() / 2;
-            let mut Pi = vec![P::ScalarField::zero(); Pi_len];
+            let mut Pi = unsafe_allocate_zero_vec(Pi_len);
 
             #[allow(clippy::needless_range_loop)]
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
@@ -334,14 +354,16 @@ where
 
             polys.push(Pi);
         }
+        drop(_enter);
+        drop(span);
 
         assert_eq!(polys.len(), ell);
         assert_eq!(polys[ell - 1].len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
         // Compute commitments in parallel
-        let com: Vec<P::G1Affine> = (1..polys.len())
-            .into_par_iter()
+        // TODO(sragss): This could be done by batch too if it gets progressively smaller.
+        let com: Vec<P::G1Affine> = into_optimal_iter!(1..polys.len())
             .map(|i| UnivariateKZG::commit_slice(&pk.kzg_pk, &polys[i]).unwrap())
             .collect();
 
@@ -508,6 +530,7 @@ impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     for HyperKZG<P, ProofTranscript>
 where
     <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
     type Setup = (HyperKZGProverKey<P>, HyperKZGVerifierKey<P>);
@@ -526,6 +549,7 @@ where
         .trim(max_len)
     }
 
+    #[tracing::instrument(skip_all, name = "HyperKZG::commit")]
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
             setup.0.kzg_pk.g1_powers().len() >= poly.Z.len(),
@@ -536,36 +560,22 @@ where
         HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, &poly.Z).unwrap())
     }
 
+    #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
     fn batch_commit(
         evals: &[&[Self::Field]],
         gens: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-        // TODO: assert lengths are valid
-        evals
-            .par_iter()
-            .map(|evals| {
-                assert!(
-                    gens.0.kzg_pk.g1_powers().len() >= evals.len(),
-                    "COMMIT KEY LENGTH ERROR {}, {}",
-                    gens.0.kzg_pk.g1_powers().len(),
-                    evals.len()
-                );
-                match batch_type {
-                    BatchType::GrandProduct => HyperKZGCommitment(
-                        UnivariateKZG::commit_slice_with_mode(
-                            &gens.0.kzg_pk,
-                            evals,
-                            kzg::CommitMode::GrandProduct,
-                        )
-                        .unwrap(),
-                    ),
-                    _ => HyperKZGCommitment(
-                        UnivariateKZG::commit_slice(&gens.0.kzg_pk, evals).unwrap(),
-                    ),
-                }
-            })
-            .collect::<Vec<_>>()
+        let mode = match batch_type {
+            BatchType::GrandProduct => CommitMode::GrandProduct,
+            _ => CommitMode::Default,
+        };
+
+        UnivariateKZG::commit_batch_with_mode(&gens.0.kzg_pk, evals, mode)
+            .unwrap()
+            .into_par_iter()
+            .map(|c| HyperKZGCommitment(c))
+            .collect()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
