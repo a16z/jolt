@@ -32,7 +32,6 @@ clap = { version = "4.3.10", features = ["derive"] }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
-lazy_static = "1.4.0"
 num-integer = "0.1.45"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
