@@ -26,6 +26,7 @@ ark-ff = { version = "0.4.2", default-features = false }
 ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
+ark-crypto-primitives = {git = "https://github.com/a16z/crypto-primitives.git"}
 ark-std = { version = "0.4.0" }
 binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
 clap = { version = "4.3.10", features = ["derive"] }
@@ -106,6 +107,7 @@ default = [
     "ark-ff/asm",
     "host",
     "rayon",
+    "ark-crypto-primitives/sponge"
 ]
 host = ["dep:reqwest", "dep:tokio"]
 

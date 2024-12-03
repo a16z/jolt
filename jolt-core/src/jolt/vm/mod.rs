@@ -381,6 +381,7 @@ where
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
+
         Self::fiat_shamir_preamble(
             &mut transcript,
             &program_io,
@@ -751,3 +752,4 @@ pub mod instruction_lookups;
 pub mod read_write_memory;
 pub mod rv32i_vm;
 pub mod timestamp_range_check;
+
