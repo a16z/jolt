@@ -119,6 +119,8 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let packed_query =
             R1CSBuilder::<C, F, JoltR1CSInputs>::pack_be(query_chunks.clone(), LOG_M);
 
+        // For the `AssertAlignedMemoryAccessInstruction` lookups, we add the `rs1` and `imm` values
+        // to obtain the memory address being accessed.
         let add_operands = JoltR1CSInputs::InstructionFlags(ADDInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(
                 AssertAlignedMemoryAccessInstruction::<32, 2>::default().into(),
