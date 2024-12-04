@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 guest = { package = "multi-function-guest", path = "./guest" }
+
+[features]
+icicle = ["jolt-sdk/icicle"]

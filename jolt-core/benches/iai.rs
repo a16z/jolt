@@ -35,7 +35,7 @@ fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F>) {
 #[library_benchmark]
 #[bench::long(msm_setup::<G1Projective>(4096))]
 fn bench_msm<G: CurveGroup>(input: (Vec<G>, Vec<G::ScalarField>)) -> G {
-    black_box(VariableBaseMSM::msm(&G::normalize_batch(&input.0), &input.1).unwrap())
+    black_box(VariableBaseMSM::msm(&G::normalize_batch(&input.0), None, &input.1).unwrap())
 }
 
 #[library_benchmark]
