@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use crate::utils::transcript::Transcript;
 use crate::{
     field::JoltField,
-    poly::dense_mlpoly::DensePolynomial,
+    poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 
@@ -47,7 +47,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup;
-    fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
+    fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
     fn batch_commit(
         evals: &[&[Self::Field]],
         gens: &Self::Setup,
@@ -55,7 +55,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     ) -> Vec<Self::Commitment>;
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment;
     fn batch_commit_polys(
-        polys: &[DensePolynomial<Self::Field>],
+        polys: &[MultilinearPolynomial<Self::Field>],
         setup: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
@@ -63,7 +63,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
         Self::batch_commit(&slices, setup, batch_type)
     }
     fn batch_commit_polys_ref(
-        polys: &[&DensePolynomial<Self::Field>],
+        polys: &[&MultilinearPolynomial<Self::Field>],
         setup: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
@@ -82,13 +82,13 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
 
     fn prove(
         setup: &Self::Setup,
-        poly: &DensePolynomial<Self::Field>,
+        poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
     fn batch_prove(
         setup: &Self::Setup,
-        polynomials: &[&DensePolynomial<Self::Field>],
+        polynomials: &[&MultilinearPolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         batch_type: BatchType,

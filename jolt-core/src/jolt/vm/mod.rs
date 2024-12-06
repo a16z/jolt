@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
@@ -27,7 +28,6 @@ use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
@@ -197,7 +197,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
+pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.

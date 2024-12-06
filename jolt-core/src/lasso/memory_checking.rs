@@ -4,6 +4,7 @@
 use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -214,7 +215,7 @@ where
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
-    type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
+    type Polynomials: StructuredPolynomialData<MultilinearPolynomial<F>>;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
     type Commitments: StructuredPolynomialData<PCS::Commitment>;
     type ExogenousOpenings: ExogenousOpenings<F> + Sync = NoExogenousOpenings;
@@ -362,7 +363,7 @@ where
                     .zip_eq(exogenous_openings.openings_mut().into_par_iter()),
             )
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_at_chi_low_optimized(&eq_read_write);
+                let claim = poly.evaluate(&eq_read_write);
                 *opening = claim;
             });
 
@@ -387,7 +388,7 @@ where
             .par_iter()
             .zip_eq(openings.init_final_values_mut().into_par_iter())
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_at_chi_low_optimized(&eq_init_final);
+                let claim = poly.evaluate(&eq_init_final);
                 *opening = claim;
             });
 

@@ -12,10 +12,12 @@ use super::{
     commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
+    multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding},
     unipoly::{CompressedUniPoly, UniPoly},
 };
 use crate::{
     field::{JoltField, OptimizedMul},
+    poly::multilinear_polynomial::PolynomialEvaluation,
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         errors::ProofVerifyError,
@@ -34,7 +36,7 @@ use crate::{
 pub struct ProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
-    pub polynomial: DensePolynomial<F>,
+    pub polynomial: MultilinearPolynomial<F>,
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
@@ -46,7 +48,7 @@ pub struct ProverOpening<F: JoltField> {
     #[cfg(test)]
     /// If this is a batched opening, this `Vec` contains the individual
     /// polynomials in the batch.
-    batch: Vec<DensePolynomial<F>>,
+    batch: Vec<MultilinearPolynomial<F>>,
 }
 
 /// An opening that the verifier must verify.
@@ -74,7 +76,7 @@ where
 
 impl<F: JoltField> ProverOpening<F> {
     fn new(
-        polynomial: DensePolynomial<F>,
+        polynomial: MultilinearPolynomial<F>,
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
         claim: F,
@@ -169,7 +171,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
     pub fn append(
         &mut self,
-        polynomials: &[&DensePolynomial<F>],
+        polynomials: &[&MultilinearPolynomial<F>],
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
         claims: &[&F],
@@ -186,7 +188,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
             let expected_claims: Vec<F> = polynomials
                 .iter()
-                .map(|poly| poly.evaluate_at_chi(&expected_eq_poly))
+                .map(|poly| poly.evaluate_with_chis(&expected_eq_poly))
                 .collect();
             for (claim, expected_claim) in claims.iter().zip(expected_claims.iter()) {
                 assert_eq!(*claim, expected_claim, "Unexpected claim");
@@ -221,7 +223,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                 let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
 
                 for (coeff, poly) in rho_powers.iter().zip(polynomials.iter()) {
-                    let poly_len = poly.evals().len();
+                    let poly_len = poly.len();
                     if index >= poly_len {
                         continue;
                     }
@@ -233,14 +235,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                 chunk
             })
             .collect::<Vec<_>>();
-        let batched_poly = DensePolynomial::new(f_batched);
+        let batched_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(f_batched));
 
         #[cfg(test)]
         {
             let mut opening =
                 ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim);
             for poly in polynomials.into_iter() {
-                opening.batch.push(DensePolynomial::clone(poly));
+                opening.batch.push(*poly.clone());
             }
             self.openings.push(opening);
         }
@@ -312,7 +314,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                 chunk
             })
             .collect();
-        let joint_poly = DensePolynomial::new(joint_poly);
+        let joint_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(joint_poly));
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
@@ -356,7 +358,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-        let mut bound_polys: Vec<Option<DensePolynomial<F>>> = vec![None; self.openings.len()];
+        let mut bound_polys: Vec<Option<MultilinearPolynomial<F>>> =
+            vec![None; self.openings.len()];
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
@@ -393,7 +396,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
-        bound_polys: &mut Vec<Option<DensePolynomial<F>>>,
+        bound_polys: &mut Vec<Option<MultilinearPolynomial<F>>>,
         previous_round_claim: F,
     ) -> UniPoly<F> {
         let evals: Vec<(F, F)> = self
@@ -448,7 +451,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
     fn bind(
         &mut self,
         remaining_sumcheck_rounds: usize,
-        bound_polys: &mut Vec<Option<DensePolynomial<F>>>,
+        bound_polys: &mut Vec<Option<MultilinearPolynomial<F>>>,
         r_j: F,
     ) {
         self.openings
@@ -460,7 +463,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                         Some(bound_poly) => {
                             rayon::join(
                                 || opening.eq_poly.bound_poly_var_top(&r_j),
-                                || bound_poly.bound_poly_var_top(&r_j),
+                                || bound_poly.bind(r_j),
                             );
                         }
                         None => {

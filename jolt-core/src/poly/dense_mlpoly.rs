@@ -70,20 +70,6 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
-    pub fn bound_poly_var_top_par(&mut self, r: &F) {
-        let n = self.len() / 2;
-        let (left, right) = self.Z.split_at_mut(n);
-
-        left.par_iter_mut()
-            .zip(right.par_iter())
-            .for_each(|(a, b)| {
-                *a += *r * (*b - *a);
-            });
-
-        self.num_vars -= 1;
-        self.len = n;
-    }
-
     pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);

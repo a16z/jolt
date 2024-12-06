@@ -49,7 +49,7 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
                 },
                 |(mut poly, r)| {
                     for i in 0..num_vars {
-                        criterion::black_box(poly.bound_poly_var_top_par(&r[i]));
+                        criterion::black_box(poly.bound_poly_var_top(&r[i]));
                     }
                 },
             );
