@@ -162,7 +162,8 @@ where
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
         let (rx_con, rx_ts) = if cfg!(feature = "reorder") {
             let num_constr_bits = constraint_builder.padded_rows_per_step().ilog2() as usize;
-            let (rx_ts, rx_con) = outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_constr_bits);
+            let (rx_ts, rx_con) =
+                outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_constr_bits);
             (rx_con, rx_ts)
         } else {
             let num_steps_bits = constraint_builder
