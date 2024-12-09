@@ -105,8 +105,10 @@ default = [
     "ark-ff/asm",
     "host",
     "rayon",
+    "reorder",
 ]
 host = ["dep:reqwest", "dep:tokio"]
+reorder = []
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0"

@@ -25,6 +25,7 @@ pub struct UniformSpartanKey<const C: usize, I: ConstraintInput, F: JoltField> {
     pub offset_eq_r1cs: NonUniformR1CS<F>,
 
     /// Number of constraints across all steps padded to nearest power of 2
+    // TODO: #[not(cfg(feature = "reorder"))]
     pub num_cons_total: usize,
 
     /// Number of steps padded to the nearest power of 2
@@ -112,6 +113,11 @@ impl<F: JoltField> NonUniformR1CS<F> {
 
         (eq_constants, condition_constants)
     }
+
+    /// Unpadded number of non-uniform constraints.
+    fn num_constraints(&self) -> usize {
+        self.constraints.len()
+    }
 }
 
 /// Represents a single constraint row where the variables are either from the current step (offset = false)
@@ -138,8 +144,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let uniform_r1cs = constraint_builder.materialize_uniform();
         let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 
+        // TODO: #[not(cfg(feature = "reorder"))]
         let total_rows = constraint_builder.constraint_rows().next_power_of_two();
-        let num_steps = constraint_builder.uniform_repeat().next_power_of_two();
+        let num_steps = constraint_builder.uniform_repeat().next_power_of_two(); // TODO(JP): Number of steps no longer need to be padded.
 
         let vk_digest = Self::digest(&uniform_r1cs, &offset_eq_r1cs, num_steps);
 
@@ -147,6 +154,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             _inputs: PhantomData,
             uniform_r1cs,
             offset_eq_r1cs,
+            // TODO: #[not(cfg(feature = "reorder"))]
             num_cons_total: total_rows,
             num_steps,
             vk_digest,
@@ -167,8 +175,23 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         2 * self.num_vars_total()
     }
 
+    // TODO: #[not(cfg(feature = "reorder"))]
     pub fn num_rows_total(&self) -> usize {
         self.num_cons_total
+    }
+
+    /// Padded number of constraint rows per step.
+    // #[cfg(feature = "reorder")]
+    pub fn padded_row_constraint_per_step(&self) -> usize {
+        // JP: This is redundant with `padded_rows_per_step`. Can we reuse that instead?
+        (self.uniform_r1cs.num_rows + self.offset_eq_r1cs.num_constraints()).next_power_of_two()
+    }
+
+    /// Number of bits needed for all rows.
+    // #[cfg(feature = "reorder")]
+    pub fn num_rows_bits(&self) -> usize {
+        let row_count = self.num_steps * self.padded_row_constraint_per_step();
+        row_count.next_power_of_two().log_2()
     }
 
     /// Evaluates A(r_x, y) + r_rlc * B(r_x, y) + r_rlc^2 * C(r_x, y) where r_x = r_constr || r_step for all y.
@@ -213,9 +236,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             };
 
         let (eq_constants, condition_constants) = self.offset_eq_r1cs.constants();
-        let sm_a_r = compute_repeated(&self.uniform_r1cs.a, Some(eq_constants));
-        let sm_b_r = compute_repeated(&self.uniform_r1cs.b, Some(condition_constants));
-        let sm_c_r = compute_repeated(&self.uniform_r1cs.c, None);
+        let sm_a_r = compute_repeated(&self.uniform_r1cs.a, Some(eq_constants)); // V var entries
+        let sm_b_r = compute_repeated(&self.uniform_r1cs.b, Some(condition_constants)); // V var entries
+        let sm_c_r = compute_repeated(&self.uniform_r1cs.c, None); // V var entries
 
         let r_rlc_sq = r_rlc.square();
         let sm_rlc = sm_a_r
@@ -306,18 +329,28 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
 
     /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_matrix_mles")]
-    pub fn evaluate_r1cs_matrix_mles(&self, r: &[F]) -> (F, F, F) {
-        let total_rows_bits = self.num_rows_total().log_2();
-        let total_cols_bits = self.num_cols_total().log_2();
-        let steps_bits: usize = self.num_steps.log_2();
-        let constraint_rows_bits = (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2();
-        let uniform_cols_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
-        assert_eq!(r.len(), total_rows_bits + total_cols_bits);
-        assert_eq!(total_rows_bits - steps_bits, constraint_rows_bits);
+    pub fn evaluate_r1cs_matrix_mles(&self, r_row: &[F], r_col: &[F]) -> (F, F, F) {
+        let (total_cols_bits, steps_bits, constraint_rows_bits, r_row_constr, r_row_step) = if cfg!(feature = "reorder") {
+            let total_rows_bits = r_row.len();
+            let total_cols_bits = r_col.len();
+            let constraint_rows_bits = self.padded_row_constraint_per_step().log_2();
+            let steps_bits: usize = total_rows_bits - constraint_rows_bits;
+            let (r_row_step, r_row_constr) = r_row.split_at(total_rows_bits - constraint_rows_bits); // TMP
+            (total_cols_bits, steps_bits, constraint_rows_bits, r_row_constr, r_row_step)
+        } else {
+            let total_rows_bits = self.num_rows_total().log_2();
+            let total_cols_bits = self.num_cols_total().log_2();
+            let steps_bits: usize = self.num_steps.log_2();
+            let constraint_rows_bits = (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2();
+            assert_eq!(r_row.len(), total_rows_bits);
+            assert_eq!(r_col.len(), total_cols_bits);
+            assert_eq!(total_rows_bits - steps_bits, constraint_rows_bits);
 
-        // Deconstruct 'r' into representitive bits
-        let (r_row, r_col) = r.split_at(total_rows_bits);
-        let (r_row_constr, r_row_step) = r_row.split_at(constraint_rows_bits);
+            // Deconstruct 'r' into representitive bits
+            let (r_row_constr, r_row_step) = r_row.split_at(constraint_rows_bits);
+            (total_cols_bits, steps_bits, constraint_rows_bits, r_row_constr, r_row_step)
+        };
+        let uniform_cols_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
         let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1);
         assert_eq!(r_row_step.len(), r_col_step.len());
 

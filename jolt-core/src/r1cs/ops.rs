@@ -108,6 +108,23 @@ impl LC {
         result
     }
 
+    // JP: Why does `evaluate` exist?
+    pub fn evaluate_row<F: JoltField>(
+        &self,
+        flattened_polynomials: &[&DensePolynomial<F>],
+        row: usize,
+    ) -> F {
+        self.terms()
+            .iter()
+            .map(|term| match term.0 {
+                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                    F::from_i64(term.1).mul_01_optimized(flattened_polynomials[var_index][row])
+                }
+                Variable::Constant => F::from_i64(term.1),
+            })
+            .sum()
+    }
+
     pub fn evaluate_batch<F: JoltField>(
         &self,
         flattened_polynomials: &[&DensePolynomial<F>],

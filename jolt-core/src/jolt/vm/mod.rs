@@ -378,6 +378,7 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
 
+        // TODO(JP): Drop padding on number of steps
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
