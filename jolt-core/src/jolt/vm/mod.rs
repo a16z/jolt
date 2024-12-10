@@ -242,7 +242,7 @@ impl<F: JoltField> JoltPolynomials<F> {
 
         let trace_polys = self.read_write_values();
         let trace_comitments =
-            PCS::batch_commit_polys_ref(&trace_polys, &preprocessing.generators, BatchType::Big);
+            PCS::batch_commit(&trace_polys, &preprocessing.generators, BatchType::Big);
         commitments
             .read_write_values_mut()
             .into_iter()
@@ -258,7 +258,7 @@ impl<F: JoltField> JoltPolynomials<F> {
             || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
             || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators),
         );
-        commitments.instruction_lookups.final_cts = PCS::batch_commit_polys_ref(
+        commitments.instruction_lookups.final_cts = PCS::batch_commit(
             &self
                 .instruction_lookups
                 .final_cts
@@ -404,7 +404,7 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
+        let memory_polynomials = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
             &preprocessing.read_write_memory,
             &trace,

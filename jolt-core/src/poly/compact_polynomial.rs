@@ -55,13 +55,13 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     //     self.num_vars
     // }
 
-    // pub fn len(&self) -> usize {
-    //     self.len
-    // }
+    pub fn len(&self) -> usize {
+        self.len
+    }
 
-    // pub fn is_empty(&self) -> bool {
-    //     self.len == 0
-    // }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T, F> {

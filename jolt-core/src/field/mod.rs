@@ -56,6 +56,7 @@ pub trait JoltField:
     fn montgomery_r2() -> Option<Self> {
         None
     }
+    #[inline(always)]
     fn mul_u64_unchecked(&self, n: u64) -> Self {
         *self * Self::from_u64(n).unwrap()
     }

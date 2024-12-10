@@ -644,13 +644,13 @@ where
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
+            openings.v_read_write[5], // imm
             openings.a_read_write,
             openings.v_read_write[0], // address
             openings.v_read_write[1], // opcode
             openings.v_read_write[2], // rd
             openings.v_read_write[3], // rs1
             openings.v_read_write[4], // rs2
-            openings.v_read_write[5], // imm
             openings.t_read,
         ]]
     }
@@ -660,13 +660,13 @@ where
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
+            openings.v_read_write[5], // imm
             openings.a_read_write,
             openings.v_read_write[0], // address
             openings.v_read_write[1], // opcode
             openings.v_read_write[2], // rd
             openings.v_read_write[3], // rs1
             openings.v_read_write[4], // rs2
-            openings.v_read_write[5], // imm
             openings.t_read + F::one(),
         ]]
     }
@@ -677,13 +677,13 @@ where
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
+            v_init_final[5], // imm
             openings.a_init_final.unwrap(),
             v_init_final[0], // address
             v_init_final[1], // opcode
             v_init_final[2], // rd
             v_init_final[3], // rs1
             v_init_final[4], // rs2
-            v_init_final[5], // imm
             F::zero(),
         ]]
     }
@@ -694,13 +694,13 @@ where
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
+            v_init_final[5], // imm
             openings.a_init_final.unwrap(),
             v_init_final[0], // address
             v_init_final[1], // opcode
             v_init_final[2], // rd
             v_init_final[3], // rs1
             v_init_final[4], // rs2
-            v_init_final[5], // imm
             openings.t_final,
         ]]
     }

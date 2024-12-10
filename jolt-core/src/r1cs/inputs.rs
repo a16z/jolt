@@ -420,7 +420,7 @@ impl ConstraintInput for JoltR1CSInputs {
 mod tests {
     use ark_bn254::Fr;
 
-    use crate::jolt::vm::JoltPolynomials;
+    use crate::{jolt::vm::JoltPolynomials, poly::multilinear_polynomial::MultilinearPolynomial};
 
     use super::*;
 
@@ -451,8 +451,8 @@ mod tests {
                 .collect(),
             _ => vec![JoltR1CSInputs::Aux(aux)],
         }) {
-            let ref_ptr = aux.get_ref(&jolt_polys) as *const DensePolynomial<Fr>;
-            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const DensePolynomial<Fr>;
+            let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
+            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const MultilinearPolynomial<Fr>;
             assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
         }
     }
