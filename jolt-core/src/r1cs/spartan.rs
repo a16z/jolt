@@ -6,6 +6,8 @@ use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
@@ -110,7 +112,7 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
             .collect();
@@ -194,7 +196,7 @@ where
         let chi = EqPolynomial::evals(r_col_step);
         let claimed_witness_evals: Vec<_> = flattened_polys
             .par_iter()
-            .map(|poly| poly.evaluate_at_chi_low_optimized(&chi))
+            .map(|poly| poly.evaluate_with_chis(&chi))
             .collect();
 
         opening_accumulator.append(

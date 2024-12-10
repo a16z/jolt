@@ -25,10 +25,10 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize>
 impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtable<F>
     for SllSubtable<F, CHUNK_INDEX, WORD_SIZE>
 {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u16> {
         // table[x | y] = (x << (y % WORD_SIZE)) & ((1 << (WORD_SIZE - suffix_length)) - 1)
         // where `suffix_length = operand_chunk_width * CHUNK_INDEX`
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
 
         let operand_chunk_width: usize = (log2(M) / 2) as usize;
         let suffix_length = operand_chunk_width * CHUNK_INDEX;
@@ -45,7 +45,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
 
             let row = (x as u64).checked_shl((y % WORD_SIZE) as u32).unwrap_or(0) & truncate_mask;
 
-            entries.push(F::from_u64(row).unwrap());
+            entries.push(row as u16);
         }
         entries
     }
@@ -108,6 +108,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{sll::SllSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

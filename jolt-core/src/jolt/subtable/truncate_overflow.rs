@@ -25,15 +25,15 @@ impl<F: JoltField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZE
 impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
     for TruncateOverflowSubtable<F, WORD_SIZE>
 {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u16> {
         // table[x] = x & (0b00..011..1), where the number of 0s is `cutoff`.
         // Truncates overflow bits beyond nearest multiple of `log2(M)`
         let cutoff = WORD_SIZE % log2(M) as usize;
 
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
         for idx in 0..M {
             let (_, lower_bits) = split_bits(idx, cutoff);
-            let row = F::from_u64(lower_bits as u64).unwrap();
+            let row = lower_bits as u16;
             entries.push(row);
         }
         entries
@@ -59,6 +59,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

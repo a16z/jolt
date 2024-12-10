@@ -17,9 +17,9 @@ impl<F: JoltField> IdentitySubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for IdentitySubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u16> {
         // table[x] = x
-        (0..M).map(|i| F::from_u64(i as u64).unwrap()).collect()
+        (0..M).map(|i| i as u16).collect()
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
@@ -39,6 +39,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

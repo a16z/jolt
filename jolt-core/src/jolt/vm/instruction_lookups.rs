@@ -1,3 +1,5 @@
+use crate::poly::compact_polynomial::CompactPolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
@@ -17,7 +19,6 @@ use crate::lasso::memory_checking::{
     VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -55,11 +56,6 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
     /// step of the execution trace.
     pub(crate) lookup_outputs: T,
 
-    /// Hack: This is only populated for `InstructionLookupPolynomials`, where
-    /// the instruction flags are kept in u64 representation for efficient conversion
-    /// to memory flags.
-    instruction_flag_bitvectors: Option<Vec<Vec<u64>>>,
-
     a_init_final: VerifierComputedOpening<T>,
     v_init_final: VerifierComputedOpening<Vec<T>>,
 }
@@ -69,7 +65,8 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type InstructionLookupPolynomials<F: JoltField> = InstructionLookupStuff<DensePolynomial<F>>;
+pub type InstructionLookupPolynomials<F: JoltField> =
+    InstructionLookupStuff<MultilinearPolynomial<F>>;
 /// Note –– F: JoltField bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -104,7 +101,6 @@ impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize 
             instruction_flags: std::iter::repeat_with(|| T::default())
                 .take(preprocessing.instruction_to_memory_indices.len())
                 .collect(),
-            instruction_flag_bitvectors: None,
             lookup_outputs: T::default(),
             a_init_final: None,
             v_init_final: None,
@@ -195,6 +191,15 @@ where
         <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
     ) {
         let gamma_squared = gamma.square();
+
+        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
+        // into Montgomery form while multiplying them by gamma or gamma_squared
+        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
+            (*gamma * r2, gamma_squared * r2)
+        } else {
+            (*gamma, gamma_squared)
+        };
+
         let num_lookups = polynomials.dim[0].len();
 
         let read_write_leaves = (0..preprocessing.num_memories)
@@ -202,18 +207,34 @@ where
             .flat_map_iter(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
 
+                let dim: &CompactPolynomial<u16, F> =
+                    (&polynomials.dim[dim_index]).try_into().unwrap();
+                let E_poly: &CompactPolynomial<u16, F> =
+                    (&polynomials.E_polys[memory_index]).try_into().unwrap();
+                let read_cts: &CompactPolynomial<u32, F> =
+                    (&polynomials.read_cts[memory_index]).try_into().unwrap();
+
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
-                        let a = &polynomials.dim[dim_index][i];
-                        let v = &polynomials.E_polys[memory_index][i];
-                        let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+                        let a = dim[i] as u64;
+                        let v = E_poly[i] as u64;
+                        let t = read_cts[i] as u64;
+                        gamma_squared.mul_u64_unchecked(t)
+                            + gamma.mul_u64_unchecked(v)
+                            + F::from_u64(a).unwrap()
                             - *tau
                     })
                     .collect();
-                let write_fingerprints = read_fingerprints
-                    .iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                let write_fingerprints: Vec<F> = (0..num_lookups)
+                    .map(|i| {
+                        let a = dim[i] as u64;
+                        let v = E_poly[i] as u64;
+                        let t = read_cts[i] as u64 + 1;
+                        gamma_squared.mul_u64_unchecked(t)
+                            + gamma.mul_u64_unchecked(v)
+                            + F::from_u64(a).unwrap()
+                            - *tau
+                    })
                     .collect();
                 [read_fingerprints, write_fingerprints]
             })
@@ -230,18 +251,19 @@ where
                 // Init leaves
                 (0..M).for_each(|i| {
                     let a = &F::from_u64(i as u64).unwrap();
-                    let v = &subtable[i];
+                    let v: u16 = subtable[i];
                     // let t = F::zero();
                     // Compute h(a,v,t) where t == 0
-                    leaves[i] = mul_0_1_optimized(v, gamma) + *a - *tau;
+                    leaves[i] = gamma.mul_u64_unchecked(v as u64) + *a - *tau;
                 });
                 // Final leaves
                 let mut leaf_index = M;
                 for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
-                    let final_cts = &polynomials.final_cts[*memory_index];
+                    let final_cts: &CompactPolynomial<u32, F> =
+                        (&polynomials.final_cts[*memory_index]).try_into().unwrap();
                     (0..M).for_each(|i| {
                         leaves[leaf_index] =
-                            leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared);
+                            leaves[i] + gamma_squared.mul_u64_unchecked(final_cts[i] as u64);
                         leaf_index += 1;
                     });
                 }
@@ -252,7 +274,11 @@ where
 
         let memory_flags = Self::memory_flag_indices(
             preprocessing,
-            polynomials.instruction_flag_bitvectors.as_ref().unwrap(),
+            polynomials
+                .instruction_flags
+                .iter()
+                .map(|poly| poly.try_into().unwrap())
+                .collect(),
         );
 
         (
@@ -597,8 +623,9 @@ pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     instruction_to_memory_indices: Vec<Vec<usize>>,
     memory_to_subtable_index: Vec<usize>,
     memory_to_dimension_index: Vec<usize>,
-    materialized_subtables: Vec<Vec<F>>,
+    materialized_subtables: Vec<Vec<u16>>,
     num_memories: usize,
+    _field: PhantomData<F>,
 }
 
 impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
@@ -655,12 +682,13 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
             memory_to_subtable_index,
             memory_to_dimension_index,
             instruction_to_memory_indices,
+            _field: PhantomData,
         }
     }
 
     /// Materializes all subtables used by this Jolt instance.
     #[tracing::instrument(skip_all)]
-    fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<F>>
+    fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<u16>>
     where
         Subtables: JoltSubtableSet<F>,
     {
@@ -848,26 +876,29 @@ where
     ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
 
-        let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
+        let subtable_lookup_indices: Vec<Vec<u16>> = Self::subtable_lookup_indices(ops);
 
-        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
-            ..preprocessing.num_memories)
+        let polys: Vec<(
+            MultilinearPolynomial<F>,
+            MultilinearPolynomial<F>,
+            MultilinearPolynomial<F>,
+        )> = (0..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                 let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
-                let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
+                let access_sequence: &Vec<u16> = &subtable_lookup_indices[dim_index];
 
-                let mut final_cts_i = vec![0usize; M];
-                let mut read_cts_i = vec![0usize; m];
-                let mut subtable_lookups = vec![F::zero(); m];
+                let mut final_cts_i = vec![0u32; M];
+                let mut read_cts_i = vec![0u32; m];
+                let mut subtable_lookups = vec![0; m];
 
                 for (j, op) in ops.iter().enumerate() {
                     if let Some(instr) = &op.instruction_lookup {
                         let memories_used = &preprocessing.instruction_to_memory_indices
                             [InstructionSet::enum_index(instr)];
                         if memories_used.contains(&memory_index) {
-                            let memory_address = access_sequence[j];
+                            let memory_address = access_sequence[j] as usize;
                             debug_assert!(memory_address < M);
 
                             let counter = final_cts_i[memory_address];
@@ -880,18 +911,19 @@ where
                 }
 
                 (
-                    DensePolynomial::from_usize(&read_cts_i),
-                    DensePolynomial::from_usize(&final_cts_i),
-                    DensePolynomial::new(subtable_lookups),
+                    MultilinearPolynomial::from(read_cts_i),
+                    MultilinearPolynomial::from(final_cts_i),
+                    MultilinearPolynomial::from(subtable_lookups),
                 )
             })
             .collect();
 
-        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
+        // Vec<(MultilinearPolynomial<F>, MultilinearPolynomial<F>, MultilinearPolynomial<F>)> ->
+        //   (Vec<MultilinearPolynomial<F>>, Vec<MultilinearPolynomial<F>>, Vec<MultilinearPolynomial<F>>)
         let (read_cts, final_cts, E_polys): (
-            Vec<DensePolynomial<F>>,
-            Vec<DensePolynomial<F>>,
-            Vec<DensePolynomial<F>>,
+            Vec<MultilinearPolynomial<F>>,
+            Vec<MultilinearPolynomial<F>>,
+            Vec<MultilinearPolynomial<F>>,
         ) = polys.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
             |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
@@ -902,30 +934,27 @@ where
             },
         );
 
-        let dim: Vec<DensePolynomial<F>> = (0..C)
+        let dim: Vec<MultilinearPolynomial<F>> = subtable_lookup_indices
             .into_par_iter()
-            .map(|i| {
-                let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
-                DensePolynomial::from_usize(access_sequence)
-            })
+            .map(|access_sequence| MultilinearPolynomial::from(access_sequence))
             .collect();
 
-        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
-            vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
+        let mut instruction_flag_bitvectors: Vec<Vec<u8>> =
+            vec![vec![0; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
             if let Some(instr) = &op.instruction_lookup {
                 instruction_flag_bitvectors[InstructionSet::enum_index(instr)][j] = 1;
             }
         }
 
-        let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
-            .par_iter()
-            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
+        let instruction_flag_polys: Vec<MultilinearPolynomial<F>> = instruction_flag_bitvectors
+            .into_par_iter()
+            .map(|flag_bitvector| MultilinearPolynomial::from(flag_bitvector))
             .collect();
 
         let mut lookup_outputs = Self::compute_lookup_outputs(ops);
-        lookup_outputs.resize(m, F::zero());
-        let lookup_outputs = DensePolynomial::new(lookup_outputs);
+        lookup_outputs.resize(m, 0);
+        let lookup_outputs = MultilinearPolynomial::from(lookup_outputs);
 
         InstructionLookupPolynomials {
             dim,
@@ -936,7 +965,6 @@ where
             lookup_outputs,
             a_init_final: None,
             v_init_final: None,
-            instruction_flag_bitvectors: Some(instruction_flag_bitvectors),
         }
     }
 
@@ -961,9 +989,9 @@ where
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
         eq_poly: &mut DensePolynomial<F>,
-        memory_polys: &[DensePolynomial<F>],
-        flag_polys: &[DensePolynomial<F>],
-        lookup_outputs_poly: &mut DensePolynomial<F>,
+        memory_polys: &[MultilinearPolynomial<F>],
+        flag_polys: &[MultilinearPolynomial<F>],
+        lookup_outputs_poly: &mut MultilinearPolynomial<F>,
         degree: usize,
         transcript: &mut ProofTranscript,
     ) -> (
@@ -1073,9 +1101,9 @@ where
     fn primary_sumcheck_inner_loop(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &DensePolynomial<F>,
-        flag_polys: &[DensePolynomial<F>],
-        memory_polys: &[DensePolynomial<F>],
-        lookup_outputs_poly: &DensePolynomial<F>,
+        flag_polys: &[MultilinearPolynomial<F>],
+        memory_polys: &[MultilinearPolynomial<F>],
+        lookup_outputs_poly: &MultilinearPolynomial<F>,
         num_eval_points: usize,
     ) -> UniPoly<F> {
         let mle_len = eq_poly.len();
@@ -1244,9 +1272,9 @@ where
     /// given execution step accesses the memory, it must be executing exactly one of those instructions.
     fn memory_flag_indices(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        instruction_flag_bitvectors: &[Vec<u64>],
+        instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
     ) -> Vec<Vec<usize>> {
-        let m = instruction_flag_bitvectors[0].len();
+        let m = instruction_flag_polys[0].len();
 
         (0..preprocessing.num_memories)
             .into_par_iter()
@@ -1260,7 +1288,7 @@ where
                 let mut memory_flag_indices = vec![];
                 for i in 0..m {
                     for instruction_index in instruction_indices.iter() {
-                        if instruction_flag_bitvectors[*instruction_index][i] != 0 {
+                        if instruction_flag_polys[*instruction_index].coeffs[i] != 0 {
                             memory_flag_indices.push(i);
                             break;
                         }
@@ -1284,23 +1312,27 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<u16>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
-        let chunked_indices: Vec<Vec<usize>> = ops
+        let chunked_indices: Vec<Vec<u16>> = ops
             .iter()
             .map(|op| {
                 if let Some(instr) = &op.instruction_lookup {
-                    instr.to_indices(C, log_M)
+                    instr
+                        .to_indices(C, log_M)
+                        .iter()
+                        .map(|i| *i as u16)
+                        .collect()
                 } else {
                     vec![0; C]
                 }
             })
             .collect();
 
-        let mut subtable_lookup_indices: Vec<Vec<usize>> = Vec::with_capacity(C);
+        let mut subtable_lookup_indices: Vec<Vec<u16>> = Vec::with_capacity(C);
         for i in 0..C {
-            let mut access_sequence: Vec<usize> =
+            let mut access_sequence: Vec<u16> =
                 chunked_indices.iter().map(|chunks| chunks[i]).collect();
             access_sequence.resize(m, 0);
             subtable_lookup_indices.push(access_sequence);
@@ -1319,14 +1351,14 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<F> {
+    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<u32> {
         instructions
             .par_iter()
             .map(|op| {
                 if let Some(instr) = &op.instruction_lookup {
-                    F::from_u64(instr.lookup_entry()).unwrap()
+                    instr.lookup_entry() as u32
                 } else {
-                    F::zero()
+                    0
                 }
             })
             .collect()

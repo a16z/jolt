@@ -17,6 +17,12 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U64Scalars(CompactPolynomial<u64, F>),
 }
 
+impl<F: JoltField> Default for MultilinearPolynomial<F> {
+    fn default() -> Self {
+        Self::LargeScalars(DensePolynomial::default())
+    }
+}
+
 impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn len(&self) -> usize {
         todo!()

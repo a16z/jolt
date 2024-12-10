@@ -19,15 +19,15 @@ impl<F: JoltField> OrSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for OrSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u16> {
         // table[x | y] = x | y (bit-wise OR)
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
 
         // Materialize table entries in order where (x | y) ranges 0..M
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
-            let row = F::from_u64((x | y) as u64).unwrap();
+            let row = (x | y) as u16;
             entries.push(row);
         }
         entries
@@ -56,6 +56,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{or::OrSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

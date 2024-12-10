@@ -16,7 +16,10 @@ use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::Transcript;
-use crate::{field, poly::multilinear_polynomial::MultilinearPolynomial};
+use crate::{
+    field,
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+};
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
