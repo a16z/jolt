@@ -4,7 +4,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
     field::JoltField,
-    poly::dense_mlpoly::DensePolynomial,
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, Transcript},
@@ -20,7 +20,7 @@ pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Default, Debug, PartialEq)]
 pub struct MockCommitment<F: JoltField> {
-    poly: DensePolynomial<F>,
+    poly: MultilinearPolynomial<F>,
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
@@ -46,49 +46,27 @@ where
     type BatchedProof = MockProof<F>;
 
     fn setup(_shapes: &[CommitShape]) -> Self::Setup {}
-    fn commit(poly: &DensePolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
+    fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {
             poly: poly.to_owned(),
         }
     }
     fn batch_commit(
-        evals: &[&[Self::Field]],
+        polys: &[&MultilinearPolynomial<Self::Field>],
         _gens: &Self::Setup,
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-        let polys: Vec<DensePolynomial<F>> = evals
-            .iter()
-            .map(|poly_evals| DensePolynomial::new(poly_evals.to_vec()))
-            .collect();
-
         polys
             .into_iter()
-            .map(|poly| MockCommitment { poly })
+            .map(|&poly| MockCommitment { poly: poly.clone() })
             .collect()
-    }
-    fn commit_slice(evals: &[Self::Field], _setup: &Self::Setup) -> Self::Commitment {
-        MockCommitment {
-            poly: DensePolynomial::new(evals.to_owned()),
-        }
     }
     fn prove(
         _setup: &Self::Setup,
-        _poly: &DensePolynomial<Self::Field>,
+        _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        MockProof {
-            opening_point: opening_point.to_owned(),
-        }
-    }
-    fn batch_prove(
-        _setup: &Self::Setup,
-        _polynomials: &[&DensePolynomial<Self::Field>],
-        opening_point: &[Self::Field],
-        _openings: &[Self::Field],
-        _batch_type: BatchType,
-        _transcript: &mut ProofTranscript,
-    ) -> Self::BatchedProof {
         MockProof {
             opening_point: opening_point.to_owned(),
         }
@@ -98,21 +76,14 @@ where
         commitments: &[&Self::Commitment],
         coeffs: &[Self::Field],
     ) -> Self::Commitment {
-        let max_size = commitments
+        let polys: Vec<_> = commitments
             .iter()
-            .map(|comm| comm.poly.len())
-            .max()
-            .unwrap();
-        let mut poly = DensePolynomial::new(vec![Self::Field::zero(); max_size]);
-        for (commitment, coeff) in commitments.iter().zip(coeffs.iter()) {
-            poly.Z
-                .iter_mut()
-                .zip(commitment.poly.Z.iter())
-                .for_each(|(a, b)| {
-                    *a += *coeff * b;
-                });
+            .map(|commitment| &commitment.poly)
+            .collect();
+
+        MockCommitment {
+            poly: MultilinearPolynomial::linear_combination(&polys, coeffs),
         }
-        MockCommitment { poly }
     }
 
     fn verify(
@@ -126,23 +97,6 @@ where
         let evaluation = commitment.poly.evaluate(opening_point);
         assert_eq!(evaluation, *opening);
         assert_eq!(proof.opening_point, opening_point);
-        Ok(())
-    }
-
-    fn batch_verify(
-        batch_proof: &Self::BatchedProof,
-        _setup: &Self::Setup,
-        opening_point: &[Self::Field],
-        openings: &[Self::Field],
-        commitments: &[&Self::Commitment],
-        _transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        assert_eq!(batch_proof.opening_point, opening_point);
-        assert_eq!(openings.len(), commitments.len());
-        for i in 0..openings.len() {
-            let evaluation = commitments[i].poly.evaluate(opening_point);
-            assert_eq!(evaluation, openings[i]);
-        }
         Ok(())
     }
 

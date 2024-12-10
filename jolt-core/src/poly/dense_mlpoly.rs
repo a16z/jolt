@@ -277,58 +277,9 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::commitment::hyrax::matrix_dimensions;
-
     use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
-
-    fn evaluate_with_LR<F: JoltField>(Z: &[F], r: &[F]) -> F {
-        let ell = r.len();
-        let (L_size, _R_size) = matrix_dimensions(ell, 1);
-        let eq = EqPolynomial::<F>::new(r.to_vec());
-        let (L, R) = eq.compute_factored_evals(L_size);
-
-        // ensure ell is even
-        assert!(ell % 2 == 0);
-        // compute n = 2^\ell
-        let n = ell.pow2();
-        // compute m = sqrt(n) = 2^{\ell/2}
-        let m = n.square_root();
-
-        // compute vector-matrix product between L and Z viewed as a matrix
-        let LZ = (0..m)
-            .map(|i| (0..m).map(|j| L[j] * Z[j * m + i]).sum())
-            .collect::<Vec<F>>();
-
-        // compute dot product between LZ and R
-        compute_dotproduct(&LZ, &R)
-    }
-
-    #[test]
-    fn check_polynomial_evaluation() {
-        check_polynomial_evaluation_helper::<Fr>()
-    }
-
-    fn check_polynomial_evaluation_helper<F: JoltField>() {
-        // Z = [1, 2, 1, 4]
-        let Z = vec![
-            F::one(),
-            F::from_u64(2u64).unwrap(),
-            F::one(),
-            F::from_u64(4u64).unwrap(),
-        ];
-
-        // r = [4,3]
-        let r = vec![F::from_u64(4u64).unwrap(), F::from_u64(3u64).unwrap()];
-
-        let eval_with_LR = evaluate_with_LR::<F>(&Z, &r);
-        let poly = DensePolynomial::new(Z);
-
-        let eval = poly.evaluate(&r);
-        assert_eq!(eval, F::from_u64(28u64).unwrap());
-        assert_eq!(eval_with_LR, eval);
-    }
 
     pub fn compute_factored_chis_at_r<F: JoltField>(r: &[F]) -> (Vec<F>, Vec<F>) {
         let mut L: Vec<F> = Vec::new();
@@ -414,47 +365,6 @@ mod tests {
         let chis = compute_chis_at_r::<F>(&r);
         let chis_m = EqPolynomial::<F>::evals(&r);
         assert_eq!(chis, chis_m);
-    }
-
-    #[test]
-    fn check_factored_chis() {
-        check_factored_chis_helper::<Fr>()
-    }
-
-    fn check_factored_chis_helper<F: JoltField>() {
-        let mut prng = test_rng();
-
-        let s = 10;
-        let mut r: Vec<F> = Vec::new();
-        for _i in 0..s {
-            r.push(F::random(&mut prng));
-        }
-        let chis = EqPolynomial::evals(&r);
-        let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
-        let (L, R) = EqPolynomial::new(r).compute_factored_evals(L_size);
-        let O = compute_outerproduct(&L, &R);
-        assert_eq!(chis, O);
-    }
-
-    #[test]
-    fn check_memoized_factored_chis() {
-        check_memoized_factored_chis_helper::<Fr>()
-    }
-
-    fn check_memoized_factored_chis_helper<F: JoltField>() {
-        let mut prng = test_rng();
-
-        let s = 10;
-        let mut r: Vec<F> = Vec::new();
-        for _i in 0..s {
-            r.push(F::random(&mut prng));
-        }
-        let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
-        let (L, R) = compute_factored_chis_at_r(&r);
-        let eq = EqPolynomial::new(r);
-        let (L2, R2) = eq.compute_factored_evals(L_size);
-        assert_eq!(L, L2);
-        assert_eq!(R, R2);
     }
 
     #[test]

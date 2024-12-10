@@ -65,17 +65,6 @@ impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     ) -> Self::Proof {
         todo!()
     }
-    fn batch_prove(
-        _none: &Self::Setup,
-        _polynomials: &[&MultilinearPolynomial<Self::Field>],
-        _opening_point: &[Self::Field],
-        _openings: &[Self::Field],
-        _batch_type: BatchType,
-        _transcript: &mut ProofTranscript,
-    ) -> Self::BatchedProof {
-        todo!()
-    }
-
     fn verify(
         _proof: &Self::Proof,
         _setup: &Self::Setup,
@@ -83,17 +72,6 @@ impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
         _opening_point: &[Self::Field],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
-    ) -> Result<(), ProofVerifyError> {
-        todo!()
-    }
-
-    fn batch_verify(
-        _batch_proof: &Self::BatchedProof,
-        _setup: &Self::Setup,
-        _opening_point: &[Self::Field],
-        _openings: &[Self::Field],
-        _commitments: &[&Self::Commitment],
-        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         todo!()
     }

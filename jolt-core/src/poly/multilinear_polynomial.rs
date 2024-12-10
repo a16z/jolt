@@ -1,14 +1,17 @@
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid,
 };
+use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-use super::{compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial};
+use super::{
+    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, unipoly::UniPoly,
+};
 use crate::field::JoltField;
 
 #[repr(u8)]
-#[derive(Clone, Debug, EnumIter)]
+#[derive(Clone, Debug, EnumIter, PartialEq)]
 pub enum MultilinearPolynomial<F: JoltField> {
     LargeScalars(DensePolynomial<F>),
     U8Scalars(CompactPolynomial<u8, F>),
@@ -29,6 +32,10 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     }
 
     pub fn get_num_vars(&self) -> usize {
+        todo!()
+    }
+
+    pub fn linear_combination(polys: &[&Self], coefficients: &[F]) -> Self {
         todo!()
     }
 }
@@ -67,6 +74,38 @@ impl<F: JoltField> From<Vec<u64>> for MultilinearPolynomial<F> {
         Self::U64Scalars(poly)
     }
 }
+
+// impl<F: JoltField> Into<DensePolynomial<F>> for MultilinearPolynomial<F> {
+//     fn into(self) -> DensePolynomial<F> {
+//         match self {
+//             MultilinearPolynomial::LargeScalars(poly) => poly,
+//             MultilinearPolynomial::U8Scalars(poly) => DensePolynomial::new(
+//                 poly.coeffs
+//                     .par_iter()
+//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
+//                     .collect(),
+//             ),
+//             MultilinearPolynomial::U16Scalars(poly) => DensePolynomial::new(
+//                 poly.coeffs
+//                     .par_iter()
+//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
+//                     .collect(),
+//             ),
+//             MultilinearPolynomial::U32Scalars(poly) => DensePolynomial::new(
+//                 poly.coeffs
+//                     .par_iter()
+//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
+//                     .collect(),
+//             ),
+//             MultilinearPolynomial::U64Scalars(poly) => DensePolynomial::new(
+//                 poly.coeffs
+//                     .par_iter()
+//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
+//                     .collect(),
+//             ),
+//         }
+//     }
+// }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = (); // TODO(moodlezoup)

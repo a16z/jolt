@@ -69,14 +69,6 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
-    fn batch_prove(
-        setup: &Self::Setup,
-        polynomials: &[&MultilinearPolynomial<Self::Field>],
-        opening_point: &[Self::Field],
-        openings: &[Self::Field],
-        batch_type: BatchType,
-        transcript: &mut ProofTranscript,
-    ) -> Self::BatchedProof;
 
     fn verify(
         proof: &Self::Proof,
@@ -85,15 +77,6 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
-    ) -> Result<(), ProofVerifyError>;
-
-    fn batch_verify(
-        batch_proof: &Self::BatchedProof,
-        setup: &Self::Setup,
-        opening_point: &[Self::Field],
-        openings: &[Self::Field],
-        commitments: &[&Self::Commitment],
-        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];

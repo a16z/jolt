@@ -9,6 +9,8 @@ use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
+use super::multilinear_polynomial::MultilinearPolynomial;
+
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +131,18 @@ impl<F: JoltField> UniPoly<F> {
             power *= *r;
         }
         eval
+    }
+
+    #[tracing::instrument(skip_all, name = "UniPoly::eval_as_univariate")]
+    pub fn eval_as_univariate(poly: &MultilinearPolynomial<F>, r: &F) -> F {
+        todo!()
+        // let mut eval = coeffs[0];
+        // let mut power = *r;
+        // for i in 1..coeffs.len() {
+        //     eval += power * coeffs[i];
+        //     power *= *r;
+        // }
+        // eval
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {

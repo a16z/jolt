@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
@@ -176,6 +177,23 @@ where
         mode: CommitMode,
     ) -> Result<P::G1Affine, ProofVerifyError> {
         Self::commit_inner(pk, &poly.coeffs, 0, mode)
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_as_univariate")]
+    pub fn commit_as_univariate(
+        pk: &KZGProverKey<P>,
+        poly: &MultilinearPolynomial<P::ScalarField>,
+    ) -> Result<P::G1Affine, ProofVerifyError> {
+        todo!()
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_as_univariate_with_mode")]
+    pub fn commit_as_univariate_with_mode(
+        pk: &KZGProverKey<P>,
+        poly: &MultilinearPolynomial<P::ScalarField>,
+        mode: CommitMode,
+    ) -> Result<P::G1Affine, ProofVerifyError> {
+        todo!()
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit_slice")]
