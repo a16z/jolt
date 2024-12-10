@@ -14,6 +14,7 @@ use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::compact_polynomial::CompactPolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
@@ -518,86 +519,83 @@ where
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
 
+        let mut gamma_terms = [F::one(); 7];
+        let mut gamma_term = F::montgomery_r2().unwrap_or(F::one());
+        for i in 0..7 {
+            gamma_term *= *gamma;
+            gamma_terms[i] = gamma_term;
+        }
+
+        let a: &CompactPolynomial<u32, F> = (&polynomials.a_read_write).try_into().unwrap();
+        let v_address: &CompactPolynomial<u64, F> =
+            (&polynomials.v_read_write[0]).try_into().unwrap();
+        let v_bitflags: &CompactPolynomial<u64, F> =
+            (&polynomials.v_read_write[1]).try_into().unwrap();
+        let v_rd: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[2]).try_into().unwrap();
+        let v_rs1: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[3]).try_into().unwrap();
+        let v_rs2: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[4]).try_into().unwrap();
+        let v_imm: &DensePolynomial<F> = (&polynomials.v_read_write[5]).try_into().unwrap();
+        let t: &CompactPolynomial<u32, F> = (&polynomials.t_read).try_into().unwrap();
+
         let read_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                Self::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write[0][i],
-                        polynomials.v_read_write[1][i],
-                        polynomials.v_read_write[2][i],
-                        polynomials.v_read_write[3][i],
-                        polynomials.v_read_write[4][i],
-                        polynomials.v_read_write[5][i],
-                        polynomials.t_read[i],
-                    ],
-                    gamma,
-                    tau,
-                )
+                // The gamma terms include an R^2 factor so that we convert the
+                // CompactPolynomial coefficients into Montgomery form when we
+                // multiply them by a gamma term. v_imm is a DensePolynomial,
+                // meaning its coefficients are already in Montgomery form. Thus,
+                // we make sure *not* to multiply v_imm by a gamma term.
+                v_imm[i]
+                    + gamma_terms[0].mul_u64_unchecked(a[i] as u64)
+                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
+                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
+                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
+                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
+                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
+                    + gamma_terms[6].mul_u64_unchecked(t[i] as u64)
+                    - tau
             })
             .collect();
+
+        let write_leaves = read_leaves
+            .par_iter()
+            .map(|read_leaf| *read_leaf + gamma_terms[6])
+            .collect();
+
+        let v_address: &CompactPolynomial<u64, F> =
+            (&preprocessing.v_init_final[0]).try_into().unwrap();
+        let v_bitflags: &CompactPolynomial<u64, F> =
+            (&preprocessing.v_init_final[1]).try_into().unwrap();
+        let v_rd: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[2]).try_into().unwrap();
+        let v_rs1: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[3]).try_into().unwrap();
+        let v_rs2: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[4]).try_into().unwrap();
+        let v_imm: &DensePolynomial<F> = (&preprocessing.v_init_final[5]).try_into().unwrap();
 
         let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                Self::fingerprint(
-                    &[
-                        F::from_u64(i as u64).unwrap(),
-                        preprocessing.v_init_final[0][i],
-                        preprocessing.v_init_final[1][i],
-                        preprocessing.v_init_final[2][i],
-                        preprocessing.v_init_final[3][i],
-                        preprocessing.v_init_final[4][i],
-                        preprocessing.v_init_final[5][i],
-                        F::zero(),
-                    ],
-                    gamma,
-                    tau,
-                )
+                // The gamma terms include an R^2 factor so that we convert the
+                // CompactPolynomial coefficients into Montgomery form when we
+                // multiply them by a gamma term. v_imm is a DensePolynomial,
+                // meaning its coefficients are already in Montgomery form. Thus,
+                // we make sure *not* to multiply v_imm by a gamma term.
+                v_imm[i]
+                    + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
+                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
+                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
+                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
+                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
+                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
+                    // + gamma_terms[6] * 0
+                    - tau
             })
             .collect();
 
-        // TODO(moodlezoup): Compute write_leaves from read_leaves
-        let write_leaves = (0..num_ops)
-            .into_par_iter()
-            .map(|i| {
-                Self::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write[0][i],
-                        polynomials.v_read_write[1][i],
-                        polynomials.v_read_write[2][i],
-                        polynomials.v_read_write[3][i],
-                        polynomials.v_read_write[4][i],
-                        polynomials.v_read_write[5][i],
-                        polynomials.t_read[i] + F::one(),
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-
-        // TODO(moodlezoup): Compute final_leaves from init_leaves
-        let final_leaves = (0..bytecode_size)
-            .into_par_iter()
-            .map(|i| {
-                Self::fingerprint(
-                    &[
-                        F::from_u64(i as u64).unwrap(),
-                        preprocessing.v_init_final[0][i],
-                        preprocessing.v_init_final[1][i],
-                        preprocessing.v_init_final[2][i],
-                        preprocessing.v_init_final[3][i],
-                        preprocessing.v_init_final[4][i],
-                        preprocessing.v_init_final[5][i],
-                        polynomials.t_final[i],
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
+        let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
+        let final_leaves = init_leaves
+            .par_iter()
+            .enumerate()
+            .map(|(i, init_leaf)| *init_leaf + gamma_terms[6].mul_u64_unchecked(t_final[i] as u64))
             .collect();
 
         // TODO(moodlezoup): avoid concat

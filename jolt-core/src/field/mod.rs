@@ -50,6 +50,15 @@ pub trait JoltField:
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");
     }
+
+    /// The R^2 value used in Montgomery arithmetic for some prime fields.
+    /// Returns `None` if the field doesn't use Montgomery arithmetic.
+    fn montgomery_r2() -> Option<Self> {
+        None
+    }
+    fn mul_u64_unchecked(&self, n: u64) -> Self {
+        *self * Self::from_u64(n).unwrap()
+    }
 }
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {

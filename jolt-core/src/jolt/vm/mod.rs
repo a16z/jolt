@@ -258,8 +258,12 @@ impl<F: JoltField> JoltPolynomials<F> {
             || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
             || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators),
         );
-        commitments.instruction_lookups.final_cts = PCS::batch_commit_polys(
-            &self.instruction_lookups.final_cts,
+        commitments.instruction_lookups.final_cts = PCS::batch_commit_polys_ref(
+            &self
+                .instruction_lookups
+                .final_cts
+                .iter()
+                .collect::<Vec<_>>(),
             &preprocessing.generators,
             BatchType::Big,
         );

@@ -1,3 +1,5 @@
+use std::ops::Index;
+
 use crate::utils::math::Math;
 use crate::{field::JoltField, utils};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -13,9 +15,9 @@ impl SmallScalar for u64 {}
 
 #[derive(Clone, Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
-    num_vars: usize, // the number of variables in the multilinear polynomial
+    num_vars: usize,
     len: usize,
-    pub coeffs: Vec<T>, // evaluations of the polynomial in the num_vars-dimensional Boolean hypercubee
+    pub coeffs: Vec<T>,
     pub bound_coeffs: Vec<F>,
 }
 
@@ -83,11 +85,12 @@ impl<T: SmallScalar, F: JoltField> PolynomialEvaluation<F> for CompactPolynomial
 //     }
 // }
 
-// impl<T: SmallScalar, F: JoltField> Index<usize> for CompactPolynomial<T, F> {
-//     type Output = T;
+impl<T: SmallScalar, F: JoltField> Index<usize> for CompactPolynomial<T, F> {
+    type Output = T;
 
-//     #[inline(always)]
-//     fn index(&self, _index: usize) -> &T {
-//         &(self.coeffs[_index])
-//     }
-// }
+    #[inline(always)]
+    fn index(&self, _index: usize) -> &T {
+        assert!(self.bound_coeffs.is_empty(), "Polynomial is already bound");
+        &(self.coeffs[_index])
+    }
+}

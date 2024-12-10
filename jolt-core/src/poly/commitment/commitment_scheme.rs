@@ -49,27 +49,10 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     fn setup(shapes: &[CommitShape]) -> Self::Setup;
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
     fn batch_commit(
-        evals: &[&[Self::Field]],
+        polys: &[&MultilinearPolynomial<Self::Field>],
         gens: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment>;
-    fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment;
-    fn batch_commit_polys(
-        polys: &[MultilinearPolynomial<Self::Field>],
-        setup: &Self::Setup,
-        batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
-        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
-        Self::batch_commit(&slices, setup, batch_type)
-    }
-    fn batch_commit_polys_ref(
-        polys: &[&MultilinearPolynomial<Self::Field>],
-        setup: &Self::Setup,
-        batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
-        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
-        Self::batch_commit(&slices, setup, batch_type)
-    }
 
     /// Homomorphically combines multiple commitments into a single commitment, computed as a
     /// linear combination with the given coefficients.

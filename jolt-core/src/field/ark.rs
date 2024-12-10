@@ -55,4 +55,12 @@ impl JoltField for ark_bn254::Fr {
         assert_eq!(bytes.len(), Self::NUM_BYTES);
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
+
+    fn montgomery_r2() -> Option<Self> {
+        Some(ark_ff::Fp::new_unchecked(Self::R2))
+    }
+
+    fn mul_u64_unchecked(&self, n: u64) -> Self {
+        ark_ff::Fp::mul_u64(*self, n)
+    }
 }

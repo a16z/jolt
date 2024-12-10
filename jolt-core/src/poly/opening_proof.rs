@@ -301,7 +301,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
                 let mut chunk = unsafe_allocate_zero_vec(chunk_size);
                 for (coeff, opening) in gamma_powers.iter().zip(self.openings.iter()) {
-                    let poly_len = opening.polynomial.Z.len();
+                    let poly_len = opening.polynomial.len();
                     if index >= poly_len {
                         continue;
                     }

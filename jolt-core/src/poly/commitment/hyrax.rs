@@ -5,6 +5,7 @@ use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -71,22 +72,22 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>, ProofTranscript: Transcript>
         }
         PedersenGenerators::new(max_len, b"Jolt v1 Hyrax generators")
     }
-    fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Setup) -> Self::Commitment {
+    fn commit(poly: &MultilinearPolynomial<Self::Field>, gens: &Self::Setup) -> Self::Commitment {
         HyraxCommitment::commit(poly, gens)
     }
     fn batch_commit(
-        evals: &[&[Self::Field]],
+        polys: &[&MultilinearPolynomial<Self::Field>],
         gens: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         HyraxCommitment::batch_commit(evals, gens, batch_type)
     }
-    fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Setup) -> Self::Commitment {
-        HyraxCommitment::commit_slice(eval_slice, generators)
-    }
+    // fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Setup) -> Self::Commitment {
+    //     HyraxCommitment::commit_slice(eval_slice, generators)
+    // }
     fn prove(
         _setup: &Self::Setup,
-        poly: &DensePolynomial<Self::Field>,
+        poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -95,7 +96,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>, ProofTranscript: Transcript>
     }
     fn batch_prove(
         _setup: &Self::Setup,
-        polynomials: &[&DensePolynomial<Self::Field>],
+        polynomials: &[&MultilinearPolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         batch_type: BatchType,

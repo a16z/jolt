@@ -12,11 +12,11 @@ use super::{
     kzg,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
-use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::Transcript;
+use crate::{field, poly::multilinear_polynomial::MultilinearPolynomial};
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -526,18 +526,18 @@ where
         .trim(max_len)
     }
 
-    fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
+    fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
-            setup.0.kzg_pk.g1_powers().len() >= poly.Z.len(),
+            setup.0.kzg_pk.g1_powers().len() >= poly.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
             setup.0.kzg_pk.g1_powers().len(),
-            poly.Z.len()
+            poly.len()
         );
         HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, &poly.Z).unwrap())
     }
 
     fn batch_commit(
-        evals: &[&[Self::Field]],
+        polys: &[&MultilinearPolynomial<Self::Field>],
         gens: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
@@ -568,13 +568,13 @@ where
             .collect::<Vec<_>>()
     }
 
-    fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
-        HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, evals).unwrap())
-    }
+    // fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
+    //     HyperKZGCommitment(UnivariateKZG::commit_slice(&setup.0.kzg_pk, evals).unwrap())
+    // }
 
     fn prove(
         setup: &Self::Setup,
-        poly: &DensePolynomial<Self::Field>,
+        poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -585,7 +585,7 @@ where
 
     fn batch_prove(
         setup: &Self::Setup,
-        polynomials: &[&DensePolynomial<Self::Field>],
+        polynomials: &[&MultilinearPolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         _batch_type: BatchType,
