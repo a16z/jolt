@@ -62,11 +62,24 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.coeffs.iter()
+    }
 }
 
 impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T, F> {
+    fn is_bound(&self) -> bool {
+        !self.bound_coeffs.is_empty()
+    }
+
     fn bind(&mut self, r: F) {}
     fn bind_parallel(&mut self, r: F) {}
+
+    fn final_sumcheck_claim(&self) -> F {
+        assert_eq!(self.len, 1);
+        self.bound_coeffs[0]
+    }
 }
 
 impl<T: SmallScalar, F: JoltField> PolynomialEvaluation<F> for CompactPolynomial<T, F> {
@@ -75,6 +88,10 @@ impl<T: SmallScalar, F: JoltField> PolynomialEvaluation<F> for CompactPolynomial
     }
 
     fn evaluate_with_chis(&self, chis: &[F]) -> F {
+        todo!()
+    }
+
+    fn sumcheck_evals(&self, index: usize, num_evals: usize) -> Vec<F> {
         todo!()
     }
 }

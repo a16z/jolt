@@ -31,6 +31,7 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 
+use super::read_write_memory::ReadWriteMemoryPolynomials;
 use super::{JoltCommitments, JoltPolynomials, JoltStuff};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -129,8 +130,14 @@ where
 {
     #[tracing::instrument(skip_all, name = "TimestampRangeCheckWitness::new")]
     pub fn generate_witness(
-        read_timestamps: &[Vec<u32>; MEMORY_OPS_PER_INSTRUCTION],
+        read_write_memory_polys: &ReadWriteMemoryPolynomials<F>,
     ) -> TimestampRangeCheckPolynomials<F> {
+        let read_timestamps: [&CompactPolynomial<u32, F>; 4] = [
+            (&read_write_memory_polys.t_read_rs1).try_into().unwrap(),
+            (&read_write_memory_polys.t_read_rs2).try_into().unwrap(),
+            (&read_write_memory_polys.t_read_rd).try_into().unwrap(),
+            (&read_write_memory_polys.t_read_ram).try_into().unwrap(),
+        ];
         let M = read_timestamps[0].len();
 
         #[cfg(test)]
@@ -160,7 +167,7 @@ where
 
                 #[cfg(test)]
                 {
-                    let global_minus_read_timestamps = &read_timestamps[i]
+                    let global_minus_read_timestamps: Vec<_> = read_timestamps[i]
                         .iter()
                         .enumerate()
                         .map(|(j, timestamp)| j as u32 - *timestamp)
@@ -168,12 +175,12 @@ where
 
                     for (lookup_indices, read_cts, final_cts) in [
                         (
-                            &read_timestamps[i],
+                            &read_timestamps[i].coeffs,
                             &read_cts_read_timestamp,
                             &final_cts_read_timestamp,
                         ),
                         (
-                            global_minus_read_timestamps,
+                            &global_minus_read_timestamps,
                             &read_cts_global_minus_read,
                             &final_cts_global_minus_read,
                         ),

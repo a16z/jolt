@@ -250,21 +250,32 @@ impl<F: JoltField> Valid for MultilinearPolynomial<F> {
 }
 
 pub trait PolynomialBinding<F: JoltField> {
+    fn is_bound(&self) -> bool;
     fn bind(&mut self, r: F);
     fn bind_parallel(&mut self, r: F);
+    fn final_sumcheck_claim(&self) -> F;
 }
 
 pub trait PolynomialEvaluation<F: JoltField> {
     fn evaluate(&self, r: &[F]) -> F;
     fn evaluate_with_chis(&self, chis: &[F]) -> F;
+    fn sumcheck_evals(&self, index: usize, num_evals: usize) -> Vec<F>;
 }
 
 impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
+    fn is_bound(&self) -> bool {
+        todo!()
+    }
+
     fn bind(&mut self, r: F) {
         todo!()
     }
 
     fn bind_parallel(&mut self, r: F) {
+        todo!()
+    }
+
+    fn final_sumcheck_claim(&self) -> F {
         todo!()
     }
 }
@@ -276,5 +287,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
     fn evaluate_with_chis(&self, chis: &[F]) -> F {
         todo!()
+    }
+
+    fn sumcheck_evals(&self, index: usize, num_evals: usize) -> Vec<F> {
+        todo!();
     }
 }

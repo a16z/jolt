@@ -419,7 +419,7 @@ where
             },
             || {
                 TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(
-                    &read_timestamps,
+                    &memory_polynomials,
                 )
             },
         );
@@ -479,7 +479,7 @@ where
 
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
-            &jolt_polynomials,
+            &mut jolt_polynomials,
             &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,
