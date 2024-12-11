@@ -5,7 +5,7 @@ use crate::{field::JoltField, utils};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 
-use super::multilinear_polynomial::{PolynomialBinding, PolynomialEvaluation};
+use super::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 
 pub trait SmallScalar: Integer + CanonicalSerialize + CanonicalDeserialize {}
 impl SmallScalar for u8 {}
@@ -73,8 +73,8 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
         !self.bound_coeffs.is_empty()
     }
 
-    fn bind(&mut self, r: F) {}
-    fn bind_parallel(&mut self, r: F) {}
+    fn bind(&mut self, r: F, order: BindingOrder) {}
+    fn bind_parallel(&mut self, r: F, order: BindingOrder) {}
 
     fn final_sumcheck_claim(&self) -> F {
         assert_eq!(self.len, 1);
@@ -91,7 +91,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialEvaluation<F> for CompactPolynomial
         todo!()
     }
 
-    fn sumcheck_evals(&self, index: usize, num_evals: usize) -> Vec<F> {
+    fn sumcheck_evals(&self, index: usize, num_evals: usize, order: BindingOrder) -> Vec<F> {
         todo!()
     }
 }

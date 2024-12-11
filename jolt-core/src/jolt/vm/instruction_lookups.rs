@@ -1,6 +1,6 @@
 use crate::poly::compact_polynomial::CompactPolynomial;
 use crate::poly::multilinear_polynomial::{
-    MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::BatchedGrandProduct;
@@ -1039,7 +1039,7 @@ where
                 .par_iter_mut()
                 .chain(memory_polys.par_iter_mut())
                 .chain([&mut eq_poly, lookup_outputs_poly].into_par_iter())
-                .for_each(|poly| poly.bind(r_j));
+                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
 
             drop(_bind_enter);
             drop(_bind_span);
@@ -1089,17 +1089,18 @@ where
         let evaluations: Vec<F> = (0..mle_half)
             .into_par_iter()
             .map(|i| {
-                let eq_evals = eq_poly.sumcheck_evals(i, num_eval_points);
-                let output_evals = lookup_outputs_poly.sumcheck_evals(i, num_eval_points);
+                let eq_evals = eq_poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh);
+                let output_evals =
+                    lookup_outputs_poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh);
                 let flag_evals: Vec<Vec<F>> = flag_polys
                     .iter()
-                    .map(|poly| poly.sumcheck_evals(i, num_eval_points))
+                    .map(|poly| poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh))
                     .collect();
                 // TODO(moodlezoup): Can avoid computing some of these, instead
                 // compute subtable evals "JIT" in for loop below
                 let subtable_evals: Vec<Vec<F>> = subtable_polys
                     .iter()
-                    .map(|poly| poly.sumcheck_evals(i, num_eval_points))
+                    .map(|poly| poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh))
                     .collect();
 
                 let mut inner_sum = vec![F::zero(); num_eval_points];

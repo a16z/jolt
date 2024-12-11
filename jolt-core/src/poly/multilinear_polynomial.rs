@@ -20,6 +20,11 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U64Scalars(CompactPolynomial<u64, F>),
 }
 
+pub enum BindingOrder {
+    LowToHigh,
+    HighToLow,
+}
+
 impl<F: JoltField> Default for MultilinearPolynomial<F> {
     fn default() -> Self {
         Self::LargeScalars(DensePolynomial::default())
@@ -251,15 +256,15 @@ impl<F: JoltField> Valid for MultilinearPolynomial<F> {
 
 pub trait PolynomialBinding<F: JoltField> {
     fn is_bound(&self) -> bool;
-    fn bind(&mut self, r: F);
-    fn bind_parallel(&mut self, r: F);
+    fn bind(&mut self, r: F, order: BindingOrder);
+    fn bind_parallel(&mut self, r: F, order: BindingOrder);
     fn final_sumcheck_claim(&self) -> F;
 }
 
 pub trait PolynomialEvaluation<F: JoltField> {
     fn evaluate(&self, r: &[F]) -> F;
     fn evaluate_with_chis(&self, chis: &[F]) -> F;
-    fn sumcheck_evals(&self, index: usize, num_evals: usize) -> Vec<F>;
+    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
 }
 
 impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
@@ -267,11 +272,11 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
         todo!()
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F, order: BindingOrder) {
         todo!()
     }
 
-    fn bind_parallel(&mut self, r: F) {
+    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         todo!()
     }
 
@@ -289,7 +294,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         todo!()
     }
 
-    fn sumcheck_evals(&self, index: usize, num_evals: usize) -> Vec<F> {
+    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         todo!();
     }
 }
