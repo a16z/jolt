@@ -324,13 +324,13 @@ where
         let mut polys: Vec<MultilinearPolynomial<P::ScalarField>> = Vec::new();
         polys.push(poly.clone());
         for i in 0..ell - 1 {
-            let Pi_len = polys[i].len() / 2;
-            let mut Pi = vec![P::ScalarField::zero(); Pi_len];
+            let previous_poly: &DensePolynomial<P::ScalarField> = (&polys[i]).try_into().unwrap();
+            let Pi_len = previous_poly.len() / 2;
 
-            #[allow(clippy::needless_range_loop)]
+            let mut Pi = vec![P::ScalarField::zero(); Pi_len];
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
-                *Pi_j =
-                    point[ell - i - 1] * (polys[i][2 * j + 1] - polys[i][2 * j]) + polys[i][2 * j];
+                *Pi_j = point[ell - i - 1] * (previous_poly[2 * j + 1] - previous_poly[2 * j])
+                    + previous_poly[2 * j];
             });
 
             polys.push(MultilinearPolynomial::from(Pi));

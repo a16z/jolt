@@ -236,23 +236,23 @@ where
 
     pub fn commit(
         pp: &ZeromorphProverKey<P>,
-        poly: &DensePolynomial<P::ScalarField>,
+        poly: &MultilinearPolynomial<P::ScalarField>,
     ) -> Result<ZeromorphCommitment<P>, ProofVerifyError> {
-        if pp.commit_pp.g1_powers().len() < poly.Z.len() {
+        if pp.commit_pp.g1_powers().len() < poly.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pp.commit_pp.g1_powers().len(),
-                poly.Z.len(),
+                poly.len(),
             ));
         }
         Ok(ZeromorphCommitment(
-            UnivariateKZG::commit(&pp.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
+            UnivariateKZG::commit_as_univariate(&pp.commit_pp, poly).unwrap(),
         ))
     }
 
     #[tracing::instrument(skip_all, name = "Zeromorph::open")]
     pub fn open(
         pp: &ZeromorphProverKey<P>,
-        poly: &DensePolynomial<P::ScalarField>,
+        poly: &MultilinearPolynomial<P::ScalarField>,
         point: &[P::ScalarField],
         // Can be calculated
         eval: &P::ScalarField,
@@ -261,10 +261,12 @@ where
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
 
-        if pp.commit_pp.g1_powers().len() < poly.Z.len() {
+        let poly: &DensePolynomial<P::ScalarField> = poly.try_into().unwrap();
+
+        if pp.commit_pp.g1_powers().len() < poly.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pp.commit_pp.g1_powers().len(),
-                poly.Z.len(),
+                poly.len(),
             ));
         }
 
@@ -749,7 +751,8 @@ mod test {
         for num_vars in [4, 5, 6] {
             let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(num_vars as u64);
 
-            let poly = DensePolynomial::random(num_vars, &mut rng);
+            let poly =
+                MultilinearPolynomial::LargeScalars(DensePolynomial::random(num_vars, &mut rng));
             let point: Vec<<Bn254 as Pairing>::ScalarField> = (0..num_vars)
                 .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
                 .collect();
