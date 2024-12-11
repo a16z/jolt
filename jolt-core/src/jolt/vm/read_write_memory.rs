@@ -880,8 +880,8 @@ where
     ) -> Self {
         let memory_size = polynomials.v_final.len();
         let num_rounds = memory_size.log_2();
-        let r_eq = transcript.challenge_vector(num_rounds);
-        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_eq));
+        let r_eq: Vec<F> = transcript.challenge_vector(num_rounds);
+        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
 
         let input_start_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
@@ -890,17 +890,17 @@ where
         let ram_start_index =
             memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
 
-        let io_witness_range: Vec<_> = (0..memory_size as u64)
+        let io_witness_range: Vec<u8> = (0..memory_size as u64)
             .map(|i| {
                 if i >= input_start_index && i < ram_start_index {
-                    F::one()
+                    1
                 } else {
-                    F::zero()
+                    0
                 }
             })
             .collect();
 
-        let mut v_io: Vec<u64> = vec![0; memory_size];
+        let mut v_io: Vec<u32> = vec![0; memory_size];
         let mut input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -912,7 +912,7 @@ where
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            v_io[input_index] = word as u64;
+            v_io[input_index] = word;
             input_index += 1;
         }
         let mut output_index = memory_address_to_witness_index(
@@ -926,7 +926,7 @@ where
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            v_io[output_index] = word as u64;
+            v_io[output_index] = word;
             output_index += 1;
         }
 
@@ -934,7 +934,7 @@ where
         v_io[memory_address_to_witness_index(
             program_io.memory_layout.panic,
             &program_io.memory_layout,
-        )] = program_io.panic as u64;
+        )] = program_io.panic as u32;
         if !program_io.panic {
             // Set termination bit
             v_io[memory_address_to_witness_index(
@@ -945,9 +945,9 @@ where
 
         let mut sumcheck_polys = vec![
             eq,
-            DensePolynomial::new(io_witness_range),
+            MultilinearPolynomial::from(io_witness_range),
             polynomials.v_final.clone(),
-            DensePolynomial::from_u64(&v_io),
+            MultilinearPolynomial::from(v_io),
         ];
 
         // eq * io_witness_range * (v_final - v_io)

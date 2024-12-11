@@ -3,6 +3,9 @@
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+};
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
@@ -94,7 +97,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     pub fn prove_arbitrary<Func>(
         _claim: &F,
         num_rounds: usize,
-        polys: &mut Vec<DensePolynomial<F>>,
+        polys: &mut Vec<MultilinearPolynomial<F>>,
         comb_func: Func,
         combined_degree: usize,
         transcript: &mut ProofTranscript,
@@ -116,44 +119,22 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 .into_par_iter()
                 .map(|poly_term_i| {
                     let mut accum = vec![F::zero(); combined_degree + 1];
-                    // Evaluate P({0, ..., |g(r)|})
-
-                    // TODO(#28): Optimize
-                    // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
-                    // of the m terms in the Dense multilinear polynomials. Formula is:
-                    // half = | D_{n-1} | / 2
-                    // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-
-                    // eval 0: bound_func is A(low)
-                    let params_zero: Vec<F> = polys.iter().map(|poly| poly[poly_term_i]).collect();
-                    accum[0] += comb_func(&params_zero);
-
-                    // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-                    let params_one: Vec<F> = polys
+                    // TODO(moodlezoup): Optimize
+                    let evals: Vec<_> = polys
                         .iter()
-                        .map(|poly| poly[mle_half + poly_term_i])
+                        .map(|poly| {
+                            poly.sumcheck_evals(
+                                poly_term_i,
+                                combined_degree,
+                                BindingOrder::HighToLow,
+                            )
+                        })
                         .collect();
-                    accum[1] += comb_func(&params_one);
-
-                    // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-                    // D_n(index, 0) = D_{n-1}[LOW]
-                    // D_n(index, 1) = D_{n-1}[HIGH]
-                    // D_n(index, 2) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-                    // D_n(index, 3) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-                    // ...
-                    let mut existing_term = params_one;
-                    for eval_i in 2..(combined_degree + 1) {
-                        let mut poly_evals = vec![F::zero(); polys.len()];
-                        for poly_i in 0..polys.len() {
-                            let poly = &polys[poly_i];
-                            poly_evals[poly_i] = existing_term[poly_i]
-                                + poly[mle_half + poly_term_i]
-                                - poly[poly_term_i];
-                        }
-
-                        accum[eval_i] += comb_func(&poly_evals);
-                        existing_term = poly_evals;
+                    for j in 0..combined_degree {
+                        let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
+                        accum[j] += comb_func(&evals_j);
                     }
+
                     accum
                 })
                 .collect();
@@ -180,11 +161,14 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             // bound all tables to the verifier's challenege
             polys
                 .par_iter_mut()
-                .for_each(|poly| poly.bound_poly_var_top(&r_j));
+                .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
             compressed_polys.push(round_compressed_poly);
         }
 
-        let final_evals = polys.iter().map(|poly| poly[0]).collect();
+        let final_evals = polys
+            .iter()
+            .map(|poly| poly.final_sumcheck_claim())
+            .collect();
 
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
     }
