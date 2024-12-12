@@ -2,13 +2,102 @@ use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::{prelude::*, PrimeField};
 use ark_std::cmp::Ordering;
 use ark_std::vec::Vec;
+use num_integer::Integer;
 use rayon::prelude::*;
+
+use crate::utils::math::Math;
 
 impl<G: CurveGroup> VariableBaseMSM for G {}
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
 pub trait VariableBaseMSM: ScalarMul {
+    fn msm_u8(bases: &[Self::MulBase], scalars: &[u8]) -> Result<Self, usize> {
+        (bases.len() == scalars.len())
+            .then(|| {
+                let max_num_bits = (*scalars.iter().max().unwrap() as usize).num_bits();
+                match max_num_bits {
+                    0 => Self::zero(),
+                    1 => msm_binary(bases, scalars),
+                    _ => {
+                        // TODO(moodlezoup): Avoid allocating a new vector
+                        let scalars_u16: Vec<_> =
+                            scalars.iter().map(|scalar| *scalar as u16).collect();
+                        msm_small(bases, &scalars_u16, max_num_bits)
+                    }
+                }
+            })
+            .ok_or_else(|| bases.len().min(scalars.len()))
+    }
+
+    fn msm_u16(bases: &[Self::MulBase], scalars: &[u16]) -> Result<Self, usize> {
+        (bases.len() == scalars.len())
+            .then(|| {
+                let max_num_bits = (*scalars.iter().max().unwrap() as usize).num_bits();
+                match max_num_bits {
+                    0 => Self::zero(),
+                    1 => msm_binary(bases, scalars),
+                    2..=10 => msm_small(bases, scalars, max_num_bits),
+                    _ => {
+                        // TODO(moodlezoup): Avoid allocating a new vector
+                        let scalars_u64: Vec<_> =
+                            scalars.iter().map(|scalar| *scalar as u64).collect();
+                        msm_u64(bases, &scalars_u64, max_num_bits)
+                    }
+                }
+            })
+            .ok_or_else(|| bases.len().min(scalars.len()))
+    }
+
+    fn msm_u32(bases: &[Self::MulBase], scalars: &[u32]) -> Result<Self, usize> {
+        (bases.len() == scalars.len())
+            .then(|| {
+                let max_num_bits = (*scalars.iter().max().unwrap() as usize).num_bits();
+                match max_num_bits {
+                    0 => Self::zero(),
+                    1 => msm_binary(bases, scalars),
+                    2..=10 => {
+                        // TODO(moodlezoup): Avoid allocating a new vector
+                        let scalars_u16: Vec<_> =
+                            scalars.iter().map(|scalar| *scalar as u16).collect();
+                        msm_small(bases, &scalars_u16, max_num_bits)
+                    }
+                    _ => {
+                        // TODO(moodlezoup): Avoid allocating a new vector
+                        let scalars_u64: Vec<_> =
+                            scalars.iter().map(|scalar| *scalar as u64).collect();
+                        msm_u64(bases, &scalars_u64, max_num_bits)
+                    }
+                }
+            })
+            .ok_or_else(|| bases.len().min(scalars.len()))
+    }
+
+    fn msm_u64(bases: &[Self::MulBase], scalars: &[u64]) -> Result<Self, usize> {
+        (bases.len() == scalars.len())
+            .then(|| {
+                let max_num_bits = (*scalars.iter().max().unwrap() as usize).num_bits();
+                match max_num_bits {
+                    0 => Self::zero(),
+                    1 => msm_binary(bases, scalars),
+                    2..=10 => {
+                        // TODO(moodlezoup): Avoid allocating a new vector
+                        let scalars_u16: Vec<_> =
+                            scalars.iter().map(|scalar| *scalar as u16).collect();
+                        msm_small(bases, &scalars_u16, max_num_bits)
+                    }
+                    _ => {
+                        if Self::NEGATION_IS_CHEAP {
+                            msm_u64_wnaf(bases, scalars, max_num_bits)
+                        } else {
+                            msm_u64(bases, scalars, max_num_bits)
+                        }
+                    }
+                }
+            })
+            .ok_or_else(|| bases.len().min(scalars.len()))
+    }
+
     fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
         (bases.len() == scalars.len())
             .then(|| {
@@ -20,13 +109,15 @@ pub trait VariableBaseMSM: ScalarMul {
 
                 match max_num_bits {
                     0 => Self::zero(),
-                    1 => {
-                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        msm_binary(bases, scalars_u64)
-                    }
+                    1 => scalars
+                        .iter()
+                        .zip(bases)
+                        .filter(|(&scalar, _base)| !scalar.is_zero())
+                        .map(|(_scalar, base)| base)
+                        .fold(Self::zero(), |sum, base| sum + base),
                     2..=10 => {
-                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        msm_small(bases, scalars_u64, max_num_bits as usize)
+                        let scalars_u8 = &map_field_elements_to_u16::<Self>(scalars);
+                        msm_small(bases, scalars_u8, max_num_bits as usize)
                     }
                     11..=64 => {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
@@ -51,6 +142,17 @@ pub trait VariableBaseMSM: ScalarMul {
             })
             .ok_or_else(|| bases.len().min(scalars.len()))
     }
+}
+
+fn map_field_elements_to_u16<V: VariableBaseMSM>(field_elements: &[V::ScalarField]) -> Vec<u16> {
+    field_elements
+        .par_iter()
+        .map(|s| {
+            let bigint = s.into_bigint();
+            let limbs: &[u64] = bigint.as_ref();
+            limbs[0] as u16
+        })
+        .collect::<Vec<_>>()
 }
 
 fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarField]) -> Vec<u64> {
@@ -415,17 +517,17 @@ fn msm_u64<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bi
 }
 
 #[tracing::instrument(skip_all, name = "msm_binary")]
-fn msm_binary<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64]) -> V {
+fn msm_binary<V: VariableBaseMSM, T: Integer>(bases: &[V::MulBase], scalars: &[T]) -> V {
     scalars
         .iter()
         .zip(bases)
-        .filter(|(&scalar, _base)| scalar != 0)
+        .filter(|(scalar, _base)| !scalar.is_zero())
         .map(|(_scalar, base)| base)
         .fold(V::zero(), |sum, base| sum + base)
 }
 
 #[tracing::instrument(skip_all, name = "msm_small")]
-fn msm_small<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bits: usize) -> V {
+fn msm_small<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u16], max_num_bits: usize) -> V {
     let num_buckets: usize = 1 << max_num_bits;
     // Assign things to buckets based on the scalar
     let mut buckets: Vec<V> = vec![V::zero(); num_buckets];

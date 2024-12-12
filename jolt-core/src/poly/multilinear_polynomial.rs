@@ -33,7 +33,13 @@ impl<F: JoltField> Default for MultilinearPolynomial<F> {
 
 impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn len(&self) -> usize {
-        todo!()
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.len(),
+            MultilinearPolynomial::U8Scalars(poly) => poly.len(),
+            MultilinearPolynomial::U16Scalars(poly) => poly.len(),
+            MultilinearPolynomial::U32Scalars(poly) => poly.len(),
+            MultilinearPolynomial::U64Scalars(poly) => poly.len(),
+        }
     }
 
     pub fn get_num_vars(&self) -> usize {
@@ -42,6 +48,24 @@ impl<F: JoltField> MultilinearPolynomial<F> {
 
     pub fn linear_combination(polys: &[&Self], coefficients: &[F]) -> Self {
         todo!()
+    }
+
+    pub fn get_coeff(&self, index: usize) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly[index],
+            MultilinearPolynomial::U8Scalars(poly) => {
+                F::from_u64(poly.coeffs[index] as u64).unwrap()
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                F::from_u64(poly.coeffs[index] as u64).unwrap()
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                F::from_u64(poly.coeffs[index] as u64).unwrap()
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                F::from_u64(poly.coeffs[index] as u64).unwrap()
+            }
+        }
     }
 }
 

@@ -112,7 +112,7 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+        let mut flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
             .collect();
@@ -184,7 +184,7 @@ where
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-                &flattened_polys,
+                &mut flattened_polys,
                 transcript,
             );
         drop_in_background_thread(poly_ABC);

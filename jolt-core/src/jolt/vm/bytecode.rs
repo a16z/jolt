@@ -305,7 +305,7 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
+    #[tracing::instrument(skip_all, name = "BytecodeProof::generate_witness")]
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut Vec<JoltTraceStep<InstructionSet>>,

@@ -456,7 +456,7 @@ where
     fn batch_commit(
         polys: &[&MultilinearPolynomial<Self::Field>],
         gens: &Self::Setup,
-        batch_type: BatchType,
+        _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         // TODO: assert lengths are valid
         polys
@@ -468,19 +468,23 @@ where
                     gens.0.kzg_pk.g1_powers().len(),
                     poly.len()
                 );
-                match batch_type {
-                    BatchType::GrandProduct => HyperKZGCommitment(
-                        UnivariateKZG::commit_as_univariate_with_mode(
-                            &gens.0.kzg_pk,
-                            poly,
-                            kzg::CommitMode::GrandProduct,
-                        )
-                        .unwrap(),
-                    ),
-                    _ => HyperKZGCommitment(
-                        UnivariateKZG::commit_as_univariate(&gens.0.kzg_pk, poly).unwrap(),
-                    ),
-                }
+                // TODO(moodlezoup): Handle batch_type
+                HyperKZGCommitment(
+                    UnivariateKZG::commit_as_univariate(&gens.0.kzg_pk, poly).unwrap(),
+                )
+                // match batch_type {
+                //     BatchType::GrandProduct => HyperKZGCommitment(
+                //         UnivariateKZG::commit_as_univariate_with_mode(
+                //             &gens.0.kzg_pk,
+                //             poly,
+                //             kzg::CommitMode::GrandProduct,
+                //         )
+                //         .unwrap(),
+                //     ),
+                //     _ => HyperKZGCommitment(
+                //         UnivariateKZG::commit_as_univariate(&gens.0.kzg_pk, poly).unwrap(),
+                //     ),
+                // }
             })
             .collect::<Vec<_>>()
     }

@@ -250,7 +250,7 @@ fn map_to_polys<F: JoltField, const N: usize>(
 }
 
 impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
+    #[tracing::instrument(skip_all, name = "ReadWriteMemoryPolynomials::generate_witness")]
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,

@@ -871,7 +871,7 @@ where
     }
 
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
-    #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
+    #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness")]
     pub fn generate_witness(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         ops: &Vec<JoltTraceStep<InstructionSet>>,

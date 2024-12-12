@@ -4,18 +4,14 @@ use super::{
     ops::{Term, Variable, LC},
     special_polys::SparsePolynomial,
 };
-use crate::utils::transcript::Transcript;
 use crate::{
     field::JoltField,
     jolt::vm::JoltPolynomials,
-    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
+    poly::commitment::commitment_scheme::CommitmentScheme,
     r1cs::key::{SparseConstraints, UniformR1CS},
-    utils::{
-        math::Math,
-        mul_0_1_optimized,
-        thread::{par_flatten_triple, unsafe_allocate_sparse_zero_vec, unsafe_allocate_zero_vec},
-    },
+    utils::{math::Math, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
+use crate::{poly::multilinear_polynomial::MultilinearPolynomial, utils::transcript::Transcript};
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -32,7 +28,7 @@ impl Constraint {
     fn pretty_fmt<const C: usize, I: ConstraintInput, F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[&DensePolynomial<F>],
+        flattened_polynomials: &[&MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
         use std::fmt::Write as _;
@@ -64,7 +60,7 @@ impl Constraint {
                         f,
                         "    {:?} = {}",
                         I::from_index::<C>(var_index),
-                        flattened_polynomials[var_index][step_index]
+                        flattened_polynomials[var_index].get_coeff(step_index)
                     )?;
                 }
                 Variable::Constant => {}
@@ -128,8 +124,8 @@ impl<F: JoltField> AuxComputation<F> {
         &self,
         jolt_polynomials: &JoltPolynomials<F>,
         batch_size: usize,
-    ) -> DensePolynomial<F> {
-        let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
+    ) -> MultilinearPolynomial<F> {
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(jolt_polynomials))
             .collect();
@@ -152,7 +148,7 @@ impl<F: JoltField> AuxComputation<F> {
                             for term in lc.terms().iter() {
                                 match term.0 {
                                     Variable::Input(index) | Variable::Auxiliary(index) => {
-                                        input += flattened_polys[index][global_index]
+                                        input += flattened_polys[index].get_coeff(global_index)
                                             * F::from_i64(term.1);
                                     }
                                     Variable::Constant => input += F::from_i64(term.1),
@@ -165,7 +161,7 @@ impl<F: JoltField> AuxComputation<F> {
                 });
             });
 
-        DensePolynomial::new(aux_poly)
+        MultilinearPolynomial::from(aux_poly)
     }
 
     /// Computes auxiliary variable for batch_size steps using the evaluations of each
@@ -518,7 +514,7 @@ impl OffsetEqConstraint {
 
 pub(crate) fn eval_offset_lc<F: JoltField>(
     offset: &OffsetLC,
-    flattened_polynomials: &[&DensePolynomial<F>],
+    flattened_polynomials: &[&MultilinearPolynomial<F>],
     step: usize,
     next_step_m: Option<usize>,
 ) -> F {
@@ -666,14 +662,14 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     // #[cfg(feature = "reorder")]
     fn compute_spartan_Xz<
         U: for<'a> Fn(&'a Constraint) -> &'a LC + Send + Sync + Copy + 'static,
-        O: Fn(&[&DensePolynomial<F>], &OffsetEqConstraint, usize, Option<usize>) -> F
+        O: Fn(&[&MultilinearPolynomial<F>], &OffsetEqConstraint, usize, Option<usize>) -> F
             + Send
             + Sync
             + Copy
             + 'static,
     >(
         &self,
-        flattened_polynomials: &[&DensePolynomial<F>], // N variables of (S steps)
+        flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
         uniform_constraint: U,
         offset_constraint: O,
     ) -> Vec<(F, usize)> {
@@ -757,165 +753,55 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         ProofTranscript: Transcript,
     >(
         &self,
-        flattened_polynomials: &[&DensePolynomial<F>], // N variables of (S steps)
+        flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
     ) -> (
         SparsePolynomial<F>,
         SparsePolynomial<F>,
         SparsePolynomial<F>,
     ) {
-        if cfg!(feature = "reorder") {
-            let span = tracing::span!(tracing::Level::DEBUG, "uniform and non-uniform constraints");
-            let _enter = span.enter();
-
-            let az_sparse = self.compute_spartan_Xz(
-                flattened_polynomials,
-                |constraint: &Constraint| &constraint.a,
-                |flattened_polynomials, constr, step_index, next_step_index_m| {
-                    let eq_a_eval = eval_offset_lc(
-                        &constr.a,
-                        flattened_polynomials,
-                        step_index,
-                        next_step_index_m,
-                    );
-                    let eq_b_eval = eval_offset_lc(
-                        &constr.b,
-                        flattened_polynomials,
-                        step_index,
-                        next_step_index_m,
-                    );
-                    let az = eq_a_eval - eq_b_eval;
-                    az
-                },
-            );
-            let bz_sparse = self.compute_spartan_Xz(
-                flattened_polynomials,
-                |constraint: &Constraint| &constraint.b,
-                |flattened_polynomials, constr, step_index, next_step_index_m| {
-                    let condition_eval = eval_offset_lc(
-                        &constr.cond,
-                        flattened_polynomials,
-                        step_index,
-                        next_step_index_m,
-                    );
-                    let bz = condition_eval;
-                    bz
-                },
-            );
-            let cz_sparse = self.compute_spartan_Xz(
-                flattened_polynomials,
-                |constraint: &Constraint| &constraint.c,
-                |_, _, _, _| F::zero(),
-            );
-            drop(_enter);
-
-            let num_vars = self.constraint_rows().next_power_of_two().log_2();
-            let az_poly = SparsePolynomial::new(num_vars, az_sparse);
-            let bz_poly = SparsePolynomial::new(num_vars, bz_sparse);
-            let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);
-
-            #[cfg(test)]
-            self.assert_valid(flattened_polynomials, &az_poly, &bz_poly, &cz_poly);
-
-            return (az_poly, bz_poly, cz_poly);
-        }
-
-        let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
-
-        // uniform_constraints: Xz[0..uniform_constraint_rows]
-        let span = tracing::span!(tracing::Level::DEBUG, "uniform constraints");
+        // if cfg!(feature = "reorder") {
+        let span = tracing::span!(tracing::Level::DEBUG, "uniform and non-uniform constraints");
         let _enter = span.enter();
-        #[allow(clippy::type_complexity)]
-        let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> = self
-            .uniform_builder
-            .constraints
-            .par_iter()
-            .enumerate()
-            .map(|(constraint_index, constraint)| {
-                let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
 
-                let mut evaluate_lc_chunk = |lc: &LC| {
-                    if !lc.terms().is_empty() {
-                        lc.evaluate_batch_mut(flattened_polynomials, &mut dense_output_buffer);
-
-                        // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
-                        let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
-                        for (local_index, item) in dense_output_buffer.iter().enumerate() {
-                            if !item.is_zero() {
-                                let global_index =
-                                    constraint_index * self.uniform_repeat + local_index;
-                                sparse.push((*item, global_index));
-                            }
-                        }
-                        sparse
-                    } else {
-                        vec![]
-                    }
-                };
-
-                let a_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.a);
-                let b_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.b);
-                let c_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.c);
-
-                (a_chunk, b_chunk, c_chunk)
-            })
-            .collect();
-
-        let (mut az_sparse, mut bz_sparse, cz_sparse) = par_flatten_triple(
-            uni_constraint_evals,
-            unsafe_allocate_sparse_zero_vec,
-            self.offset_eq_constraint_rows(),
+        let az_sparse = self.compute_spartan_Xz(
+            flattened_polynomials,
+            |constraint: &Constraint| &constraint.a,
+            |flattened_polynomials, constr, step_index, next_step_index_m| {
+                let eq_a_eval = eval_offset_lc(
+                    &constr.a,
+                    flattened_polynomials,
+                    step_index,
+                    next_step_index_m,
+                );
+                let eq_b_eval = eval_offset_lc(
+                    &constr.b,
+                    flattened_polynomials,
+                    step_index,
+                    next_step_index_m,
+                );
+                let az = eq_a_eval - eq_b_eval;
+                az
+            },
         );
-
-        // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
-        // (a - b) * condition == 0
-        // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-        let span = tracing::span!(tracing::Level::DEBUG, "non-uniform constraints");
-        let _enter = span.enter();
-
-        for (constr_i, constr) in self.offset_equality_constraints.iter().enumerate() {
-            let condition_evals = constr
-                .cond
-                .1
-                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
-            let eq_a_evals = constr
-                .a
-                .1
-                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
-            let eq_b_evals = constr
-                .b
-                .1
-                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
-
-            (0..self.uniform_repeat).for_each(|step_index| {
-                // Write corresponding values, if outside the step range, only include the constant.
-                let a_step = step_index + constr.a.0 as usize;
-                let b_step = step_index + constr.b.0 as usize;
-                let a = eq_a_evals
-                    .get(a_step)
-                    .cloned()
-                    .unwrap_or(constr.a.1.constant_term_field());
-                let b = eq_b_evals
-                    .get(b_step)
-                    .cloned()
-                    .unwrap_or(constr.b.1.constant_term_field());
-                let az = a - b;
-
-                let global_index =
-                    uniform_constraint_rows + self.uniform_repeat * constr_i + step_index;
-                if !az.is_zero() {
-                    az_sparse.push((az, global_index));
-                }
-
-                let condition_step = step_index + constr.cond.0 as usize;
-                let bz = condition_evals
-                    .get(condition_step)
-                    .cloned()
-                    .unwrap_or(constr.cond.1.constant_term_field());
-                if !bz.is_zero() {
-                    bz_sparse.push((bz, global_index));
-                }
-            });
-        }
+        let bz_sparse = self.compute_spartan_Xz(
+            flattened_polynomials,
+            |constraint: &Constraint| &constraint.b,
+            |flattened_polynomials, constr, step_index, next_step_index_m| {
+                let condition_eval = eval_offset_lc(
+                    &constr.cond,
+                    flattened_polynomials,
+                    step_index,
+                    next_step_index_m,
+                );
+                let bz = condition_eval;
+                bz
+            },
+        );
+        let cz_sparse = self.compute_spartan_Xz(
+            flattened_polynomials,
+            |constraint: &Constraint| &constraint.c,
+            |_, _, _, _| F::zero(),
+        );
         drop(_enter);
 
         let num_vars = self.constraint_rows().next_power_of_two().log_2();
@@ -926,13 +812,123 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         #[cfg(test)]
         self.assert_valid(flattened_polynomials, &az_poly, &bz_poly, &cz_poly);
 
-        (az_poly, bz_poly, cz_poly)
+        return (az_poly, bz_poly, cz_poly);
+        // }
+
+        // let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
+
+        // // uniform_constraints: Xz[0..uniform_constraint_rows]
+        // let span = tracing::span!(tracing::Level::DEBUG, "uniform constraints");
+        // let _enter = span.enter();
+        // #[allow(clippy::type_complexity)]
+        // let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> = self
+        //     .uniform_builder
+        //     .constraints
+        //     .par_iter()
+        //     .enumerate()
+        //     .map(|(constraint_index, constraint)| {
+        //         let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
+
+        //         let mut evaluate_lc_chunk = |lc: &LC| {
+        //             if !lc.terms().is_empty() {
+        //                 lc.evaluate_batch_mut(flattened_polynomials, &mut dense_output_buffer);
+
+        //                 // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
+        //                 let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
+        //                 for (local_index, item) in dense_output_buffer.iter().enumerate() {
+        //                     if !item.is_zero() {
+        //                         let global_index =
+        //                             constraint_index * self.uniform_repeat + local_index;
+        //                         sparse.push((*item, global_index));
+        //                     }
+        //                 }
+        //                 sparse
+        //             } else {
+        //                 vec![]
+        //             }
+        //         };
+
+        //         let a_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.a);
+        //         let b_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.b);
+        //         let c_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.c);
+
+        //         (a_chunk, b_chunk, c_chunk)
+        //     })
+        //     .collect();
+
+        // let (mut az_sparse, mut bz_sparse, cz_sparse) = par_flatten_triple(
+        //     uni_constraint_evals,
+        //     unsafe_allocate_sparse_zero_vec,
+        //     self.offset_eq_constraint_rows(),
+        // );
+
+        // // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
+        // // (a - b) * condition == 0
+        // // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
+        // let span = tracing::span!(tracing::Level::DEBUG, "non-uniform constraints");
+        // let _enter = span.enter();
+
+        // for (constr_i, constr) in self.offset_equality_constraints.iter().enumerate() {
+        //     let condition_evals = constr
+        //         .cond
+        //         .1
+        //         .evaluate_batch(flattened_polynomials, self.uniform_repeat);
+        //     let eq_a_evals = constr
+        //         .a
+        //         .1
+        //         .evaluate_batch(flattened_polynomials, self.uniform_repeat);
+        //     let eq_b_evals = constr
+        //         .b
+        //         .1
+        //         .evaluate_batch(flattened_polynomials, self.uniform_repeat);
+
+        //     (0..self.uniform_repeat).for_each(|step_index| {
+        //         // Write corresponding values, if outside the step range, only include the constant.
+        //         let a_step = step_index + constr.a.0 as usize;
+        //         let b_step = step_index + constr.b.0 as usize;
+        //         let a = eq_a_evals
+        //             .get(a_step)
+        //             .cloned()
+        //             .unwrap_or(constr.a.1.constant_term_field());
+        //         let b = eq_b_evals
+        //             .get(b_step)
+        //             .cloned()
+        //             .unwrap_or(constr.b.1.constant_term_field());
+        //         let az = a - b;
+
+        //         let global_index =
+        //             uniform_constraint_rows + self.uniform_repeat * constr_i + step_index;
+        //         if !az.is_zero() {
+        //             az_sparse.push((az, global_index));
+        //         }
+
+        //         let condition_step = step_index + constr.cond.0 as usize;
+        //         let bz = condition_evals
+        //             .get(condition_step)
+        //             .cloned()
+        //             .unwrap_or(constr.cond.1.constant_term_field());
+        //         if !bz.is_zero() {
+        //             bz_sparse.push((bz, global_index));
+        //         }
+        //     });
+        // }
+        // drop(_enter);
+
+        // let num_vars = self.constraint_rows().next_power_of_two().log_2();
+        // let az_poly = SparsePolynomial::new(num_vars, az_sparse);
+        // let bz_poly = SparsePolynomial::new(num_vars, bz_sparse);
+        // let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);
+
+        // #[cfg(test)]
+        // self.assert_valid(flattened_polynomials, &az_poly, &bz_poly, &cz_poly);
+
+        // (az_poly, bz_poly, cz_poly)
     }
 
     #[cfg(test)]
     pub fn assert_valid(
         &self,
-        flattened_polynomials: &[&DensePolynomial<F>],
+        flattened_polynomials: &[&MultilinearPolynomial<F>],
         az: &SparsePolynomial<F>,
         bz: &SparsePolynomial<F>,
         cz: &SparsePolynomial<F>,

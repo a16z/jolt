@@ -184,33 +184,53 @@ where
         pk: &KZGProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        todo!()
-    }
+        if pk.g1_powers().len() < poly.len() {
+            return Err(ProofVerifyError::KeyLengthError(
+                pk.g1_powers().len(),
+                poly.len(),
+            ));
+        }
 
-    #[tracing::instrument(skip_all, name = "KZG::commit_as_univariate_with_mode")]
-    pub fn commit_as_univariate_with_mode(
-        pk: &KZGProverKey<P>,
-        poly: &MultilinearPolynomial<P::ScalarField>,
-        mode: CommitMode,
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        todo!()
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_slice")]
-    pub fn commit_slice(
-        pk: &KZGProverKey<P>,
-        coeffs: &[P::ScalarField],
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, coeffs, 0, CommitMode::Default)
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_slice_with_mode")]
-    pub fn commit_slice_with_mode(
-        pk: &KZGProverKey<P>,
-        coeffs: &[P::ScalarField],
-        mode: CommitMode,
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, coeffs, 0, mode)
+        match poly {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let c = <P::G1 as VariableBaseMSM>::msm(
+                    &pk.g1_powers()[..poly.len()],
+                    poly.evals_ref(),
+                )
+                .unwrap();
+                Ok(c.into_affine())
+            }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let c =
+                    <P::G1 as VariableBaseMSM>::msm_u8(&pk.g1_powers()[..poly.len()], &poly.coeffs)
+                        .unwrap();
+                Ok(c.into_affine())
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let c = <P::G1 as VariableBaseMSM>::msm_u16(
+                    &pk.g1_powers()[..poly.len()],
+                    &poly.coeffs,
+                )
+                .unwrap();
+                Ok(c.into_affine())
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let c = <P::G1 as VariableBaseMSM>::msm_u32(
+                    &pk.g1_powers()[..poly.len()],
+                    &poly.coeffs,
+                )
+                .unwrap();
+                Ok(c.into_affine())
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let c = <P::G1 as VariableBaseMSM>::msm_u64(
+                    &pk.g1_powers()[..poly.len()],
+                    &poly.coeffs,
+                )
+                .unwrap();
+                Ok(c.into_affine())
+            }
+        }
     }
 
     #[inline]

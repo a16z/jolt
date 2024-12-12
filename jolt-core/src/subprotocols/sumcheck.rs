@@ -431,7 +431,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
-        witness_polynomials: &[&DensePolynomial<F>],
+        witness_polynomials: &[&MultilinearPolynomial<F>],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
@@ -452,7 +452,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             if (index / trace_len) >= witness_polynomials.len() {
                 F::zero()
             } else {
-                witness_polynomials[index / trace_len][index % trace_len]
+                witness_polynomials[index / trace_len].get_coeff(index % trace_len)
             }
         };
 
