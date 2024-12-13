@@ -18,7 +18,7 @@ impl<F: JoltField> EqSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for EqSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // Materialize table entries in order where (x | y) ranges 0..M
         // Below is the optimized loop for the condition:
         // table[x | y] = (x == y)

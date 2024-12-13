@@ -26,14 +26,24 @@ impl<F: JoltField> EqPolynomial<F> {
         let ell = r.len();
 
         match ell {
-            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, ell),
-            _ => Self::evals_parallel(r, ell),
+            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, ell, None),
+            _ => Self::evals_parallel(r, ell, None),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_with_r2")]
+    pub fn evals_with_r2(r: &[F]) -> Vec<F> {
+        let ell = r.len();
+
+        match ell {
+            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, ell, F::montgomery_r2()),
+            _ => Self::evals_parallel(r, ell, F::montgomery_r2()),
         }
     }
 
     /// Computes evals serially. Uses less memory (and fewer allocations) than `evals_parallel`.
-    fn evals_serial(r: &[F], ell: usize) -> Vec<F> {
-        let mut evals: Vec<F> = vec![F::one(); ell.pow2()];
+    fn evals_serial(r: &[F], ell: usize, r2: Option<F>) -> Vec<F> {
+        let mut evals: Vec<F> = vec![r2.unwrap_or(F::one()); ell.pow2()];
         let mut size = 1;
         for j in 0..ell {
             // in each iteration, we double the size of chis
@@ -51,11 +61,11 @@ impl<F: JoltField> EqPolynomial<F> {
     /// Computes evals in parallel. Uses more memory and allocations than `evals_serial`, but
     /// evaluates biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
-    pub fn evals_parallel(r: &[F], ell: usize) -> Vec<F> {
+    pub fn evals_parallel(r: &[F], ell: usize, r2: Option<F>) -> Vec<F> {
         let final_size = (2usize).pow(ell as u32);
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;
-        evals[0] = F::one();
+        evals[0] = r2.unwrap_or(F::one());
 
         for r in r.iter().rev() {
             let (evals_left, evals_right) = evals.split_at_mut(size);
@@ -73,16 +83,5 @@ impl<F: JoltField> EqPolynomial<F> {
         }
 
         evals
-    }
-
-    #[tracing::instrument(skip_all, name = "EqPolynomial::compute_factored_evals")]
-    pub fn compute_factored_evals(&self, L_size: usize) -> (Vec<F>, Vec<F>) {
-        let ell = self.r.len();
-        let left_num_vars = L_size.log_2();
-
-        let L = EqPolynomial::evals(&self.r[..left_num_vars]);
-        let R = EqPolynomial::evals(&self.r[left_num_vars..ell]);
-
-        (L, R)
     }
 }

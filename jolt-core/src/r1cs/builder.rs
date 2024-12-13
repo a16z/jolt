@@ -120,6 +120,8 @@ impl<F: JoltField> AuxComputation<F> {
         }
     }
 
+    // TODO(moodlezoup): This can be optimized, most auxiliary polynomials
+    // have coefficients < 2^32
     fn compute_aux_poly<const C: usize, I: ConstraintInput>(
         &self,
         jolt_polynomials: &JoltPolynomials<F>,

@@ -71,3 +71,32 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use rand_chacha::rand_core::RngCore;
+
+    #[test]
+    fn implicit_montgomery_conversion() {
+        let mut rng = test_rng();
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            assert_eq!(
+                <Fr as JoltField>::from_u64(x).unwrap(),
+                Fr::montgomery_r2().unwrap().mul_u64_unchecked(x)
+            );
+        }
+
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let y = Fr::random(&mut rng);
+            assert_eq!(
+                y * <Fr as JoltField>::from_u64(x).unwrap(),
+                (y * Fr::montgomery_r2().unwrap()).mul_u64_unchecked(x)
+            );
+        }
+    }
+}

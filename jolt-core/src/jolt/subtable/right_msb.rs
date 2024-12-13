@@ -19,7 +19,7 @@ impl<F: JoltField> RightMSBSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for RightMSBSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = (y & 0b100..0) = msb(y)
         let mut entries = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;

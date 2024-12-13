@@ -18,7 +18,7 @@ impl<F: JoltField> DivByZeroSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for DivByZeroSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = (x == 0) && (y == 2^b - 1)
         let mut entries = vec![0; M];
         let bits_per_operand = (log2(M) / 2) as usize;

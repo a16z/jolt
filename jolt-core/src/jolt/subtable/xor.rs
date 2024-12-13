@@ -19,7 +19,7 @@ impl<F: JoltField> XorSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = x ^ y (bit-wise XOR)
         let mut entries = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
@@ -27,7 +27,7 @@ impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
         // Materialize table entries in order where (x | y) ranges 0..M
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
-            let row = (x ^ y) as u16;
+            let row = (x ^ y) as u32;
             entries.push(row);
         }
         entries

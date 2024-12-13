@@ -135,14 +135,53 @@ impl<F: JoltField> UniPoly<F> {
 
     #[tracing::instrument(skip_all, name = "UniPoly::eval_as_univariate")]
     pub fn eval_as_univariate(poly: &MultilinearPolynomial<F>, r: &F) -> F {
-        todo!()
-        // let mut eval = coeffs[0];
-        // let mut power = *r;
-        // for i in 1..coeffs.len() {
-        //     eval += power * coeffs[i];
-        //     power *= *r;
-        // }
-        // eval
+        match poly {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let mut eval = poly.Z[0];
+                let mut power = *r;
+                for coeff in poly.evals_ref()[1..].iter() {
+                    eval += power * coeff;
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += power.mul_u64_unchecked(*coeff as u64);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += power.mul_u64_unchecked(*coeff as u64);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += power.mul_u64_unchecked(*coeff as u64);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += power.mul_u64_unchecked(*coeff);
+                    power *= *r;
+                }
+                eval
+            }
+        }
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {

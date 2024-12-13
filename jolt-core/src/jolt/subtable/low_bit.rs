@@ -16,7 +16,7 @@ impl<F: JoltField, const OFFSET: usize> LowBitSubtable<F, OFFSET> {
 }
 
 impl<F: JoltField, const OFFSET: usize> LassoSubtable<F> for LowBitSubtable<F, OFFSET> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x] = x & (1 << OFFSET)
         let mut entries = Vec::with_capacity(M);
         let low_bit = 1usize << OFFSET;

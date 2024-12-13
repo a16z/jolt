@@ -6,9 +6,12 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use super::{
-    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, unipoly::UniPoly,
+    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
 };
-use crate::field::JoltField;
+use crate::{
+    field::{JoltField, OptimizedMul},
+    utils::thread::unsafe_allocate_zero_vec,
+};
 
 #[repr(u8)]
 #[derive(Clone, Debug, EnumIter, PartialEq)]
@@ -46,8 +49,63 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         todo!()
     }
 
-    pub fn linear_combination(polys: &[&Self], coefficients: &[F]) -> Self {
-        todo!()
+    pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
+        let max_length = polynomials.iter().map(|poly| poly.len()).max().unwrap();
+        let num_chunks = rayon::current_num_threads()
+            .next_power_of_two()
+            .min(max_length);
+        let chunk_size = (max_length / num_chunks).max(1);
+
+        let lc_coeffs: Vec<F> = (0..num_chunks)
+            .into_par_iter()
+            .flat_map_iter(|chunk_index| {
+                let index = chunk_index * chunk_size;
+                let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
+
+                for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
+                    let poly_len = poly.len();
+                    if index >= poly_len {
+                        continue;
+                    }
+
+                    match poly {
+                        MultilinearPolynomial::LargeScalars(poly) => {
+                            let poly_evals = &poly.evals_ref()[index..];
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                *rlc += poly_eval.mul_01_optimized(*coeff);
+                            }
+                        }
+                        MultilinearPolynomial::U8Scalars(poly) => {
+                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                                *rlc += coeff_r2.mul_u64_unchecked(*poly_eval as u64);
+                            }
+                        }
+                        MultilinearPolynomial::U16Scalars(poly) => {
+                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                                *rlc += coeff_r2.mul_u64_unchecked(*poly_eval as u64);
+                            }
+                        }
+                        MultilinearPolynomial::U32Scalars(poly) => {
+                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                                *rlc += coeff_r2.mul_u64_unchecked(*poly_eval as u64);
+                            }
+                        }
+                        MultilinearPolynomial::U64Scalars(poly) => {
+                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                                *rlc += coeff_r2.mul_u64_unchecked(*poly_eval);
+                            }
+                        }
+                    }
+                }
+                chunk
+            })
+            .collect();
+
+        MultilinearPolynomial::from(lc_coeffs)
     }
 
     pub fn get_coeff(&self, index: usize) -> F {
@@ -103,38 +161,6 @@ impl<F: JoltField> From<Vec<u64>> for MultilinearPolynomial<F> {
         Self::U64Scalars(poly)
     }
 }
-
-// impl<F: JoltField> Into<DensePolynomial<F>> for MultilinearPolynomial<F> {
-//     fn into(self) -> DensePolynomial<F> {
-//         match self {
-//             MultilinearPolynomial::LargeScalars(poly) => poly,
-//             MultilinearPolynomial::U8Scalars(poly) => DensePolynomial::new(
-//                 poly.coeffs
-//                     .par_iter()
-//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
-//                     .collect(),
-//             ),
-//             MultilinearPolynomial::U16Scalars(poly) => DensePolynomial::new(
-//                 poly.coeffs
-//                     .par_iter()
-//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
-//                     .collect(),
-//             ),
-//             MultilinearPolynomial::U32Scalars(poly) => DensePolynomial::new(
-//                 poly.coeffs
-//                     .par_iter()
-//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
-//                     .collect(),
-//             ),
-//             MultilinearPolynomial::U64Scalars(poly) => DensePolynomial::new(
-//                 poly.coeffs
-//                     .par_iter()
-//                     .map(|&coeff| F::from_u64(coeff as u64).unwrap())
-//                     .collect(),
-//             ),
-//         }
-//     }
-// }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = (); // TODO(moodlezoup)
@@ -311,11 +337,52 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
-        todo!()
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let chis = EqPolynomial::evals_with_r2(&r);
+                assert_eq!(chis.len(), poly.len());
+                chis.par_iter()
+                    .zip(poly.coeffs.par_iter())
+                    .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i as u64))
+                    .sum()
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let chis = EqPolynomial::evals_with_r2(&r);
+                assert_eq!(chis.len(), poly.len());
+                chis.par_iter()
+                    .zip(poly.coeffs.par_iter())
+                    .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i as u64))
+                    .sum()
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let chis = EqPolynomial::evals_with_r2(&r);
+                assert_eq!(chis.len(), poly.len());
+                chis.par_iter()
+                    .zip(poly.coeffs.par_iter())
+                    .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i as u64))
+                    .sum()
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let chis = EqPolynomial::evals_with_r2(&r);
+                assert_eq!(chis.len(), poly.len());
+                chis.par_iter()
+                    .zip(poly.coeffs.par_iter())
+                    .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i))
+                    .sum()
+            }
+        }
     }
 
+    // TODO(moodlezoup): This is suboptimal for CompactPolynomials because get_coeff
+    // requires a field multiplication (to convert the coefficient into Montgomery
+    // form). Avoid this as much as possible.
     fn evaluate_with_chis(&self, chis: &[F]) -> F {
-        todo!()
+        assert_eq!(chis.len(), self.len());
+        chis.par_iter()
+            .enumerate()
+            .map(|(i, x)| *x * self.get_coeff(i))
+            .sum()
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {

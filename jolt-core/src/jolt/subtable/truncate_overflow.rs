@@ -25,7 +25,7 @@ impl<F: JoltField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZE
 impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
     for TruncateOverflowSubtable<F, WORD_SIZE>
 {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x] = x & (0b00..011..1), where the number of 0s is `cutoff`.
         // Truncates overflow bits beyond nearest multiple of `log2(M)`
         let cutoff = WORD_SIZE % log2(M) as usize;
@@ -33,7 +33,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
         let mut entries = Vec::with_capacity(M);
         for idx in 0..M {
             let (_, lower_bits) = split_bits(idx, cutoff);
-            let row = lower_bits as u16;
+            let row = lower_bits as u32;
             entries.push(row);
         }
         entries

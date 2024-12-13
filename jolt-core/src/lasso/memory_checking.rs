@@ -353,6 +353,7 @@ where
         let mut exogenous_openings = Self::ExogenousOpenings::default();
 
         let eq_read_write = EqPolynomial::evals(r_read_write);
+        // let eq_read_write_r2 = EqPolynomial::evals_with_r2(r_read_write);
         polynomials
             .read_write_values()
             .par_iter()
@@ -363,7 +364,7 @@ where
                     .zip_eq(exogenous_openings.openings_mut().into_par_iter()),
             )
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate(&eq_read_write);
+                let claim = poly.evaluate_with_chis(&eq_read_write);
                 *opening = claim;
             });
 
@@ -383,12 +384,13 @@ where
         );
 
         let eq_init_final = EqPolynomial::evals(r_init_final);
+        // let eq_init_final_r2 = EqPolynomial::evals_with_r2(r_init_final);
         polynomials
             .init_final_values()
             .par_iter()
             .zip_eq(openings.init_final_values_mut().into_par_iter())
             .for_each(|(poly, opening)| {
-                let claim = poly.evaluate(&eq_init_final);
+                let claim = poly.evaluate_with_chis(&eq_init_final);
                 *opening = claim;
             });
 

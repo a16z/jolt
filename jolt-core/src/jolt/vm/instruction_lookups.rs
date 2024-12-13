@@ -253,7 +253,7 @@ where
                 // Init leaves
                 (0..M).for_each(|i| {
                     let a = &F::from_u64(i as u64).unwrap();
-                    let v: u16 = subtable[i];
+                    let v: u32 = subtable[i];
                     // let t = F::zero();
                     // Compute h(a,v,t) where t == 0
                     leaves[i] = gamma.mul_u64_unchecked(v as u64) + *a - *tau;
@@ -625,7 +625,7 @@ pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     instruction_to_memory_indices: Vec<Vec<usize>>,
     memory_to_subtable_index: Vec<usize>,
     memory_to_dimension_index: Vec<usize>,
-    materialized_subtables: Vec<Vec<u16>>,
+    materialized_subtables: Vec<Vec<u32>>,
     num_memories: usize,
     _field: PhantomData<F>,
 }
@@ -690,7 +690,7 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
 
     /// Materializes all subtables used by this Jolt instance.
     #[tracing::instrument(skip_all)]
-    fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<u16>>
+    fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<u32>>
     where
         Subtables: JoltSubtableSet<F>,
     {

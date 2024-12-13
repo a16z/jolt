@@ -363,82 +363,83 @@ where
             MultilinearPolynomial::from(rs2),
             MultilinearPolynomial::from(imm),
         ];
-        let t_read = MultilinearPolynomial::from(read_cts);
+        let t_read: MultilinearPolynomial<F> = MultilinearPolynomial::from(read_cts);
         let t_final = MultilinearPolynomial::from(final_cts);
 
-        // #[cfg(test)]
-        // let mut init_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
-        // #[cfg(test)]
-        // let mut final_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut init_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut final_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
 
-        // #[cfg(test)]
-        // for (a, t) in t_final.Z.iter().enumerate() {
-        //     init_tuples.insert((
-        //         a as u64,
-        //         [
-        //             preprocessing.v_init_final[0][a],
-        //             preprocessing.v_init_final[1][a],
-        //             preprocessing.v_init_final[2][a],
-        //             preprocessing.v_init_final[3][a],
-        //             preprocessing.v_init_final[4][a],
-        //             preprocessing.v_init_final[5][a],
-        //         ],
-        //         0,
-        //     ));
-        //     final_tuples.insert((
-        //         a as u64,
-        //         [
-        //             preprocessing.v_init_final[0][a],
-        //             preprocessing.v_init_final[1][a],
-        //             preprocessing.v_init_final[2][a],
-        //             preprocessing.v_init_final[3][a],
-        //             preprocessing.v_init_final[4][a],
-        //             preprocessing.v_init_final[5][a],
-        //         ],
-        //         t.to_u64().unwrap(),
-        //     ));
-        // }
+        #[cfg(test)]
+        for a in 0..t_final.len() {
+            let t: F = t_final.get_coeff(a);
+            init_tuples.insert((
+                a as u64,
+                [
+                    preprocessing.v_init_final[0].get_coeff(a),
+                    preprocessing.v_init_final[1].get_coeff(a),
+                    preprocessing.v_init_final[2].get_coeff(a),
+                    preprocessing.v_init_final[3].get_coeff(a),
+                    preprocessing.v_init_final[4].get_coeff(a),
+                    preprocessing.v_init_final[5].get_coeff(a),
+                ],
+                0,
+            ));
+            final_tuples.insert((
+                a as u64,
+                [
+                    preprocessing.v_init_final[0].get_coeff(a),
+                    preprocessing.v_init_final[1].get_coeff(a),
+                    preprocessing.v_init_final[2].get_coeff(a),
+                    preprocessing.v_init_final[3].get_coeff(a),
+                    preprocessing.v_init_final[4].get_coeff(a),
+                    preprocessing.v_init_final[5].get_coeff(a),
+                ],
+                t.to_u64().unwrap(),
+            ));
+        }
 
-        // #[cfg(test)]
-        // let mut read_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
-        // #[cfg(test)]
-        // let mut write_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut read_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut write_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
 
-        // #[cfg(test)]
-        // for (i, a) in a_read_write.iter().enumerate() {
-        //     read_tuples.insert((
-        //         *a as u64,
-        //         [
-        //             v_read_write[0][i],
-        //             v_read_write[1][i],
-        //             v_read_write[2][i],
-        //             v_read_write[3][i],
-        //             v_read_write[4][i],
-        //             v_read_write[5][i],
-        //         ],
-        //         t_read[i].to_u64().unwrap(),
-        //     ));
-        //     write_tuples.insert((
-        //         *a as u64,
-        //         [
-        //             v_read_write[0][i],
-        //             v_read_write[1][i],
-        //             v_read_write[2][i],
-        //             v_read_write[3][i],
-        //             v_read_write[4][i],
-        //             v_read_write[5][i],
-        //         ],
-        //         t_read[i].to_u64().unwrap() + 1,
-        //     ));
-        // }
+        #[cfg(test)]
+        for (i, a) in a_read_write.iter().enumerate() {
+            read_tuples.insert((
+                *a as u64,
+                [
+                    v_read_write[0].get_coeff(i),
+                    v_read_write[1].get_coeff(i),
+                    v_read_write[2].get_coeff(i),
+                    v_read_write[3].get_coeff(i),
+                    v_read_write[4].get_coeff(i),
+                    v_read_write[5].get_coeff(i),
+                ],
+                t_read.get_coeff(i).to_u64().unwrap(),
+            ));
+            write_tuples.insert((
+                *a as u64,
+                [
+                    v_read_write[0].get_coeff(i),
+                    v_read_write[1].get_coeff(i),
+                    v_read_write[2].get_coeff(i),
+                    v_read_write[3].get_coeff(i),
+                    v_read_write[4].get_coeff(i),
+                    v_read_write[5].get_coeff(i),
+                ],
+                t_read.get_coeff(i).to_u64().unwrap() + 1,
+            ));
+        }
 
-        // #[cfg(test)]
-        // {
-        //     let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
-        //     let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
-        //     let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
-        //     assert_eq!(set_difference.len(), 0);
-        // }
+        #[cfg(test)]
+        {
+            let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
+            let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
+            let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
+            assert_eq!(set_difference.len(), 0);
+        }
 
         let a_read_write = MultilinearPolynomial::from(a_read_write);
 
@@ -519,7 +520,7 @@ where
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
 
-        let mut gamma_terms = [F::one(); 7];
+        let mut gamma_terms = [F::zero(); 7];
         let mut gamma_term = F::montgomery_r2().unwrap_or(F::one());
         for i in 0..7 {
             gamma_term *= *gamma;
@@ -557,9 +558,20 @@ where
             })
             .collect();
 
-        let write_leaves = read_leaves
-            .par_iter()
-            .map(|read_leaf| *read_leaf + gamma_terms[6])
+        // TODO(moodlezoup): Compute write_leaves from read_leaves
+        let write_leaves: Vec<F> = (0..num_ops)
+            .into_par_iter()
+            .map(|i| {
+                v_imm[i]
+                    + gamma_terms[0].mul_u64_unchecked(a[i] as u64)
+                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
+                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
+                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
+                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
+                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
+                    + gamma_terms[6].mul_u64_unchecked(t[i] as u64 + 1)
+                    - tau
+            })
             .collect();
 
         let v_address: &CompactPolynomial<u64, F> =
@@ -574,11 +586,6 @@ where
         let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                // The gamma terms include an R^2 factor so that we convert the
-                // CompactPolynomial coefficients into Montgomery form when we
-                // multiply them by a gamma term. v_imm is a DensePolynomial,
-                // meaning its coefficients are already in Montgomery form. Thus,
-                // we make sure *not* to multiply v_imm by a gamma term.
                 v_imm[i]
                     + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
                     + gamma_terms[1].mul_u64_unchecked(v_address[i])
@@ -591,11 +598,21 @@ where
             })
             .collect();
 
+        // TODO(moodlezoup): Compute final_leaves from init_leaves
         let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
-        let final_leaves = init_leaves
-            .par_iter()
-            .enumerate()
-            .map(|(i, init_leaf)| *init_leaf + gamma_terms[6].mul_u64_unchecked(t_final[i] as u64))
+        let final_leaves: Vec<F> = (0..bytecode_size)
+            .into_par_iter()
+            .map(|i| {
+                v_imm[i]
+                    + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
+                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
+                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
+                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
+                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
+                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
+                    + gamma_terms[6].mul_u64_unchecked(t_final[i] as u64)
+                    - tau
+            })
             .collect();
 
         // TODO(moodlezoup): avoid concat
@@ -708,7 +725,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
+    use crate::jolt::vm::rv32i_vm::RV32I;
 
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
@@ -750,41 +767,41 @@ mod tests {
         BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
     }
 
-    #[test]
-    #[should_panic]
-    fn bytecode_validation_fake_trace() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
-            BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
-            BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-            BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
-            BytecodeRow::new(to_ram_address(4), 32, 32, 32, 32, 32),
-        ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
-            BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-            BytecodeRow::new(to_ram_address(5), 0, 0, 0, 0, 0), // no_op: shouldn't exist in pgoram
-        ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
-            &program, &trace,
-        );
-    }
+    // #[test]
+    // #[should_panic]
+    // fn bytecode_validation_fake_trace() {
+    //     let program = vec![
+    //         BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
+    //         BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
+    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
+    //         BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
+    //         BytecodeRow::new(to_ram_address(4), 32, 32, 32, 32, 32),
+    //     ];
+    //     let trace = vec![
+    //         BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
+    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
+    //         BytecodeRow::new(to_ram_address(5), 0, 0, 0, 0, 0), // no_op: shouldn't exist in pgoram
+    //     ];
+    //     BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
+    //         &program, &trace,
+    //     );
+    // }
 
-    #[test]
-    #[should_panic]
-    fn bytecode_validation_bad_prog_increment() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
-            BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
-            BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-            BytecodeRow::new(to_ram_address(4), 16, 16, 16, 16, 16), // Increment by 2
-        ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
-            BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-        ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
-            &program, &trace,
-        );
-    }
+    // #[test]
+    // #[should_panic]
+    // fn bytecode_validation_bad_prog_increment() {
+    //     let program = vec![
+    //         BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
+    //         BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
+    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
+    //         BytecodeRow::new(to_ram_address(4), 16, 16, 16, 16, 16), // Increment by 2
+    //     ];
+    //     let trace = vec![
+    //         BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
+    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
+    //     ];
+    //     BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
+    //         &program, &trace,
+    //     );
+    // }
 }

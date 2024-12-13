@@ -18,7 +18,7 @@ impl<F: JoltField> RightIsZeroSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for RightIsZeroSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = (y == 0)
         let mut entries = vec![0; M];
         let right_operand_bits = (1 << (log2(M) / 2)) - 1;

@@ -18,7 +18,7 @@ impl<F: JoltField> EqAbsSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for EqAbsSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<u16> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // Materialize table entries in order where (x | y) ranges 0..M
         // Below is the optimized loop for the condition:
         // lower_bits_mask = 0b01111...11
