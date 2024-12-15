@@ -793,6 +793,7 @@ where
                 read_write_hashes.to_vec(),
                 init_final_hashes.to_vec(),
             );
+        #[cfg(test)]
         TimestampValidityProof::<F, PCS, ProofTranscript>::check_multiset_equality(
             &NoPreprocessing,
             &multiset_hashes,

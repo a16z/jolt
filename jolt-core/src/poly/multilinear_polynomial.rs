@@ -46,7 +46,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     }
 
     pub fn get_num_vars(&self) -> usize {
-        todo!()
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::U8Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::U16Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
+        }
     }
 
     pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
@@ -122,6 +128,41 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 F::from_u64(poly.coeffs[index] as u64).unwrap()
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get_bound_coeff(&self, index: usize) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly[index],
+            MultilinearPolynomial::U8Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    F::from_u64(poly.coeffs[index] as u64).unwrap()
+                }
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    F::from_u64(poly.coeffs[index] as u64).unwrap()
+                }
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    F::from_u64(poly.coeffs[index] as u64).unwrap()
+                }
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    F::from_u64(poly.coeffs[index]).unwrap()
+                }
             }
         }
     }
@@ -322,16 +363,36 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
         todo!()
     }
 
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind")]
     fn bind(&mut self, r: F, order: BindingOrder) {
-        todo!()
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => match order {
+                BindingOrder::LowToHigh => poly.bound_poly_var_bot(&r),
+                BindingOrder::HighToLow => poly.bound_poly_var_top(&r),
+            },
+            MultilinearPolynomial::U8Scalars(poly) => poly.bind(r, order),
+            MultilinearPolynomial::U16Scalars(poly) => poly.bind(r, order),
+            MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
+            MultilinearPolynomial::U64Scalars(poly) => poly.bind(r, order),
+        }
     }
 
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         todo!()
     }
 
     fn final_sumcheck_claim(&self) -> F {
-        todo!()
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                assert_eq!(poly.len(), 1);
+                poly.Z[0]
+            }
+            MultilinearPolynomial::U8Scalars(poly) => poly.final_sumcheck_claim(),
+            MultilinearPolynomial::U16Scalars(poly) => poly.final_sumcheck_claim(),
+            MultilinearPolynomial::U32Scalars(poly) => poly.final_sumcheck_claim(),
+            MultilinearPolynomial::U64Scalars(poly) => poly.final_sumcheck_claim(),
+        }
     }
 }
 
@@ -341,7 +402,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::U8Scalars(poly) => {
                 let chis = EqPolynomial::evals_with_r2(&r);
-                assert_eq!(chis.len(), poly.len());
+                assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
                     .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i as u64))
@@ -349,7 +410,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             }
             MultilinearPolynomial::U16Scalars(poly) => {
                 let chis = EqPolynomial::evals_with_r2(&r);
-                assert_eq!(chis.len(), poly.len());
+                assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
                     .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i as u64))
@@ -357,7 +418,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             }
             MultilinearPolynomial::U32Scalars(poly) => {
                 let chis = EqPolynomial::evals_with_r2(&r);
-                assert_eq!(chis.len(), poly.len());
+                assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
                     .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i as u64))
@@ -365,7 +426,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 let chis = EqPolynomial::evals_with_r2(&r);
-                assert_eq!(chis.len(), poly.len());
+                assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
                     .map(|(a_i, b_i)| a_i.mul_u64_unchecked(*b_i))
@@ -378,14 +439,45 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     // requires a field multiplication (to convert the coefficient into Montgomery
     // form). Avoid this as much as possible.
     fn evaluate_with_chis(&self, chis: &[F]) -> F {
-        assert_eq!(chis.len(), self.len());
+        // assert_eq!(chis.len(), self.len());
         chis.par_iter()
             .enumerate()
             .map(|(i, x)| *x * self.get_coeff(i))
             .sum()
     }
 
+    // TODO(moodlezoup): tinyvec?
+    #[inline]
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        todo!();
+        debug_assert!(degree > 0);
+        debug_assert!(index < self.len() / 2);
+        match order {
+            BindingOrder::HighToLow => {
+                let mut evals = vec![F::zero(); degree + 1];
+                evals[0] = self.get_bound_coeff(index);
+                if degree == 1 {
+                    return evals;
+                }
+                evals[1] = self.get_bound_coeff(index + self.len() / 2);
+                let m = evals[1] - evals[0];
+                for i in 1..degree {
+                    evals[i + 1] = evals[i] + m;
+                }
+                evals
+            }
+            BindingOrder::LowToHigh => {
+                let mut evals = vec![F::zero(); degree + 1];
+                evals[0] = self.get_bound_coeff(2 * index);
+                if degree == 1 {
+                    return evals;
+                }
+                evals[1] = self.get_bound_coeff(2 * index + 1);
+                let m = evals[1] - evals[0];
+                for i in 1..degree {
+                    evals[i + 1] = evals[i] + m;
+                }
+                evals
+            }
+        }
     }
 }

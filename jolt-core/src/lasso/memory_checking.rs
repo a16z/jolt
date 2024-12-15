@@ -314,6 +314,7 @@ where
 
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
+        #[cfg(test)]
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript(transcript);
 

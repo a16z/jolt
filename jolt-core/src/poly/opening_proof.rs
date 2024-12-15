@@ -16,7 +16,7 @@ use super::{
     unipoly::{CompressedUniPoly, UniPoly},
 };
 use crate::{
-    field::{JoltField, OptimizedMul},
+    field::JoltField,
     poly::multilinear_polynomial::PolynomialEvaluation,
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
@@ -208,34 +208,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
-        // // Compute the random linear combination of the polynomials
-        // let total_evals_len = 1 << opening_point.len();
-        // // Only use as many chunks as there are threads, or the total number of evaluations
-        // let num_chunks = rayon::current_num_threads()
-        //     .next_power_of_two()
-        //     .min(total_evals_len);
-        // let chunk_size = (total_evals_len / num_chunks).max(1);
-        // let f_batched = (0..num_chunks)
-        //     .into_par_iter()
-        //     .flat_map_iter(|chunk_index| {
-        //         let index = chunk_index * chunk_size;
-        //         let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
-
-        //         for (coeff, poly) in rho_powers.iter().zip(polynomials.iter()) {
-        //             let poly_len = poly.len();
-        //             if index >= poly_len {
-        //                 continue;
-        //             }
-        //             let poly_evals = &poly.evals_ref()[index..];
-        //             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-        //                 *rlc += poly_eval.mul_01_optimized(*coeff);
-        //             }
-        //         }
-        //         chunk
-        //     })
-        //     .collect::<Vec<_>>();
-        // let batched_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(f_batched));
-
         let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
 
         #[cfg(test)]
@@ -269,6 +241,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        // TODO(moodlezoup): surely there's a better way to do this
+        let unbound_polys = self
+            .openings
+            .iter()
+            .map(|opening| opening.polynomial.clone())
+            .collect::<Vec<_>>();
+
         // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(&rho_powers, transcript);
@@ -281,48 +260,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        // let max_len = self
-        //     .openings
-        //     .iter()
-        //     .map(|opening| opening.polynomial.len())
-        //     .max()
-        //     .unwrap();
-        // // Only use as many chunks as there are threads, or the total number of evaluations
-        // let num_chunks = rayon::current_num_threads()
-        //     .next_power_of_two()
-        //     .min(max_len);
-        // let chunk_size = (max_len / num_chunks).max(1);
-
-        // // Compute random linear combination of the polynomials, accounting for the fact
-        // // that they may be of different sizes
-        // let joint_poly: Vec<F> = (0..num_chunks)
-        //     .into_par_iter()
-        //     .flat_map_iter(|chunk_index| {
-        //         let index = chunk_index * chunk_size;
-
-        //         let mut chunk = unsafe_allocate_zero_vec(chunk_size);
-        //         for (coeff, opening) in gamma_powers.iter().zip(self.openings.iter()) {
-        //             let poly_len = opening.polynomial.len();
-        //             if index >= poly_len {
-        //                 continue;
-        //             }
-        //             let poly_evals = &opening.polynomial.Z[index..];
-
-        //             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-        //                 *rlc += coeff.mul_01_optimized(*poly_eval);
-        //             }
-        //         }
-        //         chunk
-        //     })
-        //     .collect();
-        // let joint_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(joint_poly));
-
         let joint_poly = MultilinearPolynomial::linear_combination(
-            &self
-                .openings
-                .iter()
-                .map(|opening| &opening.polynomial)
-                .collect::<Vec<_>>(),
+            &unbound_polys.iter().collect::<Vec<_>>(),
             &gamma_powers,
         );
 
@@ -343,6 +282,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         coeffs: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        println!("# openings: {}", self.openings.len());
         let max_num_vars = self
             .openings
             .iter()
@@ -380,10 +320,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             r.push(r_j);
 
             self.openings.par_iter_mut().for_each(|opening| {
-                rayon::join(
-                    || opening.eq_poly.bind(r_j, BindingOrder::HighToLow),
-                    || opening.polynomial.bind(r_j, BindingOrder::HighToLow),
-                );
+                if remaining_rounds <= opening.opening_point.len() {
+                    rayon::join(
+                        || opening.eq_poly.bind(r_j, BindingOrder::HighToLow),
+                        || opening.polynomial.bind(r_j, BindingOrder::HighToLow),
+                    );
+                }
             });
 
             e = uni_poly.evaluate(&r_j);
@@ -401,7 +343,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
     /// Computes the univariate (quadratic) polynomial that serves as the
     /// prover's message in each round of the sumcheck in `prove_batch_opening_reduction`.
-    #[tracing::instrument(skip_all, name = "compute_quadratic")]
+    #[tracing::instrument(skip_all)]
     fn compute_quadratic(
         &self,
         coeffs: &[F],

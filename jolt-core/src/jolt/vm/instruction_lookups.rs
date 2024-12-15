@@ -211,7 +211,7 @@ where
 
                 let dim: &CompactPolynomial<u16, F> =
                     (&polynomials.dim[dim_index]).try_into().unwrap();
-                let E_poly: &CompactPolynomial<u16, F> =
+                let E_poly: &CompactPolynomial<u32, F> =
                     (&polynomials.E_polys[memory_index]).try_into().unwrap();
                 let read_cts: &CompactPolynomial<u32, F> =
                     (&polynomials.read_cts[memory_index]).try_into().unwrap();
@@ -227,6 +227,7 @@ where
                             - *tau
                     })
                     .collect();
+                // TODO(moodlezoup): Compute write_fingerprints from read_fingerprints
                 let write_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
                         let a = dim[i] as u64;
@@ -1040,9 +1041,6 @@ where
                 .chain(memory_polys.par_iter_mut())
                 .chain([&mut eq_poly, lookup_outputs_poly].into_par_iter())
                 .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-
-            drop(_bind_enter);
-            drop(_bind_span);
         } // End rounds
 
         // Pass evaluations at point r back in proof:
@@ -1070,7 +1068,7 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop")]
+    #[tracing::instrument(skip_all)]
     fn primary_sumcheck_prover_message(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &MultilinearPolynomial<F>,
@@ -1082,10 +1080,6 @@ where
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
-        // Loop over half MLE size (size of MLE next round)
-        //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
-        //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
-        // After: Sum over MLE elements (with combine)
         let evaluations: Vec<F> = (0..mle_half)
             .into_par_iter()
             .map(|i| {
@@ -1096,12 +1090,8 @@ where
                     .iter()
                     .map(|poly| poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh))
                     .collect();
-                // TODO(moodlezoup): Can avoid computing some of these, instead
-                // compute subtable evals "JIT" in for loop below
-                let subtable_evals: Vec<Vec<F>> = subtable_polys
-                    .iter()
-                    .map(|poly| poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh))
-                    .collect();
+                // Subtable evals are lazily computed in the for-loop below
+                let mut subtable_evals: Vec<Vec<F>> = vec![vec![]; subtable_polys.len()];
 
                 let mut inner_sum = vec![F::zero(); num_eval_points];
                 for instruction in InstructionSet::iter() {
@@ -1117,7 +1107,17 @@ where
 
                         let subtable_terms: Vec<F> = memory_indices
                             .iter()
-                            .map(|memory_index| subtable_evals[*memory_index][j])
+                            .map(|memory_index| {
+                                if subtable_evals[*memory_index].is_empty() {
+                                    subtable_evals[*memory_index] = subtable_polys[*memory_index]
+                                        .sumcheck_evals(
+                                            i,
+                                            num_eval_points,
+                                            BindingOrder::LowToHigh,
+                                        );
+                                }
+                                subtable_evals[*memory_index][j]
+                            })
                             .collect();
 
                         let instruction_collation_eval =
@@ -1134,7 +1134,7 @@ where
                 evaluations
             })
             .reduce(
-                || vec![F::zero(); num_eval_points],
+                || vec![F::zero(); num_eval_points], // TODO(moodlezoup): tinyvec?
                 |running, new| {
                     debug_assert_eq!(running.len(), new.len());
                     running
