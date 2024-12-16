@@ -139,13 +139,7 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline(always)]
     fn mul_u64_unchecked(&self, n: u64) -> Self {
-        if n == 0 {
-            Self::zero()
-        } else if n == 1 {
-            *self
-        } else {
-            ark_ff::Fp::mul_u64(*self, n)
-        }
+        ark_ff::Fp::mul_u64(*self, n)
     }
 }
 

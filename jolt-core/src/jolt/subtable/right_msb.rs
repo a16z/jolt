@@ -58,7 +58,7 @@ mod test {
         right_msb_materialize_mle_parity,
         RightMSBSubtable<Fr>,
         Fr,
-        256
+        1 << 16
     );
     subtable_materialize_mle_parity_test!(
         right_msb_binius_materialize_mle_parity,

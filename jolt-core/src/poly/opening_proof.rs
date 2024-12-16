@@ -282,7 +282,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         coeffs: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
-        println!("# openings: {}", self.openings.len());
         let max_num_vars = self
             .openings
             .iter()

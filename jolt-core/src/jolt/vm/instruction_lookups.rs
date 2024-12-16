@@ -5,7 +5,7 @@ use crate::poly::multilinear_polynomial::{
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
-use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -204,7 +204,7 @@ where
 
         let num_lookups = polynomials.dim[0].len();
 
-        let read_write_leaves = (0..preprocessing.num_memories)
+        let read_write_leaves: Vec<_> = (0..preprocessing.num_memories)
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
@@ -227,17 +227,9 @@ where
                             - *tau
                     })
                     .collect();
-                // TODO(moodlezoup): Compute write_fingerprints from read_fingerprints
+                let t_adjustment = gamma_squared.mul_u64_unchecked(1);
                 let write_fingerprints: Vec<F> = (0..num_lookups)
-                    .map(|i| {
-                        let a = dim[i];
-                        let v = E_poly[i] as u64;
-                        let t = read_cts[i] as u64 + 1;
-                        gamma_squared.mul_u64_unchecked(t)
-                            + gamma.mul_u64_unchecked(v)
-                            + F::from_u16(a)
-                            - *tau
-                    })
+                    .map(|i| read_fingerprints[i] + t_adjustment)
                     .collect();
                 [read_fingerprints, write_fingerprints]
             })
@@ -373,7 +365,6 @@ where
             multiset_hashes.final_hashes.len(),
             preprocessing.num_memories
         );
-
         (0..preprocessing.num_memories)
             .into_par_iter()
             .for_each(|i| {
@@ -734,7 +725,7 @@ where
         let num_rounds = trace_length.log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
-        let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
+        let (primary_sumcheck_proof, mut r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck(
                 preprocessing,
                 num_rounds,
@@ -745,6 +736,7 @@ where
                 Self::sumcheck_poly_degree(),
                 transcript,
             );
+        r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
 
         // Create a single opening proof for the flag_evals and memory_evals
         let sumcheck_openings = PrimarySumcheckOpenings {
@@ -768,10 +760,11 @@ where
         .concat();
         primary_sumcheck_openings.push(outputs_eval);
 
+        let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         opening_accumulator.append(
             &primary_sumcheck_polys,
-            DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck)),
-            r_primary_sumcheck.clone(),
+            eq_primary_sumcheck,
+            r_primary_sumcheck,
             &primary_sumcheck_openings.iter().collect::<Vec<_>>(),
             transcript,
         );
@@ -894,7 +887,7 @@ where
 
                 let mut final_cts_i = vec![0u32; M];
                 let mut read_cts_i = vec![0u32; m];
-                let mut subtable_lookups = vec![0; m];
+                let mut subtable_lookups = vec![0u32; m];
 
                 for (j, op) in ops.iter().enumerate() {
                     if let Some(instr) = &op.instruction_lookup {
@@ -1196,7 +1189,7 @@ where
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
     ) -> Vec<Vec<usize>> {
-        let m = instruction_flag_polys[0].len();
+        let m = instruction_flag_polys[0].coeffs.len();
 
         (0..preprocessing.num_memories)
             .into_par_iter()

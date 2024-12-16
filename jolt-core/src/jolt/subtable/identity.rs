@@ -48,7 +48,7 @@ mod test {
         iden_materialize_mle_parity,
         IdentitySubtable<Fr>,
         Fr,
-        256
+        1 << 16
     );
 
     subtable_materialize_mle_parity_test!(
