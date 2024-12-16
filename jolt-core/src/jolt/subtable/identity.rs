@@ -26,7 +26,7 @@ impl<F: JoltField> LassoSubtable<F> for IdentitySubtable<F> {
         // \sum_i 2^i * x_{b - i - 1}
         let mut result = F::zero();
         for i in 0..point.len() {
-            result += F::from_u64(1u64 << i).unwrap() * point[point.len() - 1 - i];
+            result += F::from_u64(1u64 << i) * point[point.len() - 1 - i];
         }
         result
     }

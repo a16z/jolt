@@ -218,24 +218,24 @@ where
 
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
-                        let a = dim[i] as u64;
+                        let a = dim[i];
                         let v = E_poly[i] as u64;
                         let t = read_cts[i] as u64;
                         gamma_squared.mul_u64_unchecked(t)
                             + gamma.mul_u64_unchecked(v)
-                            + F::from_u64(a).unwrap()
+                            + F::from_u16(a)
                             - *tau
                     })
                     .collect();
                 // TODO(moodlezoup): Compute write_fingerprints from read_fingerprints
                 let write_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
-                        let a = dim[i] as u64;
+                        let a = dim[i];
                         let v = E_poly[i] as u64;
                         let t = read_cts[i] as u64 + 1;
                         gamma_squared.mul_u64_unchecked(t)
                             + gamma.mul_u64_unchecked(v)
-                            + F::from_u64(a).unwrap()
+                            + F::from_u16(a)
                             - *tau
                     })
                     .collect();
@@ -253,7 +253,7 @@ where
                 );
                 // Init leaves
                 (0..M).for_each(|i| {
-                    let a = &F::from_u64(i as u64).unwrap();
+                    let a = &F::from_u16(i as u16);
                     let v: u32 = subtable[i];
                     // let t = F::zero();
                     // Compute h(a,v,t) where t == 0

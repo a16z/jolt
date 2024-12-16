@@ -297,7 +297,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             .zip(self.openings.par_iter())
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.polynomial.get_num_vars() != max_num_vars {
-                    F::from_u64(1 << (max_num_vars - opening.polynomial.get_num_vars())).unwrap()
+                    F::from_u64(1 << (max_num_vars - opening.polynomial.get_num_vars()))
                         * opening.claim
                 } else {
                     opening.claim
@@ -374,8 +374,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                     debug_assert!(!opening.polynomial.is_bound());
                     let remaining_variables =
                         remaining_sumcheck_rounds - opening.opening_point.len() - 1;
-                    let scaled_claim =
-                        F::from_u64(1 << remaining_variables).unwrap() * opening.claim;
+                    let scaled_claim = F::from_u64(1 << remaining_variables) * opening.claim;
                     (scaled_claim, scaled_claim)
                 }
             })
@@ -616,7 +615,7 @@ where
             .zip(self.openings.par_iter())
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.opening_point.len() != num_sumcheck_rounds {
-                    F::from_u64(1 << (num_sumcheck_rounds - opening.opening_point.len())).unwrap()
+                    F::from_u64(1 << (num_sumcheck_rounds - opening.opening_point.len()))
                         * opening.claim
                 } else {
                     opening.claim

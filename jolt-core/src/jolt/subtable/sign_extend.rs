@@ -44,7 +44,7 @@ impl<F: JoltField, const WIDTH: usize> LassoSubtable<F> for SignExtendSubtable<F
 
         let sign_bit = point[point.len() - WIDTH];
         let ones: u64 = (1 << WIDTH) - 1;
-        sign_bit * F::from_u64(ones).unwrap()
+        sign_bit * F::from_u64(ones)
     }
 }
 

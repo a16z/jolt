@@ -485,7 +485,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 .sum();
             eval_point_2 += mul_0_optimized(
                 &(poly_A[len] + poly_A[len] - poly_A[0]),
-                &(F::from_u64(2).unwrap() - witness_value(0)),
+                &(F::from_u8(2) - witness_value(0)),
             );
 
             let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];

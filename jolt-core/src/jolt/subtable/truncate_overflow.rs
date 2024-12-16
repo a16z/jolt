@@ -46,7 +46,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
 
         let mut result = F::zero();
         for i in 0..cutoff {
-            result += F::from_u64(1u64 << i).unwrap() * point[point.len() - 1 - i];
+            result += F::from_u64(1u64 << i) * point[point.len() - 1 - i];
         }
         result
     }

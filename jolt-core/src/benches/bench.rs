@@ -118,9 +118,9 @@ where
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
-                1 << 20,
-                1 << 20,
-                1 << 22,
+                1 << 18,
+                1 << 18,
+                1 << 18,
             );
 
         let (jolt_proof, jolt_commitments, _) =

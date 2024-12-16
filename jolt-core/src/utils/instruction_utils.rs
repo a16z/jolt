@@ -33,7 +33,7 @@ pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usi
 
     let mut sum = F::zero();
     let mut weight = F::one();
-    let shift = F::from_u64(1u64 << operand_bits).unwrap();
+    let shift = F::from_u64(1u64 << operand_bits);
     for i in 0..C {
         sum += weight * vals[C - i - 1];
         weight *= shift;

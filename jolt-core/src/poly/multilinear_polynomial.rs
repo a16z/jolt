@@ -117,18 +117,10 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn get_coeff(&self, index: usize) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly[index],
-            MultilinearPolynomial::U8Scalars(poly) => {
-                F::from_u64(poly.coeffs[index] as u64).unwrap()
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                F::from_u64(poly.coeffs[index] as u64).unwrap()
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                F::from_u64(poly.coeffs[index] as u64).unwrap()
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                F::from_u64(poly.coeffs[index] as u64).unwrap()
-            }
+            MultilinearPolynomial::U8Scalars(poly) => F::from_u8(poly.coeffs[index]),
+            MultilinearPolynomial::U16Scalars(poly) => F::from_u16(poly.coeffs[index]),
+            MultilinearPolynomial::U32Scalars(poly) => F::from_u32(poly.coeffs[index]),
+            MultilinearPolynomial::U64Scalars(poly) => F::from_u64(poly.coeffs[index]),
         }
     }
 
@@ -140,28 +132,28 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
                 } else {
-                    F::from_u64(poly.coeffs[index] as u64).unwrap()
+                    F::from_u8(poly.coeffs[index])
                 }
             }
             MultilinearPolynomial::U16Scalars(poly) => {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
                 } else {
-                    F::from_u64(poly.coeffs[index] as u64).unwrap()
+                    F::from_u16(poly.coeffs[index])
                 }
             }
             MultilinearPolynomial::U32Scalars(poly) => {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
                 } else {
-                    F::from_u64(poly.coeffs[index] as u64).unwrap()
+                    F::from_u32(poly.coeffs[index])
                 }
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
                 } else {
-                    F::from_u64(poly.coeffs[index]).unwrap()
+                    F::from_u64(poly.coeffs[index])
                 }
             }
         }

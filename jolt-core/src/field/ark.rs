@@ -1,5 +1,8 @@
 use ark_ff::{PrimeField, UniformRand};
 use ark_std::Zero;
+use rayon::prelude::*;
+
+use crate::utils::thread::unsafe_allocate_zero_vec;
 
 use super::{FieldOps, JoltField};
 
@@ -7,22 +10,101 @@ impl FieldOps for ark_bn254::Fr {}
 impl<'a, 'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for &'a ark_bn254::Fr {}
 impl<'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
+static mut SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 4] = [vec![], vec![], vec![], vec![]];
+
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
+    type SmallValueLookupTables = [Vec<Self>; 4];
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
     }
 
-    fn from_u64(n: u64) -> Option<Self> {
-        <Self as ark_ff::PrimeField>::from_u64(n)
+    fn compute_lookup_tables() -> Self::SmallValueLookupTables {
+        let mut lookup_tables = [
+            unsafe_allocate_zero_vec(1 << 16),
+            unsafe_allocate_zero_vec(1 << 16),
+            unsafe_allocate_zero_vec(1 << 16),
+            unsafe_allocate_zero_vec(1 << 16),
+        ];
+
+        for i in 0..4 {
+            let bitshift = 16 * i;
+            let unit = <Self as ark_ff::PrimeField>::from_u64(1 << bitshift).unwrap();
+            lookup_tables[i] = (0..(1 << 16))
+                .into_par_iter()
+                .map(|j| unit * <Self as ark_ff::PrimeField>::from_u64(j).unwrap())
+                .collect();
+        }
+
+        lookup_tables
+    }
+
+    fn initialize_lookup_tables(init: Self::SmallValueLookupTables) {
+        unsafe {
+            SMALL_VALUE_LOOKUP_TABLES = init;
+        }
+    }
+
+    fn from_u8(n: u8) -> Self {
+        #[cfg(test)]
+        {
+            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+        }
+        #[cfg(not(test))]
+        {
+            unsafe { SMALL_VALUE_LOOKUP_TABLES[0][n as usize] }
+        }
+    }
+
+    fn from_u16(n: u16) -> Self {
+        #[cfg(test)]
+        {
+            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+        }
+        #[cfg(not(test))]
+        {
+            unsafe { SMALL_VALUE_LOOKUP_TABLES[0][n as usize] }
+        }
+    }
+
+    fn from_u32(n: u32) -> Self {
+        #[cfg(test)]
+        {
+            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+        }
+        #[cfg(not(test))]
+        {
+            const BITMASK: u32 = (1 << 16) - 1;
+            unsafe {
+                SMALL_VALUE_LOOKUP_TABLES[0][(n & BITMASK) as usize]
+                    + SMALL_VALUE_LOOKUP_TABLES[1][((n >> 16) & BITMASK) as usize]
+            }
+        }
+    }
+
+    fn from_u64(n: u64) -> Self {
+        #[cfg(test)]
+        {
+            <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
+        }
+        #[cfg(not(test))]
+        {
+            const BITMASK: u64 = (1 << 16) - 1;
+            unsafe {
+                SMALL_VALUE_LOOKUP_TABLES[0][(n & BITMASK) as usize]
+                    + SMALL_VALUE_LOOKUP_TABLES[1][((n >> 16) & BITMASK) as usize]
+                    + SMALL_VALUE_LOOKUP_TABLES[2][((n >> 32) & BITMASK) as usize]
+                    + SMALL_VALUE_LOOKUP_TABLES[3][((n >> 48) & BITMASK) as usize]
+            }
+        }
     }
 
     fn from_i64(val: i64) -> Self {
         if val > 0 {
-            <Self as JoltField>::from_u64(val as u64).unwrap()
+            <Self as JoltField>::from_u64(val as u64)
         } else {
-            Self::zero() - <Self as JoltField>::from_u64(-(val) as u64).unwrap()
+            Self::zero() - <Self as JoltField>::from_u64(-(val) as u64)
         }
     }
 
@@ -31,15 +113,10 @@ impl JoltField for ark_bn254::Fr {
         let limbs: &[u64] = bigint.as_ref();
         let result = limbs[0];
 
-        match <Self as JoltField>::from_u64(result) {
-            None => None,
-            Some(x) => {
-                if x == *self {
-                    Some(result)
-                } else {
-                    None
-                }
-            }
+        if <Self as JoltField>::from_u64(result) != *self {
+            None
+        } else {
+            Some(result)
         }
     }
 
@@ -85,7 +162,7 @@ mod tests {
         for _ in 0..256 {
             let x = rng.next_u64();
             assert_eq!(
-                <Fr as JoltField>::from_u64(x).unwrap(),
+                <Fr as JoltField>::from_u64(x),
                 Fr::montgomery_r2().unwrap().mul_u64_unchecked(x)
             );
         }
@@ -94,7 +171,7 @@ mod tests {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
             assert_eq!(
-                y * <Fr as JoltField>::from_u64(x).unwrap(),
+                y * <Fr as JoltField>::from_u64(x),
                 (y * Fr::montgomery_r2().unwrap()).mul_u64_unchecked(x)
             );
         }

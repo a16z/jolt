@@ -9,7 +9,6 @@
 //! and within the KZG commitment scheme implementation itself).
 use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
-    kzg,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::poly::{commitment::commitment_scheme::CommitShape, dense_mlpoly::DensePolynomial};

@@ -402,7 +402,7 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
 That is, it ignores the case where x is all 1s, outputting 0.
 Assumes x and y are provided big-endian. */
 pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
-    let one = F::from_u64(1_u64).unwrap();
+    let one = F::one();
 
     /* If y+1 = x, then the two bit vectors are of the following form.
         Let k be the longest suffix of 1s in x.

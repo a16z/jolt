@@ -587,28 +587,28 @@ where
                             *read_fingerprint = gamma_squared
                                 .mul_u64_unchecked(t_read_rs1[j] as u64)
                                 + gamma.mul_u64_unchecked(v_read_rs1[j] as u64)
-                                + F::from_u64(a_rs1[j] as u64).unwrap()
+                                + F::from_u8(a_rs1[j])
                                 - *tau;
                         }
                         RS2 => {
                             *read_fingerprint = gamma_squared
                                 .mul_u64_unchecked(t_read_rs2[j] as u64)
                                 + gamma.mul_u64_unchecked(v_read_rs2[j] as u64)
-                                + F::from_u64(a_rs2[j] as u64).unwrap()
+                                + F::from_u8(a_rs2[j])
                                 - *tau;
                         }
                         RD => {
                             *read_fingerprint = gamma_squared
                                 .mul_u64_unchecked(t_read_rd[j] as u64)
                                 + gamma.mul_u64_unchecked(v_read_rd[j] as u64)
-                                + F::from_u64(a_rd[j] as u64).unwrap()
+                                + F::from_u8(a_rd[j])
                                 - *tau;
                         }
                         RAM => {
                             *read_fingerprint = gamma_squared
                                 .mul_u64_unchecked(t_read_ram[j] as u64)
                                 + gamma.mul_u64_unchecked(v_read_ram[j] as u64)
-                                + F::from_u64(a_ram[j] as u64).unwrap()
+                                + F::from_u32(a_ram[j])
                                 - *tau;
                         }
                         _ => unreachable!(),
@@ -620,25 +620,25 @@ where
                     RS1 => {
                         *write_fingerprint = gamma_squared.mul_u64_unchecked(j as u64)
                             + gamma.mul_u64_unchecked(v_read_rs1[j] as u64)
-                            + F::from_u64(a_rs1[j] as u64).unwrap()
+                            + F::from_u8(a_rs1[j])
                             - *tau;
                     }
                     RS2 => {
                         *write_fingerprint = gamma_squared.mul_u64_unchecked(j as u64)
                             + gamma.mul_u64_unchecked(v_read_rs2[j] as u64)
-                            + F::from_u64(a_rs2[j] as u64).unwrap()
+                            + F::from_u8(a_rs2[j])
                             - *tau;
                     }
                     RD => {
                         *write_fingerprint = gamma_squared.mul_u64_unchecked(j as u64)
                             + gamma.mul_u64_unchecked(v_write_rd[j] as u64)
-                            + F::from_u64(a_rd[j] as u64).unwrap()
+                            + F::from_u8(a_rd[j])
                             - *tau
                     }
                     RAM => {
                         *write_fingerprint = gamma_squared.mul_u64_unchecked(j as u64)
                             + gamma.mul_u64_unchecked(v_write_ram[j] as u64)
-                            + F::from_u64(a_ram[j] as u64).unwrap()
+                            + F::from_u32(a_ram[j])
                             - *tau;
                     }
                     _ => unreachable!(),
@@ -650,7 +650,7 @@ where
             polynomials.v_init.as_ref().unwrap().try_into().unwrap();
         let init_fingerprints: Vec<F> = (0..memory_size)
             .into_par_iter()
-            .map(|i| /* 0 * gamma^2 + */ gamma.mul_u64_unchecked(v_init[i] as u64) + F::from_u64(i as u64).unwrap() - *tau)
+            .map(|i| /* 0 * gamma^2 + */ gamma.mul_u64_unchecked(v_init[i] as u64) + F::from_u32(i as u32) - *tau)
             .collect();
 
         let v_final: &CompactPolynomial<u32, F> = (&polynomials.v_final).try_into().unwrap();
@@ -660,7 +660,7 @@ where
             .map(|i| {
                 gamma_squared.mul_u64_unchecked(t_final[i] as u64)
                     + gamma.mul_u64_unchecked(v_final[i] as u64)
-                    + F::from_u64(i as u64).unwrap()
+                    + F::from_u32(i as u32)
                     - *tau
             })
             .collect();

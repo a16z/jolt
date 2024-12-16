@@ -71,7 +71,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
-                .map(|bit| F::from_u64(*bit as u64).unwrap())
+                .map(|bit| F::from_u64(*bit as u64))
                 .collect::<Vec<F>>(); // big-endian
 
             // Compute eq(y, bin(k))
@@ -92,7 +92,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             // Compute \sum_{j = 0}^{m'-1} 2^{k + j} * x_{b - j - 1}
             let shift_x_by_k = (0..m_prime)
                 .enumerate()
-                .map(|(j, _)| F::from_u64(1_u64 << (j + k)).unwrap() * x[b - 1 - j])
+                .map(|(j, _)| F::from_u64(1_u64 << (j + k)) * x[b - 1 - j])
                 .fold(F::zero(), |acc, val| acc + val);
 
             result += eq_term * shift_x_by_k;

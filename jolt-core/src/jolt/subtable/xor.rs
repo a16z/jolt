@@ -43,7 +43,7 @@ impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
         for i in 0..b {
             let x = x[b - i - 1];
             let y = y[b - i - 1];
-            result += F::from_u64(1u64 << i).unwrap() * ((F::one() - x) * y + x * (F::one() - y));
+            result += F::from_u64(1u64 << i) * ((F::one() - x) * y + x * (F::one() - y));
         }
         result
     }

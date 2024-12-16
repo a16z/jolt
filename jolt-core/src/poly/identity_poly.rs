@@ -15,7 +15,7 @@ impl IdentityPolynomial {
         let len = r.len();
         assert_eq!(len, self.size_point);
         (0..len)
-            .map(|i| F::from_u64((len - i - 1).pow2() as u64).unwrap() * r[i])
+            .map(|i| F::from_u64((len - i - 1).pow2() as u64) * r[i])
             .sum()
     }
 }

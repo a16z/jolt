@@ -82,7 +82,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
             }
 
             let x_sign_upper = (0..k).fold(F::zero(), |acc, i| {
-                acc + F::from_u64(1_u64 << (WORD_SIZE - 1 - i)).unwrap() * x_sign
+                acc + F::from_u64(1_u64 << (WORD_SIZE - 1 - i)) * x_sign
             });
 
             result += eq_term * x_sign_upper;

@@ -39,7 +39,7 @@ impl<F: JoltField> UniPoly<F> {
 
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
         let n = evals.len();
-        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64).unwrap()).collect();
+        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
 
         let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -329,8 +329,8 @@ mod tests {
     fn test_from_evals_quad_helper<F: JoltField>() {
         // polynomial is 2x^2 + 3x + 1
         let e0 = F::one();
-        let e1 = F::from_u64(6u64).unwrap();
-        let e2 = F::from_u64(15u64).unwrap();
+        let e1 = F::from_u64(6u64);
+        let e2 = F::from_u64(15u64);
         let evals = vec![e0, e1, e2];
         let poly = UniPoly::from_evals(&evals);
 
@@ -338,8 +338,8 @@ mod tests {
         assert_eq!(poly.eval_at_one(), e1);
         assert_eq!(poly.coeffs.len(), 3);
         assert_eq!(poly.coeffs[0], F::one());
-        assert_eq!(poly.coeffs[1], F::from_u64(3u64).unwrap());
-        assert_eq!(poly.coeffs[2], F::from_u64(2u64).unwrap());
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64));
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64));
 
         let hint = e0 + e1;
         let compressed_poly = poly.compress();
@@ -348,8 +348,8 @@ mod tests {
             assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
         }
 
-        let e3 = F::from_u64(28u64).unwrap();
-        assert_eq!(poly.evaluate(&F::from_u64(3u64).unwrap()), e3);
+        let e3 = F::from_u64(28u64);
+        assert_eq!(poly.evaluate(&F::from_u64(3u64)), e3);
     }
 
     #[test]
@@ -359,9 +359,9 @@ mod tests {
     fn test_from_evals_cubic_helper<F: JoltField>() {
         // polynomial is x^3 + 2x^2 + 3x + 1
         let e0 = F::one();
-        let e1 = F::from_u64(7u64).unwrap();
-        let e2 = F::from_u64(23u64).unwrap();
-        let e3 = F::from_u64(55u64).unwrap();
+        let e1 = F::from_u64(7u64);
+        let e2 = F::from_u64(23u64);
+        let e3 = F::from_u64(55u64);
         let evals = vec![e0, e1, e2, e3];
         let poly = UniPoly::from_evals(&evals);
 
@@ -369,8 +369,8 @@ mod tests {
         assert_eq!(poly.eval_at_one(), e1);
         assert_eq!(poly.coeffs.len(), 4);
         assert_eq!(poly.coeffs[0], F::one());
-        assert_eq!(poly.coeffs[1], F::from_u64(3u64).unwrap());
-        assert_eq!(poly.coeffs[2], F::from_u64(2u64).unwrap());
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64));
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64));
         assert_eq!(poly.coeffs[3], F::one());
 
         let hint = e0 + e1;
@@ -380,8 +380,8 @@ mod tests {
             assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
         }
 
-        let e4 = F::from_u64(109u64).unwrap();
-        assert_eq!(poly.evaluate(&F::from_u64(4u64).unwrap()), e4);
+        let e4 = F::from_u64(109u64);
+        assert_eq!(poly.evaluate(&F::from_u64(4u64)), e4);
     }
 
     pub fn naive_mul<F: JoltField>(ours: &UniPoly<F>, other: &UniPoly<F>) -> UniPoly<F> {

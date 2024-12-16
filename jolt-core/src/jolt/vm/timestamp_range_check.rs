@@ -359,7 +359,7 @@ where
                     .map(|j| {
                         let read_timestamp = read_timestamps[i][j] as u64;
                         gamma.mul_u64_unchecked(read_timestamp)
-                            + F::from_u64(read_cts_read_timestamp[i][j] as u64).unwrap()
+                            + F::from_u32(read_cts_read_timestamp[i][j])
                             - *tau
                     })
                     .collect();
@@ -373,7 +373,7 @@ where
                     .map(|j| {
                         let global_minus_read = j as u64 - read_timestamps[i][j] as u64;
                         gamma.mul_u64_unchecked(global_minus_read)
-                            + F::from_u64(read_cts_global_minus_read[i][j] as u64).unwrap()
+                            + F::from_u32(read_cts_global_minus_read[i][j])
                             - *tau
                     })
                     .collect();
@@ -423,18 +423,12 @@ where
                 .flat_map(|i| {
                     let final_fingerprints_0 = (0..M)
                         .into_par_iter()
-                        .map(|j| {
-                            F::from_u64(final_cts_read_timestamp[i][j] as u64).unwrap()
-                                + init_leaves[j]
-                        })
+                        .map(|j| F::from_u32(final_cts_read_timestamp[i][j]) + init_leaves[j])
                         .collect();
 
                     let final_fingerprints_1 = (0..M)
                         .into_par_iter()
-                        .map(|j| {
-                            F::from_u64(final_cts_global_minus_read[i][j] as u64).unwrap()
-                                + init_leaves[j]
-                        })
+                        .map(|j| F::from_u32(final_cts_global_minus_read[i][j]) + init_leaves[j])
                         .collect();
 
                     [final_fingerprints_0, final_fingerprints_1]

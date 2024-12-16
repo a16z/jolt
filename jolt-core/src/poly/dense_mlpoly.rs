@@ -237,18 +237,14 @@ impl<F: JoltField> DensePolynomial<F> {
     pub fn from_usize(Z: &[usize]) -> Self {
         DensePolynomial::new(
             (0..Z.len())
-                .map(|i| F::from_u64(Z[i] as u64).unwrap())
+                .map(|i| F::from_u64(Z[i] as u64))
                 .collect::<Vec<F>>(),
         )
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
     pub fn from_u64(Z: &[u64]) -> Self {
-        DensePolynomial::new(
-            (0..Z.len())
-                .map(|i| F::from_u64(Z[i]).unwrap())
-                .collect::<Vec<F>>(),
-        )
+        DensePolynomial::new((0..Z.len()).map(|i| F::from_u64(Z[i])).collect::<Vec<F>>())
     }
 
     pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {

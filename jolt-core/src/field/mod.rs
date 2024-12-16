@@ -40,9 +40,19 @@ pub trait JoltField:
     + Hash
 {
     const NUM_BYTES: usize;
-    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
+    type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize = ();
 
-    fn from_u64(n: u64) -> Option<Self>;
+    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
+    fn compute_lookup_tables() -> Self::SmallValueLookupTables {
+        unimplemented!("Small-value lookup tables are unimplemented")
+    }
+    fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
+        unimplemented!("Small-value lookup tables are unimplemented")
+    }
+    fn from_u8(n: u8) -> Self;
+    fn from_u16(n: u16) -> Self;
+    fn from_u32(n: u32) -> Self;
+    fn from_u64(n: u64) -> Self;
     fn from_i64(val: i64) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
@@ -58,7 +68,7 @@ pub trait JoltField:
     }
     #[inline(always)]
     fn mul_u64_unchecked(&self, n: u64) -> Self {
-        *self * Self::from_u64(n).unwrap()
+        *self * Self::from_u64(n)
     }
 }
 
