@@ -80,5 +80,5 @@ This means any language that compiles to LLVM IR (like C, C++, Rust, etc.) can b
 ## References
 - [RISC-V Specifications](https://riscv.org/technical/specifications/)
 - [RV32I Base ISA Specification](https://github.com/riscv/riscv-isa-manual/releases/download/Ratified-IMAFDQC/riscv-spec-20191213.pdf)
-- [RISC-V Assembly Programmer's Manual](https://github.com/riscv/riscv-asm-manual/blob/master/riscv-asm.md)
+- [RISC-V Assembly Programmer's Manual](https://github.com/riscv-non-isa/riscv-asm-manual/blob/main/src/asm-manual.adoc)
 - [LLVM RISC-V Backend Documentation](https://llvm.org/docs/RISCVUsage.html)
