@@ -40,11 +40,6 @@ jobs:
         with:
           command: clippy
           args: --all
-      - name: cargo clippy icicle
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all --features icicle
 
   machete:
     runs-on: ubuntu-latest
@@ -81,23 +76,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
-
-  test-icicle:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Cache Jolt RISC-V Rust toolchain
-        uses: actions/cache@v4
-        with:
-          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
-          path: ~/.jolt
-      - name: Install Jolt RISC-V Rust toolchain
-        run: cargo run install-toolchain
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run jolt-core tests
-        run: cargo nextest run --release -p jolt-core --features icicle
 
   on-chain:
     name: Onchain Verifier Tests
