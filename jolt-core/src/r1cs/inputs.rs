@@ -238,7 +238,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcri
     }
 }
 
-/// Jolt's R1CS constraint inputs are typically represneted as an enum.
+/// Jolt's R1CS constraint inputs are typically represented as an enum.
 /// This trait serves two main purposes:
 /// - Defines a canonical ordering over inputs (and thus indices for each input).
 ///   This is needed for sumcheck.
@@ -325,9 +325,12 @@ pub enum AuxVariable {
     NextPCJump,
     ShouldBranch,
     NextPC,
+    // New variant for bit decomposition
+    BitDecomposition(usize),
 }
 
 impl_r1cs_input_lc_conversions!(JoltR1CSInputs, 4);
+
 impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
         JoltR1CSInputs::iter()
@@ -337,14 +340,26 @@ impl ConstraintInput for JoltR1CSInputs {
                 Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
                 Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
-                Self::Aux(_) => AuxVariable::iter()
-                    .flat_map(|aux| match aux {
+                Self::Aux(aux) => {
+                    match aux {
                         AuxVariable::RelevantYChunk(_) => (0..C)
                             .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
                             .collect(),
-                        _ => vec![Self::Aux(aux)],
-                    })
-                    .collect(),
+                        AuxVariable::BitDecomposition(_) => {
+                            // For bit decomposition, assume 8 bits
+                            (0..8).map(|i| Self::Aux(AuxVariable::BitDecomposition(i))).collect()
+                        }
+                        // For all other AuxVariable variants, just one element
+                        AuxVariable::LeftLookupOperand
+                        | AuxVariable::RightLookupOperand
+                        | AuxVariable::Product
+                        | AuxVariable::WriteLookupOutputToRD
+                        | AuxVariable::WritePCtoRD
+                        | AuxVariable::NextPCJump
+                        | AuxVariable::ShouldBranch
+                        | AuxVariable::NextPC => vec![Self::Aux(aux)],
+                    }
+                }
                 _ => vec![variant],
             })
             .collect()
@@ -388,6 +403,13 @@ impl ConstraintInput for JoltR1CSInputs {
                 AuxVariable::NextPCJump => &aux_polynomials.next_pc_jump,
                 AuxVariable::ShouldBranch => &aux_polynomials.should_branch,
                 AuxVariable::NextPC => &aux_polynomials.next_pc,
+                AuxVariable::BitDecomposition(_i) => {
+                    // At this stage, we don't have separate storage for each bit.
+                    // In practice, you'd store these as separate aux polynomials as well.
+                    // For now, you might just panic or handle them after you've added
+                    // the necessary aux polynomials.
+                    panic!("BitDecomposition aux variables must be handled in the circuit builder")
+                }
             },
         }
     }
@@ -403,13 +425,15 @@ impl ConstraintInput for JoltR1CSInputs {
                 AuxVariable::RightLookupOperand => &mut aux_polynomials.right_lookup_operand,
                 AuxVariable::Product => &mut aux_polynomials.product,
                 AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
-                AuxVariable::WriteLookupOutputToRD => {
-                    &mut aux_polynomials.write_lookup_output_to_rd
-                }
+                AuxVariable::WriteLookupOutputToRD => &mut aux_polynomials.write_lookup_output_to_rd,
                 AuxVariable::WritePCtoRD => &mut aux_polynomials.write_pc_to_rd,
                 AuxVariable::NextPCJump => &mut aux_polynomials.next_pc_jump,
                 AuxVariable::ShouldBranch => &mut aux_polynomials.should_branch,
                 AuxVariable::NextPC => &mut aux_polynomials.next_pc,
+                AuxVariable::BitDecomposition(_i) => {
+                    // Similarly to get_ref, handle this once you have a place to store these bits.
+                    panic!("BitDecomposition aux variables must be handled in the circuit builder")
+                }
             },
             _ => panic!("get_ref_mut should only be invoked when computing aux polynomials"),
         }
@@ -449,8 +473,17 @@ mod tests {
                 .into_iter()
                 .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
                 .collect(),
+            AuxVariable::BitDecomposition(_) => (0..8)
+                .into_iter()
+                .map(|i| JoltR1CSInputs::Aux(AuxVariable::BitDecomposition(i)))
+                .collect(),
             _ => vec![JoltR1CSInputs::Aux(aux)],
         }) {
+            // For BitDecomposition we panic above, so skip them here
+            if let JoltR1CSInputs::Aux(AuxVariable::BitDecomposition(_)) = aux {
+                continue;
+            }
+
             let ref_ptr = aux.get_ref(&jolt_polys) as *const DensePolynomial<Fr>;
             let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const DensePolynomial<Fr>;
             assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);

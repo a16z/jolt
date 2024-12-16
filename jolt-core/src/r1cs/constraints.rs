@@ -18,7 +18,7 @@ use crate::{
 use super::{
     builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder},
     inputs::{AuxVariable, ConstraintInput, JoltR1CSInputs},
-    ops::Variable,
+    ops::{Term, Variable, LC},
 };
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;
@@ -170,11 +170,20 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             y,
         );
 
+        // Range check all the chunks
+        for i in 0..C {
+            range_check_single_8bit(cs, x_chunks[i]);
+            range_check_single_8bit(cs, y_chunks[i]);
+            range_check_single_8bit(cs, query_chunks[i]);
+        }
+
         // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
         let is_shift = JoltR1CSInputs::InstructionFlags(SLLInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(SRLInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(SRAInstruction::default().into());
         for i in 0..C {
+            // Range check x_chunks[i], y_chunks[i], query_chunks[i] here
+
             let relevant_chunk_y = cs.allocate_if_else(
                 JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)),
                 is_shift.clone(),
@@ -262,3 +271,32 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         vec![pc_constraint, virtual_sequence_constraint]
     }
 }
+
+fn range_check_single_8bit<const C: usize, F: JoltField>(
+    cs: &mut R1CSBuilder<C, F, JoltR1CSInputs>,
+    chunk: Variable,
+) {
+    let mut sum_expr = LC::zero();
+
+    for i in 0..8 {
+        let bit_var = cs.allocate_aux(
+            JoltR1CSInputs::Aux(AuxVariable::BitDecomposition(i)),
+            vec![],
+            Box::new(|_values| F::zero()),
+        );
+
+        // Constrain the bit to be binary.
+        cs.constrain_binary(bit_var);
+
+        // Create a Term for bit_var * 2^i: Term(bit_var, (1 << i))
+        let bit_term = Term(bit_var, (1 << i) as i64);
+
+        // Add this term to the sum_expr. Term implements Into<LC>, so this works.
+        sum_expr = sum_expr + bit_term;
+    }
+
+    // Finally, constrain chunk == sum_expr
+    cs.constrain_eq(chunk, sum_expr);
+}
+
+
