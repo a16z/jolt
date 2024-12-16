@@ -19,12 +19,7 @@ pub trait VariableBaseMSM: ScalarMul {
                 match max_num_bits {
                     0 => Self::zero(),
                     1 => msm_binary(bases, scalars),
-                    _ => {
-                        // TODO(moodlezoup): Avoid allocating a new vector
-                        let scalars_u16: Vec<_> =
-                            scalars.iter().map(|scalar| *scalar as u16).collect();
-                        msm_small(bases, &scalars_u16, max_num_bits)
-                    }
+                    _ => msm_small(bases, scalars, max_num_bits),
                 }
             })
             .ok_or_else(|| bases.len().min(scalars.len()))
@@ -38,12 +33,7 @@ pub trait VariableBaseMSM: ScalarMul {
                     0 => Self::zero(),
                     1 => msm_binary(bases, scalars),
                     2..=10 => msm_small(bases, scalars, max_num_bits),
-                    _ => {
-                        // TODO(moodlezoup): Avoid allocating a new vector
-                        let scalars_u64: Vec<_> =
-                            scalars.iter().map(|scalar| *scalar as u64).collect();
-                        msm_u64(bases, &scalars_u64, max_num_bits)
-                    }
+                    _ => msm_u64(bases, scalars, max_num_bits),
                 }
             })
             .ok_or_else(|| bases.len().min(scalars.len()))
@@ -56,18 +46,8 @@ pub trait VariableBaseMSM: ScalarMul {
                 match max_num_bits {
                     0 => Self::zero(),
                     1 => msm_binary(bases, scalars),
-                    2..=10 => {
-                        // TODO(moodlezoup): Avoid allocating a new vector
-                        let scalars_u16: Vec<_> =
-                            scalars.iter().map(|scalar| *scalar as u16).collect();
-                        msm_small(bases, &scalars_u16, max_num_bits)
-                    }
-                    _ => {
-                        // TODO(moodlezoup): Avoid allocating a new vector
-                        let scalars_u64: Vec<_> =
-                            scalars.iter().map(|scalar| *scalar as u64).collect();
-                        msm_u64(bases, &scalars_u64, max_num_bits)
-                    }
+                    2..=10 => msm_small(bases, scalars, max_num_bits),
+                    _ => msm_u64(bases, scalars, max_num_bits),
                 }
             })
             .ok_or_else(|| bases.len().min(scalars.len()))
@@ -80,19 +60,8 @@ pub trait VariableBaseMSM: ScalarMul {
                 match max_num_bits {
                     0 => Self::zero(),
                     1 => msm_binary(bases, scalars),
-                    2..=10 => {
-                        // TODO(moodlezoup): Avoid allocating a new vector
-                        let scalars_u16: Vec<_> =
-                            scalars.iter().map(|scalar| *scalar as u16).collect();
-                        msm_small(bases, &scalars_u16, max_num_bits)
-                    }
-                    _ => {
-                        if Self::NEGATION_IS_CHEAP {
-                            msm_u64_wnaf(bases, scalars, max_num_bits)
-                        } else {
-                            msm_u64(bases, scalars, max_num_bits)
-                        }
-                    }
+                    2..=10 => msm_small(bases, scalars, max_num_bits),
+                    _ => msm_u64(bases, scalars, max_num_bits as usize),
                 }
             })
             .ok_or_else(|| bases.len().min(scalars.len()))
@@ -121,11 +90,7 @@ pub trait VariableBaseMSM: ScalarMul {
                     }
                     11..=64 => {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        if Self::NEGATION_IS_CHEAP {
-                            msm_u64_wnaf(bases, scalars_u64, max_num_bits as usize)
-                        } else {
-                            msm_u64(bases, scalars_u64, max_num_bits as usize)
-                        }
+                        msm_u64(bases, scalars_u64, max_num_bits as usize)
                     }
                     _ => {
                         let scalars = scalars
@@ -167,7 +132,7 @@ fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarFiel
 }
 
 // Compute msm using windowed non-adjacent form
-#[tracing::instrument(skip_all, name = "msm_bigint_wnaf")]
+#[tracing::instrument(skip_all)]
 fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
@@ -367,12 +332,12 @@ fn make_digits_bigint(
 }
 
 // Compute msm using windowed non-adjacent form
-#[tracing::instrument(skip_all, name = "msm_u64_wnaf")]
-fn msm_u64_wnaf<V: VariableBaseMSM>(
-    bases: &[V::MulBase],
-    scalars: &[u64],
-    max_num_bits: usize,
-) -> V {
+#[tracing::instrument(skip_all)]
+fn msm_u64_wnaf<V, T>(bases: &[V::MulBase], scalars: &[T], max_num_bits: usize) -> V
+where
+    V: VariableBaseMSM,
+    T: Into<u64> + Zero + Copy + Sync,
+{
     let c = if bases.len() < 32 {
         3
     } else {
@@ -382,7 +347,7 @@ fn msm_u64_wnaf<V: VariableBaseMSM>(
     let digits_count = max_num_bits.div_ceil(c);
     let scalar_digits = scalars
         .into_par_iter()
-        .flat_map_iter(|s| make_digits_u64(*s, c, max_num_bits))
+        .flat_map_iter(|s| make_digits_u64((*s).into(), c, max_num_bits))
         .collect::<Vec<_>>();
     let zero = V::zero();
 
@@ -429,7 +394,12 @@ fn msm_u64_wnaf<V: VariableBaseMSM>(
 }
 
 /// Optimized implementation of multi-scalar multiplication.
-fn msm_u64<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bits: usize) -> V {
+#[tracing::instrument(skip_all)]
+fn msm_u64<V, T>(bases: &[V::MulBase], scalars: &[T], max_num_bits: usize) -> V
+where
+    V: VariableBaseMSM,
+    T: Into<u64> + Zero + Copy + Sync,
+{
     let c = if bases.len() < 32 {
         3
     } else {
@@ -452,6 +422,7 @@ fn msm_u64<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bi
             // This clone is cheap, because the iterator contains just a
             // pointer and an index into the original vectors.
             scalars_and_bases_iter.clone().for_each(|(&scalar, base)| {
+                let scalar: u64 = scalar.into();
                 if scalar == 1 {
                     // We only process unit scalars once in the first window.
                     if w_start == 0 {
@@ -516,7 +487,7 @@ fn msm_u64<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bi
             })
 }
 
-#[tracing::instrument(skip_all, name = "msm_binary")]
+#[tracing::instrument(skip_all)]
 fn msm_binary<V: VariableBaseMSM, T: Integer>(bases: &[V::MulBase], scalars: &[T]) -> V {
     scalars
         .iter()
@@ -526,17 +497,22 @@ fn msm_binary<V: VariableBaseMSM, T: Integer>(bases: &[V::MulBase], scalars: &[T
         .fold(V::zero(), |sum, base| sum + base)
 }
 
-#[tracing::instrument(skip_all, name = "msm_small")]
-fn msm_small<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u16], max_num_bits: usize) -> V {
+#[tracing::instrument(skip_all)]
+fn msm_small<V, T>(bases: &[V::MulBase], scalars: &[T], max_num_bits: usize) -> V
+where
+    V: VariableBaseMSM,
+    T: Into<u64> + Zero + Copy,
+{
     let num_buckets: usize = 1 << max_num_bits;
     // Assign things to buckets based on the scalar
     let mut buckets: Vec<V> = vec![V::zero(); num_buckets];
     scalars
         .iter()
         .zip(bases)
-        .filter(|(&scalar, _base)| scalar != 0)
-        .for_each(|(&scalar, base)| {
-            buckets[scalar as usize] += base;
+        .filter(|(scalar, _base)| !scalar.is_zero())
+        .for_each(|(scalar, base)| {
+            let bucket_index: u64 = (*scalar).into();
+            buckets[bucket_index as usize] += base;
         });
 
     let mut result = V::zero();
