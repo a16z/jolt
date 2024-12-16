@@ -148,20 +148,19 @@ fn display_greeting() {
 
 fn display_sysinfo() {
     let mut sys = System::new_all();
-
     sys.refresh_all();
 
     println!(
         "OS:             {}",
-        System::name().unwrap_or("UNKNOWN".to_string())
+        sys.name().unwrap_or_else(|| "UNKNOWN".to_string())
     );
     println!(
         "version:        {}",
-        System::os_version().unwrap_or("UNKNOWN".to_string())
+        sys.os_version().unwrap_or_else(|| "UNKNOWN".to_string())
     );
     println!(
         "Host:           {}",
-        System::host_name().unwrap_or("UNKNOWN".to_string())
+        sys.host_name().unwrap_or_else(|| "UNKNOWN".to_string())
     );
     println!("CPUs:           {}", sys.cpus().len());
     println!(
