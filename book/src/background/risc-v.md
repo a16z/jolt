@@ -44,7 +44,7 @@ For detailed instruction formats and encoding, refer to the __chapter 2__ of [sp
 
 - Maintains the simple register-based architecture of RV32I
 
-- Results always written to a single 32-bit register (for upper/lower multiplication results, two separate instructions are used)
+- Results are always written to a single 32-bit register (for upper/lower multiplication results, two separate instructions are used)
 
 - All instructions in this extension are encoded in the standard 32-bit RISC-V format
 
