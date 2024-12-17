@@ -15,9 +15,10 @@ use super::{
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     unipoly::{CompressedUniPoly, UniPoly},
 };
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::{
     field::JoltField,
-    poly::multilinear_polynomial::PolynomialEvaluation,
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         errors::ProofVerifyError,
@@ -218,6 +219,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
         #[cfg(test)]
         {
+            let batched_eval = batched_poly.evaluate(&opening_point);
+            assert_eq!(batched_eval, batched_claim);
             let mut opening =
                 ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim);
             for poly in polynomials.into_iter() {
@@ -273,6 +276,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
+
+        #[cfg(test)]
+        self.openings
+            .iter_mut()
+            .zip(unbound_polys.into_iter())
+            .for_each(|(opening, poly)| opening.polynomial = poly);
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -361,20 +370,24 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             .map(|opening| {
                 if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     let mle_half = opening.polynomial.len() / 2;
-                    (0..mle_half)
+                    let eval_0: F = (0..mle_half)
                         .map(|i| {
-                            let poly_evals =
-                                opening
-                                    .polynomial
-                                    .sumcheck_evals(i, 2, BindingOrder::HighToLow);
-                            let eq_evals =
-                                opening
-                                    .eq_poly
-                                    .sumcheck_evals(i, 2, BindingOrder::HighToLow);
-                            (eq_evals[0] * poly_evals[0], eq_evals[2] * poly_evals[2])
+                            opening.polynomial.get_bound_coeff(i)
+                                * opening.eq_poly.get_bound_coeff(i)
                         })
-                        .reduce(|acc, e| (acc.0 + e.0, acc.1 + e.1))
-                        .unwrap()
+                        .sum();
+                    let eval_2: F = (0..mle_half)
+                        .map(|i| {
+                            let poly_bound_point = opening.polynomial.get_bound_coeff(i + mle_half)
+                                + opening.polynomial.get_bound_coeff(i + mle_half)
+                                - opening.polynomial.get_bound_coeff(i);
+                            let eq_bound_point = opening.eq_poly.get_bound_coeff(i + mle_half)
+                                + opening.eq_poly.get_bound_coeff(i + mle_half)
+                                - opening.eq_poly.get_bound_coeff(i);
+                            poly_bound_point * eq_bound_point
+                        })
+                        .sum();
+                    (eval_0, eval_2)
                 } else {
                     debug_assert!(!opening.polynomial.is_bound());
                     let remaining_variables =
@@ -488,25 +501,33 @@ where
                 batched_claim, prover_opening.claim,
                 "batched claim mismatch"
             );
-            // for (i, (poly, commitment)) in prover_opening
-            //     .batch
-            //     .iter()
-            //     .zip(commitments.into_iter())
-            //     .enumerate()
-            // {
-            //     let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
-            //     assert_eq!(
-            //         prover_commitment, **commitment,
-            //         "commitment mismatch at index {}",
-            //         i
-            //     );
-            // }
-            // let prover_joint_commitment =
-            //     PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
-            // assert_eq!(
-            //     prover_joint_commitment, joint_commitment,
-            //     "joint commitment mismatch"
-            // );
+            for (i, (poly, commitment)) in prover_opening
+                .batch
+                .iter()
+                .zip(commitments.into_iter())
+                .enumerate()
+            {
+                let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
+                assert_eq!(
+                    prover_commitment, **commitment,
+                    "commitment mismatch at index {}",
+                    i
+                );
+            }
+            let batched_poly = MultilinearPolynomial::linear_combination(
+                &prover_opening.batch.iter().collect::<Vec<_>>(),
+                &rho_powers,
+            );
+            assert!(
+                batched_poly == prover_opening.polynomial,
+                "batched poly mismatch"
+            );
+            let prover_joint_commitment =
+                PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
+            assert_eq!(
+                prover_joint_commitment, joint_commitment,
+                "joint commitment mismatch"
+            );
         }
 
         self.openings.push(VerifierOpening::new(
@@ -562,7 +583,6 @@ where
             .sum();
 
         if sumcheck_claim != expected_sumcheck_claim {
-            println!("here");
             return Err(ProofVerifyError::InternalError);
         }
 

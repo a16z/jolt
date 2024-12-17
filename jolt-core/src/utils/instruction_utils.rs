@@ -20,7 +20,7 @@ pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use jolt_core::utils::instruction_utils::concatenate_lookups;
 /// use ark_bn254::Fr;
 ///

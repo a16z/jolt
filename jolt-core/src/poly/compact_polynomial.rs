@@ -16,7 +16,7 @@ impl SmallScalar for u16 {}
 impl SmallScalar for u32 {}
 impl SmallScalar for u64 {}
 
-#[derive(Clone, Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     num_vars: usize,
     len: usize,
@@ -31,20 +31,6 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
             "Dense multilinear polynomials must be made from a power of 2 (not {})",
             coeffs.len()
         );
-
-        CompactPolynomial {
-            num_vars: coeffs.len().log_2(),
-            len: coeffs.len(),
-            coeffs,
-            bound_coeffs: vec![],
-        }
-    }
-
-    pub fn from_coeffs_padded(mut coeffs: Vec<T>) -> Self {
-        // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
-        while !(utils::is_power_of_two(coeffs.len())) {
-            coeffs.push(T::zero());
-        }
 
         CompactPolynomial {
             num_vars: coeffs.len().log_2(),
@@ -148,11 +134,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialEvaluation<F> for CompactPolynomial
     }
 }
 
-// impl<T: SmallScalar, F: JoltField> Clone for CompactPolynomial<T, F> {
-//     fn clone(&self) -> Self {
-//         Self::from_coeffs(self.coeffs[0..self.len].to_vec())
-//     }
-// }
+impl<T: SmallScalar, F: JoltField> Clone for CompactPolynomial<T, F> {
+    fn clone(&self) -> Self {
+        Self::from_coeffs(self.coeffs.to_vec())
+    }
+}
 
 impl<T: SmallScalar, F: JoltField> Index<usize> for CompactPolynomial<T, F> {
     type Output = T;

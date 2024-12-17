@@ -35,6 +35,16 @@ impl<F: JoltField> Default for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> MultilinearPolynomial<F> {
+    pub fn original_len(&self) -> usize {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.Z.len(),
+            MultilinearPolynomial::U8Scalars(poly) => poly.coeffs.len(),
+            MultilinearPolynomial::U16Scalars(poly) => poly.coeffs.len(),
+            MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.len(),
+            MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.len(),
+        }
+    }
+
     pub fn len(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.len(),
@@ -56,7 +66,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     }
 
     pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
-        let max_length = polynomials.iter().map(|poly| poly.len()).max().unwrap();
+        debug_assert_eq!(polynomials.len(), coefficients.len());
+
+        let max_length = polynomials
+            .iter()
+            .map(|poly| poly.original_len())
+            .max()
+            .unwrap();
         let num_chunks = rayon::current_num_threads()
             .next_power_of_two()
             .min(max_length);
@@ -69,39 +85,44 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
 
                 for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
-                    let poly_len = poly.len();
+                    let poly_len = poly.original_len();
                     if index >= poly_len {
                         continue;
                     }
 
                     match poly {
                         MultilinearPolynomial::LargeScalars(poly) => {
+                            debug_assert!(!poly.is_bound());
                             let poly_evals = &poly.evals_ref()[index..];
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 *rlc += poly_eval.mul_01_optimized(*coeff);
                             }
                         }
                         MultilinearPolynomial::U8Scalars(poly) => {
+                            let poly_evals = &poly.coeffs[index..];
                             let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 *rlc += coeff_r2.mul_u64_unchecked(*poly_eval as u64);
                             }
                         }
                         MultilinearPolynomial::U16Scalars(poly) => {
+                            let poly_evals = &poly.coeffs[index..];
                             let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 *rlc += coeff_r2.mul_u64_unchecked(*poly_eval as u64);
                             }
                         }
                         MultilinearPolynomial::U32Scalars(poly) => {
+                            let poly_evals = &poly.coeffs[index..];
                             let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 *rlc += coeff_r2.mul_u64_unchecked(*poly_eval as u64);
                             }
                         }
                         MultilinearPolynomial::U64Scalars(poly) => {
+                            let poly_evals = &poly.coeffs[index..];
                             let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly.coeffs.iter()) {
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 *rlc += coeff_r2.mul_u64_unchecked(*poly_eval);
                             }
                         }

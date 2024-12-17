@@ -47,18 +47,16 @@ where
 
     fn setup(_shapes: &[CommitShape]) -> Self::Setup {}
     fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
-        MockCommitment {
-            poly: poly.to_owned(),
-        }
+        MockCommitment { poly: poly.clone() }
     }
     fn batch_commit(
         polys: &[&MultilinearPolynomial<Self::Field>],
-        _gens: &Self::Setup,
+        setup: &Self::Setup,
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         polys
             .into_iter()
-            .map(|&poly| MockCommitment { poly: poly.clone() })
+            .map(|poly| Self::commit(poly, setup))
             .collect()
     }
     fn prove(

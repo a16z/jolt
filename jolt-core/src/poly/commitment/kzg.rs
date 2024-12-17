@@ -193,22 +193,21 @@ where
 
         match poly {
             MultilinearPolynomial::LargeScalars(poly) => {
-                let c = <P::G1 as VariableBaseMSM>::msm(
-                    &pk.g1_powers()[..poly.len()],
-                    poly.evals_ref(),
+                let c = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.Z.len()], &poly.Z)
+                    .unwrap();
+                Ok(c.into_affine())
+            }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let c = <P::G1 as VariableBaseMSM>::msm_u8(
+                    &pk.g1_powers()[..poly.coeffs.len()],
+                    &poly.coeffs,
                 )
                 .unwrap();
                 Ok(c.into_affine())
             }
-            MultilinearPolynomial::U8Scalars(poly) => {
-                let c =
-                    <P::G1 as VariableBaseMSM>::msm_u8(&pk.g1_powers()[..poly.len()], &poly.coeffs)
-                        .unwrap();
-                Ok(c.into_affine())
-            }
             MultilinearPolynomial::U16Scalars(poly) => {
                 let c = <P::G1 as VariableBaseMSM>::msm_u16(
-                    &pk.g1_powers()[..poly.len()],
+                    &pk.g1_powers()[..poly.coeffs.len()],
                     &poly.coeffs,
                 )
                 .unwrap();
@@ -216,7 +215,7 @@ where
             }
             MultilinearPolynomial::U32Scalars(poly) => {
                 let c = <P::G1 as VariableBaseMSM>::msm_u32(
-                    &pk.g1_powers()[..poly.len()],
+                    &pk.g1_powers()[..poly.coeffs.len()],
                     &poly.coeffs,
                 )
                 .unwrap();
@@ -224,7 +223,7 @@ where
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 let c = <P::G1 as VariableBaseMSM>::msm_u64(
-                    &pk.g1_powers()[..poly.len()],
+                    &pk.g1_powers()[..poly.coeffs.len()],
                     &poly.coeffs,
                 )
                 .unwrap();
