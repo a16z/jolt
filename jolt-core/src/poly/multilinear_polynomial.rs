@@ -352,7 +352,13 @@ pub trait PolynomialEvaluation<F: JoltField> {
 
 impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {
-        todo!()
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.is_bound(),
+            MultilinearPolynomial::U8Scalars(poly) => poly.is_bound(),
+            MultilinearPolynomial::U16Scalars(poly) => poly.is_bound(),
+            MultilinearPolynomial::U32Scalars(poly) => poly.is_bound(),
+            MultilinearPolynomial::U64Scalars(poly) => poly.is_bound(),
+        }
     }
 
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind")]
@@ -430,6 +436,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     // TODO(moodlezoup): This is suboptimal for CompactPolynomials because get_coeff
     // requires a field multiplication (to convert the coefficient into Montgomery
     // form). Avoid this as much as possible.
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_with_chis")]
     fn evaluate_with_chis(&self, chis: &[F]) -> F {
         // assert_eq!(chis.len(), self.len());
         chis.par_iter()
@@ -439,6 +446,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     }
 
     // TODO(moodlezoup): tinyvec?
+    // TODO(moodlezoup): Return Vec of length degree
     #[inline]
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         debug_assert!(degree > 0);
@@ -447,9 +455,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             BindingOrder::HighToLow => {
                 let mut evals = vec![F::zero(); degree + 1];
                 evals[0] = self.get_bound_coeff(index);
-                if degree == 1 {
-                    return evals;
-                }
                 evals[1] = self.get_bound_coeff(index + self.len() / 2);
                 let m = evals[1] - evals[0];
                 for i in 1..degree {
@@ -460,9 +465,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             BindingOrder::LowToHigh => {
                 let mut evals = vec![F::zero(); degree + 1];
                 evals[0] = self.get_bound_coeff(2 * index);
-                if degree == 1 {
-                    return evals;
-                }
                 evals[1] = self.get_bound_coeff(2 * index + 1);
                 let m = evals[1] - evals[0];
                 for i in 1..degree {

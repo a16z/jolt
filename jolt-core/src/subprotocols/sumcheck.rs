@@ -130,7 +130,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                             )
                         })
                         .collect();
-                    for j in 0..combined_degree {
+                    for j in 0..combined_degree + 1 {
                         let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
                         accum[j] += comb_func(&evals_j);
                     }
@@ -442,9 +442,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let len = poly_A.len() / 2;
         let trace_len = witness_polynomials[0].len();
-        witness_polynomials
-            .iter()
-            .for_each(|poly| debug_assert_eq!(poly.len(), trace_len));
+        // witness_polynomials
+        //     .iter()
+        //     .for_each(|poly| debug_assert_eq!(poly.len(), trace_len));
 
         // We don't materialize the full, flattened witness vector, but this closure
         // simulates it

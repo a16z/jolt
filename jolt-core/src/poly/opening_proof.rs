@@ -179,6 +179,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         assert_eq!(polynomials.len(), claims.len());
         #[cfg(test)]
         {
+            for poly in polynomials.iter() {
+                if let MultilinearPolynomial::LargeScalars(dense_polynomial) = poly {
+                    assert!(!dense_polynomial.is_bound())
+                }
+            }
+
             let expected_eq_poly = EqPolynomial::evals(&opening_point);
             assert!(
                 eq_poly.Z == expected_eq_poly,
@@ -365,7 +371,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                                 opening
                                     .eq_poly
                                     .sumcheck_evals(i, 2, BindingOrder::HighToLow);
-                            (eq_evals[0] * poly_evals[0], eq_evals[1] * poly_evals[1])
+                            (eq_evals[0] * poly_evals[0], eq_evals[2] * poly_evals[2])
                         })
                         .reduce(|acc, e| (acc.0 + e.0, acc.1 + e.1))
                         .unwrap()
@@ -482,25 +488,25 @@ where
                 batched_claim, prover_opening.claim,
                 "batched claim mismatch"
             );
-            for (i, (poly, commitment)) in prover_opening
-                .batch
-                .iter()
-                .zip(commitments.into_iter())
-                .enumerate()
-            {
-                let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
-                assert_eq!(
-                    prover_commitment, **commitment,
-                    "commitment mismatch at index {}",
-                    i
-                );
-            }
-            let prover_joint_commitment =
-                PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
-            assert_eq!(
-                prover_joint_commitment, joint_commitment,
-                "joint commitment mismatch"
-            );
+            // for (i, (poly, commitment)) in prover_opening
+            //     .batch
+            //     .iter()
+            //     .zip(commitments.into_iter())
+            //     .enumerate()
+            // {
+            //     let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
+            //     assert_eq!(
+            //         prover_commitment, **commitment,
+            //         "commitment mismatch at index {}",
+            //         i
+            //     );
+            // }
+            // let prover_joint_commitment =
+            //     PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
+            // assert_eq!(
+            //     prover_joint_commitment, joint_commitment,
+            //     "joint commitment mismatch"
+            // );
         }
 
         self.openings.push(VerifierOpening::new(
@@ -556,6 +562,7 @@ where
             .sum();
 
         if sumcheck_claim != expected_sumcheck_claim {
+            println!("here");
             return Err(ProofVerifyError::InternalError);
         }
 

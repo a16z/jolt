@@ -807,12 +807,13 @@ where
         let r_eq = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);
 
         // TODO: compartmentalize all primary sumcheck logic
-        let (claim_last, r_primary_sumcheck) = proof.primary_sumcheck.sumcheck_proof.verify(
+        let (claim_last, mut r_primary_sumcheck) = proof.primary_sumcheck.sumcheck_proof.verify(
             F::zero(),
             proof.primary_sumcheck.num_rounds,
             Self::sumcheck_poly_degree(),
             transcript,
         )?;
+        r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
 
         // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);

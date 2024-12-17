@@ -58,6 +58,10 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len == 0
     }
 
+    pub fn is_bound(&self) -> bool {
+        self.len != self.Z.len()
+    }
+
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);
@@ -105,7 +109,6 @@ impl<F: JoltField> DensePolynomial<F> {
                 *a += *r * (*b - *a);
             });
 
-        self.Z.resize(n, F::zero());
         self.num_vars -= 1;
         self.len = n;
     }

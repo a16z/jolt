@@ -133,9 +133,9 @@ where
         read_write_memory_polys: &ReadWriteMemoryPolynomials<F>,
     ) -> TimestampRangeCheckPolynomials<F> {
         let read_timestamps: [&CompactPolynomial<u32, F>; 4] = [
+            (&read_write_memory_polys.t_read_rd).try_into().unwrap(),
             (&read_write_memory_polys.t_read_rs1).try_into().unwrap(),
             (&read_write_memory_polys.t_read_rs2).try_into().unwrap(),
-            (&read_write_memory_polys.t_read_rd).try_into().unwrap(),
             (&read_write_memory_polys.t_read_ram).try_into().unwrap(),
         ];
         let M = read_timestamps[0].len();
