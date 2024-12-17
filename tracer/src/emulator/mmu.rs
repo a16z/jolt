@@ -23,7 +23,7 @@ use super::terminal::Terminal;
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
 /// devices, maps address to them, and accesses them depending on address.
-/// It also manages virtual-physical address translation and memoty protection.
+/// It also manages virtual-physical address translation and memory protection.
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
 pub struct Mmu {
@@ -147,7 +147,7 @@ impl Mmu {
         self.disk.init(data);
     }
 
-    /// Overrides defalut Device tree configuration.
+    /// Overrides default Device tree configuration.
     ///
     /// # Arguments
     /// * `data` DTB binary content
