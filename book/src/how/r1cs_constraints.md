@@ -21,7 +21,7 @@ The inputs required for the constraint system for a single CPU step are:
 
 #### Pertaining to read-write memory
 * The (starting) RAM address read by the instruction: if the instruction is not a load/store, this is 0.
-* The bytes written to or read from memory.
+* The bytes are written to or read from memory.
 
 ####  Pertaining to instruction lookups
 * The chunks of the instruction's operands `x` and `y`.
@@ -44,7 +44,7 @@ the preprocessed bytecode in Jolt.
     1. `ConcatLookupQueryChunks`: Indicates whether the instruction performs a concat-type lookup.
     1. `Virtual`: 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
     1. `Assert`: 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
-    1. `DoNotUpdatePC`: Used in virtual sequences; the program counter should be the same for the full seqeuence.
+    1. `DoNotUpdatePC`: Used in virtual sequences; the program counter should be the same for the full sequence.
 * Instruction flags: these are the unary bits used to indicate instruction is executed at a given step.
 There are as many per step as the number of unique instruction lookup tables in Jolt.
 
@@ -71,7 +71,7 @@ The main changes involved in making this happen are:
 - Spartan is modified to only take in the constraint matrices a single step, and the total number of steps.
 Using this, the prover and verifier can efficiently calculate the multilinear extensions of the full R1CS matrices.
 - The commitment format of the witness values is changed to reflect uniformity.
-All versions of a variable corresponding to each time step is committed together.
+All versions of a variable corresponding to each time step are committed together.
 This affects nearly all variables committed to in Jolt.
 - The inputs and witnesses are provided to the constraint system as segments.
 - Additional constraints are used to enforce consistency of the state transferred between CPU steps.
