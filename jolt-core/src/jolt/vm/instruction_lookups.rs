@@ -733,7 +733,6 @@ where
                 &mut polynomials.instruction_lookups.E_polys,
                 &mut polynomials.instruction_lookups.instruction_flags,
                 &mut polynomials.instruction_lookups.lookup_outputs.clone(),
-                Self::sumcheck_poly_degree(),
                 transcript,
             );
         r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
@@ -989,7 +988,6 @@ where
         memory_polys: &mut [MultilinearPolynomial<F>],
         flag_polys: &mut [MultilinearPolynomial<F>],
         lookup_outputs_poly: &mut MultilinearPolynomial<F>,
-        degree: usize,
         transcript: &mut ProofTranscript,
     ) -> (
         SumcheckInstanceProof<F, ProofTranscript>,
@@ -1008,24 +1006,28 @@ where
             .for_each(|flag_poly| debug_assert_eq!(flag_poly.len(), poly_len));
         debug_assert_eq!(lookup_outputs_poly.len(), poly_len);
 
+        let mut previous_claim = F::zero();
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-        let num_eval_points = degree + 1;
 
         for _round in 0..num_rounds {
-            let round_uni_poly = Self::primary_sumcheck_prover_message(
+            let univariate_poly = Self::primary_sumcheck_prover_message(
                 preprocessing,
                 &eq_poly,
                 flag_polys,
                 memory_polys,
                 lookup_outputs_poly,
-                num_eval_points,
+                previous_claim,
             );
 
-            compressed_polys.push(round_uni_poly.compress());
-            round_uni_poly.compress().append_to_transcript(transcript);
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
             let r_j = transcript.challenge_scalar::<F>();
             r.push(r_j);
+
+            previous_claim = univariate_poly.evaluate(&r_j);
 
             // Bind all polys
             let _bind_span = trace_span!("bind");
@@ -1069,31 +1071,32 @@ where
         flag_polys: &[MultilinearPolynomial<F>],
         subtable_polys: &[MultilinearPolynomial<F>],
         lookup_outputs_poly: &MultilinearPolynomial<F>,
-        num_eval_points: usize,
+        previous_claim: F,
     ) -> UniPoly<F> {
+        let degree = Self::sumcheck_poly_degree();
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
-        let evaluations: Vec<F> = (0..mle_half)
+        let mut evaluations: Vec<F> = (0..mle_half)
             .into_par_iter()
             .map(|i| {
-                let eq_evals = eq_poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh);
+                let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                 let output_evals =
-                    lookup_outputs_poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh);
+                    lookup_outputs_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                 let flag_evals: Vec<Vec<F>> = flag_polys
                     .iter()
-                    .map(|poly| poly.sumcheck_evals(i, num_eval_points, BindingOrder::LowToHigh))
+                    .map(|poly| poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh))
                     .collect();
                 // Subtable evals are lazily computed in the for-loop below
                 let mut subtable_evals: Vec<Vec<F>> = vec![vec![]; subtable_polys.len()];
 
-                let mut inner_sum = vec![F::zero(); num_eval_points];
+                let mut inner_sum = vec![F::zero(); degree];
                 for instruction in InstructionSet::iter() {
                     let instruction_index = InstructionSet::enum_index(&instruction);
                     let memory_indices =
                         &preprocessing.instruction_to_memory_indices[instruction_index];
 
-                    for j in 0..num_eval_points {
+                    for j in 0..degree {
                         let flag_eval = flag_evals[instruction_index][j];
                         if flag_eval.is_zero() {
                             continue;
@@ -1104,11 +1107,7 @@ where
                             .map(|memory_index| {
                                 if subtable_evals[*memory_index].is_empty() {
                                     subtable_evals[*memory_index] = subtable_polys[*memory_index]
-                                        .sumcheck_evals(
-                                            i,
-                                            num_eval_points,
-                                            BindingOrder::LowToHigh,
-                                        );
+                                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                                 }
                                 subtable_evals[*memory_index][j]
                             })
@@ -1120,7 +1119,7 @@ where
                     }
                 }
 
-                let evaluations: Vec<F> = (0..num_eval_points)
+                let evaluations: Vec<F> = (0..degree)
                     .map(|eval_index| {
                         eq_evals[eval_index] * (inner_sum[eval_index] - output_evals[eval_index])
                     })
@@ -1128,7 +1127,7 @@ where
                 evaluations
             })
             .reduce(
-                || vec![F::zero(); num_eval_points], // TODO(moodlezoup): tinyvec?
+                || vec![F::zero(); degree],
                 |running, new| {
                     debug_assert_eq!(running.len(), new.len());
                     running
@@ -1139,6 +1138,7 @@ where
                 },
             );
 
+        evaluations.insert(1, previous_claim - evaluations[0]);
         UniPoly::from_evals(&evaluations)
     }
 

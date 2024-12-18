@@ -95,7 +95,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
     #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
     pub fn prove_arbitrary<Func>(
-        _claim: &F,
+        claim: &F,
         num_rounds: usize,
         polys: &mut Vec<MultilinearPolynomial<F>>,
         comb_func: Func,
@@ -105,20 +105,21 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     where
         Func: Fn(&[F]) -> F + std::marker::Sync,
     {
+        let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _round in 0..num_rounds {
             // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
             // for points {0, ..., |g(x)|}
-            let mut eval_points = vec![F::zero(); combined_degree + 1];
+            let mut eval_points = vec![F::zero(); combined_degree];
 
             let mle_half = polys[0].len() / 2;
 
             let accum: Vec<Vec<F>> = (0..mle_half)
                 .into_par_iter()
                 .map(|poly_term_i| {
-                    let mut accum = vec![F::zero(); combined_degree + 1];
+                    let mut accum = vec![F::zero(); combined_degree];
                     // TODO(moodlezoup): Optimize
                     let evals: Vec<_> = polys
                         .iter()
@@ -130,7 +131,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                             )
                         })
                         .collect();
-                    for j in 0..combined_degree + 1 {
+                    for j in 0..combined_degree {
                         let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
                         accum[j] += comb_func(&evals_j);
                     }
@@ -150,11 +151,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                         .sum::<F>();
                 });
 
-            let round_uni_poly = UniPoly::from_evals(&eval_points);
-            let round_compressed_poly = round_uni_poly.compress();
+            eval_points.insert(1, previous_claim - eval_points[0]);
+            let univariate_poly = UniPoly::from_evals(&eval_points);
+            let compressed_poly = univariate_poly.compress();
 
             // append the prover's message to the transcript
-            round_compressed_poly.append_to_transcript(transcript);
+            compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
@@ -162,7 +164,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             polys
                 .par_iter_mut()
                 .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
-            compressed_polys.push(round_compressed_poly);
+            previous_claim = univariate_poly.evaluate(&r_j);
+            compressed_polys.push(compressed_poly);
         }
 
         let final_evals = polys

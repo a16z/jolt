@@ -466,7 +466,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             .sum()
     }
 
-    // TODO(moodlezoup): tinyvec?
     // TODO(moodlezoup): Return Vec of length degree
     #[inline]
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
@@ -474,22 +473,30 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         debug_assert!(index < self.len() / 2);
         match order {
             BindingOrder::HighToLow => {
-                let mut evals = vec![F::zero(); degree + 1];
+                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(index);
-                evals[1] = self.get_bound_coeff(index + self.len() / 2);
-                let m = evals[1] - evals[0];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(index + self.len() / 2);
+                let m = eval - evals[0];
                 for i in 1..degree {
-                    evals[i + 1] = evals[i] + m;
+                    eval += m;
+                    evals[i] = eval;
                 }
                 evals
             }
             BindingOrder::LowToHigh => {
-                let mut evals = vec![F::zero(); degree + 1];
+                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(2 * index);
-                evals[1] = self.get_bound_coeff(2 * index + 1);
-                let m = evals[1] - evals[0];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(2 * index + 1);
+                let m = eval - evals[0];
                 for i in 1..degree {
-                    evals[i + 1] = evals[i] + m;
+                    eval += m;
+                    evals[i] = eval;
                 }
                 evals
             }
