@@ -697,6 +697,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afb84c814227b90d6895e01398aee0d8033c00e7466aca416fb6a8e0eb19d8a7"
 
 [[package]]
+name = "cmake"
+version = "0.1.51"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb1e43aa7fd152b1f968787f7dbcdeb306d1867ff373c69955211876c053f91a"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "cobs"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1547,6 +1556,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "icicle-bn254"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-hash",
+ "icicle-runtime",
+]
+
+[[package]]
+name = "icicle-core"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+dependencies = [
+ "hex",
+ "icicle-runtime",
+ "once_cell",
+ "rand 0.8.5",
+ "rayon",
+]
+
+[[package]]
+name = "icicle-hash"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-runtime",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "icicle-runtime"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+dependencies = [
+ "cmake",
+ "once_cell",
+]
+
+[[package]]
 name = "icu_collections"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1830,10 +1882,14 @@ dependencies = [
  "fixedbitset",
  "getrandom 0.2.15",
  "iai-callgrind",
+ "icicle-bn254",
+ "icicle-core",
+ "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
  "memory-stats",
  "num-integer",
+ "once_cell",
  "postcard",
  "rand 0.7.3",
  "rand_chacha 0.3.1",
@@ -1844,6 +1900,7 @@ dependencies = [
  "sha3",
  "strum",
  "strum_macros",
+ "sys-info",
  "target-lexicon",
  "thiserror",
  "tokio",
@@ -3382,6 +3439,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.89",
+]
+
+[[package]]
+name = "sys-info"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b3a0d0aba8bf96a0e1ddfdc352fc53b3df7f39318c71854910c3c4b024ae52c"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]

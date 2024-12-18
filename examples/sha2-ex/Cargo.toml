@@ -8,3 +8,6 @@ jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
 guest = { package = "sha2-guest", path = "./guest" }
 
 hex = "0.4.3"
+
+[features]
+icicle = ["jolt-sdk/icicle"]

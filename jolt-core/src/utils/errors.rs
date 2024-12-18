@@ -14,7 +14,7 @@ pub enum ProofVerifyError {
     DecompressionError([u8; 32]),
     #[error("R1CS proof verification failed: {0}")]
     SpartanError(String),
-    #[error("Length Error: SRS Length: {0}, Key Length: {0}")]
+    #[error("Length Error: SRS Length: {0}, Key Length: {1}")]
     KeyLengthError(usize, usize),
     #[error("Invalid key length: {0}, expected power of 2")]
     InvalidKeyLength(usize),

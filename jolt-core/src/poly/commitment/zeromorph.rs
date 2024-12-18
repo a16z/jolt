@@ -1,10 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use std::{iter, marker::PhantomData};
-
-use crate::field;
-use crate::msm::VariableBaseMSM;
+use crate::msm::{Icicle, VariableBaseMSM};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -13,26 +10,36 @@ use crate::utils::{
     transcript::{AppendToTranscript, Transcript},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{batch_inversion, Field};
+use ark_ff::batch_inversion;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use itertools::izip;
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
+use std::{iter, marker::PhantomData};
 use tracing::trace_span;
-
-use rayon::prelude::*;
 
 use super::{
     commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
+use crate::field::JoltField;
+use crate::optimal_iter;
+use rayon::prelude::*;
 
-pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
+pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>)
+where
+    P::G1: Icicle;
 
-impl<P: Pairing> ZeromorphSRS<P> {
-    pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self {
+impl<P: Pairing> ZeromorphSRS<P>
+where
+    P::G1: Icicle,
+{
+    pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self
+    where
+        P::ScalarField: JoltField,
+    {
         Self(Arc::new(SRS::setup(rng, max_degree, max_degree)))
     }
 
@@ -53,7 +60,10 @@ impl<P: Pairing> ZeromorphSRS<P> {
 
 //TODO: adapt interface to have prover and verifier key
 #[derive(Clone, Debug)]
-pub struct ZeromorphProverKey<P: Pairing> {
+pub struct ZeromorphProverKey<P: Pairing>
+where
+    P::G1: Icicle,
+{
     pub commit_pp: KZGProverKey<P>,
     pub open_pp: KZGProverKey<P>,
 }
@@ -91,7 +101,7 @@ fn compute_multilinear_quotients<P: Pairing>(
     point: &[P::ScalarField],
 ) -> (Vec<UniPoly<P::ScalarField>>, P::ScalarField)
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
 {
     let num_var = poly.get_num_vars();
     assert_eq!(num_var, point.len());
@@ -134,7 +144,7 @@ fn compute_batched_lifted_degree_quotient<P: Pairing>(
     y_challenge: &P::ScalarField,
 ) -> (UniPoly<P::ScalarField>, usize)
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
 {
     let num_vars = quotients.len();
 
@@ -165,14 +175,15 @@ fn eval_and_quotient_scalars<P: Pairing>(
     challenges: &[P::ScalarField],
 ) -> (P::ScalarField, (Vec<P::ScalarField>, Vec<P::ScalarField>))
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
 {
     let num_vars = challenges.len();
 
     // squares of x = [x, x^2, .. x^{2^k}, .. x^{2^num_vars}]
-    let squares_of_x: Vec<_> = iter::successors(Some(x_challenge), |&x| Some(x.square()))
-        .take(num_vars + 1)
-        .collect();
+    let squares_of_x: Vec<_> =
+        iter::successors(Some(x_challenge), |&x| Some(JoltField::square(&x)))
+            .take(num_vars + 1)
+            .collect();
 
     let offsets_of_x = {
         let mut offsets_of_x = squares_of_x
@@ -228,7 +239,8 @@ pub struct Zeromorph<P: Pairing, ProofTranscript: Transcript> {
 
 impl<P, ProofTranscript> Zeromorph<P, ProofTranscript>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
+    <P as Pairing>::G1: Icicle,
     P: Pairing,
     ProofTranscript: Transcript,
 {
@@ -277,12 +289,18 @@ where
         assert_eq!(quotients.len(), poly.get_num_vars());
         assert_eq!(remainder, *eval);
 
-        // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
-        let q_k_com: Vec<P::G1Affine> = quotients
-            .par_iter()
+        // TODO(sagar): support variable_batch msms - or decide not to support them altogether
+        let q_k_com: Vec<P::G1Affine> = optimal_iter!(quotients)
             .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())
             .collect();
         let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
+        // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
+        // let quotient_slices: Vec<&[P::ScalarField]> =
+        //     quotients.iter().map(|q| q.coeffs.as_slice()).collect();
+        // let q_k_com = UnivariateKZG::commit_batch(&pp.commit_pp, &quotient_slices)?;
+        // let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
+        // let quotient_max_len = quotient_slices.iter().map(|s| s.len()).max().unwrap();
+
         q_comms.iter().for_each(|c| transcript.append_point(c));
 
         // Sample challenge y
@@ -459,9 +477,7 @@ where
             proof.q_k_com.clone(),
         ]
         .concat();
-        let zeta_z_com = <P::G1 as VariableBaseMSM>::msm(&bases, &scalars)
-            .unwrap()
-            .into_affine();
+        let zeta_z_com = <P::G1 as VariableBaseMSM>::msm(&bases, None, &scalars)?.into_affine();
 
         // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, -[X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
         let pairing = P::multi_pairing(
@@ -482,7 +498,8 @@ where
 impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     for Zeromorph<P, ProofTranscript>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
     type Setup = (ZeromorphProverKey<P>, ZeromorphVerifierKey<P>);
@@ -490,7 +507,11 @@ where
     type Proof = ZeromorphProof<P>;
     type BatchedProof = ZeromorphProof<P>;
 
-    fn setup(shapes: &[CommitShape]) -> Self::Setup {
+    fn setup(shapes: &[CommitShape]) -> Self::Setup
+    where
+        P::ScalarField: JoltField,
+        P::G1: Icicle,
+    {
         let max_len = shapes.iter().map(|shape| shape.input_length).max().unwrap();
 
         ZeromorphSRS(Arc::new(SRS::setup(
@@ -519,22 +540,11 @@ where
         gens: &Self::Setup,
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-        // TODO: assert lengths are valid
-        evals
-            .par_iter()
-            .map(|evals| {
-                assert!(
-                    gens.0.commit_pp.g1_powers().len() > evals.len(),
-                    "COMMIT KEY LENGTH ERROR {}, {}",
-                    gens.0.commit_pp.g1_powers().len(),
-                    evals.len()
-                );
-                ZeromorphCommitment(
-                    UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
-                        .unwrap(),
-                )
-            })
-            .collect::<Vec<_>>()
+        UnivariateKZG::commit_batch(&gens.0.commit_pp, evals)
+            .unwrap()
+            .into_iter()
+            .map(|c| ZeromorphCommitment(c))
+            .collect()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
@@ -631,7 +641,7 @@ mod test {
     use crate::utils::math::Math;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
-    use ark_ff::{BigInt, Zero};
+    use ark_ff::{BigInt, Field, Zero};
     use ark_std::{test_rng, UniformRand};
     use rand_core::SeedableRng;
 
