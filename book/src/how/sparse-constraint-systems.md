@@ -27,7 +27,7 @@ Here, one should think of $z$ as an execution trace for the VM, i.e., a list of 
 that happened at each and every cycle of VM. In Jolt, there are under 100 entries of $z$ per cycle
 (though as we add pre-compiles this number might grow).
 
-We modify each constraint by multiplying the left hand side by the binary flag $b_j$, i.e., 
+We modify each constraint by multiplying the left-hand side by the binary flag $b_j$, i.e., 
 $$b_j \cdot \left(\langle a_i, z \rangle \cdot \langle b_i, z \rangle  - \langle c_i, z \rangle \right) = 0.$$
 
 Now, for any cycle where this pre-compile is not executed, the prover can simply assign any variables 
@@ -68,6 +68,6 @@ and has other benefits.
 
 We call this technique (fast proving for) "sparse constraint systems". Note that the term sparse here
 does not refer to there being the sparsity of the R1CS constraint matrices themselves, 
-but rather to almost all of the left hand sides of the constraints being $0$
+but rather to almost all of the left-hand sides of the constraints being $0$
 when the constraints are evaluated on the valid witness vector $z$.
 

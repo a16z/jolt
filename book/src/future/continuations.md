@@ -10,7 +10,7 @@ Jolt will pursue both approaches to prover space control. Below, we provide more
 
 Continuations work by breaking a large computation into “chunks”, proving each chunk (almost) independently, and recursively aggregating the proofs (i.e., proving one knows the proofs for each chunk). 
 
-Continuations come in two flavors: "brute-force recursion" and folding. In brute-force recursion, the proofs for different chunks are aggregated by having the prover prove it knows each proof. Roughly speaking, the verifier of each proof is repesented as a circuit, and a SNARK is used to prove that the prover knows a satisfying assignment for each circuit. 
+Continuations come in two flavors: "brute-force recursion" and folding. In brute-force recursion, the proofs for different chunks are aggregated by having the prover prove it knows each proof. Roughly speaking, the verifier of each proof is represented as a circuit, and a SNARK is used to prove that the prover knows a satisfying assignment for each circuit. 
 
 In folding schemes, the "proof" for each chunk is actually only a "partial proof", in particular omitting any evaluation proofs for any committed polynomials. The partial proofs for each chunk are not explicitly checked by anyone. Rather, they are "aggregated" into a single partial proof, and that partial proof is then "completed" into a full SNARK proof. In folding schemes, the prover winds up recursively proving that it correctly aggregated the partial proofs. This has major performance benefits relative to "brute force recursion", because aggregating proofs is much simpler than checking them. Hence, proving aggregation was done correctly is much cheaper than proving full-fledged proof verification was done correctly.
 

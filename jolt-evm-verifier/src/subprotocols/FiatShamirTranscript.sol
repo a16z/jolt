@@ -2,7 +2,7 @@
 
 pragma solidity >=0.8.0;
 
-// We wrap this memory region mostly to discourage downsteam touching of it
+// We wrap this memory region mostly to discourage downstream touching of it
 // Note - Always init this via the new_transcript function as this hashes seed data and
 //        appends the protocol name
 // Note - We don't clean the data in the memory region as we always only hash up to the point we stored in each
@@ -14,7 +14,7 @@ struct Transcript {
 
 // An implementation of a Fiat Shamir Public Coin protocol which matches the one from the Jolt rust repo
 // We first define an object and memory region (the max memory limit of writes is defined on init),
-// then users can write data to this trascript or pull determistic randoms values.
+// then users can write data to this transcript or pull deterministic randoms values.
 // Care should be taken to ensure that all writes are done with consistent amounts of data.
 library FiatShamirTranscript {
     /// Generates a new transcript held in memory by initializing the region in memory before hashing the protocol
@@ -90,7 +90,7 @@ library FiatShamirTranscript {
     }
 
     /// We append a point of a N/pN x N/pN where p is less than 2^256 and the point is encoded as (32 bytes, 32 bytes)
-    /// On eth mainnet this will be a point on the bn256 paring curve which there is a precompile for
+    /// On eth mainnet this will be a point on the bn256 pairing curve which there is a precompile for
     /// WARN - This function assumes that the caller has done the mod to ensure the top bits are zero for x and y
     /// @param transcript The transcript we are hashing the value into
     /// @param added_x The point's x value which is hashed into the public coin's seed.
