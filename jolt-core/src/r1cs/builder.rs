@@ -228,7 +228,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         }
     }
 
-    fn allocate_aux(
+    pub(crate) fn allocate_aux(
         &mut self,
         aux_symbol: I,
         symbolic_inputs: Vec<LC>,
