@@ -22,7 +22,7 @@ use self::terminal::Terminal;
 ///
 /// Sample code to run the emulator.
 /// ```ignore
-/// // Creates an emulator with arbitary terminal
+/// // Creates an emulator with arbitrary terminal
 /// let mut emulator = Emulator::new(Box::new(DefaultTerminal::new()));
 /// // Set up program content binary
 /// emulator.setup_program(program_content);
