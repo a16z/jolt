@@ -21,7 +21,7 @@ The inputs required for the constraint system for a single CPU step are:
 
 #### Pertaining to read-write memory
 * The (starting) RAM address read by the instruction: if the instruction is not a load/store, this is 0.
-* The bytes are written to or read from memory.
+* The bytes that are written to or read from memory.
 
 ####  Pertaining to instruction lookups
 * The chunks of the instruction's operands `x` and `y`.
