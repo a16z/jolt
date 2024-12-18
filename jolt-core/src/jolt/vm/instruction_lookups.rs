@@ -764,7 +764,7 @@ where
             &primary_sumcheck_polys,
             eq_primary_sumcheck,
             r_primary_sumcheck,
-            &primary_sumcheck_openings.iter().collect::<Vec<_>>(),
+            &primary_sumcheck_openings,
             transcript,
         );
 

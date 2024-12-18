@@ -353,53 +353,48 @@ where
         let mut openings = Self::Openings::initialize(preprocessing);
         let mut exogenous_openings = Self::ExogenousOpenings::default();
 
-        let eq_read_write = EqPolynomial::evals(r_read_write);
-        // let eq_read_write_r2 = EqPolynomial::evals_with_r2(r_read_write);
-        polynomials
-            .read_write_values()
-            .par_iter()
-            .zip_eq(openings.read_write_values_mut().into_par_iter())
-            .chain(
-                Self::ExogenousOpenings::exogenous_data(jolt_polynomials)
-                    .par_iter()
-                    .zip_eq(exogenous_openings.openings_mut().into_par_iter()),
-            )
-            .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_with_chis(&eq_read_write);
-                *opening = claim;
-            });
-
         let read_write_polys: Vec<_> = [
             polynomials.read_write_values(),
             Self::ExogenousOpenings::exogenous_data(jolt_polynomials),
         ]
         .concat();
-        let read_write_claims: Vec<_> =
-            [openings.read_write_values(), exogenous_openings.openings()].concat();
+        let (read_write_evals, eq_read_write) =
+            MultilinearPolynomial::batch_evaluate(&read_write_polys, r_read_write);
+        let read_write_openings: Vec<&mut F> = openings
+            .read_write_values_mut()
+            .into_iter()
+            .chain(exogenous_openings.openings_mut().into_iter())
+            .collect();
+
+        for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {
+            *opening = *eval;
+        }
+
         opening_accumulator.append(
             &read_write_polys,
             DensePolynomial::new(eq_read_write),
             r_read_write.to_vec(),
-            &read_write_claims,
+            &read_write_evals,
             transcript,
         );
 
-        let eq_init_final = EqPolynomial::evals(r_init_final);
-        // let eq_init_final_r2 = EqPolynomial::evals_with_r2(r_init_final);
-        polynomials
-            .init_final_values()
-            .par_iter()
-            .zip_eq(openings.init_final_values_mut().into_par_iter())
-            .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_with_chis(&eq_init_final);
-                *opening = claim;
-            });
+        let init_final_polys = polynomials.init_final_values();
+        let (init_final_evals, eq_init_final) =
+            MultilinearPolynomial::batch_evaluate(&init_final_polys, r_init_final);
+
+        for (opening, eval) in openings
+            .init_final_values_mut()
+            .into_iter()
+            .zip(init_final_evals.iter())
+        {
+            *opening = *eval;
+        }
 
         opening_accumulator.append(
             &polynomials.init_final_values(),
             DensePolynomial::new(eq_init_final),
             r_init_final.to_vec(),
-            &openings.init_final_values(),
+            &init_final_evals,
             transcript,
         );
 

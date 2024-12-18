@@ -367,7 +367,7 @@ pub trait PolynomialBinding<F: JoltField> {
 
 pub trait PolynomialEvaluation<F: JoltField> {
     fn evaluate(&self, r: &[F]) -> F;
-    fn evaluate_with_chis(&self, chis: &[F]) -> F;
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
 }
 
@@ -416,6 +416,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
@@ -454,16 +455,54 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         }
     }
 
-    // TODO(moodlezoup): This is suboptimal for CompactPolynomials because get_coeff
-    // requires a field multiplication (to convert the coefficient into Montgomery
-    // form). Avoid this as much as possible.
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_with_chis")]
-    fn evaluate_with_chis(&self, chis: &[F]) -> F {
-        // assert_eq!(chis.len(), self.len());
-        chis.par_iter()
-            .enumerate()
-            .map(|(i, x)| *x * self.get_coeff(i))
-            .sum()
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
+        let eq = EqPolynomial::evals(r);
+
+        if polys.iter().any(|poly| match poly {
+            MultilinearPolynomial::LargeScalars(_) => false,
+            _ => true,
+        }) {
+            let eq_r2 = EqPolynomial::evals_with_r2(r);
+            let evals: Vec<F> = polys
+                .into_par_iter()
+                .map(|&poly| match poly {
+                    MultilinearPolynomial::LargeScalars(poly) => {
+                        poly.evaluate_at_chi_low_optimized(&eq)
+                    }
+                    MultilinearPolynomial::U8Scalars(poly) => eq_r2
+                        .par_iter()
+                        .zip(poly.coeffs.par_iter())
+                        .map(|(chi, coeff)| chi.mul_u64_unchecked(*coeff as u64))
+                        .sum(),
+                    MultilinearPolynomial::U16Scalars(poly) => eq_r2
+                        .par_iter()
+                        .zip(poly.coeffs.par_iter())
+                        .map(|(chi, coeff)| chi.mul_u64_unchecked(*coeff as u64))
+                        .sum(),
+                    MultilinearPolynomial::U32Scalars(poly) => eq_r2
+                        .par_iter()
+                        .zip(poly.coeffs.par_iter())
+                        .map(|(chi, coeff)| chi.mul_u64_unchecked(*coeff as u64))
+                        .sum(),
+                    MultilinearPolynomial::U64Scalars(poly) => eq_r2
+                        .par_iter()
+                        .zip(poly.coeffs.par_iter())
+                        .map(|(chi, coeff)| chi.mul_u64_unchecked(*coeff))
+                        .sum(),
+                })
+                .collect();
+            (evals, eq)
+        } else {
+            let evals: Vec<F> = polys
+                .into_par_iter()
+                .map(|&poly| {
+                    let poly: &DensePolynomial<F> = poly.try_into().unwrap();
+                    poly.evaluate_at_chi_low_optimized(&eq)
+                })
+                .collect();
+            (evals, eq)
+        }
     }
 
     // TODO(moodlezoup): Return Vec of length degree

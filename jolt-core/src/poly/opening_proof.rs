@@ -174,7 +174,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         polynomials: &[&MultilinearPolynomial<F>],
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
-        claims: &[&F],
+        claims: &[F],
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(polynomials.len(), claims.len());
@@ -192,11 +192,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
                 "eq_poly and opening point are inconsistent"
             );
 
-            let expected_claims: Vec<F> = polynomials
-                .iter()
-                .map(|poly| poly.evaluate_with_chis(&expected_eq_poly))
-                .collect();
-            for (claim, expected_claim) in claims.iter().zip(expected_claims.iter()) {
+            let expected_claims: Vec<F> =
+                MultilinearPolynomial::batch_evaluate(polynomials, &opening_point).0;
+            for (claim, expected_claim) in claims.iter().zip(expected_claims.into_iter()) {
                 assert_eq!(*claim, expected_claim, "Unexpected claim");
             }
         }

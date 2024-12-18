@@ -193,17 +193,14 @@ where
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
         let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
 
-        let chi = EqPolynomial::evals(r_col_step);
-        let claimed_witness_evals: Vec<_> = flattened_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_with_chis(&chi))
-            .collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys, r_col_step);
 
         opening_accumulator.append(
             &flattened_polys,
-            DensePolynomial::new(chi),
+            DensePolynomial::new(chis),
             r_col_step.to_vec(),
-            &claimed_witness_evals.iter().collect::<Vec<_>>(),
+            &claimed_witness_evals,
             transcript,
         );
 

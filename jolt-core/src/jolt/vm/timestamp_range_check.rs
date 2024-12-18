@@ -701,35 +701,28 @@ where
             + multiset_hashes.init_hashes.len()
             + multiset_hashes.final_hashes.len();
         let (_, r_opening) = r_grand_product.split_at(batch_size.next_power_of_two().log_2());
-        let chis = EqPolynomial::evals(r_opening);
 
-        polynomials
-            .read_write_values()
-            .into_par_iter()
-            .zip(openings.read_write_values_mut().into_par_iter())
-            .chain(
-                ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials)
-                    .into_par_iter()
-                    .zip(timestamp_openings.openings_mut().into_par_iter()),
-            )
-            .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_with_chis(&chis);
-                *opening = claim;
-            });
+        let read_write_polys = [
+            polynomials.read_write_values(),
+            ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials),
+        ]
+        .concat();
+        let read_write_openings: Vec<&mut F> = openings
+            .read_write_values_mut()
+            .into_iter()
+            .chain(timestamp_openings.openings_mut().into_iter())
+            .collect();
+        let (read_write_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&read_write_polys, &r_opening);
+        for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {
+            *opening = *eval;
+        }
 
         opening_accumulator.append(
-            &polynomials
-                .read_write_values()
-                .into_iter()
-                .chain(ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials).into_iter())
-                .collect::<Vec<_>>(),
+            &read_write_polys,
             DensePolynomial::new(chis),
             r_opening.to_vec(),
-            &openings
-                .read_write_values()
-                .into_iter()
-                .chain(timestamp_openings.openings())
-                .collect::<Vec<_>>(),
+            &read_write_evals,
             transcript,
         );
 

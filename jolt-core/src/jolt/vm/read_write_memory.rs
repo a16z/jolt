@@ -967,7 +967,7 @@ where
             &[&polynomials.v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
-            &[&sumcheck_openings[2]],
+            &[sumcheck_openings[2]],
             transcript,
         );
 

@@ -643,15 +643,14 @@ where
         openings.a_init_final =
             Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
 
-        let chis = EqPolynomial::evals(r_init_final);
         openings.v_init_final = Some(
-            preprocessing
-                .v_init_final
-                .par_iter()
-                .map(|poly| poly.evaluate_with_chis(&chis))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
+            MultilinearPolynomial::batch_evaluate(
+                &preprocessing.v_init_final.iter().collect::<Vec<_>>(),
+                r_init_final,
+            )
+            .0
+            .try_into()
+            .unwrap(),
         );
     }
 

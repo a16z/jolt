@@ -412,13 +412,13 @@ where
         // 3. f(r_sumcheck, 1)
 
         // We have a commitment to g(x) = f(1, x), so we can prove opening 1 directly:
-        let chis_r = EqPolynomial::evals(&r_sumcheck);
-        let g_r_sumcheck = g_polynomial.evaluate_with_chis(&chis_r);
+        let (g_r_sumcheck, chis_r) =
+            MultilinearPolynomial::batch_evaluate(&[&g_polynomial], &r_sumcheck);
         opening_accumulator.append(
             &[&g_polynomial],
             DensePolynomial::new(chis_r),
             r_sumcheck.clone(),
-            &[&g_r_sumcheck],
+            &g_r_sumcheck,
             transcript,
         );
 
@@ -447,7 +447,7 @@ where
             &[&g_polynomial],
             DensePolynomial::new(EqPolynomial::evals(&reduced_opening_point_g)),
             reduced_opening_point_g,
-            &[&reduced_opening_g],
+            &[reduced_opening_g],
             transcript,
         );
 
@@ -463,7 +463,7 @@ where
         let quark_proof = Self {
             sumcheck_proof,
             g_commitment,
-            g_r_sumcheck,
+            g_r_sumcheck: g_r_sumcheck[0],
             g_r_prime,
             v_r_prime,
             num_vars: v_variables,
