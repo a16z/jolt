@@ -21,7 +21,7 @@ and the details will be fully fleshed out in an upcoming e-print.</LI>
 </OL>
 
 Note that this plan does not require "non-uniform folding". The fact that there are many different primitive RISC-V 
-instructions is handled by "monolithic Jolt". Folding is merely applied to accumluate many copies of the same claim,
+instructions is handled by "monolithic Jolt". Folding is merely applied to accumulate many copies of the same claim,
 namely that a Jolt proof (minus any HyperKZG evaluation proof) was correctly verified. 
 
 # Space cost estimates
