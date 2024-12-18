@@ -46,6 +46,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_u8(n: u8) -> Self {
         #[cfg(test)]
         {
@@ -57,6 +58,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_u16(n: u16) -> Self {
         #[cfg(test)]
         {
@@ -68,6 +70,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_u32(n: u32) -> Self {
         #[cfg(test)]
         {
@@ -83,6 +86,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_u64(n: u64) -> Self {
         #[cfg(test)]
         {
