@@ -7,7 +7,10 @@ use super::{
 use crate::{
     field::JoltField,
     jolt::vm::JoltPolynomials,
-    poly::commitment::commitment_scheme::CommitmentScheme,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        spartan_interleaved_poly::SpartanInterleavedPolynomial,
+    },
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::math::Math,
 };
@@ -18,10 +21,10 @@ use std::{collections::BTreeMap, marker::PhantomData};
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone)]
-struct Constraint {
-    a: LC,
-    b: LC,
-    c: LC,
+pub struct Constraint {
+    pub(crate) a: LC,
+    pub(crate) b: LC,
+    pub(crate) c: LC,
 }
 
 impl Constraint {
@@ -448,9 +451,9 @@ pub type OffsetLC = (bool, LC);
 /// uniform constraint system.
 #[derive(Debug)]
 pub struct OffsetEqConstraint {
-    cond: OffsetLC,
-    a: OffsetLC,
-    b: OffsetLC,
+    pub(crate) cond: OffsetLC,
+    pub(crate) a: OffsetLC,
+    pub(crate) b: OffsetLC,
 }
 
 impl OffsetEqConstraint {
@@ -481,11 +484,11 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
     flattened_polynomials: &[&MultilinearPolynomial<F>],
     step: usize,
     next_step_m: Option<usize>,
-) -> F {
+) -> i128 {
     if !offset.0 {
-        offset.1.evaluate_row(flattened_polynomials, step)
+        offset.1.evaluate_row_i128(flattened_polynomials, step)
     } else if let Some(next_step) = next_step_m {
-        offset.1.evaluate_row(flattened_polynomials, next_step)
+        offset.1.evaluate_row_i128(flattened_polynomials, next_step)
     } else {
         offset.1.constant_term_field()
     }
@@ -659,12 +662,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         (0..num_steps)
             .into_par_iter()
             .flat_map_iter(|step_index| {
-                let next_step_index_m = if step_index + 1 < num_steps {
-                    Some(step_index + 1)
-                } else {
-                    None
-                };
-
                 // uniform_constraints
                 let uniform_constraints = filtered_uniform_constraints.par_iter().flat_map(
                     move |(constraint_index, lc)| {
@@ -679,6 +676,12 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                         }
                     },
                 );
+
+                let next_step_index_m = if step_index + 1 < num_steps {
+                    Some(step_index + 1)
+                } else {
+                    None
+                };
 
                 // offset_equality_constraints
                 // (a - b) * condition == 0
@@ -712,10 +715,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn compute_spartan_Az_Bz_Cz<
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
-    >(
+    pub fn compute_spartan_Az_Bz_Cz(
         &self,
         flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
     ) -> (
@@ -723,6 +723,15 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         SparsePolynomial<F>,
         SparsePolynomial<F>,
     ) {
+        let dense_len = self.padded_rows_per_step() * self.uniform_repeat();
+
+        let interleaved = SpartanInterleavedPolynomial::new(
+            &self.uniform_builder.constraints,
+            &self.offset_equality_constraints,
+            flattened_polynomials,
+            self.padded_rows_per_step(),
+        );
+
         let az_sparse = self.compute_spartan_Xz(
             flattened_polynomials,
             |constraint: &Constraint| &constraint.a,
@@ -740,8 +749,12 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                     next_step_index_m,
                 );
                 let az = eq_a_eval - eq_b_eval;
-                az
+                F::from_i128(az)
             },
+        );
+        println!(
+            "Az is {}% sparse",
+            100.0 * (dense_len - az_sparse.len()) as f64 / dense_len as f64
         );
 
         let bz_sparse = self.compute_spartan_Xz(
@@ -755,14 +768,22 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                     next_step_index_m,
                 );
                 let bz = condition_eval;
-                bz
+                F::from_i128(bz)
             },
+        );
+        println!(
+            "Bz is {}% sparse",
+            100.0 * (dense_len - bz_sparse.len()) as f64 / dense_len as f64
         );
 
         let cz_sparse = self.compute_spartan_Xz(
             flattened_polynomials,
             |constraint: &Constraint| &constraint.c,
             |_, _, _, _| F::zero(),
+        );
+        println!(
+            "Cz is {}% sparse",
+            100.0 * (dense_len - cz_sparse.len()) as f64 / dense_len as f64
         );
 
         let num_vars = self.constraint_rows().next_power_of_two().log_2();

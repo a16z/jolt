@@ -130,7 +130,7 @@ where
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let (mut az, mut bz, mut cz) =
-            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS, ProofTranscript>(&flattened_polys);
+            constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(

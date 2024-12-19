@@ -59,11 +59,11 @@ impl LC {
             .filter(|term| matches!(term.0, Variable::Constant))
     }
 
-    pub fn constant_term_field<F: JoltField>(&self) -> F {
+    pub fn constant_term_field(&self) -> i128 {
         if let Some(term) = self.constant_term() {
-            F::from_i64(term.1)
+            term.1 as i128
         } else {
-            F::zero()
+            0
         }
     }
 
@@ -101,6 +101,22 @@ impl LC {
             })
             .sum();
         F::from_i128(result)
+    }
+
+    pub fn evaluate_row_i128<F: JoltField>(
+        &self,
+        flattened_polynomials: &[&MultilinearPolynomial<F>],
+        row: usize,
+    ) -> i128 {
+        self.terms()
+            .iter()
+            .map(|term| match term.0 {
+                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                    term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
+                }
+                Variable::Constant => term.1 as i128,
+            })
+            .sum()
     }
 
     #[cfg(test)]
