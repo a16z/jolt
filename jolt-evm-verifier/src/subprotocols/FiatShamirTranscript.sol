@@ -89,7 +89,7 @@ library FiatShamirTranscript {
         ///      of stepping
     }
 
-    /// We append a point of a N/pN x N/pN where p is less than 2^256 and the point is encoded as (32 bytes, 32 bytes)
+    /// We append a point of an N/pN x N/pN where p is less than 2^256 and the point is encoded as (32 bytes, 32 bytes)
     /// On eth mainnet this will be a point on the bn256 pairing curve which there is a precompile for
     /// WARN - This function assumes that the caller has done the mod to ensure the top bits are zero for x and y
     /// @param transcript The transcript we are hashing the value into
