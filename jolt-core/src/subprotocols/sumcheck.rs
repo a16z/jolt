@@ -365,7 +365,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
     pub fn prove_spartan_cubic(
-        claim: &F,
         num_rounds: usize,
         poly_eq: &mut SplitEqPolynomial<F>,
         poly_A: &mut SparsePolynomial<F>,
@@ -375,7 +374,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::new();
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
-        let mut claim_per_round = *claim;
+        let mut claim = F::zero();
 
         for _ in 0..num_rounds {
             let poly = {
@@ -385,7 +384,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
                 let evals = [
                     eval_point_0,
-                    claim_per_round - eval_point_0,
+                    claim - eval_point_0,
                     eval_point_2,
                     eval_point_3,
                 ];
@@ -404,7 +403,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             polys.push(compressed_poly);
 
             // Set up next round
-            claim_per_round = poly.evaluate(&r_i);
+            claim = poly.evaluate(&r_i);
 
             // bound all tables to the verifier's challenege
             poly_eq.bind(r_i);

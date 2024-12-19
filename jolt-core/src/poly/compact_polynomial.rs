@@ -2,26 +2,85 @@ use std::ops::Index;
 
 use crate::utils::math::Math;
 use crate::{field::JoltField, utils};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_integer::Integer;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
-pub trait SmallScalar:
-    Copy + Integer + CanonicalSerialize + CanonicalDeserialize + Into<u64>
-{
+pub trait SmallScalar: Copy + Integer + Sync {
+    fn field_mul<F: JoltField>(&self, n: F) -> F;
 }
-impl SmallScalar for u8 {}
-impl SmallScalar for u16 {}
-impl SmallScalar for u32 {}
-impl SmallScalar for u64 {}
+impl SmallScalar for u8 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64_unchecked(*self as u64)
+    }
+}
+impl SmallScalar for u16 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64_unchecked(*self as u64)
+    }
+}
+impl SmallScalar for u32 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64_unchecked(*self as u64)
+    }
+}
+impl SmallScalar for u64 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        n.mul_u64_unchecked(*self)
+    }
+}
+impl SmallScalar for i64 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        if self.is_negative() {
+            -n.mul_u64_unchecked(-self as u64)
+        } else {
+            n.mul_u64_unchecked(*self as u64)
+        }
+    }
+}
 
-#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Debug, PartialEq)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     num_vars: usize,
     len: usize,
     pub coeffs: Vec<T>,
     pub bound_coeffs: Vec<F>,
+}
+
+impl<T: SmallScalar, F: JoltField> Valid for CompactPolynomial<T, F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("")
+    }
+}
+
+impl<T: SmallScalar, F: JoltField> CanonicalDeserialize for CompactPolynomial<T, F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        unimplemented!("")
+    }
+}
+
+impl<T: SmallScalar, F: JoltField> CanonicalSerialize for CompactPolynomial<T, F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        unimplemented!("")
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        unimplemented!("")
+    }
 }
 
 impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
@@ -88,8 +147,8 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 BindingOrder::LowToHigh => {
                     self.bound_coeffs = (0..n)
                         .map(|i| {
-                            one_minus_r_r2.mul_u64_unchecked(self.coeffs[2 * i].into())
-                                + r_r2.mul_u64_unchecked(self.coeffs[2 * i + 1].into())
+                            self.coeffs[2 * i].field_mul(one_minus_r_r2)
+                                + self.coeffs[2 * i + 1].field_mul(r_r2)
                         })
                         .collect();
                 }
@@ -98,10 +157,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                     self.bound_coeffs = left
                         .iter()
                         .zip(right.iter())
-                        .map(|(&a, &b)| {
-                            one_minus_r_r2.mul_u64_unchecked(a.into())
-                                + r_r2.mul_u64_unchecked(b.into())
-                        })
+                        .map(|(&a, &b)| a.field_mul(one_minus_r_r2) + b.field_mul(r_r2))
                         .collect();
                 }
             }

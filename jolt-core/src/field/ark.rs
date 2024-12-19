@@ -1,4 +1,4 @@
-use ark_ff::{PrimeField, UniformRand};
+use ark_ff::{BigInt, PrimeField, UniformRand};
 use ark_std::Zero;
 use rayon::prelude::*;
 
@@ -105,10 +105,52 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn from_i64(val: i64) -> Self {
-        if val > 0 {
-            <Self as JoltField>::from_u64(val as u64)
+        if val.is_negative() {
+            let val = (-val) as u64;
+            if val <= u16::MAX as u64 {
+                -<Self as JoltField>::from_u16(val as u16)
+            } else if val <= u32::MAX as u64 {
+                -<Self as JoltField>::from_u32(val as u32)
+            } else {
+                -<Self as JoltField>::from_u64(val as u64)
+            }
         } else {
-            Self::zero() - <Self as JoltField>::from_u64(-(val) as u64)
+            let val = val as u64;
+            if val <= u16::MAX as u64 {
+                <Self as JoltField>::from_u16(val as u16)
+            } else if val <= u32::MAX as u64 {
+                <Self as JoltField>::from_u32(val as u32)
+            } else {
+                <Self as JoltField>::from_u64(val as u64)
+            }
+        }
+    }
+
+    fn from_i128(val: i128) -> Self {
+        if val.is_negative() {
+            let val = (-val) as u128;
+            if val <= u16::MAX as u128 {
+                -<Self as JoltField>::from_u16(val as u16)
+            } else if val <= u32::MAX as u128 {
+                -<Self as JoltField>::from_u32(val as u32)
+            } else if val <= u64::MAX as u128 {
+                -<Self as JoltField>::from_u64(val as u64)
+            } else {
+                let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
+                -<Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+            }
+        } else {
+            let val = val as u128;
+            if val <= u16::MAX as u128 {
+                <Self as JoltField>::from_u16(val as u16)
+            } else if val <= u32::MAX as u128 {
+                <Self as JoltField>::from_u32(val as u32)
+            } else if val <= u64::MAX as u128 {
+                <Self as JoltField>::from_u64(val as u64)
+            } else {
+                let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
+                <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+            }
         }
     }
 

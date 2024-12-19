@@ -1,4 +1,4 @@
-use crate::poly::compact_polynomial::CompactPolynomial;
+use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
@@ -219,15 +219,12 @@ where
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
                         let a = dim[i];
-                        let v = E_poly[i] as u64;
-                        let t = read_cts[i] as u64;
-                        gamma_squared.mul_u64_unchecked(t)
-                            + gamma.mul_u64_unchecked(v)
-                            + F::from_u16(a)
-                            - *tau
+                        let v = E_poly[i];
+                        let t = read_cts[i];
+                        t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
-                let t_adjustment = gamma_squared.mul_u64_unchecked(1);
+                let t_adjustment = 1u64.field_mul(gamma_squared);
                 let write_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| read_fingerprints[i] + t_adjustment)
                     .collect();
@@ -249,7 +246,7 @@ where
                     let v: u32 = subtable[i];
                     // let t = F::zero();
                     // Compute h(a,v,t) where t == 0
-                    leaves[i] = gamma.mul_u64_unchecked(v as u64) + *a - *tau;
+                    leaves[i] = v.field_mul(gamma) + *a - *tau;
                 });
                 // Final leaves
                 let mut leaf_index = M;
@@ -257,8 +254,7 @@ where
                     let final_cts: &CompactPolynomial<u32, F> =
                         (&polynomials.final_cts[*memory_index]).try_into().unwrap();
                     (0..M).for_each(|i| {
-                        leaves[leaf_index] =
-                            leaves[i] + gamma_squared.mul_u64_unchecked(final_cts[i] as u64);
+                        leaves[leaf_index] = leaves[i] + final_cts[i].field_mul(gamma_squared);
                         leaf_index += 1;
                     });
                 }

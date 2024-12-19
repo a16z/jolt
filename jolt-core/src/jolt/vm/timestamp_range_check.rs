@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::compact_polynomial::CompactPolynomial;
+use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::{
@@ -357,8 +357,7 @@ where
                 let read_fingerprints_0: Vec<F> = (0..M)
                     .into_par_iter()
                     .map(|j| {
-                        let read_timestamp = read_timestamps[i][j] as u64;
-                        gamma.mul_u64_unchecked(read_timestamp)
+                        read_timestamps[i][j].field_mul(gamma)
                             + F::from_u32(read_cts_read_timestamp[i][j])
                             - *tau
                     })
@@ -371,8 +370,8 @@ where
                 let read_fingerprints_1: Vec<F> = (0..M)
                     .into_par_iter()
                     .map(|j| {
-                        let global_minus_read = j as u64 - read_timestamps[i][j] as u64;
-                        gamma.mul_u64_unchecked(global_minus_read)
+                        let global_minus_read = j as u32 - read_timestamps[i][j];
+                        global_minus_read.field_mul(gamma)
                             + F::from_u32(read_cts_global_minus_read[i][j])
                             - *tau
                     })
@@ -397,7 +396,7 @@ where
             .into_par_iter()
             .map(|i| {
                 // t = 0
-                gamma.mul_u64_unchecked(i as u64) - *tau
+                (i as u64).field_mul(gamma) - *tau
             })
             .collect();
 

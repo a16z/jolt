@@ -3,10 +3,7 @@
 
 #[cfg(test)]
 use super::inputs::ConstraintInput;
-use crate::{
-    field::{JoltField, OptimizedMul},
-    poly::multilinear_polynomial::MultilinearPolynomial,
-};
+use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use std::fmt::Debug;
 #[cfg(test)]
 use std::fmt::Write as _;
@@ -93,44 +90,18 @@ impl LC {
         flattened_polynomials: &[&MultilinearPolynomial<F>],
         row: usize,
     ) -> F {
-        self.terms()
+        let result: i128 = self
+            .terms()
             .iter()
             .map(|term| match term.0 {
-                Variable::Input(var_index) | Variable::Auxiliary(var_index) => F::from_i64(term.1)
-                    .mul_01_optimized(flattened_polynomials[var_index].get_coeff(row)),
-                Variable::Constant => F::from_i64(term.1),
+                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                    term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
+                }
+                Variable::Constant => term.1 as i128,
             })
-            .sum()
+            .sum();
+        F::from_i128(result)
     }
-
-    // pub fn evaluate_batch<F: JoltField>(
-    //     &self,
-    //     flattened_polynomials: &[&MultilinearPolynomial<F>],
-    //     batch_size: usize,
-    // ) -> Vec<F> {
-    //     let mut output = unsafe_allocate_zero_vec(batch_size);
-    //     self.evaluate_batch_mut::<F>(flattened_polynomials, &mut output);
-    //     output
-    // }
-
-    // pub fn evaluate_batch_mut<F: JoltField>(
-    //     &self,
-    //     flattened_polynomials: &[&MultilinearPolynomial<F>],
-    //     output: &mut [F],
-    // ) {
-    //     output.par_iter_mut().enumerate().for_each(|(i, eval)| {
-    //         *eval = self
-    //             .terms()
-    //             .iter()
-    //             .map(|term| match term.0 {
-    //                 Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
-    //                     F::from_i64(term.1).mul_01_optimized(flattened_polynomials[var_index][i])
-    //                 }
-    //                 Variable::Constant => F::from_i64(term.1),
-    //             })
-    //             .sum()
-    //     });
-    // }
 
     #[cfg(test)]
     pub fn pretty_fmt<const C: usize, I: ConstraintInput>(

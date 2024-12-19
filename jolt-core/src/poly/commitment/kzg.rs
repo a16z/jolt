@@ -4,7 +4,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, ScalarMul};
 use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
@@ -227,6 +227,18 @@ where
                     &poly.coeffs,
                 )
                 .unwrap();
+                Ok(c.into_affine())
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                // TODO(moodlezoup): This can be optimized
+                let scalars: Vec<_> = poly
+                    .coeffs
+                    .par_iter()
+                    .map(|x| P::ScalarField::from_i64(*x))
+                    .collect();
+                let c =
+                    <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers()[..poly.coeffs.len()], &scalars)
+                        .unwrap();
                 Ok(c.into_affine())
             }
         }

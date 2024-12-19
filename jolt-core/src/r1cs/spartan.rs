@@ -19,7 +19,6 @@ use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
-use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -135,7 +134,6 @@ where
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
-                &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut eq_tau,
                 &mut az,

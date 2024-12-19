@@ -142,6 +142,9 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
             <Self as JoltField>::from_u64(-val as u64)
         }
     }
+    fn from_i128(val: i128) -> Self {
+        todo!()
+    }
 
     fn square(&self) -> Self {
         Self(self.0.square())

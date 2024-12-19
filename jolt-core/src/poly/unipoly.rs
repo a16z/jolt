@@ -9,6 +9,7 @@ use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
+use super::compact_polynomial::SmallScalar;
 use super::multilinear_polynomial::MultilinearPolynomial;
 
 // ax^2 + bx + c stored as vec![c,b,a]
@@ -149,7 +150,7 @@ impl<F: JoltField> UniPoly<F> {
                 let mut eval = F::zero();
                 let mut power = F::montgomery_r2().unwrap_or(F::one());
                 for coeff in poly.coeffs.iter() {
-                    eval += power.mul_u64_unchecked(*coeff as u64);
+                    eval += coeff.field_mul(power);
                     power *= *r;
                 }
                 eval
@@ -158,7 +159,7 @@ impl<F: JoltField> UniPoly<F> {
                 let mut eval = F::zero();
                 let mut power = F::montgomery_r2().unwrap_or(F::one());
                 for coeff in poly.coeffs.iter() {
-                    eval += power.mul_u64_unchecked(*coeff as u64);
+                    eval += coeff.field_mul(power);
                     power *= *r;
                 }
                 eval
@@ -167,7 +168,7 @@ impl<F: JoltField> UniPoly<F> {
                 let mut eval = F::zero();
                 let mut power = F::montgomery_r2().unwrap_or(F::one());
                 for coeff in poly.coeffs.iter() {
-                    eval += power.mul_u64_unchecked(*coeff as u64);
+                    eval += coeff.field_mul(power);
                     power *= *r;
                 }
                 eval
@@ -176,7 +177,16 @@ impl<F: JoltField> UniPoly<F> {
                 let mut eval = F::zero();
                 let mut power = F::montgomery_r2().unwrap_or(F::one());
                 for coeff in poly.coeffs.iter() {
-                    eval += power.mul_u64_unchecked(*coeff);
+                    eval += coeff.field_mul(power);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += coeff.field_mul(power);
                     power *= *r;
                 }
                 eval
@@ -204,14 +214,6 @@ impl<F: JoltField> UniPoly<F> {
         self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
     }
 }
-
-/*
-impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
-    fn add_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += rhs);
-    }
-}
-*/
 
 impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
     fn add_assign(&mut self, rhs: &Self) {

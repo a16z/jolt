@@ -15,7 +15,6 @@ use crate::lasso::memory_checking::{
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::compact_polynomial::CompactPolynomial;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
@@ -26,7 +25,7 @@ use super::{JoltPolynomials, JoltTraceStep};
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial},
+    poly::identity_poly::IdentityPolynomial,
 };
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -279,7 +278,7 @@ impl<F: JoltField> BytecodePreprocessing<F> {
             rd.push(instruction.rd);
             rs1.push(instruction.rs1);
             rs2.push(instruction.rs2);
-            imm.push(F::from_i64(instruction.imm));
+            imm.push(instruction.imm);
         }
 
         let v_init_final = [
@@ -352,7 +351,7 @@ where
             rd.push(step.bytecode_row.rd);
             rs1.push(step.bytecode_row.rs1);
             rs2.push(step.bytecode_row.rs2);
-            imm.push(F::from_i64(step.bytecode_row.imm));
+            imm.push(step.bytecode_row.imm);
         }
 
         let v_read_write = [
@@ -535,18 +534,13 @@ where
         let v_rd: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[2]).try_into().unwrap();
         let v_rs1: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[3]).try_into().unwrap();
         let v_rs2: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[4]).try_into().unwrap();
-        let v_imm: &DensePolynomial<F> = (&polynomials.v_read_write[5]).try_into().unwrap();
+        let v_imm: &CompactPolynomial<i64, F> = (&polynomials.v_read_write[5]).try_into().unwrap();
         let t: &CompactPolynomial<u32, F> = (&polynomials.t_read).try_into().unwrap();
 
         let read_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                // The gamma terms include an R^2 factor so that we convert the
-                // CompactPolynomial coefficients into Montgomery form when we
-                // multiply them by a gamma term. v_imm is a DensePolynomial,
-                // meaning its coefficients are already in Montgomery form. Thus,
-                // we make sure *not* to multiply v_imm by a gamma term.
-                v_imm[i]
+                F::from_i64(v_imm[i])
                     + gamma_terms[0].mul_u64_unchecked(a[i] as u64)
                     + gamma_terms[1].mul_u64_unchecked(v_address[i])
                     + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
@@ -562,7 +556,7 @@ where
         let write_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                v_imm[i]
+                F::from_i64(v_imm[i])
                     + gamma_terms[0].mul_u64_unchecked(a[i] as u64)
                     + gamma_terms[1].mul_u64_unchecked(v_address[i])
                     + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
@@ -581,12 +575,13 @@ where
         let v_rd: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[2]).try_into().unwrap();
         let v_rs1: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[3]).try_into().unwrap();
         let v_rs2: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[4]).try_into().unwrap();
-        let v_imm: &DensePolynomial<F> = (&preprocessing.v_init_final[5]).try_into().unwrap();
+        let v_imm: &CompactPolynomial<i64, F> =
+            (&preprocessing.v_init_final[5]).try_into().unwrap();
 
         let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                v_imm[i]
+                F::from_i64(v_imm[i])
                     + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
                     + gamma_terms[1].mul_u64_unchecked(v_address[i])
                     + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
@@ -603,7 +598,7 @@ where
         let final_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                v_imm[i]
+                F::from_i64(v_imm[i])
                     + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
                     + gamma_terms[1].mul_u64_unchecked(v_address[i])
                     + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
