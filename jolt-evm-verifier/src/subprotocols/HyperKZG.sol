@@ -164,7 +164,7 @@ contract HyperKZG {
             accumulated_q = q * accumulated_q;
         }
 
-        // Finally we do a MSM to get the value of the the left hand side
+        // Finally we do an MSM to get the value of the the left hand side
         // NOTE - This is gas inefficient and grows with log of the proof size so we might want
         //        to move to a pippenger window algo with much smaller MSMs which we might save gas on.
         // Our first value is the c_x c_y as this would be the first entry of com in rust.
