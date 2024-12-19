@@ -300,7 +300,7 @@ const HTML_HEAD: &str = r#"
 <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>Jolt x WASMn</title>
+        <title>Jolt x WASM</title>
     </head>
     <body>
         <h1>Jolt x WASM</h1>
