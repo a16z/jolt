@@ -90,17 +90,7 @@ impl LC {
         flattened_polynomials: &[&MultilinearPolynomial<F>],
         row: usize,
     ) -> F {
-        let result: i128 = self
-            .terms()
-            .iter()
-            .map(|term| match term.0 {
-                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
-                    term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
-                }
-                Variable::Constant => term.1 as i128,
-            })
-            .sum();
-        F::from_i128(result)
+        F::from_i128(self.evaluate_row_i128(flattened_polynomials, row))
     }
 
     pub fn evaluate_row_i128<F: JoltField>(

@@ -6,6 +6,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::special_polys::{SparsePolynomial, SparseTripleIterator};
@@ -366,60 +367,28 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
     pub fn prove_spartan_cubic(
         num_rounds: usize,
-        poly_eq: &mut SplitEqPolynomial<F>,
-        poly_A: &mut SparsePolynomial<F>,
-        poly_B: &mut SparsePolynomial<F>,
-        poly_C: &mut SparsePolynomial<F>,
+        eq_poly: &mut SplitEqPolynomial<F>,
+        az_bz_cz_poly: &mut SpartanInterleavedPolynomial<F>,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>) {
+    ) -> (Self, Vec<F>, [F; 3]) {
         let mut r: Vec<F> = Vec::new();
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
         let mut claim = F::zero();
 
-        for _ in 0..num_rounds {
-            let poly = {
-                // Make an iterator returning the contributions to the evaluations
-                let (eval_point_0, eval_point_2, eval_point_3) =
-                    Self::compute_eval_points_spartan_cubic(poly_eq, poly_A, poly_B, poly_C);
-
-                let evals = [
-                    eval_point_0,
-                    claim - eval_point_0,
-                    eval_point_2,
-                    eval_point_3,
-                ];
-
-                UniPoly::from_evals(&evals)
-            };
-
-            let compressed_poly = poly.compress();
-
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
-
-            //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar();
-            r.push(r_i);
-            polys.push(compressed_poly);
-
-            // Set up next round
-            claim = poly.evaluate(&r_i);
-
-            // bound all tables to the verifier's challenege
-            poly_eq.bind(r_i);
-            poly_A.bound_poly_var_bot_par(&r_i);
-            poly_B.bound_poly_var_bot_par(&r_i);
-            poly_C.bound_poly_var_bot_par(&r_i);
+        for round in 0..num_rounds {
+            if round == 0 {
+                az_bz_cz_poly
+                    .first_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+            } else {
+                az_bz_cz_poly
+                    .subseqeunt_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+            }
         }
 
         (
             SumcheckInstanceProof::new(polys),
             r,
-            vec![
-                poly_A.final_eval(),
-                poly_B.final_eval(),
-                poly_C.final_eval(),
-            ],
+            az_bz_cz_poly.final_sumcheck_evals(),
         )
     }
 

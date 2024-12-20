@@ -129,20 +129,16 @@ where
             .collect::<Vec<F>>();
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
-        let (mut az, mut bz, mut cz) =
-            constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
-
+        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
                 num_rounds_x,
                 &mut eq_tau,
-                &mut az,
-                &mut bz,
-                &mut cz,
+                &mut az_bz_cz_poly,
                 transcript,
             );
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        drop_in_background_thread((az, bz, cz, eq_tau));
+        drop_in_background_thread((az_bz_cz_poly, eq_tau));
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
         // claims from the end of sum-check

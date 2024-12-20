@@ -718,83 +718,78 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     pub fn compute_spartan_Az_Bz_Cz(
         &self,
         flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
-    ) -> (
-        SparsePolynomial<F>,
-        SparsePolynomial<F>,
-        SparsePolynomial<F>,
-    ) {
-        let dense_len = self.padded_rows_per_step() * self.uniform_repeat();
-
-        let interleaved = SpartanInterleavedPolynomial::new(
+    ) -> SpartanInterleavedPolynomial<F> {
+        SpartanInterleavedPolynomial::new(
             &self.uniform_builder.constraints,
             &self.offset_equality_constraints,
             flattened_polynomials,
             self.padded_rows_per_step(),
-        );
+        )
 
-        let az_sparse = self.compute_spartan_Xz(
-            flattened_polynomials,
-            |constraint: &Constraint| &constraint.a,
-            |flattened_polynomials, constr, step_index, next_step_index_m| {
-                let eq_a_eval = eval_offset_lc(
-                    &constr.a,
-                    flattened_polynomials,
-                    step_index,
-                    next_step_index_m,
-                );
-                let eq_b_eval = eval_offset_lc(
-                    &constr.b,
-                    flattened_polynomials,
-                    step_index,
-                    next_step_index_m,
-                );
-                let az = eq_a_eval - eq_b_eval;
-                F::from_i128(az)
-            },
-        );
-        println!(
-            "Az is {}% sparse",
-            100.0 * (dense_len - az_sparse.len()) as f64 / dense_len as f64
-        );
+        // let dense_len = self.padded_rows_per_step() * self.uniform_repeat();
+        // let az_sparse = self.compute_spartan_Xz(
+        //     flattened_polynomials,
+        //     |constraint: &Constraint| &constraint.a,
+        //     |flattened_polynomials, constr, step_index, next_step_index_m| {
+        //         let eq_a_eval = eval_offset_lc(
+        //             &constr.a,
+        //             flattened_polynomials,
+        //             step_index,
+        //             next_step_index_m,
+        //         );
+        //         let eq_b_eval = eval_offset_lc(
+        //             &constr.b,
+        //             flattened_polynomials,
+        //             step_index,
+        //             next_step_index_m,
+        //         );
+        //         let az = eq_a_eval - eq_b_eval;
+        //         F::from_i128(az)
+        //     },
+        // );
+        // println!(
+        //     "Az is {}% sparse",
+        //     100.0 * (dense_len - az_sparse.len()) as f64 / dense_len as f64
+        // );
 
-        let bz_sparse = self.compute_spartan_Xz(
-            flattened_polynomials,
-            |constraint: &Constraint| &constraint.b,
-            |flattened_polynomials, constr, step_index, next_step_index_m| {
-                let condition_eval = eval_offset_lc(
-                    &constr.cond,
-                    flattened_polynomials,
-                    step_index,
-                    next_step_index_m,
-                );
-                let bz = condition_eval;
-                F::from_i128(bz)
-            },
-        );
-        println!(
-            "Bz is {}% sparse",
-            100.0 * (dense_len - bz_sparse.len()) as f64 / dense_len as f64
-        );
+        // let bz_sparse = self.compute_spartan_Xz(
+        //     flattened_polynomials,
+        //     |constraint: &Constraint| &constraint.b,
+        //     |flattened_polynomials, constr, step_index, next_step_index_m| {
+        //         let condition_eval = eval_offset_lc(
+        //             &constr.cond,
+        //             flattened_polynomials,
+        //             step_index,
+        //             next_step_index_m,
+        //         );
+        //         let bz = condition_eval;
+        //         F::from_i128(bz)
+        //     },
+        // );
+        // println!(
+        //     "Bz is {}% sparse",
+        //     100.0 * (dense_len - bz_sparse.len()) as f64 / dense_len as f64
+        // );
 
-        let cz_sparse = self.compute_spartan_Xz(
-            flattened_polynomials,
-            |constraint: &Constraint| &constraint.c,
-            |_, _, _, _| F::zero(),
-        );
-        println!(
-            "Cz is {}% sparse",
-            100.0 * (dense_len - cz_sparse.len()) as f64 / dense_len as f64
-        );
+        // let cz_sparse = self.compute_spartan_Xz(
+        //     flattened_polynomials,
+        //     |constraint: &Constraint| &constraint.c,
+        //     |_, _, _, _| F::zero(),
+        // );
+        // println!(
+        //     "Cz is {}% sparse",
+        //     100.0 * (dense_len - cz_sparse.len()) as f64 / dense_len as f64
+        // );
 
-        let num_vars = self.constraint_rows().next_power_of_two().log_2();
-        let az_poly = SparsePolynomial::new(num_vars, az_sparse);
-        let bz_poly = SparsePolynomial::new(num_vars, bz_sparse);
-        let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);
+        // let num_vars = self.constraint_rows().next_power_of_two().log_2();
+        // let az_poly = SparsePolynomial::new(num_vars, az_sparse);
+        // let bz_poly = SparsePolynomial::new(num_vars, bz_sparse);
+        // let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);
 
-        #[cfg(test)]
-        self.assert_valid(flattened_polynomials, &az_poly, &bz_poly, &cz_poly);
+        // #[cfg(test)]
+        // self.assert_valid(flattened_polynomials, &az_poly, &bz_poly, &cz_poly);
 
-        (az_poly, bz_poly, cz_poly)
+        // (az_poly, bz_poly, cz_poly)
     }
 
     #[cfg(test)]
