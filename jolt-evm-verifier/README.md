@@ -1,6 +1,6 @@
 # Jolt EVM Verifier
 
-This packages implements a verifier for the Jolt prover which can run in the EVM. 
+This package implements a verifier for the Jolt prover which can run in the EVM. 
 
 ## *WARNING THIS PACKAGE IS NEITHER COMPLETE NOR REVIEWED FOR SECURITY. DO NOT USE IN PRODUCTION.*
 
