@@ -8,7 +8,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use eyre::Result;
 use rand::prelude::SliceRandom;
-use sysinfo::System;
+use sysinfo::{System, SystemExt};
 
 use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
@@ -22,19 +22,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Creates a new Jolt project with the specified name
     New {
-        /// Project name
         name: String,
-        /// Whether to generate WASM compatible files
         #[arg(short, long)]
         wasm: bool,
     },
-    /// Installs the required RISC-V toolchains for Rust
     InstallToolchain,
-    /// Uninstalls the RISC-V toolchains for Rust
     UninstallToolchain,
-    /// Handles preprocessing and generates WASM compatible files
     BuildWasm,
 }
 
@@ -153,15 +147,15 @@ fn display_sysinfo() {
 
     println!(
         "OS:             {}",
-        System::name().unwrap_or("UNKNOWN".to_string())
+        sys.name().unwrap_or("UNKNOWN".to_string())
     );
     println!(
         "version:        {}",
-        System::os_version().unwrap_or("UNKNOWN".to_string())
+        sys.os_version().unwrap_or("UNKNOWN".to_string())
     );
     println!(
         "Host:           {}",
-        System::host_name().unwrap_or("UNKNOWN".to_string())
+        sys.host_name().unwrap_or("UNKNOWN".to_string())
     );
     println!("CPUs:           {}", sys.cpus().len());
     println!(
