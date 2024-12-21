@@ -29,7 +29,7 @@ where
 
     fn deserialize_from_file(path: &Path) -> Result<Self, std::io::Error>
     where
-        Self: Sized,
+        Self: Sized;
     {
         let mut file = File::open(path)?;
         let mut contents = String::new();
