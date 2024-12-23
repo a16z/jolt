@@ -7,11 +7,7 @@ use super::{
 };
 use crate::{
     field::{JoltField, OptimizedMul},
-    r1cs::builder::{eval_offset_lc, CombinedUniformBuilder, Constraint, OffsetEqConstraint},
-    subprotocols::{
-        grand_product::BatchedGrandProductLayer,
-        sumcheck::{BatchedCubicSumcheck, Bindable},
-    },
+    r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
     utils::{
         math::Math,
         transcript::{AppendToTranscript, Transcript},
@@ -23,14 +19,20 @@ use rayon::prelude::*;
 #[derive(Default, Debug, Clone)]
 pub struct SpartanInterleavedPolynomial<F: JoltField> {
     /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
-    /// polynomials used in the first Spartan sumcheck.
+    /// polynomials used in the first Spartan sumcheck. Before the polynomial is bound
+    /// the first time, all the coefficients can be represented by `i128`s.
     pub(crate) unbound_coeffs: Vec<SparseCoefficient<i128>>,
+    /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
+    /// polynomials used in the first Spartan sumcheck. Once the polynomial has been
+    /// bound, we switch to using `bound_coeffs` instead of `unbound_coeffs`, because
+    /// coefficients will be full-width field elements rather than `i128`s.
     pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
     /// A reused buffer where bound values are written to during `bind`.
     /// With every bind, `coeffs` and `binding_scratch_space` are swapped.
     binding_scratch_space: Vec<SparseCoefficient<F>>,
-    /// The length of the layer if it were represented by a single dense vector.
-    pub(crate) dense_len: usize,
+    /// The length of one of the Az, Bz, or Cz polynomials if it were represented by
+    /// a single dense vector.
+    dense_len: usize,
 }
 
 impl<F: JoltField> SpartanInterleavedPolynomial<F> {
@@ -42,7 +44,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         padded_num_constraints: usize,
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
-        let dense_len = 3 * padded_num_constraints * num_steps;
 
         let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
         let chunk_size = num_steps.div_ceil(num_chunks);
@@ -80,9 +81,25 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         // Cz = Az ⊙ Cz
                         if !az_coeff.is_zero() && !bz_coeff.is_zero() {
                             let cz_coeff = az_coeff * bz_coeff;
+                            #[cfg(test)]
+                            {
+                                assert_eq!(
+                                    cz_coeff,
+                                    constraint
+                                        .c
+                                        .evaluate_row_i128(flattened_polynomials, step_index)
+                                );
+                            }
                             coeffs.push((global_index + 2, cz_coeff).into());
                         }
                     }
+
+                    // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
+                    let next_step_index = if step_index + 1 < num_steps {
+                        Some(step_index + 1)
+                    } else {
+                        None
+                    };
 
                     // Cross-step constraints
                     for (constraint_index, constraint) in cross_step_constraints.iter().enumerate()
@@ -91,12 +108,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             * (step_index * padded_num_constraints
                                 + uniform_constraints.len()
                                 + constraint_index);
-                        // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-                        let next_step_index = if step_index + 1 < num_steps {
-                            Some(step_index + 1)
-                        } else {
-                            None
-                        };
 
                         // Az
                         let eq_a_eval = eval_offset_lc(
@@ -111,20 +122,30 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             step_index,
                             next_step_index,
                         );
-                        let coeff = eq_a_eval - eq_b_eval;
-                        if !coeff.is_zero() {
-                            coeffs.push((global_index, coeff).into());
+                        let az_coeff = eq_a_eval - eq_b_eval;
+                        if !az_coeff.is_zero() {
+                            coeffs.push((global_index, az_coeff).into());
                             // If Az != 0, then the condition must be false (i.e. Bz = 0)
+                            #[cfg(test)]
+                            {
+                                let bz_coeff = eval_offset_lc(
+                                    &constraint.cond,
+                                    flattened_polynomials,
+                                    step_index,
+                                    next_step_index,
+                                );
+                                assert_eq!(bz_coeff, 0);
+                            }
                         } else {
                             // Bz
-                            let condition_eval = eval_offset_lc(
+                            let bz_coeff = eval_offset_lc(
                                 &constraint.cond,
                                 flattened_polynomials,
                                 step_index,
                                 next_step_index,
                             );
-                            if !condition_eval.is_zero() {
-                                coeffs.push((global_index + 1, condition_eval).into());
+                            if !bz_coeff.is_zero() {
+                                coeffs.push((global_index + 1, bz_coeff).into());
                             }
                         }
                         // Cz is always 0 for cross-step constraints
@@ -135,11 +156,90 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             })
             .collect();
 
+        #[cfg(test)]
+        {
+            // Check that indices are monotonically increasing
+            let mut prev_index = unbound_coeffs[0].index;
+            for coeff in unbound_coeffs[1..].iter() {
+                assert!(coeff.index > prev_index);
+                prev_index = coeff.index;
+            }
+        }
+
         Self {
             unbound_coeffs,
             bound_coeffs: vec![],
             binding_scratch_space: vec![],
-            dense_len,
+            dense_len: num_steps * padded_num_constraints,
+        }
+    }
+
+    #[cfg(test)]
+    fn uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>) {
+        let mut az = vec![F::zero(); self.dense_len];
+        let mut bz = vec![F::zero(); self.dense_len];
+        let mut cz = vec![F::zero(); self.dense_len];
+
+        if !self.is_bound() {
+            for coeff in &self.unbound_coeffs {
+                match coeff.index % 3 {
+                    0 => az[coeff.index / 3] = F::from_i128(coeff.value),
+                    1 => bz[coeff.index / 3] = F::from_i128(coeff.value),
+                    2 => cz[coeff.index / 3] = F::from_i128(coeff.value),
+                    _ => unreachable!(),
+                }
+            }
+        } else {
+            for coeff in &self.bound_coeffs {
+                match coeff.index % 3 {
+                    0 => az[coeff.index / 3] = coeff.value,
+                    1 => bz[coeff.index / 3] = coeff.value,
+                    2 => cz[coeff.index / 3] = coeff.value,
+                    _ => unreachable!(),
+                }
+            }
+        }
+        (
+            DensePolynomial::new(az),
+            DensePolynomial::new(bz),
+            DensePolynomial::new(cz),
+        )
+    }
+
+    #[cfg(test)]
+    fn interleave(
+        az: &DensePolynomial<F>,
+        bz: &DensePolynomial<F>,
+        cz: &DensePolynomial<F>,
+    ) -> Self {
+        let mut bound_coeffs = Vec::with_capacity(az.len() * 3);
+
+        let mut index = 0;
+        for ((a, b), c) in az
+            .evals_ref()
+            .iter()
+            .zip(bz.evals_ref().iter())
+            .zip(cz.evals_ref())
+        {
+            if !a.is_zero() {
+                bound_coeffs.push((index, *a).into())
+            }
+            index += 1;
+            if !b.is_zero() {
+                bound_coeffs.push((index, *b).into())
+            }
+            index += 1;
+            if !c.is_zero() {
+                bound_coeffs.push((index, *c).into())
+            }
+            index += 1;
+        }
+
+        Self {
+            unbound_coeffs: vec![],
+            bound_coeffs,
+            binding_scratch_space: vec![],
+            dense_len: az.len(),
         }
     }
 
@@ -295,6 +395,9 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         // Bind polynomials
         eq_poly.bind(r_i);
 
+        #[cfg(test)]
+        let (mut az, mut bz, mut cz) = self.uninterleave();
+
         let output_sizes: Vec<_> = chunks
             .par_iter()
             .map(|chunk| Self::binding_output_length(chunk))
@@ -322,57 +425,68 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 for block in unbound_coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
-                    let mut az_coeff: Option<F> = None;
-                    let mut bz_coeff: Option<F> = None;
-                    let mut cz_coeff: Option<F> = None;
+                    let mut az_coeff: (Option<i128>, Option<i128>) = (None, None);
+                    let mut bz_coeff: (Option<i128>, Option<i128>) = (None, None);
+                    let mut cz_coeff: (Option<i128>, Option<i128>) = (None, None);
 
-                    // TODO(moodlezoup): Can replace some field arithmetic with i128 arithmetic
                     for coeff in block {
-                        match coeff.index % 3 {
-                            0 => match az_coeff {
-                                Some(low) => {
-                                    az_coeff = Some(
-                                        low + r_i.mul_0_optimized(F::from_i128(coeff.value) - low),
-                                    )
-                                }
-                                None => az_coeff = Some(F::from_i128(coeff.value)),
-                            },
-                            1 => match bz_coeff {
-                                Some(low) => {
-                                    bz_coeff = Some(
-                                        low + r_i.mul_0_optimized(F::from_i128(coeff.value) - low),
-                                    )
-                                }
-                                None => bz_coeff = Some(F::from_i128(coeff.value)),
-                            },
-                            2 => match cz_coeff {
-                                Some(low) => {
-                                    cz_coeff = Some(
-                                        low + r_i.mul_0_optimized(F::from_i128(coeff.value) - low),
-                                    )
-                                }
-                                None => cz_coeff = Some(F::from_i128(coeff.value)),
-                            },
+                        match coeff.index % 6 {
+                            0 => az_coeff.0 = Some(coeff.value),
+                            1 => bz_coeff.0 = Some(coeff.value),
+                            2 => cz_coeff.0 = Some(coeff.value),
+                            3 => az_coeff.1 = Some(coeff.value),
+                            4 => bz_coeff.1 = Some(coeff.value),
+                            5 => cz_coeff.1 = Some(coeff.value),
                             _ => unreachable!(),
                         }
                     }
-                    if let Some(val) = az_coeff {
-                        output_slice[output_index] = (3 * block_index, val).into();
+                    if az_coeff != (None, None) {
+                        let (low, high) = (az_coeff.0.unwrap_or(0), az_coeff.1.unwrap_or(0));
+                        output_slice[output_index] = (
+                            3 * block_index,
+                            F::from_i128(low) + r_i * F::from_i128(high - low),
+                        )
+                            .into();
                         output_index += 1;
                     }
-                    if let Some(val) = bz_coeff {
-                        output_slice[output_index] = (3 * block_index + 1, val).into();
+                    if bz_coeff != (None, None) {
+                        let (low, high) = (bz_coeff.0.unwrap_or(0), bz_coeff.1.unwrap_or(0));
+                        output_slice[output_index] = (
+                            3 * block_index + 1,
+                            F::from_i128(low) + r_i * F::from_i128(high - low),
+                        )
+                            .into();
                         output_index += 1;
                     }
-                    if let Some(val) = cz_coeff {
-                        output_slice[output_index] = (3 * block_index + 2, val).into();
+                    if cz_coeff != (None, None) {
+                        let (low, high) = (cz_coeff.0.unwrap_or(0), cz_coeff.1.unwrap_or(0));
+                        output_slice[output_index] = (
+                            3 * block_index + 2,
+                            F::from_i128(low) + r_i * F::from_i128(high - low),
+                        )
+                            .into();
                         output_index += 1;
                     }
                 }
                 debug_assert_eq!(output_index, output_slice.len())
             });
-
         self.dense_len /= 2;
+
+        #[cfg(test)]
+        {
+            let (az_bound, bz_bound, cz_bound) = self.uninterleave();
+            az.bound_poly_var_bot(&r_i);
+            bz.bound_poly_var_bot(&r_i);
+            cz.bound_poly_var_bot(&r_i);
+            for i in 0..az.len() {
+                if az_bound[i] != az[i] {
+                    println!("{i} {} != {}", az_bound[i], az[i]);
+                }
+            }
+            assert!(az_bound.Z[..az_bound.len()] == az.Z[..az.len()]);
+            assert!(bz_bound.Z[..bz_bound.len()] == bz.Z[..bz.len()]);
+            assert!(cz_bound.Z[..cz_bound.len()] == cz.Z[..cz.len()]);
+        }
     }
 
     pub fn subseqeunt_sumcheck_round<ProofTranscript: Transcript>(
@@ -564,6 +678,9 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         // Bind polynomials
         eq_poly.bind(r_i);
 
+        #[cfg(test)]
+        let (mut az, mut bz, mut cz) = self.uninterleave();
+
         let output_sizes: Vec<_> = chunks
             .par_iter()
             .map(|chunk| Self::binding_output_length(chunk))
@@ -594,43 +711,46 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 for block in coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
-                    let mut az_coeff: Option<F> = None;
-                    let mut bz_coeff: Option<F> = None;
-                    let mut cz_coeff: Option<F> = None;
+                    let mut az_coeff: (Option<F>, Option<F>) = (None, None);
+                    let mut bz_coeff: (Option<F>, Option<F>) = (None, None);
+                    let mut cz_coeff: (Option<F>, Option<F>) = (None, None);
 
                     for coeff in block {
-                        match coeff.index % 3 {
-                            0 => match az_coeff {
-                                Some(low) => {
-                                    az_coeff = Some(low + r_i.mul_0_optimized(coeff.value - low))
-                                }
-                                None => az_coeff = Some(coeff.value),
-                            },
-                            1 => match bz_coeff {
-                                Some(low) => {
-                                    bz_coeff = Some(low + r_i.mul_0_optimized(coeff.value - low))
-                                }
-                                None => bz_coeff = Some(coeff.value),
-                            },
-                            2 => match cz_coeff {
-                                Some(low) => {
-                                    cz_coeff = Some(low + r_i.mul_0_optimized(coeff.value - low))
-                                }
-                                None => cz_coeff = Some(coeff.value),
-                            },
+                        match coeff.index % 6 {
+                            0 => az_coeff.0 = Some(coeff.value),
+                            1 => bz_coeff.0 = Some(coeff.value),
+                            2 => cz_coeff.0 = Some(coeff.value),
+                            3 => az_coeff.1 = Some(coeff.value),
+                            4 => bz_coeff.1 = Some(coeff.value),
+                            5 => cz_coeff.1 = Some(coeff.value),
                             _ => unreachable!(),
                         }
                     }
-                    if let Some(val) = az_coeff {
-                        output_slice[output_index] = (3 * block_index, val).into();
+                    if az_coeff != (None, None) {
+                        let (low, high) = (
+                            az_coeff.0.unwrap_or(F::zero()),
+                            az_coeff.1.unwrap_or(F::zero()),
+                        );
+                        output_slice[output_index] =
+                            (3 * block_index, low + r_i * (high - low)).into();
                         output_index += 1;
                     }
-                    if let Some(val) = bz_coeff {
-                        output_slice[output_index] = (3 * block_index + 1, val).into();
+                    if bz_coeff != (None, None) {
+                        let (low, high) = (
+                            bz_coeff.0.unwrap_or(F::zero()),
+                            bz_coeff.1.unwrap_or(F::zero()),
+                        );
+                        output_slice[output_index] =
+                            (3 * block_index + 1, low + r_i * (high - low)).into();
                         output_index += 1;
                     }
-                    if let Some(val) = cz_coeff {
-                        output_slice[output_index] = (3 * block_index + 2, val).into();
+                    if cz_coeff != (None, None) {
+                        let (low, high) = (
+                            cz_coeff.0.unwrap_or(F::zero()),
+                            cz_coeff.1.unwrap_or(F::zero()),
+                        );
+                        output_slice[output_index] =
+                            (3 * block_index + 2, low + r_i * (high - low)).into();
                         output_index += 1;
                     }
                 }
@@ -638,8 +758,18 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             });
 
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
-
         self.dense_len /= 2;
+
+        #[cfg(test)]
+        {
+            let (az_bound, bz_bound, cz_bound) = self.uninterleave();
+            az.bound_poly_var_bot(&r_i);
+            bz.bound_poly_var_bot(&r_i);
+            cz.bound_poly_var_bot(&r_i);
+            assert!(az_bound.Z[..az_bound.len()] == az.Z[..az.len()]);
+            assert!(bz_bound.Z[..bz_bound.len()] == bz.Z[..bz.len()]);
+            assert!(cz_bound.Z[..cz_bound.len()] == cz.Z[..cz.len()]);
+        }
     }
 
     fn binding_output_length<T>(coeffs: &[SparseCoefficient<T>]) -> usize {
