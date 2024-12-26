@@ -315,7 +315,7 @@ impl VirtioBlockDisk {
     ///
     /// # Arguments
     /// * `memory`
-    /// * `mem_addresss` Physical address. Must be eight-byte aligned.
+    /// * `mem_address` Physical address. Must be eight-byte aligned.
     /// * `disk_address` Must be eight-byte aligned.
     /// * `length` Must be eight-byte aligned.
     fn transfer_from_disk(
@@ -350,7 +350,7 @@ impl VirtioBlockDisk {
     ///
     /// # Arguments
     /// * `memory`
-    /// * `mem_addresss` Physical address. Must be eight-byte aligned.
+    /// * `mem_address` Physical address. Must be eight-byte aligned.
     /// * `disk_address` Must be eight-byte aligned.
     /// * `length` Must be eight-byte aligned.
     fn transfer_to_disk(
