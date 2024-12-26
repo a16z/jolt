@@ -20,7 +20,7 @@ contract HyperKZG {
     using FrLib for Fr;
 
     // These are initialized using the trusted setup values. NOTE - You must negate the point
-    // VK_g2 in order to have the checks pass, unlike the the rust which checks e(L, VK_G2) =
+    // VK_g2 in order to have the checks pass, unlike the rust which checks e(L, VK_G2) =
     // e(R, VK_Beta_G2) we use a precompile which checks e(L,-VK_G2)e(R, VK_Beta_G2) = 1
     uint256 immutable VK_g1_x;
     uint256 immutable VK_g1_y;
@@ -164,7 +164,7 @@ contract HyperKZG {
             accumulated_q = q * accumulated_q;
         }
 
-        // Finally we do a MSM to get the value of the the left hand side
+        // Finally we do a MSM to get the value of the left hand side
         // NOTE - This is gas inefficient and grows with log of the proof size so we might want
         //        to move to a pippenger window algo with much smaller MSMs which we might save gas on.
         // Our first value is the c_x c_y as this would be the first entry of com in rust.
