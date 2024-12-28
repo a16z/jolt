@@ -74,7 +74,7 @@ contract HyperKZG {
     /// @param point The point which is opened
     /// @param p_of_x The scalar which we are claiming is the evaluation of the polynomial
     /// @param pi The proof of the opening
-    /// @param transcript The fiat shamair transcript we are sourcing deterministic randoms from
+    /// @param transcript The fiat shamir transcript we are sourcing deterministic randoms from
     function verify(
         uint256 c_x,
         uint256 c_y,
