@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Define the exclude list
-# exclusion_list=("collatz" "overflow" "sha3-chain")
-exclusion_list=("multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
+exclusion_list=("collatz" "overflow" "sha3-chain")
+# exclusion_list=("multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
 
 
 # Initialize an array to hold directories
