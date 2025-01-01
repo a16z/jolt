@@ -49,7 +49,7 @@ jobs:
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
       with:
-        name: CN Benchmarks
+        name: Benchmarks
         tool: 'customSmallerIsBetter'
         output-file-path: examples/benchmark_results.json
         # Access token to deploy GitHub Pages branch
