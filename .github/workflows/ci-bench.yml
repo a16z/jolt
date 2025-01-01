@@ -46,7 +46,7 @@ jobs:
         cd ..
 
 
-    - name: Store benchmark result
+    - name: Publish benchmark result
       uses: benchmark-action/github-action-benchmark@v1
       with:
         name: Benchmarks
