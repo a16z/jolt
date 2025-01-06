@@ -56,14 +56,7 @@ where
         MsmType::Large(_) => (0..SRS_SIZE)
             .into_iter()
             .map(|_| {
-                let values: [u64; 4] = [
-                    rng.next_u64(),
-                    rng.next_u64(),
-                    rng.next_u64(),
-                    rng.next_u64(),
-                ];
-                let bigint = ark_ff::BigInteger256::new(values);
-                <Fr as JoltField>::from_bytes(&bigint.to_bytes_le())
+                Fr::random(&mut rng)
             })
             .collect(),
     };
@@ -78,6 +71,8 @@ where
             .map(|base| G1Projective::from_ark_affine(base))
             .collect(),
     );
+    #[cfg(not(feature = "icicle"))]
+    let gpu_bases = None;
 
     let max_num_bits = scalars
         .par_iter()
@@ -86,8 +81,6 @@ where
         .unwrap();
 
     println!("Using max num bits: {}", max_num_bits);
-    #[cfg(not(feature = "icicle"))]
-    let gpu_bases = None;
     (bases, gpu_bases, scalars)
 }
 

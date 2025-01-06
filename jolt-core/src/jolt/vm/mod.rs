@@ -315,8 +315,6 @@ where
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
-        //TODO(sagar): This should be moved to a more appropriate place - icicle makes a network request
-        // which impacts prover time.
         icicle::icicle_init();
 
         let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
@@ -406,6 +404,7 @@ where
         JoltCommitments<PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
+        icicle::icicle_init();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);

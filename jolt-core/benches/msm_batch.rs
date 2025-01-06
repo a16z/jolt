@@ -88,14 +88,7 @@ fn get_scalars(msm_type: MsmType, size: usize) -> Vec<Fr> {
         MsmType::Large(_) => (0..size)
             .into_iter()
             .map(|_| {
-                let values: [u64; 4] = [
-                    rng.next_u64(),
-                    rng.next_u64(),
-                    rng.next_u64(),
-                    rng.next_u64(),
-                ];
-                let bigint = ark_ff::BigInteger256::new(values);
-                <Fr as JoltField>::from_bytes(&bigint.to_bytes_le())
+                Fr::random(&mut rng)
             })
             .collect(),
     }
