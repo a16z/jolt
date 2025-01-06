@@ -55,9 +55,7 @@ where
             .collect(),
         MsmType::Large(_) => (0..SRS_SIZE)
             .into_iter()
-            .map(|_| {
-                Fr::random(&mut rng)
-            })
+            .map(|_| Fr::random(&mut rng))
             .collect(),
     };
 

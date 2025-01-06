@@ -87,9 +87,7 @@ fn get_scalars(msm_type: MsmType, size: usize) -> Vec<Fr> {
             .collect(),
         MsmType::Large(_) => (0..size)
             .into_iter()
-            .map(|_| {
-                Fr::random(&mut rng)
-            })
+            .map(|_| Fr::random(&mut rng))
             .collect(),
     }
 }
