@@ -14,6 +14,7 @@ use std::marker::PhantomData;
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
+use crate::join_conditional;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -26,6 +27,7 @@ use crate::jolt::{
 use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
+use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
@@ -238,31 +240,57 @@ impl<F: JoltField> JoltPolynomials<F> {
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
+        let span = tracing::span!(tracing::Level::INFO, "commit::initialize");
+        let _guard = span.enter();
         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+        drop(_guard);
+        drop(span);
 
         let trace_polys = self.read_write_values();
-        let trace_comitments =
+        let span = tracing::span!(tracing::Level::INFO, "commit::trace_commitments");
+        let _guard = span.enter();
+        let trace_commitments =
             PCS::batch_commit_polys_ref(&trace_polys, &preprocessing.generators, BatchType::Big);
+        drop(_guard);
+        drop(span);
+
         commitments
             .read_write_values_mut()
             .into_iter()
-            .zip(trace_comitments.into_iter())
+            .zip(trace_commitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
 
+        let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
+        let _guard = span.enter();
         commitments.bytecode.t_final =
             PCS::commit(&self.bytecode.t_final, &preprocessing.generators);
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "commit::read_write_memory");
+        let _guard = span.enter();
         (
             commitments.read_write_memory.v_final,
             commitments.read_write_memory.t_final,
-        ) = rayon::join(
+        ) = join_conditional!(
             || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
-            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators),
+            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators)
         );
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(
+            tracing::Level::INFO,
+            "commit::commit_instructions_final_cts"
+        );
+        let _guard = span.enter();
         commitments.instruction_lookups.final_cts = PCS::batch_commit_polys(
             &self.instruction_lookups.final_cts,
             &preprocessing.generators,
             BatchType::Big,
         );
+        drop(_guard);
+        drop(span);
 
         commitments
     }
@@ -287,6 +315,8 @@ where
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
+        icicle::icicle_init();
+
         let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
             max_bytecode_size,
             max_trace_length,
@@ -374,6 +404,7 @@ where
         JoltCommitments<PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
+        icicle::icicle_init();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
