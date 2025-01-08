@@ -848,8 +848,10 @@ where
     ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
 
+        // Parallelize subtable lookup indices computation
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
 
+        // Parallelize the main polynomial generation
         let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
             ..preprocessing.num_memories)
             .into_par_iter()
@@ -858,23 +860,31 @@ where
                 let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                 let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
 
+                // Pre-allocate vectors
                 let mut final_cts_i = vec![0usize; M];
                 let mut read_cts_i = vec![0usize; m];
                 let mut subtable_lookups = vec![F::zero(); m];
 
-                for (j, op) in ops.iter().enumerate() {
-                    if let Some(instr) = &op.instruction_lookup {
-                        let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(instr)];
-                        if memories_used.contains(&memory_index) {
-                            let memory_address = access_sequence[j];
-                            debug_assert!(memory_address < M);
+                // Process operations in chunks for better cache utilization
+                for chunk in ops.chunks(1024).enumerate() {
+                    let (chunk_idx, chunk_ops) = chunk;
+                    let base_idx = chunk_idx * 1024;
+                    
+                    for (j, op) in chunk_ops.iter().enumerate() {
+                        let abs_idx = base_idx + j;
+                        if let Some(instr) = &op.instruction_lookup {
+                            let memories_used = &preprocessing.instruction_to_memory_indices
+                                [InstructionSet::enum_index(instr)];
+                            if memories_used.contains(&memory_index) {
+                                let memory_address = access_sequence[abs_idx];
+                                debug_assert!(memory_address < M);
 
-                            let counter = final_cts_i[memory_address];
-                            read_cts_i[j] = counter;
-                            final_cts_i[memory_address] = counter + 1;
-                            subtable_lookups[j] = preprocessing.materialized_subtables
-                                [subtable_index][memory_address];
+                                let counter = final_cts_i[memory_address];
+                                read_cts_i[abs_idx] = counter;
+                                final_cts_i[memory_address] = counter + 1;
+                                subtable_lookups[abs_idx] = preprocessing.materialized_subtables
+                                    [subtable_index][memory_address];
+                            }
                         }
                     }
                 }
@@ -887,7 +897,7 @@ where
             })
             .collect();
 
-        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
+        // Parallel conversion of polys tuple to separate vectors
         let (read_cts, final_cts, E_polys): (
             Vec<DensePolynomial<F>>,
             Vec<DensePolynomial<F>>,
