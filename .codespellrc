@@ -1,3 +1,3 @@
 [codespell]
-ignore-words-list = Crate,crate
+ignore-words-list = Crate,crate,ans,sie,SIE,FLE,THRE,Bootle
 skip = *.json,*.yml,*.toml,*.lock
