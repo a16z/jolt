@@ -69,7 +69,7 @@ impl Into<HyperKZGProofSol> for &HyperKZGProof<Bn254> {
         let yneg_scalar = self.v[1].clone();
         let y_scalar = self.v[2].clone();
 
-        // Horrible type conversion here, possibly theres an easier way
+        // Horrible type conversion here, possibly there's an easier way
         let v_ypos = ypos_scalar
             .iter()
             .map(|i| U256::from_be_slice(i.into_bigint().to_bytes_be().as_slice()))

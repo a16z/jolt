@@ -113,5 +113,5 @@ If the current instruction is virtual, we can constrain the next instruction in 
 next instruction in the bytecode.
 We observe that the virtual sequences used in the M extension don't involve jumps or branches,
 so this should always hold, *except* if we encounter a virtual instruction followed by a padding instruction.
-But that should never happend because an execution trace should always end with some return handling,
+But that should never happen because an execution trace should always end with some return handling,
 which shouldn't involve a virtual sequence.

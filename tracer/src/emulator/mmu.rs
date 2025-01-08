@@ -532,7 +532,7 @@ impl Mmu {
             false => match effective_address {
                 // I don't know why but dtb data seems to be stored from 0x1020 on Linux.
                 // It might be from self.x[0xb] initialization?
-                // And DTB size is arbitray.
+                // And DTB size is arbitrary.
                 0x00001020..=0x00001fff => self.dtb[effective_address as usize - 0x1020],
                 0x02000000..=0x0200ffff => self.clint.load(effective_address),
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),
