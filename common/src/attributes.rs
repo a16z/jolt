@@ -13,7 +13,7 @@ pub struct Attributes {
     pub max_output_size: u64,
 }
 
-pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
+pub fn parse_attributes(attr: &[NestedMeta]) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
 
