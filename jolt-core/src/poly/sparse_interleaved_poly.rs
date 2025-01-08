@@ -227,7 +227,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                             continue;
                         }
                         if coeff.index % 2 == 0 {
-                            // Left node; try to find correspoding right node
+                            // Left node; try to find corresponding right node
                             let right = segment
                                 .get(j + 1)
                                 .cloned()
