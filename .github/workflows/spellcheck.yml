@@ -4,8 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - add-spell
-
+      - main
 jobs:
   codespell:
     runs-on: ubuntu-latest
