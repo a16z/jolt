@@ -50,7 +50,7 @@ we can "switch over" to the standard "dense" linear-time sum-check proving algor
 so that $n/2^i \approx m$. In Jolt, we expect this "switchover" to happen by round $4$ or $5$. 
 In the end, the amount of extra field work done by the prover owing to the sparsity will only be a factor of $2$ or so.
 
-Jolt uses this approach within Lasso as well. Across all of the primtive RISC-V instructions,
+Jolt uses this approach within Lasso as well. Across all of the primitive RISC-V instructions,
 there are about 80 "subtables" that get used. Any particular primitive instruction only needs
 to access between 4 and 10 of these subtables. We "pretend" that every primitive instruction
 actually accesses all 80 of the subtables, but use binary flags to "turn off" any subtable
@@ -63,7 +63,7 @@ commitment time, and that our grand product prover does not pay any field work f
 There are alternative approaches we could take to achieve "a la carte" prover costs, e.g., [vRAM](https://web.eecs.umich.edu/~genkin/papers/vram.pdf)'s approach
 of having the prover sort all cycles by which primitive operation or pre-compile was executed at that cycle
 (see also the much more recent work [Ceno](https://eprint.iacr.org/2024/387)).
-But the above approach is compatable with a streaming prover, avoids committing to the same data multiple times,
+But the above approach is compatible with a streaming prover, avoids committing to the same data multiple times,
 and has other benefits.
 
 We call this technique (fast proving for) "sparse constraint systems". Note that the term sparse here

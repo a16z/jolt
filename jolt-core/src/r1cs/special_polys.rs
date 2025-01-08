@@ -185,7 +185,7 @@ impl<F: JoltField> SparsePolynomial<F> {
                             write_index += 1;
                         }
                     } else if sparse_index > 0 && chunk[sparse_index - 1].1 == dense_index - 1 {
-                        // (low, high) present, but handeled prior
+                        // (low, high) present, but handled prior
                         continue;
                     } else {
                         // (_, high) present
