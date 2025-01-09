@@ -240,7 +240,7 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     pub fn evals(&self) -> Vec<F> {
-        self.Z.clone()
+        self.Z[..self.len].to_owned()
     }
 
     pub fn evals_ref(&self) -> &[F] {

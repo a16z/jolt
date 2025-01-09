@@ -165,6 +165,16 @@ impl<F: JoltField> AuxComputation<F> {
                 });
             });
 
+        /* Hack(arasuarun): Set all variables in the last step to 0.
+           Needed for the crush-second-sumcheck optimization. 
+           There should be a better way to do this instead of iterating over all witness segments. 
+        */
+        let mut last_index = batch_size - 1;
+        while last_index < aux_poly.len() {
+            aux_poly[last_index] = F::zero();
+            last_index += batch_size;
+        }
+
         DensePolynomial::new(aux_poly)
     }
 
@@ -671,7 +681,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                             if !item.is_zero() {
                                 let global_index =
                                     constraint_index * self.uniform_repeat + local_index;
-                                sparse.push((*item, global_index));
+                                if local_index != self.uniform_repeat - 1 { // Ignore the last step 
+                                    sparse.push((*item, global_index));
+                                }
                             }
                         }
                         sparse
@@ -704,17 +716,17 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             let condition_evals = constr
                 .cond
                 .1
-                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
+                .evaluate_batch(flattened_polynomials, self.uniform_repeat-1);
             let eq_a_evals = constr
                 .a
                 .1
-                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
+                .evaluate_batch(flattened_polynomials, self.uniform_repeat-1);
             let eq_b_evals = constr
                 .b
                 .1
-                .evaluate_batch(flattened_polynomials, self.uniform_repeat);
+                .evaluate_batch(flattened_polynomials, self.uniform_repeat-1);
 
-            (0..self.uniform_repeat).for_each(|step_index| {
+            (0..self.uniform_repeat-1).for_each(|step_index| {
                 // Write corresponding values, if outside the step range, only include the constant.
                 let a_step = step_index + constr.a.0 as usize;
                 let b_step = step_index + constr.b.0 as usize;
@@ -746,7 +758,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         }
         drop(_enter);
 
-        let num_vars = self.constraint_rows().next_power_of_two().log_2();
+        let num_vars = (self.constraint_rows() +  self.offset_equality_constraints.len()).next_power_of_two().log_2();
         let az_poly = SparsePolynomial::new(num_vars, az_sparse);
         let bz_poly = SparsePolynomial::new(num_vars, bz_sparse);
         let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);

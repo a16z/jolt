@@ -105,6 +105,17 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        #[cfg(test)]
+        {
+            let total_evals = 1 << num_rounds;
+            let mut sum = F::zero();
+            for i in 0..total_evals {
+                let params: Vec<F> = polys.iter().map(|poly| poly[i]).collect();
+                sum += comb_func(&params);
+            }
+            assert_eq!(&sum, _claim, "Sumcheck claim is wrong");
+        }
+
         for _round in 0..num_rounds {
             // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
             // for points {0, ..., |g(x)|}
