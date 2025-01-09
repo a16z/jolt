@@ -7,7 +7,7 @@ use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
+use rayon::prelude::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -79,6 +79,7 @@ impl<F: JoltField> UniPoly<F> {
                 for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
                     remainder.coeffs[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
                 }
+
                 while let Some(true) = remainder.coeffs.last().map(|c| c == &F::zero()) {
                     remainder.coeffs.pop();
                 }
