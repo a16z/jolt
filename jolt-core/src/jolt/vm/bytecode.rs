@@ -23,6 +23,7 @@ use rayon::prelude::*;
 
 use super::{JoltPolynomials, JoltTraceStep};
 use crate::utils::transcript::Transcript;
+
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::identity_poly::IdentityPolynomial,

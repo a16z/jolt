@@ -38,7 +38,7 @@ fn sum_u64_i32(a: u64, b: i32) -> u64 {
         }
         a - abs_b
     } else {
-        let b_u64: u64 = b.try_into().expect("failed u64 convesion");
+        let b_u64: u64 = b.try_into().expect("failed u64 conversion");
         a + b_u64
     }
 }
@@ -201,7 +201,7 @@ pub enum CircuitFlags {
     Virtual,
     /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
     Assert,
-    /// Used in virtual sequences; the program counter should be the same for the full seqeuence.
+    /// Used in virtual sequences; the program counter should be the same for the full sequence.
     DoNotUpdatePC,
 }
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;

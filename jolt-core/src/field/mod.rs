@@ -61,6 +61,9 @@ pub trait JoltField:
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");
     }
+    fn num_bits(&self) -> u32 {
+        unimplemented!("num_bits is not implemented");
+    }
 
     /// The R^2 value used in Montgomery arithmetic for some prime fields.
     /// Returns `None` if the field doesn't use Montgomery arithmetic.

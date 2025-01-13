@@ -2,7 +2,6 @@ pub mod binius;
 pub mod commitment_scheme;
 pub mod hyperkzg;
 pub mod kzg;
-pub mod pedersen;
 pub mod zeromorph;
 
 #[cfg(test)]

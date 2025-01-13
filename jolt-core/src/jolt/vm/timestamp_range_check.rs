@@ -1,7 +1,9 @@
-use crate::field::JoltField;
+use super::{JoltCommitments, JoltPolynomials, JoltStuff};
+use crate::field::{JoltField, OptimizedMul};
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -11,14 +13,6 @@ use crate::subprotocols::grand_product::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use itertools::interleave;
-use rayon::prelude::*;
-#[cfg(test)]
-use std::collections::HashSet;
-
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
@@ -32,7 +26,12 @@ use crate::{
 };
 
 use super::read_write_memory::ReadWriteMemoryPolynomials;
-use super::{JoltCommitments, JoltPolynomials, JoltStuff};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use itertools::interleave;
+use rayon::prelude::*;
+#[cfg(test)]
+use std::collections::HashSet;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampRangeCheckStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {

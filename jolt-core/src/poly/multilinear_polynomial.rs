@@ -1,3 +1,4 @@
+use crate::utils::math::Math;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid,
 };
@@ -67,6 +68,33 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn max_num_bits(&self) -> u32 {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly
+                .evals_ref()
+                .par_iter()
+                .map(|s| s.num_bits())
+                .max()
+                .unwrap(),
+            MultilinearPolynomial::U8Scalars(poly) => {
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+            }
         }
     }
 

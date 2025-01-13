@@ -38,7 +38,7 @@ impl Plic {
 
     /// Runs one cycle. Takes interrupting signals from devices and
     /// raises an interrupt to CPU depending on configuration.
-    /// If interrupt occurs a certain bit of `mip` regiser is risen
+    /// If interrupt occurs a certain bit of `mip` register is risen
     /// depending on interrupt type.
     ///
     /// # Arguments

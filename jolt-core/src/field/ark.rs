@@ -1,5 +1,4 @@
-use ark_ff::{BigInt, PrimeField, UniformRand};
-use ark_std::Zero;
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -177,6 +176,10 @@ impl JoltField for ark_bn254::Fr {
     fn from_bytes(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), Self::NUM_BYTES);
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
+    }
+
+    fn num_bits(&self) -> u32 {
+        self.into_bigint().num_bits()
     }
 
     fn montgomery_r2() -> Option<Self> {
