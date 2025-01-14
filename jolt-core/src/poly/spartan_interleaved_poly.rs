@@ -4,6 +4,8 @@ use super::{
     split_eq_poly::SplitEqPolynomial,
     unipoly::{CompressedUniPoly, UniPoly},
 };
+#[cfg(test)]
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
@@ -205,42 +207,42 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         )
     }
 
-    #[cfg(test)]
-    fn interleave(
-        az: &DensePolynomial<F>,
-        bz: &DensePolynomial<F>,
-        cz: &DensePolynomial<F>,
-    ) -> Self {
-        let mut bound_coeffs = Vec::with_capacity(az.len() * 3);
+    // #[cfg(test)]
+    // fn interleave(
+    //     az: &DensePolynomial<F>,
+    //     bz: &DensePolynomial<F>,
+    //     cz: &DensePolynomial<F>,
+    // ) -> Self {
+    //     let mut bound_coeffs = Vec::with_capacity(az.len() * 3);
 
-        let mut index = 0;
-        for ((a, b), c) in az
-            .evals_ref()
-            .iter()
-            .zip(bz.evals_ref().iter())
-            .zip(cz.evals_ref())
-        {
-            if !a.is_zero() {
-                bound_coeffs.push((index, *a).into())
-            }
-            index += 1;
-            if !b.is_zero() {
-                bound_coeffs.push((index, *b).into())
-            }
-            index += 1;
-            if !c.is_zero() {
-                bound_coeffs.push((index, *c).into())
-            }
-            index += 1;
-        }
+    //     let mut index = 0;
+    //     for ((a, b), c) in az
+    //         .evals_ref()
+    //         .iter()
+    //         .zip(bz.evals_ref().iter())
+    //         .zip(cz.evals_ref())
+    //     {
+    //         if !a.is_zero() {
+    //             bound_coeffs.push((index, *a).into())
+    //         }
+    //         index += 1;
+    //         if !b.is_zero() {
+    //             bound_coeffs.push((index, *b).into())
+    //         }
+    //         index += 1;
+    //         if !c.is_zero() {
+    //             bound_coeffs.push((index, *c).into())
+    //         }
+    //         index += 1;
+    //     }
 
-        Self {
-            unbound_coeffs: vec![],
-            bound_coeffs,
-            binding_scratch_space: vec![],
-            dense_len: az.len(),
-        }
-    }
+    //     Self {
+    //         unbound_coeffs: vec![],
+    //         bound_coeffs,
+    //         binding_scratch_space: vec![],
+    //         dense_len: az.len(),
+    //     }
+    // }
 
     pub fn is_bound(&self) -> bool {
         !self.bound_coeffs.is_empty()

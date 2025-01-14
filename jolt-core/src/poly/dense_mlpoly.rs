@@ -280,45 +280,6 @@ mod tests {
     use ark_bn254::Fr;
     use ark_std::test_rng;
 
-    pub fn compute_factored_chis_at_r<F: JoltField>(r: &[F]) -> (Vec<F>, Vec<F>) {
-        let mut L: Vec<F> = Vec::new();
-        let mut R: Vec<F> = Vec::new();
-
-        let ell = r.len();
-        assert!(ell % 2 == 0); // ensure ell is even
-        let n = ell.pow2();
-        let m = n.square_root();
-
-        // compute row vector L
-        for i in 0..m {
-            let mut chi_i = F::one();
-            for j in 0..ell / 2 {
-                let bit_j = ((m * i) & (1 << (r.len() - j - 1))) > 0;
-                if bit_j {
-                    chi_i *= r[j];
-                } else {
-                    chi_i *= F::one() - r[j];
-                }
-            }
-            L.push(chi_i);
-        }
-
-        // compute column vector R
-        for i in 0..m {
-            let mut chi_i = F::one();
-            for j in ell / 2..ell {
-                let bit_j = (i & (1 << (r.len() - j - 1))) > 0;
-                if bit_j {
-                    chi_i *= r[j];
-                } else {
-                    chi_i *= F::one() - r[j];
-                }
-            }
-            R.push(chi_i);
-        }
-        (L, R)
-    }
-
     pub fn compute_chis_at_r<F: JoltField>(r: &[F]) -> Vec<F> {
         let ell = r.len();
         let n = ell.pow2();
@@ -336,16 +297,6 @@ mod tests {
             chis.push(chi_i);
         }
         chis
-    }
-
-    pub fn compute_outerproduct<F: JoltField>(L: &[F], R: &[F]) -> Vec<F> {
-        assert_eq!(L.len(), R.len());
-        (0..L.len())
-            .map(|i| (0..R.len()).map(|j| L[i] * R[j]).collect::<Vec<F>>())
-            .collect::<Vec<Vec<F>>>()
-            .into_iter()
-            .flatten()
-            .collect::<Vec<F>>()
     }
 
     #[test]

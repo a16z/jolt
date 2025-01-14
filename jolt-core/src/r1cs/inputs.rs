@@ -419,8 +419,6 @@ impl ConstraintInput for JoltR1CSInputs {
 mod tests {
     use ark_bn254::Fr;
 
-    use crate::{jolt::vm::JoltPolynomials, poly::multilinear_polynomial::MultilinearPolynomial};
-
     use super::*;
 
     #[test]

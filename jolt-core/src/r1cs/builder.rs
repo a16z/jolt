@@ -22,53 +22,53 @@ pub struct Constraint {
     pub(crate) c: LC,
 }
 
-impl Constraint {
-    #[cfg(test)]
-    fn pretty_fmt<const C: usize, I: ConstraintInput, F: JoltField>(
-        &self,
-        f: &mut String,
-        flattened_polynomials: &[&MultilinearPolynomial<F>],
-        step_index: usize,
-    ) -> std::fmt::Result {
-        use std::fmt::Write as _;
+// impl Constraint {
+//     #[cfg(test)]
+//     fn pretty_fmt<const C: usize, I: ConstraintInput, F: JoltField>(
+//         &self,
+//         f: &mut String,
+//         flattened_polynomials: &[&MultilinearPolynomial<F>],
+//         step_index: usize,
+//     ) -> std::fmt::Result {
+//         use std::fmt::Write as _;
 
-        self.a.pretty_fmt::<C, I>(f)?;
-        write!(f, " ⋅ ")?;
-        self.b.pretty_fmt::<C, I>(f)?;
-        write!(f, " == ")?;
-        self.c.pretty_fmt::<C, I>(f)?;
-        writeln!(f, "")?;
+//         self.a.pretty_fmt::<C, I>(f)?;
+//         write!(f, " ⋅ ")?;
+//         self.b.pretty_fmt::<C, I>(f)?;
+//         write!(f, " == ")?;
+//         self.c.pretty_fmt::<C, I>(f)?;
+//         writeln!(f, "")?;
 
-        let mut terms = Vec::new();
-        for term in self
-            .a
-            .terms()
-            .iter()
-            .chain(self.b.terms().iter())
-            .chain(self.c.terms().iter())
-        {
-            if !terms.contains(term) {
-                terms.push(*term);
-            }
-        }
+//         let mut terms = Vec::new();
+//         for term in self
+//             .a
+//             .terms()
+//             .iter()
+//             .chain(self.b.terms().iter())
+//             .chain(self.c.terms().iter())
+//         {
+//             if !terms.contains(term) {
+//                 terms.push(*term);
+//             }
+//         }
 
-        for term in terms {
-            match term.0 {
-                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
-                    writeln!(
-                        f,
-                        "    {:?} = {}",
-                        I::from_index::<C>(var_index),
-                        flattened_polynomials[var_index].get_coeff(step_index)
-                    )?;
-                }
-                Variable::Constant => {}
-            }
-        }
+//         for term in terms {
+//             match term.0 {
+//                 Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+//                     writeln!(
+//                         f,
+//                         "    {:?} = {}",
+//                         I::from_index::<C>(var_index),
+//                         flattened_polynomials[var_index].get_coeff(step_index)
+//                     )?;
+//                 }
+//                 Variable::Constant => {}
+//             }
+//         }
 
-        Ok(())
-    }
-}
+//         Ok(())
+//     }
+// }
 
 type AuxComputationFunction = dyn Fn(&[i64]) -> i128 + Send + Sync;
 
@@ -787,47 +787,47 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         // (az_poly, bz_poly, cz_poly)
     }
 
-    #[cfg(test)]
-    pub fn assert_valid(
-        &self,
-        flattened_polynomials: &[&MultilinearPolynomial<F>],
-        az: &SparsePolynomial<F>,
-        bz: &SparsePolynomial<F>,
-        cz: &SparsePolynomial<F>,
-    ) {
-        let az = az.clone().to_dense();
-        let bz = bz.clone().to_dense();
-        let cz = cz.clone().to_dense();
+    // #[cfg(test)]
+    // pub fn assert_valid(
+    //     &self,
+    //     flattened_polynomials: &[&MultilinearPolynomial<F>],
+    //     az: &SparsePolynomial<F>,
+    //     bz: &SparsePolynomial<F>,
+    //     cz: &SparsePolynomial<F>,
+    // ) {
+    //     let az = az.clone().to_dense();
+    //     let bz = bz.clone().to_dense();
+    //     let cz = cz.clone().to_dense();
 
-        let rows = az.len();
-        assert_eq!(bz.len(), rows);
-        assert_eq!(cz.len(), rows);
+    //     let rows = az.len();
+    //     assert_eq!(bz.len(), rows);
+    //     assert_eq!(cz.len(), rows);
 
-        for constraint_index in 0..rows {
-            let uniform_constraint_index = constraint_index / self.uniform_repeat;
-            if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
-                let step_index = constraint_index % self.uniform_repeat;
-                if uniform_constraint_index >= self.uniform_builder.constraints.len() {
-                    panic!(
-                        "Non-uniform constraint {} violated at step {step_index}",
-                        uniform_constraint_index - self.uniform_builder.constraints.len()
-                    )
-                } else {
-                    let mut constraint_string = String::new();
-                    let _ = self.uniform_builder.constraints[uniform_constraint_index]
-                        .pretty_fmt::<C, I, F>(
-                            &mut constraint_string,
-                            flattened_polynomials,
-                            step_index,
-                        );
-                    println!("{constraint_string}");
-                    panic!(
-                        "Uniform constraint {uniform_constraint_index} violated at step {step_index}",
-                    );
-                }
-            }
-        }
-    }
+    //     for constraint_index in 0..rows {
+    //         let uniform_constraint_index = constraint_index / self.uniform_repeat;
+    //         if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
+    //             let step_index = constraint_index % self.uniform_repeat;
+    //             if uniform_constraint_index >= self.uniform_builder.constraints.len() {
+    //                 panic!(
+    //                     "Non-uniform constraint {} violated at step {step_index}",
+    //                     uniform_constraint_index - self.uniform_builder.constraints.len()
+    //                 )
+    //             } else {
+    //                 let mut constraint_string = String::new();
+    //                 let _ = self.uniform_builder.constraints[uniform_constraint_index]
+    //                     .pretty_fmt::<C, I, F>(
+    //                         &mut constraint_string,
+    //                         flattened_polynomials,
+    //                         step_index,
+    //                     );
+    //                 println!("{constraint_string}");
+    //                 panic!(
+    //                     "Uniform constraint {uniform_constraint_index} violated at step {step_index}",
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 #[cfg(test)]

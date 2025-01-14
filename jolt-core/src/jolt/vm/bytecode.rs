@@ -723,8 +723,7 @@ mod tests {
     use crate::jolt::vm::rv32i_vm::RV32I;
 
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
-    use ark_bn254::{Fr, G1Projective};
+    use ark_bn254::Fr;
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
         rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
@@ -761,42 +760,4 @@ mod tests {
         let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
         BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
     }
-
-    // #[test]
-    // #[should_panic]
-    // fn bytecode_validation_fake_trace() {
-    //     let program = vec![
-    //         BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
-    //         BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
-    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-    //         BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
-    //         BytecodeRow::new(to_ram_address(4), 32, 32, 32, 32, 32),
-    //     ];
-    //     let trace = vec![
-    //         BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
-    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-    //         BytecodeRow::new(to_ram_address(5), 0, 0, 0, 0, 0), // no_op: shouldn't exist in pgoram
-    //     ];
-    //     BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
-    //         &program, &trace,
-    //     );
-    // }
-
-    // #[test]
-    // #[should_panic]
-    // fn bytecode_validation_bad_prog_increment() {
-    //     let program = vec![
-    //         BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
-    //         BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
-    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-    //         BytecodeRow::new(to_ram_address(4), 16, 16, 16, 16, 16), // Increment by 2
-    //     ];
-    //     let trace = vec![
-    //         BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
-    //         BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-    //     ];
-    //     BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
-    //         &program, &trace,
-    //     );
-    // }
 }
