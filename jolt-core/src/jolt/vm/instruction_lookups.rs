@@ -928,7 +928,7 @@ where
 
         let dim: Vec<MultilinearPolynomial<F>> = subtable_lookup_indices
             .into_par_iter()
-            .map(|access_sequence| MultilinearPolynomial::from(access_sequence))
+            .map(MultilinearPolynomial::from)
             .collect();
 
         let mut instruction_flag_bitvectors: Vec<Vec<u8>> =
@@ -941,7 +941,7 @@ where
 
         let instruction_flag_polys: Vec<MultilinearPolynomial<F>> = instruction_flag_bitvectors
             .into_par_iter()
-            .map(|flag_bitvector| MultilinearPolynomial::from(flag_bitvector))
+            .map(MultilinearPolynomial::from)
             .collect();
 
         let mut lookup_outputs = Self::compute_lookup_outputs(ops);

@@ -1,6 +1,6 @@
 use crate::utils::math::Math;
 use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid,
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rayon::prelude::*;
 use strum_macros::EnumIter;
@@ -366,22 +366,22 @@ impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPoly
 impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
-        mut writer: W,
-        compress: Compress,
+        _writer: W,
+        _compress: Compress,
     ) -> Result<(), SerializationError> {
         unimplemented!("")
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
+    fn serialized_size(&self, _compress: Compress) -> usize {
         unimplemented!("")
     }
 }
 
 impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
     fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: ark_serialize::Validate,
+        _reader: R,
+        _compress: Compress,
+        _validate: Validate,
     ) -> Result<Self, SerializationError> {
         unimplemented!("")
     }
@@ -396,7 +396,6 @@ impl<F: JoltField> Valid for MultilinearPolynomial<F> {
 pub trait PolynomialBinding<F: JoltField> {
     fn is_bound(&self) -> bool;
     fn bind(&mut self, r: F, order: BindingOrder);
-    fn bind_parallel(&mut self, r: F, order: BindingOrder);
     fn final_sumcheck_claim(&self) -> F;
 }
 
@@ -433,11 +432,6 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
-        todo!()
-    }
-
     fn final_sumcheck_claim(&self) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => {
@@ -459,7 +453,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             MultilinearPolynomial::U8Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(&r);
+                let chis = EqPolynomial::evals_with_r2(r);
                 assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
@@ -467,7 +461,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     .sum()
             }
             MultilinearPolynomial::U16Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(&r);
+                let chis = EqPolynomial::evals_with_r2(r);
                 assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
@@ -475,7 +469,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     .sum()
             }
             MultilinearPolynomial::U32Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(&r);
+                let chis = EqPolynomial::evals_with_r2(r);
                 assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
@@ -483,7 +477,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     .sum()
             }
             MultilinearPolynomial::U64Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(&r);
+                let chis = EqPolynomial::evals_with_r2(r);
                 assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
@@ -491,7 +485,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     .sum()
             }
             MultilinearPolynomial::I64Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(&r);
+                let chis = EqPolynomial::evals_with_r2(r);
                 assert_eq!(chis.len(), poly.coeffs.len());
                 chis.par_iter()
                     .zip(poly.coeffs.par_iter())
@@ -505,10 +499,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
 
-        if polys.iter().any(|poly| match poly {
-            MultilinearPolynomial::LargeScalars(_) => false,
-            _ => true,
-        }) {
+        if polys
+            .iter()
+            .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
+        {
             let eq_r2 = EqPolynomial::evals_with_r2(r);
             let evals: Vec<F> = polys
                 .into_par_iter()

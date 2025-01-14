@@ -243,7 +243,7 @@ fn map_to_polys<F: JoltField, const N: usize>(
     vals: [Vec<u32>; N],
 ) -> [MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
-        .map(|vals| MultilinearPolynomial::from(vals))
+        .map(MultilinearPolynomial::from)
         .collect::<Vec<MultilinearPolynomial<F>>>()
         .try_into()
         .unwrap()
@@ -473,7 +473,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                 v_init,
             ]);
 
-        let polynomials = ReadWriteMemoryPolynomials {
+        ReadWriteMemoryPolynomials {
             a_ram,
             v_read_rd,
             v_read_rs1,
@@ -490,9 +490,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             v_init: Some(v_init),
             a_init_final: None,
             identity: None,
-        };
-
-        polynomials
+        }
     }
 
     /// Computes the shape of all commitments.

@@ -2,7 +2,9 @@ use std::ops::Index;
 
 use crate::utils::math::Math;
 use crate::{field::JoltField, utils};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
 use num_integer::Integer;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
@@ -54,17 +56,17 @@ pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
 }
 
 impl<T: SmallScalar, F: JoltField> Valid for CompactPolynomial<T, F> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+    fn check(&self) -> Result<(), SerializationError> {
         unimplemented!("")
     }
 }
 
 impl<T: SmallScalar, F: JoltField> CanonicalDeserialize for CompactPolynomial<T, F> {
     fn deserialize_with_mode<R: std::io::Read>(
-        reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
+        _reader: R,
+        _compress: Compress,
+        _validate: Validate,
+    ) -> Result<Self, SerializationError> {
         unimplemented!("")
     }
 }
@@ -72,13 +74,13 @@ impl<T: SmallScalar, F: JoltField> CanonicalDeserialize for CompactPolynomial<T,
 impl<T: SmallScalar, F: JoltField> CanonicalSerialize for CompactPolynomial<T, F> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
-        writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
+        _writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
         unimplemented!("")
     }
 
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+    fn serialized_size(&self, _compress: Compress) -> usize {
         unimplemented!("")
     }
 }
@@ -164,10 +166,6 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
         }
         self.num_vars -= 1;
         self.len = n;
-    }
-
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
-        todo!()
     }
 
     fn final_sumcheck_claim(&self) -> F {

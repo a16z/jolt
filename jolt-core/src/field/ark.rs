@@ -111,7 +111,7 @@ impl JoltField for ark_bn254::Fr {
             } else if val <= u32::MAX as u64 {
                 -<Self as JoltField>::from_u32(val as u32)
             } else {
-                -<Self as JoltField>::from_u64(val as u64)
+                -<Self as JoltField>::from_u64(val)
             }
         } else {
             let val = val as u64;
@@ -120,7 +120,7 @@ impl JoltField for ark_bn254::Fr {
             } else if val <= u32::MAX as u64 {
                 <Self as JoltField>::from_u32(val as u32)
             } else {
-                <Self as JoltField>::from_u64(val as u64)
+                <Self as JoltField>::from_u64(val)
             }
         }
     }

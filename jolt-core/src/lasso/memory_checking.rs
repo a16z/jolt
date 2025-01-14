@@ -363,7 +363,7 @@ where
         let read_write_openings: Vec<&mut F> = openings
             .read_write_values_mut()
             .into_iter()
-            .chain(exogenous_openings.openings_mut().into_iter())
+            .chain(exogenous_openings.openings_mut())
             .collect();
 
         for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {

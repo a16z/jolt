@@ -2,19 +2,14 @@ use super::{
     inputs::ConstraintInput,
     key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
     ops::{Term, Variable, LC},
-    special_polys::SparsePolynomial,
 };
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::{
     field::JoltField,
     jolt::vm::JoltPolynomials,
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        spartan_interleaved_poly::SpartanInterleavedPolynomial,
-    },
+    poly::spartan_interleaved_poly::SpartanInterleavedPolynomial,
     r1cs::key::{SparseConstraints, UniformR1CS},
-    utils::math::Math,
 };
-use crate::{poly::multilinear_polynomial::MultilinearPolynomial, utils::transcript::Transcript};
 use ark_ff::One;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::PhantomData};

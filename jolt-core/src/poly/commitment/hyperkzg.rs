@@ -133,39 +133,6 @@ where
     h
 }
 
-fn scalar_vector_muladd<P: Pairing>(
-    a: &mut [P::ScalarField],
-    v: &[P::ScalarField],
-    s: P::ScalarField,
-) where
-    <P as Pairing>::ScalarField: field::JoltField,
-    <P as Pairing>::G1: Icicle,
-{
-    assert!(a.len() >= v.len());
-    for i in 0..v.len() {
-        a[i] += s * v[i];
-    }
-}
-
-fn kzg_compute_batch_polynomial<P: Pairing>(
-    f: &[Vec<P::ScalarField>],
-    q_powers: Vec<P::ScalarField>,
-) -> Vec<P::ScalarField>
-where
-    <P as Pairing>::ScalarField: field::JoltField,
-    <P as Pairing>::G1: Icicle,
-{
-    let k = f.len(); // Number of polynomials we're batching
-
-    // Compute B(x) = f[0] + q*f[1] + q^2 * f[2] + ... q^(k-1) * f[k-1]
-    let mut B = f[0].clone();
-    for i in 1..k {
-        scalar_vector_muladd::<P>(&mut B, &f[i], q_powers[i]); // B += q_powers[i] * f[i]
-    }
-
-    B
-}
-
 fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     f: &[MultilinearPolynomial<P::ScalarField>],
     u: &[P::ScalarField],

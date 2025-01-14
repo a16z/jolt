@@ -1,5 +1,4 @@
 use super::{
-    dense_mlpoly::DensePolynomial,
     multilinear_polynomial::MultilinearPolynomial,
     sparse_interleaved_poly::SparseCoefficient,
     split_eq_poly::SplitEqPolynomial,
@@ -405,6 +404,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
         let total_output_len = output_sizes.iter().sum();
         self.bound_coeffs = Vec::with_capacity(total_output_len);
+        #[allow(clippy::uninit_vec)]
         unsafe {
             self.bound_coeffs.set_len(total_output_len);
         }

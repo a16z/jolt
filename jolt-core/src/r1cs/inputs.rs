@@ -192,15 +192,15 @@ impl<F: JoltField> R1CSPolynomials<F> {
         Self {
             chunks_x: chunks_x
                 .into_iter()
-                .map(|vals| MultilinearPolynomial::from(vals))
+                .map(MultilinearPolynomial::from)
                 .collect(),
             chunks_y: chunks_y
                 .into_iter()
-                .map(|vals| MultilinearPolynomial::from(vals))
+                .map(MultilinearPolynomial::from)
                 .collect(),
             circuit_flags: circuit_flags
                 .into_iter()
-                .map(|vals| MultilinearPolynomial::from(vals))
+                .map(MultilinearPolynomial::from)
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap(),

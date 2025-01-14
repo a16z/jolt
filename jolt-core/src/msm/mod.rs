@@ -713,32 +713,6 @@ where
     result
 }
 
-fn make_digits_u64(scalar: u64, w: usize, num_bits: usize) -> impl Iterator<Item = i64> {
-    let radix: u64 = 1 << w;
-    let window_mask: u64 = radix - 1;
-    let mut carry = 0u64;
-
-    let digits_count = num_bits.div_ceil(w);
-    (0..digits_count).map(move |i| {
-        // Construct a buffer of bits of the scalar, starting at `bit_offset`.
-        let bit_offset = i * w;
-        let bit_idx = bit_offset % 64;
-        // Read the bits from the scalar
-        let bit_buf = scalar >> bit_idx;
-        // Read the actual coefficient value from the window
-        let coef = carry + (bit_buf & window_mask); // coef = [0, 2^r)
-
-        // Recenter coefficients from [0,2^w) to [-2^w/2, 2^w/2)
-        carry = (coef + radix / 2) >> w;
-        let mut digit = (coef as i64) - (carry << w) as i64;
-
-        if i == digits_count - 1 {
-            digit += (carry << w) as i64;
-        }
-        digit
-    })
-}
-
 /// The result of this function is only approximately `ln(a)`
 /// [`Explanation of usage`]
 ///

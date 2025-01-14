@@ -205,7 +205,7 @@ where
     pub fn commit_batch_with_mode(
         pk: &KZGProverKey<P>,
         polys: &[&MultilinearPolynomial<P::ScalarField>],
-        mode: CommitMode,
+        _mode: CommitMode,
     ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
         let g1_powers = &pk.g1_powers();
         let gpu_g1 = pk.gpu_g1();
@@ -283,7 +283,7 @@ where
         pk: &KZGProverKey<P>,
         coeffs: &[P::ScalarField],
         offset: usize,
-        mode: CommitMode,
+        _mode: CommitMode,
     ) -> Result<P::G1Affine, ProofVerifyError> {
         if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(

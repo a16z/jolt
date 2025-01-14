@@ -1,5 +1,5 @@
 use super::{JoltCommitments, JoltPolynomials, JoltStuff};
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::JoltField;
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
@@ -711,7 +711,7 @@ where
             .chain(timestamp_openings.openings_mut().into_iter())
             .collect();
         let (read_write_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&read_write_polys, &r_opening);
+            MultilinearPolynomial::batch_evaluate(&read_write_polys, r_opening);
         for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {
             *opening = *eval;
         }
