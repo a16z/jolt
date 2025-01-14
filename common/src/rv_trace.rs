@@ -203,6 +203,8 @@ pub enum CircuitFlags {
     Assert,
     /// Used in virtual sequences; the program counter should be the same for the full sequence.
     DoNotUpdatePC,
+    /// 1 if the instruction is an ecall/precompile
+    Precompile,
 }
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
@@ -429,6 +431,7 @@ pub enum RV32IM {
     VIRTUAL_ASSERT_EQ,
     VIRTUAL_ASSERT_VALID_DIV0,
     VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+    VIRTUAL_PRECOMPILE,
 }
 
 impl FromStr for RV32IM {
@@ -588,6 +591,8 @@ pub struct JoltDevice {
     pub outputs: Vec<u8>,
     pub panic: bool,
     pub memory_layout: MemoryLayout,
+    pub precompile_input: Vec<u8>,
+    pub precompile_output: Vec<u8>,
 }
 
 impl JoltDevice {
@@ -597,6 +602,8 @@ impl JoltDevice {
             outputs: Vec::new(),
             panic: false,
             memory_layout: MemoryLayout::new(max_input_size, max_output_size),
+            precompile_input: Vec::new(),
+            precompile_output: Vec::new(),
         }
     }
 
@@ -621,7 +628,15 @@ impl JoltDevice {
             }
         } else {
             0 // zero-padding
+        } else if self.is_precompile_input(address) {
+            let internal_address = self.convert_read_address(address);
+            if self.precompile_inputs.len() <= internal_address {
+                0
+            } else {
+                self.precompile_inputs[internal_address]
+            }
         }
+        // Add conditional for loading precompile output
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
@@ -639,7 +654,11 @@ impl JoltDevice {
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
-
+        else if self.precompile_outputs(address) {
+            self.precompile_outputs[internal_address] = value;
+            return;
+        }
+        // add conditional for storing precompile input
         self.outputs[internal_address] = value;
     }
 
@@ -653,6 +672,14 @@ impl JoltDevice {
 
     pub fn is_output(&self, address: u64) -> bool {
         address >= self.memory_layout.output_start && address < self.memory_layout.termination
+    }
+
+    pub fn is_precompile_input(&self, address: u64) -> bool {
+        address >= self.memory_layout.precompile_input_start && address < self.memory_layout.precompile_input_end
+    }
+
+    pub fn is_precompile_output(&self, address: u64) -> bool {
+        address >= self.memory_layout.precompile_output_start && address < self.memory_layout.precompile_output_end
     }
 
     pub fn is_panic(&self, address: u64) -> bool {
@@ -682,10 +709,13 @@ pub struct MemoryLayout {
     pub input_end: u64,
     pub output_start: u64,
     pub output_end: u64,
+    pub precompile_input_start: u64,
+    pub precompile_input_end: u64,
+    pub precompile_output_start: u64,
+    pub precompile_output_end: u64,
     pub panic: u64,
     pub termination: u64,
 }
-
 impl MemoryLayout {
     pub fn new(mut max_input_size: u64, mut max_output_size: u64) -> Self {
         // Must be word-aligned
@@ -694,7 +724,7 @@ impl MemoryLayout {
 
         // Adds 8 to account for panic bit and termination bit
         // (they each occupy one full 4-byte word)
-        let io_region_num_bytes = max_input_size + max_output_size + 8;
+        let io_region_num_bytes = max_input_size + max_output_size + 8 + 32;
 
         // Padded so that the witness index corresponding to `RAM_START_ADDRESS`
         // is a power of 2
@@ -704,6 +734,10 @@ impl MemoryLayout {
         let input_end = input_start + max_input_size;
         let output_start = input_end;
         let output_end = output_start + max_output_size;
+        let precompile_input_start = output_end;
+        let precompile_input_end = precompile_input_start + 16; // 512 bits
+        let precompile_output_start = precompile_input_end;
+        let precompile_output_end = precompile_output_start + 16; // 512 bits
         let panic = output_end;
         let termination = panic + 4;
 
@@ -714,6 +748,10 @@ impl MemoryLayout {
             input_end,
             output_start,
             output_end,
+            precompile_input_start,
+            precompile_input_end,
+            precompile_output_start,
+            precompile_output_end,
             panic,
             termination,
         }
