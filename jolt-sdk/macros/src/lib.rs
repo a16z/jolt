@@ -284,6 +284,10 @@ impl MacroBuilder {
         let output_start = memory_layout.output_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
+        let max_precompile_input_len = attributes.max_precompile_input_size as usize;
+        let max_precompile_output_len = attributes.max_precompile_output_size as usize;
+        let precompile_input_start = memory_layout.precompile_input_start; // empty if no precompile used, no option
+        let precompile_output_start = memory_layout.precompile_output_start;
         let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
@@ -319,6 +323,8 @@ impl MacroBuilder {
             },
         };
 
+
+        let precompile_fn = self.make_precompile_fn(PrecompileEnum); // check with Michael
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
@@ -416,6 +422,7 @@ impl MacroBuilder {
                 MemoryOp,
                 MemoryLayout,
                 MEMORY_OPS_PER_INSTRUCTION,
+                Precompiles,
                 instruction::add::ADDInstruction,
                 tracer,
             };
@@ -563,5 +570,23 @@ impl MacroBuilder {
                 result.is_ok()
             }
         }
+    }
+
+    fn make_precompile_fn(&self, precompile_enum: PrecompileEnum) -> TokenStream2 {
+        // Iterate over the inputs
+        // Serialize the inputs from the array using correct type
+                asm!(
+                    "ecall",
+                    in("t0") PrecompileEnum::fn_name as u32,
+                )
+
+                // quote! {
+                //     #[cfg(feature = "guest")]
+                //     pub fn #fn_name(#inputs) #output {
+                //         #body
+                //     }
+                // }
+            
+        
     }
 }
