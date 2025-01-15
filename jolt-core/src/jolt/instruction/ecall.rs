@@ -25,8 +25,6 @@ impl VirtualInstructionSequence for EcallInstruction {
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
         let v_q: Option<u64> = Some(virtual_register_index(1));
-        let v_r: Option<u64> = Some(virtual_register_index(2));
-        let v_qy = Some(virtual_register_index(3));
         // Precompile input
         let x = trace_row.register_state.rs1_val.unwrap();
         let y = trace_row.register_state.rs2_val.unwrap();
@@ -85,6 +83,6 @@ mod test {
 
     #[test]
     fn ecall_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(EcallInstruction::<32>, RV32IM::ECALL);
+        jolt_virtual_sequence_test!(EcallInstruction, RV32IM::ECALL);
     }
 }
