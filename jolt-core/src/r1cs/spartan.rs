@@ -116,11 +116,7 @@ where
             .map(|var| var.get_ref(polynomials))
             .collect();
 
-        let num_rounds_x = if cfg!(feature = "reorder") {
-            key.num_rows_bits()
-        } else {
-            key.num_rows_total().log_2()
-        };
+        let num_rounds_x = key.num_rows_bits();
         let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
@@ -156,20 +152,8 @@ where
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-        let (rx_con, rx_ts) = if cfg!(feature = "reorder") {
-            let num_constr_bits = constraint_builder.padded_rows_per_step().ilog2() as usize;
-            let (rx_ts, rx_con) =
-                outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_constr_bits);
-            (rx_con, rx_ts)
-        } else {
-            let num_steps_bits = constraint_builder
-                .uniform_repeat()
-                .next_power_of_two()
-                .ilog2();
-            let (rx_con, rx_ts) =
-                outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
-            (rx_con, rx_ts)
-        };
+        let num_constr_bits = constraint_builder.padded_rows_per_step().ilog2() as usize;
+        let (rx_ts, rx_con) = outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_constr_bits);
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
@@ -226,11 +210,7 @@ where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
-        let num_rounds_x = if cfg!(feature = "reorder") {
-            key.num_rows_bits()
-        } else {
-            key.num_rows_total().log_2()
-        };
+        let num_rounds_x = key.num_rows_bits();
         let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check

@@ -27,7 +27,6 @@ default = [
     "ark-ff/asm",
     "host",
     "rayon",
-    "reorder",
 ]
 host = ["dep:reqwest", "dep:tokio"]
 icicle = [
@@ -36,7 +35,6 @@ icicle = [
     "dep:icicle-core",
     "dep:icicle-bn254",
 ]
-reorder = []
 
 [dependencies]
 ark-bn254 = "0.4.0"

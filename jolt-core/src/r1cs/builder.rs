@@ -527,13 +527,11 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         self.uniform_repeat * self.uniform_builder.constraints.len()
     }
 
-    // TODO: #[not(cfg(feature = "reorder"))]
     pub(super) fn offset_eq_constraint_rows(&self) -> usize {
         self.uniform_repeat * self.offset_equality_constraints.len()
     }
 
     /// Number of constraint rows per step, padded to the next power of two.
-    // #[cfg(feature = "reorder")]
     pub(super) fn padded_rows_per_step(&self) -> usize {
         let num_constraints =
             self.uniform_builder.constraints.len() + self.offset_equality_constraints.len();
@@ -542,11 +540,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
     /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
     pub(super) fn constraint_rows(&self) -> usize {
-        if cfg!(feature = "reorder") {
-            return self.uniform_repeat * self.padded_rows_per_step();
-        }
-
-        self.offset_eq_constraint_rows() + self.uniform_repeat_constraint_rows()
+        self.uniform_repeat * self.padded_rows_per_step()
     }
 
     pub(super) fn uniform_repeat(&self) -> usize {
