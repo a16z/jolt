@@ -35,38 +35,6 @@ contract HyperKZG {
     uint256 immutable VK_beta_g2_y_c0;
     uint256 immutable VK_beta_g2_y_c1;
 
-    /// Implements a batching protocol to verify multiple polynomial openings to the same point
-    /// using hyper kzg and a random linear combination.
-    /// @param commitments The polynomial commitment points in a vector arranged with x in the even
-    ///                    and y in the odd positions
-    /// @param point The point which is opened
-    /// @param p_of_x The vector of claimed evaluations
-    /// @param pi The proof of the opening, passed into the rlc verify
-    /// @param transcript The fiat shamair transcript we are sourcing deterministic randoms from
-    /// TODO - WARN - YOU MUST WRITE COMMITMENTS TO TRANSCRIPT BEFORE CALLING
-    /// TODO - Affine and calldata pointer versions of this, to save gas on point rep
-    function batch_verify(
-        uint256[] memory commitments,
-        uint256[] memory point,
-        uint256[] memory p_of_x,
-        HyperKZGProof memory pi,
-        Transcript memory transcript
-    ) public view returns (bool) {
-        // Load a rho from transcript
-        Fr rho = Fr.wrap(transcript.challenge_scalar(MODULUS));
-        (uint256 running_x, uint256 running_y) = (commitments[0], commitments[1]);
-        Fr running_eval = Fr.wrap(p_of_x[0]);
-        Fr scalar = rho;
-        for (uint256 i = 2; i < commitments.length; i += 2) {
-            (uint256 next_x, uint256 next_y) = ec_scalar_mul(commitments[i], commitments[i + 1], scalar.unwrap());
-            (running_x, running_y) = ec_add(running_x, running_y, next_x, next_y);
-            running_eval = running_eval + Fr.wrap(mulmod(p_of_x[i / 2], scalar.unwrap(), MODULUS));
-            scalar = scalar * rho;
-        }
-        // Pass the RLC into the singular verify function
-        return (verify(running_x, running_y, point, running_eval.unwrap(), pi, transcript));
-    }
-
     /// Implements the version multilinear hyper kzg verification as in the rust code at
     /// https://github.com/a16z/jolt/blob/main/jolt-core/src/poly/commitment/hyperkzg.rs
     /// @param c_x The x coordinate of the commitment to the multilinear polynomial
@@ -93,16 +61,27 @@ contract HyperKZG {
 
         // now for the consistency checks
         uint256 ell = point.length;
-        require(pi.v_y.length == ell && pi.v_yneg.length == ell && pi.v_ypos.length == ell, "bad length");
+        require(
+            pi.v_y.length == ell &&
+                pi.v_yneg.length == ell &&
+                pi.v_ypos.length == ell,
+            "bad length"
+        );
 
         for (uint256 i = 0; i < ell; i++) {
             uint256 y_i = i == ell - 1 ? p_of_x : pi.v_y[i + 1];
             Fr left = Fr.wrap(2) * Fr.wrap(r) * FrLib.from(y_i);
             Fr x_minus = FrLib.from(point[ell - i - 1]);
-            Fr ypos_sub_yneg = FrLib.from(pi.v_ypos[i]) - FrLib.from(pi.v_yneg[i]);
-            Fr ypos_plus_yneg = FrLib.from(pi.v_ypos[i]) + FrLib.from(pi.v_yneg[i]);
+            Fr ypos_sub_yneg = FrLib.from(pi.v_ypos[i]) -
+                FrLib.from(pi.v_yneg[i]);
+            Fr ypos_plus_yneg = FrLib.from(pi.v_ypos[i]) +
+                FrLib.from(pi.v_yneg[i]);
             // Get the other side of the equality
-            Fr right = Fr.wrap(r) * (Fr.wrap(1) - x_minus) * ypos_plus_yneg + x_minus * ypos_sub_yneg;
+            Fr right = Fr.wrap(r) *
+                (Fr.wrap(1) - x_minus) *
+                ypos_plus_yneg +
+                x_minus *
+                ypos_sub_yneg;
             require(left == right, "bad construction");
         }
 
@@ -168,13 +147,20 @@ contract HyperKZG {
         // NOTE - This is gas inefficient and grows with log of the proof size so we might want
         //        to move to a pippenger window algo with much smaller MSMs which we might save gas on.
         // Our first value is the c_x c_y as this would be the first entry of com in rust.
-        (uint256 L_x, uint256 L_y) = ec_scalar_mul(c_x, c_y, q_powers[0].unwrap());
+        (uint256 L_x, uint256 L_y) = ec_scalar_mul(
+            c_x,
+            c_y,
+            q_powers[0].unwrap()
+        );
 
         // Now we do a running sum over the points in com
         for (uint256 i = 0; i < pi.com.length; i += 2) {
             // First the scalar mult then the add
-            (uint256 temp_x_loop, uint256 temp_y_loop) =
-                ec_scalar_mul(pi.com[i], pi.com[i + 1], q_powers[i / 2 + 1].unwrap());
+            (uint256 temp_x_loop, uint256 temp_y_loop) = ec_scalar_mul(
+                pi.com[i],
+                pi.com[i + 1],
+                q_powers[i / 2 + 1].unwrap()
+            );
             (L_x, L_y) = ec_add(L_x, L_y, temp_x_loop, temp_y_loop);
         }
 
@@ -182,13 +168,22 @@ contract HyperKZG {
         (uint256 temp_x, uint256 temp_y) = ec_scalar_mul(pi.w[0], pi.w[1], r);
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
         // U[1] = -r * d_0
-        (temp_x, temp_y) = ec_scalar_mul(pi.w[2], pi.w[3], mulmod(MODULUS - r, d_0.unwrap(), MODULUS));
+        (temp_x, temp_y) = ec_scalar_mul(
+            pi.w[2],
+            pi.w[3],
+            mulmod(MODULUS - r, d_0.unwrap(), MODULUS)
+        );
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
         // U[2] = r*r * d_1
-        (temp_x, temp_y) = ec_scalar_mul(pi.w[4], pi.w[5], mulmod(mulmod(r, r, MODULUS), d_1.unwrap(), MODULUS));
+        (temp_x, temp_y) = ec_scalar_mul(
+            pi.w[4],
+            pi.w[5],
+            mulmod(mulmod(r, r, MODULUS), d_1.unwrap(), MODULUS)
+        );
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
         // -(B_u[0] + d_0 * B_u[1] + d_1 * B_u[2])
-        uint256 b_u = MODULUS - (B_u_ypos + d_0 * B_u_yneg + d_1 * B_u_y).unwrap();
+        uint256 b_u = MODULUS -
+            (B_u_ypos + d_0 * B_u_yneg + d_1 * B_u_y).unwrap();
         // Add in to the msm b_u Vk_g1
         (temp_x, temp_y) = ec_scalar_mul(VK_g1_x, VK_g1_y, b_u);
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
@@ -210,7 +205,11 @@ contract HyperKZG {
     /// @param p_x The x of the point Q
     /// @param p_y The y of the point Q
     /// @param n The scalar
-    function ec_scalar_mul(uint256 p_x, uint256 p_y, uint256 n) internal view returns (uint256 x_new, uint256 y_new) {
+    function ec_scalar_mul(
+        uint256 p_x,
+        uint256 p_y,
+        uint256 n
+    ) internal view returns (uint256 x_new, uint256 y_new) {
         bool success;
         assembly ("memory-safe") {
             let prev_frm := mload(0x40)
@@ -231,11 +230,12 @@ contract HyperKZG {
     /// @param p_y The y of the point P
     /// @param q_x The x of the point P
     /// @param q_y The y of the point P
-    function ec_add(uint256 p_x, uint256 p_y, uint256 q_x, uint256 q_y)
-        internal
-        view
-        returns (uint256 x_new, uint256 y_new)
-    {
+    function ec_add(
+        uint256 p_x,
+        uint256 p_y,
+        uint256 q_x,
+        uint256 q_y
+    ) internal view returns (uint256 x_new, uint256 y_new) {
         bool success;
         assembly ("memory-safe") {
             let prev_frm := mload(0x40)
@@ -260,7 +260,12 @@ contract HyperKZG {
     /// @param L_y The y of the point L
     /// @param R_x The x of the point R
     /// @param R_y The y of the point R
-    function pairing(uint256 L_x, uint256 L_y, uint256 R_x, uint256 R_y) internal view returns (bool valid) {
+    function pairing(
+        uint256 L_x,
+        uint256 L_y,
+        uint256 R_x,
+        uint256 R_y
+    ) internal view returns (bool valid) {
         // put the immutables into local
         uint256 vk_g2_x_c0 = VK_g2_x_c0;
         uint256 vk_g2_x_c1 = VK_g2_x_c1;
