@@ -61,6 +61,7 @@ impl ReadWriteMemoryPreprocessing {
 
         let num_words = max_bytecode_address.next_multiple_of(4) / 4 - min_bytecode_address / 4 + 1;
         let mut bytecode_words = vec![0u32; num_words as usize];
+        // Convert bytes into words and populate `bytecode_words`
         for chunk in
             memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 4 == address_b / 4)
         {
@@ -282,6 +283,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         );
+        // Convert input bytes into words and populate `v_init`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -718,8 +720,8 @@ where
             v_init[v_init_index] = *word as u64;
             v_init_index += 1;
         }
-        // Copy input bytes
         v_init_index = memory_address_to_witness_index(memory_layout.input_start, memory_layout);
+        // Convert input bytes into words and populate `v_init`
         for chunk in preprocessing.program_io.as_ref().unwrap().inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -860,11 +862,11 @@ where
             .collect();
 
         let mut v_io: Vec<u64> = vec![0; memory_size];
-        // Copy input bytes
         let mut input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         );
+        // Convert input bytes into words and populate `v_io`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -874,11 +876,11 @@ where
             v_io[input_index] = word as u64;
             input_index += 1;
         }
-        // Copy output bytes
         let mut output_index = memory_address_to_witness_index(
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         );
+        // Convert output bytes into words and populate `v_io`
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -988,9 +990,9 @@ where
         io_witness_range_eval *= r_prod;
 
         let mut v_io: Vec<u64> = vec![0; io_memory_size];
-        // Copy input bytes
         let mut input_index =
             memory_address_to_witness_index(memory_layout.input_start, memory_layout);
+        // Convert input bytes into words and populate `v_io`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
@@ -1000,9 +1002,9 @@ where
             v_io[input_index] = word as u64;
             input_index += 1;
         }
-        // Copy output bytes
         let mut output_index =
             memory_address_to_witness_index(memory_layout.output_start, memory_layout);
+        // Convert output bytes into words and populate `v_io`
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {

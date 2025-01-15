@@ -25,7 +25,7 @@ The Jolt [paper](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Aru
 ## Quickstart
 
 > [!NOTE]
-> Jolt is in alpha and is not suitable for production use yet.
+> Jolt is in alpha and is not suitable for production use at this time.
 
 For developers looking to build using Jolt, check out the [Quickstart guide](https://jolt.a16zcrypto.com/usage/quickstart.html).
 
@@ -36,8 +36,9 @@ For developers looking to contribute to Jolt, follow the instructions below.
 You will need Rust [nightly](./rust-toolchain.toml).
 
 If you have `rustup` installed, you do not need to do anything as it will
-automatically install the right toolchain and install additional target on the
+automatically install the correct toolchain and any additional targets on the
 first `cargo` invocation.
+
 
 Clone this repo:
 
@@ -68,6 +69,29 @@ Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ```cargo run --release -p sha2-chain```
 
+## CUDA Support
+
+JOLT supports CUDA acceleration via [icicle](https://github.com/ingonyama-zk/icicle-jolt).
+
+Dependencies:
+1. Install [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
+2. Install [CMake](https://cmake.org/)
+
+Now you may build Jolt with CUDA acceleration using the `--features icicle` flag.
+
+### Build
+
+```cargo build -p jolt-core --features icicle```
+
+### Bench
+
+```
+# Set the icicle backend path - this won't be needed in the future
+export ICICLE_BACKEND_INSTALL_DIR=$(pwd)/target/debug/deps/icicle/lib/backend
+cargo bench --bench msm_batch --no-fail-fast -p jolt-core --features icicle
+```
+
+Note - NVIDIA doesn't support cross compilation on MacOS. Only Windows or Linux.
 
 ## Performance profiling
 

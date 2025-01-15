@@ -19,6 +19,24 @@ repository = "https://github.com/a16z/jolt"
 license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs"]
 
+[features]
+default = [
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "ark-ff/asm",
+    "host",
+    "rayon",
+    "ark-crypto-primitives/sponge",
+]
+host = ["dep:reqwest", "dep:tokio"]
+icicle = [
+    "default",
+    "dep:icicle-runtime",
+    "dep:icicle-core",
+    "dep:icicle-bn254",
+]
+
 [dependencies]
 ark-bn254 = "0.4.0"
 ark-ec = { version = "0.4.2", default-features = false }
@@ -26,14 +44,13 @@ ark-ff = { version = "0.4.2", default-features = false }
 ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
-ark-crypto-primitives = {git = "https://github.com/a16z/crypto-primitives.git"}
+ark-crypto-primitives = { git = "https://github.com/a16z/crypto-primitives.git" }
 ark-std = { version = "0.4.0" }
 binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
 clap = { version = "4.3.10", features = ["derive"] }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
-lazy_static = "1.4.0"
 num-integer = "0.1.45"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
@@ -67,6 +84,7 @@ bytemuck = "1.19.0"
 tokio = { version = "1.38.0", optional = true }
 alloy-primitives = "0.7.6"
 alloy-sol-types = "0.7.6"
+once_cell = "1.19.0"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -95,24 +113,28 @@ harness = false
 name = "compute_cubic"
 harness = false
 
+[[bench]]
+name = "msm"
+harness = false
+
+[[bench]]
+name = "msm_batch"
+harness = false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
 
-[features]
-default = [
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "ark-ff/asm",
-    "host",
-    "rayon",
-    "ark-crypto-primitives/sponge"
-]
-host = ["dep:reqwest", "dep:tokio"]
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    "cuda_backend",
+], rev = "ed93e21", optional = true }
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "ed93e21", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    "cuda_backend",
+], rev = "ed93e21", optional = true }
 memory-stats = "1.0.0"
+sys-info = "0.9.1"
 tokio = { version = "1.38.0", optional = true, features = ["rt-multi-thread"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

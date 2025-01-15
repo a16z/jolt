@@ -23,7 +23,7 @@ use super::terminal::Terminal;
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
 /// devices, maps address to them, and accesses them depending on address.
-/// It also manages virtual-physical address translation and memoty protection.
+/// It also manages virtual-physical address translation and memory protection.
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
 pub struct Mmu {
@@ -147,7 +147,7 @@ impl Mmu {
         self.disk.init(data);
     }
 
-    /// Overrides defalut Device tree configuration.
+    /// Overrides default Device tree configuration.
     ///
     /// # Arguments
     /// * `data` DTB binary content
@@ -549,6 +549,8 @@ impl Mmu {
         }
     }
 
+    /// Records the memory word being accessed by a load instruction. The memory
+    /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
     fn trace_load(&mut self, effective_address: u64) {
         let word_address = (effective_address >> 2) << 2;
         let bytes = match self.xlen {
@@ -582,6 +584,9 @@ impl Mmu {
         }
     }
 
+    /// Records the state of the memory word containing the accessed byte
+    /// before and after the store instruction. The memory state is used in Jolt to
+    /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_byte(&mut self, effective_address: u64, value: u64) {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
@@ -620,6 +625,9 @@ impl Mmu {
         });
     }
 
+    /// Records the state of the memory word containing the accessed halfword
+    /// before and after the store instruction. The memory state is used in Jolt to
+    /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_halfword(&mut self, effective_address: u64, value: u64) {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
@@ -658,6 +666,9 @@ impl Mmu {
         });
     }
 
+    /// Records the state of the accessed memory word before and after the store
+    /// instruction. The memory state is used in Jolt to construct the witnesses
+    /// in `read_write_memory.rs`.
     fn trace_store(&mut self, effective_address: u64, value: u64) {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {

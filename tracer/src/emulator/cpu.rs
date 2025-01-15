@@ -301,7 +301,7 @@ impl Cpu {
         self.clock = self.clock.wrapping_add(1);
 
         // cpu core clock : mtime clock in clint = 8 : 1 is
-        // just an arbiraty ratio.
+        // just an arbitrary ratio.
         // @TODO: Implement more properly
         self.write_csr_raw(CSR_CYCLE_ADDRESS, self.clock * 8);
     }

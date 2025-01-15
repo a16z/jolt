@@ -3,14 +3,15 @@ use tracer::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction, xor::XORInstruction,
-    JoltInstruction,
+    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction,
+    virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction,
+    xor::XORInstruction, JoltInstruction,
 };
 /// Stores a halfword in memory
 pub struct SHInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_SIZE> {
-    const SEQUENCE_LENGTH: usize = 11;
+    const SEQUENCE_LENGTH: usize = 12;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         assert_eq!(trace_row.instruction.opcode, RV32IM::SH);
@@ -37,6 +38,29 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
         };
 
+        let is_aligned =
+            AssertAlignedMemoryAccessInstruction::<WORD_SIZE, 2>(dest, offset_unsigned)
+                .lookup_entry();
+        debug_assert_eq!(is_aligned, 1);
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+                rs1: r_dest,
+                rs2: None,
+                rd: None,
+                imm: Some(offset),
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(dest),
+                rs2_val: None,
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
+
         let ram_address = ADDInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
         assert!(ram_address % 2 == 0);
         virtual_trace.push(RVTraceRow {
@@ -57,7 +81,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             memory_state: None,
             advice_value: None,
         });
-        // TODO(moodlezoup): Assert aligned memory access
 
         let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
         let word_address =

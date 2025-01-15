@@ -257,14 +257,12 @@ mod tests {
     use crate::poly::commitment::zeromorph::Zeromorph;
     use crate::utils::poseidon_transcript::PoseidonTranscript;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
     use strum::{EnumCount, IntoEnumIterator};
 
     // If multiple tests try to read the same trace artifacts simultaneously, they will fail
-    lazy_static::lazy_static! {
-        static ref FIB_FILE_LOCK: Mutex<()> = Mutex::new(());
-        static ref SHA3_FILE_LOCK: Mutex<()> = Mutex::new(());
-    }
+    static FIB_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    static SHA3_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn test_instruction_set_subtables<PCS, ProofTranscript>()
     where

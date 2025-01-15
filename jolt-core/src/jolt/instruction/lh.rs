@@ -179,7 +179,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHInstruction<WORD_S
             advice_value: None,
         });
 
-        let left_aligned_byte = SLLInstruction::<WORD_SIZE>(word, bit_shift).lookup_entry();
+        let left_aligned_halfword = SLLInstruction::<WORD_SIZE>(word, bit_shift).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -193,14 +193,14 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHInstruction<WORD_S
             register_state: RegisterState {
                 rs1_val: Some(word),
                 rs2_val: Some(bit_shift),
-                rd_post_val: Some(left_aligned_byte),
+                rd_post_val: Some(left_aligned_halfword),
             },
             memory_state: None,
             advice_value: None,
         });
 
         let sign_extended_halfword =
-            SRAInstruction::<WORD_SIZE>(left_aligned_byte, 16).lookup_entry();
+            SRAInstruction::<WORD_SIZE>(left_aligned_halfword, 16).lookup_entry();
         assert_eq!(sign_extended_halfword, expected_rd_post_val);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
@@ -213,7 +213,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHInstruction<WORD_S
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
-                rs1_val: Some(left_aligned_byte),
+                rs1_val: Some(left_aligned_halfword),
                 rs2_val: None,
                 rd_post_val: Some(sign_extended_halfword),
             },
