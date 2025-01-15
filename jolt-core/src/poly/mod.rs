@@ -1,4 +1,3 @@
-pub mod boolean_polynomial;
 pub mod commitment;
 pub mod compact_polynomial;
 pub mod dense_interleaved_poly;
