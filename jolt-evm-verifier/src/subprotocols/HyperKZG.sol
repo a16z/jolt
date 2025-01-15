@@ -61,27 +61,16 @@ contract HyperKZG {
 
         // now for the consistency checks
         uint256 ell = point.length;
-        require(
-            pi.v_y.length == ell &&
-                pi.v_yneg.length == ell &&
-                pi.v_ypos.length == ell,
-            "bad length"
-        );
+        require(pi.v_y.length == ell && pi.v_yneg.length == ell && pi.v_ypos.length == ell, "bad length");
 
         for (uint256 i = 0; i < ell; i++) {
             uint256 y_i = i == ell - 1 ? p_of_x : pi.v_y[i + 1];
             Fr left = Fr.wrap(2) * Fr.wrap(r) * FrLib.from(y_i);
             Fr x_minus = FrLib.from(point[ell - i - 1]);
-            Fr ypos_sub_yneg = FrLib.from(pi.v_ypos[i]) -
-                FrLib.from(pi.v_yneg[i]);
-            Fr ypos_plus_yneg = FrLib.from(pi.v_ypos[i]) +
-                FrLib.from(pi.v_yneg[i]);
+            Fr ypos_sub_yneg = FrLib.from(pi.v_ypos[i]) - FrLib.from(pi.v_yneg[i]);
+            Fr ypos_plus_yneg = FrLib.from(pi.v_ypos[i]) + FrLib.from(pi.v_yneg[i]);
             // Get the other side of the equality
-            Fr right = Fr.wrap(r) *
-                (Fr.wrap(1) - x_minus) *
-                ypos_plus_yneg +
-                x_minus *
-                ypos_sub_yneg;
+            Fr right = Fr.wrap(r) * (Fr.wrap(1) - x_minus) * ypos_plus_yneg + x_minus * ypos_sub_yneg;
             require(left == right, "bad construction");
         }
 
@@ -147,20 +136,13 @@ contract HyperKZG {
         // NOTE - This is gas inefficient and grows with log of the proof size so we might want
         //        to move to a pippenger window algo with much smaller MSMs which we might save gas on.
         // Our first value is the c_x c_y as this would be the first entry of com in rust.
-        (uint256 L_x, uint256 L_y) = ec_scalar_mul(
-            c_x,
-            c_y,
-            q_powers[0].unwrap()
-        );
+        (uint256 L_x, uint256 L_y) = ec_scalar_mul(c_x, c_y, q_powers[0].unwrap());
 
         // Now we do a running sum over the points in com
         for (uint256 i = 0; i < pi.com.length; i += 2) {
             // First the scalar mult then the add
-            (uint256 temp_x_loop, uint256 temp_y_loop) = ec_scalar_mul(
-                pi.com[i],
-                pi.com[i + 1],
-                q_powers[i / 2 + 1].unwrap()
-            );
+            (uint256 temp_x_loop, uint256 temp_y_loop) =
+                ec_scalar_mul(pi.com[i], pi.com[i + 1], q_powers[i / 2 + 1].unwrap());
             (L_x, L_y) = ec_add(L_x, L_y, temp_x_loop, temp_y_loop);
         }
 
@@ -168,22 +150,13 @@ contract HyperKZG {
         (uint256 temp_x, uint256 temp_y) = ec_scalar_mul(pi.w[0], pi.w[1], r);
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
         // U[1] = -r * d_0
-        (temp_x, temp_y) = ec_scalar_mul(
-            pi.w[2],
-            pi.w[3],
-            mulmod(MODULUS - r, d_0.unwrap(), MODULUS)
-        );
+        (temp_x, temp_y) = ec_scalar_mul(pi.w[2], pi.w[3], mulmod(MODULUS - r, d_0.unwrap(), MODULUS));
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
         // U[2] = r*r * d_1
-        (temp_x, temp_y) = ec_scalar_mul(
-            pi.w[4],
-            pi.w[5],
-            mulmod(mulmod(r, r, MODULUS), d_1.unwrap(), MODULUS)
-        );
+        (temp_x, temp_y) = ec_scalar_mul(pi.w[4], pi.w[5], mulmod(mulmod(r, r, MODULUS), d_1.unwrap(), MODULUS));
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
         // -(B_u[0] + d_0 * B_u[1] + d_1 * B_u[2])
-        uint256 b_u = MODULUS -
-            (B_u_ypos + d_0 * B_u_yneg + d_1 * B_u_y).unwrap();
+        uint256 b_u = MODULUS - (B_u_ypos + d_0 * B_u_yneg + d_1 * B_u_y).unwrap();
         // Add in to the msm b_u Vk_g1
         (temp_x, temp_y) = ec_scalar_mul(VK_g1_x, VK_g1_y, b_u);
         (L_x, L_y) = ec_add(L_x, L_y, temp_x, temp_y);
@@ -205,11 +178,7 @@ contract HyperKZG {
     /// @param p_x The x of the point Q
     /// @param p_y The y of the point Q
     /// @param n The scalar
-    function ec_scalar_mul(
-        uint256 p_x,
-        uint256 p_y,
-        uint256 n
-    ) internal view returns (uint256 x_new, uint256 y_new) {
+    function ec_scalar_mul(uint256 p_x, uint256 p_y, uint256 n) internal view returns (uint256 x_new, uint256 y_new) {
         bool success;
         assembly ("memory-safe") {
             let prev_frm := mload(0x40)
@@ -230,12 +199,11 @@ contract HyperKZG {
     /// @param p_y The y of the point P
     /// @param q_x The x of the point P
     /// @param q_y The y of the point P
-    function ec_add(
-        uint256 p_x,
-        uint256 p_y,
-        uint256 q_x,
-        uint256 q_y
-    ) internal view returns (uint256 x_new, uint256 y_new) {
+    function ec_add(uint256 p_x, uint256 p_y, uint256 q_x, uint256 q_y)
+        internal
+        view
+        returns (uint256 x_new, uint256 y_new)
+    {
         bool success;
         assembly ("memory-safe") {
             let prev_frm := mload(0x40)
@@ -260,12 +228,7 @@ contract HyperKZG {
     /// @param L_y The y of the point L
     /// @param R_x The x of the point R
     /// @param R_y The y of the point R
-    function pairing(
-        uint256 L_x,
-        uint256 L_y,
-        uint256 R_x,
-        uint256 R_y
-    ) internal view returns (bool valid) {
+    function pairing(uint256 L_x, uint256 L_y, uint256 R_x, uint256 R_y) internal view returns (bool valid) {
         // put the immutables into local
         uint256 vk_g2_x_c0 = VK_g2_x_c0;
         uint256 vk_g2_x_c1 = VK_g2_x_c1;

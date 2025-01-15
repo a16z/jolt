@@ -57,19 +57,10 @@ contract TestHyperKZG is TestBase {
         HyperKZG verifier = new DeployableHyperKZG(data.vk);
         // We build a transcript in memory
         bytes32 start_string = "TestEval";
-        Transcript memory transcript = FiatShamirTranscript.new_transcript(
-            start_string,
-            3
-        );
+        Transcript memory transcript = FiatShamirTranscript.new_transcript(start_string, 3);
         // We call into the verifier contract
-        bool passes = verifier.verify(
-            data.commitment_x,
-            data.commitment_y,
-            data.point,
-            data.claim,
-            data.proof,
-            transcript
-        );
+        bool passes =
+            verifier.verify(data.commitment_x, data.commitment_y, data.point, data.claim, data.proof, transcript);
         require(passes, "does not verify a valid proof");
     }
 }
