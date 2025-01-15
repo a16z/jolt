@@ -2514,6 +2514,14 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         data: 0x00000073,
         name: "ECALL",
         operation: |cpu, _word, address| {
+            let precompile_enum = cpu.read_register(5);
+            let precompile = Precompile::from_u64(precompile_enum); // implement
+            let input = cpu.mmu.get_precompile_input(); // need to implement in mmu
+            let output = precompile.execute(input); // need to implement
+            cpu.get_mut_mmu.set_precompile_output(output); // need to implement
+
+            
+
             let exception_type = match cpu.privilege_mode {
                 PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
                 PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,
