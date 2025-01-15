@@ -351,24 +351,29 @@ mod tests {
         >();
     }
 
+    // #[test]
+    // fn fib_e2e_zeromorph() {
+    //     fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
+    // }
+
     #[test]
     fn fib_e2e_zeromorph() {
-        fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
+        fib_e2e::<Fr, Zeromorph<Bn254, PoseidonTranscript<ark_bn254::Fq>>, PoseidonTranscript<ark_bn254::Fq>>();
     }
-
-    // #[test]
-    // fn fib_e2e_hyperkzg() {
-    //     println!("Running Fib");
-    //     fib_e2e::<
-    //         Fr,
-    //         HyperKZG<Bn254, PoseidonTranscript<ark_bn254::Fr>>,
-    //         PoseidonTranscript<ark_bn254::Fr>,
-    //     >();
-    // }
+    
     #[test]
     fn fib_e2e_hyperkzg() {
-        fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
+        println!("Running Fib");
+        fib_e2e::<
+            Fr,
+            HyperKZG<Bn254, PoseidonTranscript<ark_bn254::Fq>>,
+            PoseidonTranscript<ark_bn254::Fq>,
+        >();
     }
+    // #[test]
+    // fn fib_e2e_hyperkzg() {
+    //     fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
+    // }
 
     // TODO(sragss): Finish Binius.
     // #[test]

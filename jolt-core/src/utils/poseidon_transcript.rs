@@ -9,7 +9,7 @@ use ark_ff::{BigInteger, PrimeField};
 use super::transcript::Transcript;
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Clone)]
-pub struct PoseidonTranscript<F: PrimeField + JoltField> {
+pub struct PoseidonTranscript<F: PrimeField> {
     state: PoseidonSponge<F>,
     /// We append an ordinal to each invocation of the hash
     n_rounds: u32,
@@ -24,7 +24,7 @@ pub struct PoseidonTranscript<F: PrimeField + JoltField> {
     expected_state_history: Option<Vec<F>>,
 }
 
-impl<F: PrimeField + JoltField> PoseidonTranscript<F> {
+impl<F: PrimeField> PoseidonTranscript<F> {
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
     pub fn new() -> PoseidonSponge<F> {
@@ -61,7 +61,7 @@ impl<F: PrimeField + JoltField> PoseidonTranscript<F> {
             DuplexSpongeMode::Squeezing {
                 next_squeeze_index: _,
             } => {
-                self.state.absorb_internal(0, elems.as_slice());
+                panic!("DupleSpongeMode can't be Squeezing in case of absorb")
             }
         };
     }
@@ -153,7 +153,8 @@ impl<F: PrimeField + JoltField> PoseidonTranscript<F> {
     // }
 }
 //TODO:- Optimize this.
-impl<K: PrimeField + JoltField> Transcript for PoseidonTranscript<K> {
+//TODO:- Convert label into scalar element
+impl<K: PrimeField> Transcript for PoseidonTranscript<K> {
     fn new(label: &'static [u8]) -> Self {
         let mut hasher = Self::new();
         hasher.absorb(&label);
@@ -181,8 +182,12 @@ impl<K: PrimeField + JoltField> Transcript for PoseidonTranscript<K> {
     //TODO:-
     fn append_message(&mut self, msg: &'static [u8]) {
         assert!(msg.len() < 32);
-        let scalar = K::from_le_bytes_mod_order(&msg);
-        self.append_scalar::<K>(&scalar);
+        let scalar = <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&msg);
+        let n_rounds = self.n_rounds;
+        self.absorb(&n_rounds);
+        self.absorb(&scalar);
+        let new_state = self.squeeze_field_element();
+        self.update_state(new_state);
     }
 
     //TODO:- Convert bytes into scalar
@@ -207,7 +212,7 @@ impl<K: PrimeField + JoltField> Transcript for PoseidonTranscript<K> {
         self.absorb(&n_rounds);
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
-        self.absorb(&<ark_bn254::Fr as ark_ff::PrimeField>::from_le_bytes_mod_order(&buf));
+        self.absorb(&<ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&buf));
         let new_state = self.squeeze_field_element();
         self.update_state(new_state);
     }
@@ -233,13 +238,11 @@ impl<K: PrimeField + JoltField> Transcript for PoseidonTranscript<K> {
     }
 
     fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        if points[0].is_zero() {
-            self.append_bytes(&[1_u8; 2]);
-            return;
-        } else {
-            self.append_bytes(&[1_u8; 2]);
-            return;
+        self.append_message(b"begin_append_vector");
+        for item in points.iter() {
+            self.append_point(item);
         }
+        self.append_message(b"end_append_vector");
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
