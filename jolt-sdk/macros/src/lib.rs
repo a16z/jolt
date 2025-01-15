@@ -589,4 +589,21 @@ impl MacroBuilder {
             
         
     }
+
+    #[cfg(not(feature = "guest"))]
+    pub fn prove_precompile(
+        preprocessing: Self::Preprocessing,
+        witness: Self::Witness,
+    ) -> Self::Proof {
+        // This is a placeholder for the actual implementation.
+    }
+
+    #[cfg(not(feature = "guest"))]
+    pub fn verify(
+        preprocessing: Self::Preprocessing,
+        proof: Self::Proof,
+    ) -> bool {
+        // This is a placeholder for the actual implementation.
+    }
+
 }
