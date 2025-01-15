@@ -89,14 +89,6 @@ impl LC {
         &self,
         flattened_polynomials: &[&MultilinearPolynomial<F>],
         row: usize,
-    ) -> F {
-        F::from_i128(self.evaluate_row_i128(flattened_polynomials, row))
-    }
-
-    pub fn evaluate_row_i128<F: JoltField>(
-        &self,
-        flattened_polynomials: &[&MultilinearPolynomial<F>],
-        row: usize,
     ) -> i128 {
         self.terms()
             .iter()

@@ -6,6 +6,8 @@ use super::{
 };
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
+#[cfg(test)]
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
@@ -64,7 +66,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         if !constraint.a.terms().is_empty() {
                             az_coeff = constraint
                                 .a
-                                .evaluate_row_i128(flattened_polynomials, step_index);
+                                .evaluate_row(flattened_polynomials, step_index);
                             if !az_coeff.is_zero() {
                                 coeffs.push((global_index, az_coeff).into());
                             }
@@ -74,7 +76,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         if !constraint.b.terms().is_empty() {
                             bz_coeff = constraint
                                 .b
-                                .evaluate_row_i128(flattened_polynomials, step_index);
+                                .evaluate_row(flattened_polynomials, step_index);
                             if !bz_coeff.is_zero() {
                                 coeffs.push((global_index + 1, bz_coeff).into());
                             }
@@ -84,12 +86,21 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             let cz_coeff = az_coeff * bz_coeff;
                             #[cfg(test)]
                             {
-                                assert_eq!(
-                                    cz_coeff,
-                                    constraint
-                                        .c
-                                        .evaluate_row_i128(flattened_polynomials, step_index)
-                                );
+                                if cz_coeff != constraint
+                                    .c
+                                    .evaluate_row(flattened_polynomials, step_index) {
+                                        let mut constraint_string = String::new();
+                                        let _ = constraint
+                                            .pretty_fmt::<4, JoltR1CSInputs, F>(
+                                                &mut constraint_string,
+                                                flattened_polynomials,
+                                                step_index,
+                                            );
+                                        println!("{constraint_string}");
+                                        panic!(
+                                            "Uniform constraint {constraint_index} violated at step {step_index}",
+                                        );
+                                    }
                             }
                             coeffs.push((global_index + 2, cz_coeff).into());
                         }
@@ -135,7 +146,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                     step_index,
                                     next_step_index,
                                 );
-                                assert_eq!(bz_coeff, 0);
+                                assert_eq!(bz_coeff, 0, "Non-uniform constraint {constraint_index} violated at step {step_index}");
                             }
                         } else {
                             // Bz

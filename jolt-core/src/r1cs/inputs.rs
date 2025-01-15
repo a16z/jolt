@@ -419,6 +419,8 @@ impl ConstraintInput for JoltR1CSInputs {
 mod tests {
     use ark_bn254::Fr;
 
+    use crate::jolt::vm::JoltPolynomials;
+
     use super::*;
 
     #[test]
@@ -435,24 +437,24 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn get_ref() {
-    //     const C: usize = 4;
-    //     let mut jolt_polys: JoltPolynomials<Fr> = JoltPolynomials::default();
-    //     jolt_polys.r1cs = R1CSPolynomials::initialize(&C);
+    #[test]
+    fn get_ref() {
+        const C: usize = 4;
+        let mut jolt_polys: JoltPolynomials<Fr> = JoltPolynomials::default();
+        jolt_polys.r1cs = R1CSPolynomials::initialize(&C);
 
-    //     for aux in AuxVariable::iter().flat_map(|aux| match aux {
-    //         AuxVariable::RelevantYChunk(_) => (0..C)
-    //             .into_iter()
-    //             .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
-    //             .collect(),
-    //         _ => vec![JoltR1CSInputs::Aux(aux)],
-    //     }) {
-    //         let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
-    //         let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const MultilinearPolynomial<Fr>;
-    //         assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
-    //     }
-    // }
+        for aux in AuxVariable::iter().flat_map(|aux| match aux {
+            AuxVariable::RelevantYChunk(_) => (0..C)
+                .into_iter()
+                .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
+                .collect(),
+            _ => vec![JoltR1CSInputs::Aux(aux)],
+        }) {
+            let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
+            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const MultilinearPolynomial<Fr>;
+            assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
+        }
+    }
 
     #[test]
     fn r1cs_stuff_ordering() {
