@@ -662,12 +662,12 @@ impl JoltDevice {
             self.outputs.resize(internal_address + 1, 0);
         }
 
-        if self.precompile_inputs(address) {
-            // todo()
+        if self.precompile_outputs.len() <= internal_address {
+            self.precompile_outputs.resize(internal_address + 1, 0);
         }
 
-        if self.precompile_outputs(address) {
-            //todo()
+        if self.precompile_outputs.len() <= internal_address {
+            self.precompile_outputs.resize(internal_address + 1, 0);
         }
 
         self.outputs[internal_address] = value;
