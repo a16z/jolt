@@ -749,7 +749,7 @@ impl MemoryLayout {
         let precompile_input_end = precompile_input_start + 16; // 512 bits
         let precompile_output_start = precompile_input_end;
         let precompile_output_end = precompile_output_start + 16; // 512 bits
-        let panic = output_end;
+        let panic = precompile_output_end;
         let termination = panic + 4;
 
         Self {
