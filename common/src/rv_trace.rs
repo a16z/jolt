@@ -657,14 +657,19 @@ impl JoltDevice {
         }
 
         let internal_address = self.convert_write_address(address);
+        
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
-        else if self.precompile_outputs(address) {
-            self.precompile_outputs[internal_address] = value;
-            return;
+
+        if self.precompile_inputs(address) {
+            // todo()
         }
-        // add conditional for storing precompile input
+
+        if self.precompile_outputs(address) {
+            //todo()
+        }
+
         self.outputs[internal_address] = value;
     }
 
