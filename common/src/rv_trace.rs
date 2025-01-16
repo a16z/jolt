@@ -626,8 +626,6 @@ impl JoltDevice {
             } else {
                 self.outputs[internal_address]
             }
-        } else {
-            0 // zero-padding
         } else if self.is_precompile_input(address) {
             let internal_address = self.convert_read_address(address);
             if self.precompile_inputs.len() <= internal_address {
@@ -635,8 +633,16 @@ impl JoltDevice {
             } else {
                 self.precompile_inputs[internal_address]
             }
+        } else if self.is_precompile_output(address) {
+            let internal_address = self.convert_write_address(address);
+            if self.precompile_outputs.len() <= internal_address {
+                0
+            } else {
+                self.precompile_outputs[internal_address]
+            }
+        } else {
+            0 // zero-padding
         }
-        // Add conditional for loading precompile output
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
