@@ -9,7 +9,9 @@ use rayon::prelude::*;
 
 pub(crate) mod icicle;
 use crate::field::JoltField;
-use crate::poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::MultilinearPolynomial};
+#[cfg(feature = "icicle")]
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 pub use icicle::*;
