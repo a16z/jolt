@@ -20,6 +20,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
+        // These four lookup tables correspond to the four 16-bit limbs of a u64
         let mut lookup_tables = [
             unsafe_allocate_zero_vec(1 << 16),
             unsafe_allocate_zero_vec(1 << 16),
@@ -47,6 +48,7 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u8(n: u8) -> Self {
+        // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
             <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
@@ -59,6 +61,7 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u16(n: u16) -> Self {
+        // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
             <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
@@ -71,6 +74,7 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u32(n: u32) -> Self {
+        // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
             <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
@@ -87,6 +91,7 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u64(n: u64) -> Self {
+        // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
             <Self as ark_ff::PrimeField>::from_u64(n).unwrap()

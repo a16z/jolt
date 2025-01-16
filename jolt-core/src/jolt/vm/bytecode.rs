@@ -14,7 +14,7 @@ use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::poly::compact_polynomial::CompactPolynomial;
+use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
@@ -542,13 +542,13 @@ where
             .into_par_iter()
             .map(|i| {
                 F::from_i64(v_imm[i])
-                    + gamma_terms[0].mul_u64_unchecked(a[i] as u64)
-                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
-                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
-                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
-                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
-                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
-                    + gamma_terms[6].mul_u64_unchecked(t[i] as u64)
+                    + a[i].field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    + t[i].field_mul(gamma_terms[6])
                     - tau
             })
             .collect();
@@ -558,13 +558,13 @@ where
             .into_par_iter()
             .map(|i| {
                 F::from_i64(v_imm[i])
-                    + gamma_terms[0].mul_u64_unchecked(a[i] as u64)
-                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
-                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
-                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
-                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
-                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
-                    + gamma_terms[6].mul_u64_unchecked(t[i] as u64 + 1)
+                    + a[i].field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    + (t[i] + 1).field_mul(gamma_terms[6])
                     - tau
             })
             .collect();
@@ -583,12 +583,12 @@ where
             .into_par_iter()
             .map(|i| {
                 F::from_i64(v_imm[i])
-                    + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
-                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
-                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
-                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
-                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
-                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
+                    + (i as u64).field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
                     // + gamma_terms[6] * 0
                     - tau
             })
@@ -600,13 +600,13 @@ where
             .into_par_iter()
             .map(|i| {
                 F::from_i64(v_imm[i])
-                    + gamma_terms[0].mul_u64_unchecked(i as u64) // a_init_final
-                    + gamma_terms[1].mul_u64_unchecked(v_address[i])
-                    + gamma_terms[2].mul_u64_unchecked(v_bitflags[i])
-                    + gamma_terms[3].mul_u64_unchecked(v_rd[i] as u64)
-                    + gamma_terms[4].mul_u64_unchecked(v_rs1[i] as u64)
-                    + gamma_terms[5].mul_u64_unchecked(v_rs2[i] as u64)
-                    + gamma_terms[6].mul_u64_unchecked(t_final[i] as u64)
+                    + (i as u64).field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    + t_final[i].field_mul(gamma_terms[6])
                     - tau
             })
             .collect();

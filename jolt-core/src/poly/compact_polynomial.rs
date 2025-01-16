@@ -10,8 +10,13 @@ use num_integer::Integer;
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
 pub trait SmallScalar: Copy + Integer + Sync {
+    /// Performs a field multiplication. Uses `JoltField::mul_u64_unchecked` under the hood.
+    /// WARNING: Does not convert the small scalar into Montgomery form before performing
+    /// the multiplication, so the other operand should probably have an additional R^2
+    /// factor (see `JoltField::montgomery_r2`).
     fn field_mul<F: JoltField>(&self, n: F) -> F;
 }
+
 impl SmallScalar for u8 {
     #[inline]
     fn field_mul<F: JoltField>(&self, n: F) -> F {
@@ -57,7 +62,7 @@ pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
 
 impl<T: SmallScalar, F: JoltField> Valid for CompactPolynomial<T, F> {
     fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 }
 
@@ -67,7 +72,7 @@ impl<T: SmallScalar, F: JoltField> CanonicalDeserialize for CompactPolynomial<T,
         _compress: Compress,
         _validate: Validate,
     ) -> Result<Self, SerializationError> {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 }
 
@@ -77,11 +82,11 @@ impl<T: SmallScalar, F: JoltField> CanonicalSerialize for CompactPolynomial<T, F
         _writer: W,
         _compress: Compress,
     ) -> Result<(), SerializationError> {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 }
 
@@ -89,7 +94,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
     pub fn from_coeffs(coeffs: Vec<T>) -> Self {
         assert!(
             utils::is_power_of_two(coeffs.len()),
-            "Dense multilinear polynomials must be made from a power of 2 (not {})",
+            "Multilinear polynomials must be made from a power of 2 (not {})",
             coeffs.len()
         );
 
@@ -185,7 +190,6 @@ impl<T: SmallScalar, F: JoltField> Index<usize> for CompactPolynomial<T, F> {
 
     #[inline(always)]
     fn index(&self, _index: usize) -> &T {
-        // assert!(self.bound_coeffs.is_empty(), "Polynomial is already bound");
         &(self.coeffs[_index])
     }
 }

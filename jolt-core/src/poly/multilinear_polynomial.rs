@@ -15,6 +15,7 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
+/// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
 #[derive(Clone, Debug, EnumIter, PartialEq)]
 pub enum MultilinearPolynomial<F: JoltField> {
@@ -26,6 +27,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     I64Scalars(CompactPolynomial<i64, F>),
 }
 
+/// The order in which polynomial variables are bound in sumcheck
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
@@ -38,6 +40,7 @@ impl<F: JoltField> Default for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> MultilinearPolynomial<F> {
+    /// The length of the polynomial before it was bound
     pub fn original_len(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.Z.len(),
@@ -49,6 +52,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    /// The current length of the polynomial
     pub fn len(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.len(),
@@ -71,6 +75,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    /// The maximum number of bits occupied by one of the polynomial's coefficients.
     #[tracing::instrument(skip_all)]
     pub fn max_num_bits(&self) -> u32 {
         match self {
@@ -175,6 +180,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         MultilinearPolynomial::from(lc_coeffs)
     }
 
+    /// Gets the polynomial coefficient at the given `index`
     pub fn get_coeff(&self, index: usize) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly[index],
@@ -186,6 +192,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    /// Gets the polynomial coefficient at the given `index`, as an `i64`.
+    /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i64(&self, index: usize) -> i64 {
         match self {
             MultilinearPolynomial::LargeScalars(_) => {
@@ -199,6 +207,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    /// Gets the polynomial coefficient at the given `index`, as an `i128`.
+    /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i128(&self, index: usize) -> i128 {
         match self {
             MultilinearPolynomial::LargeScalars(_) => {
@@ -212,6 +222,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    /// Gets the polynomial coefficient at the given `index`. The polynomial may have
+    /// been bound over the course of sumcheck.
     #[inline]
     pub fn get_bound_coeff(&self, index: usize) -> F {
         match self {
@@ -369,11 +381,11 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
         _writer: W,
         _compress: Compress,
     ) -> Result<(), SerializationError> {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 }
 
@@ -383,25 +395,35 @@ impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
         _compress: Compress,
         _validate: Validate,
     ) -> Result<Self, SerializationError> {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 }
 
 impl<F: JoltField> Valid for MultilinearPolynomial<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("")
+        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
     }
 }
 
 pub trait PolynomialBinding<F: JoltField> {
+    /// Returns whether or not the polynomial has been bound (in a sumcheck)
     fn is_bound(&self) -> bool;
+    /// Binds the polynomial to a random field element `r`.
     fn bind(&mut self, r: F, order: BindingOrder);
+    /// Returns the final sumcheck claim about the polynomial.
     fn final_sumcheck_claim(&self) -> F;
 }
 
 pub trait PolynomialEvaluation<F: JoltField> {
+    /// Returns the final sumcheck claim about the polynomial.
     fn evaluate(&self, r: &[F]) -> F;
+    /// Evaluates a batch of polynomials on the same point `r`.
+    /// Returns: (evals, EQ table)
+    /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
+    /// batched opening proofs (see opening_proof.rs)
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
+    /// Computes this polynomial's contribution to the computation of a prover
+    /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
 }
 
@@ -503,6 +525,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             .iter()
             .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
         {
+            // If any of the polynomials contain non-Montgomery form coefficients,
+            // we need to compute the R^2-adjusted EQ table.
             let eq_r2 = EqPolynomial::evals_with_r2(r);
             let evals: Vec<F> = polys
                 .into_par_iter()
