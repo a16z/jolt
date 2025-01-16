@@ -42,6 +42,7 @@ struct PrecompileWitness {
 
 trait Precompile {
     pub fn format_io(&self, inputs: impl Serialize, outputs: impl Serialize) -> PrecompileIO;
+    pub fn execute(&self, inputs: impl Serialize) -> Vec<u64>;
     pub fn generate_witness(&self, io: PrecompileIO) -> PrecompileWitness {
         // This is a placeholder for the actual implementation.
         PrecompileWitness {

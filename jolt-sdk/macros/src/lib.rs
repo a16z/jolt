@@ -14,9 +14,12 @@ use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, PatType, ReturnType, 
 static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
-pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn provable(attr: TokenStream, item: TokenStream, precompile: Option<TokenStream>) -> TokenStream {
     let attr = parse_macro_input!(attr as AttributeArgs);
     let func = parse_macro_input!(item as ItemFn);
+    if let Some(precompile_func) = precompile.map(|precompile| {
+        parse_macro_input!(precompile as ItemFn)
+    });
     let mut builder = MacroBuilder::new(attr, func);
 
     let mut token_stream = builder.build();
@@ -40,11 +43,16 @@ struct MacroBuilder {
     func: ItemFn,
     std: bool,
     func_args: Vec<(Ident, Box<Type>)>,
+    precompile_func: Option<ItemFn>,
+    precompile_func_args: Option<Vec<(Ident, Box<Type>)>>,
 }
 
 impl MacroBuilder {
-    fn new(attr: AttributeArgs, func: ItemFn) -> Self {
+    fn new(attr: AttributeArgs, func: ItemFn, precompile_func: Option<ItemFn>) -> Self {
         let func_args = Self::get_func_args(&func);
+        if let Some(precompile_func_args) = precompile_func.map(|precompile_func| {
+            Self::get_func_args(&precompile_func)
+        });
         #[cfg(feature = "guest-std")]
         let std = true;
         #[cfg(not(feature = "guest-std"))]
@@ -55,6 +63,8 @@ impl MacroBuilder {
             func,
             std,
             func_args,
+            precompile_func,
+            precompile_func_args,
         }
     }
 
@@ -572,7 +582,7 @@ impl MacroBuilder {
         }
     }
 
-    fn make_precompile_fn(&self, precompile_enum: PrecompileEnum) -> TokenStream2 {
+    fn make_build_precompile_fn(&self, precompile_enum: PrecompileEnum) -> TokenStream2 {
         // Iterate over the inputs
         // Serialize the inputs from the array using correct type
                 asm!(
