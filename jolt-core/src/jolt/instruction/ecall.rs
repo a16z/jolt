@@ -24,10 +24,22 @@ impl VirtualInstructionSequence for EcallInstruction {
         let r_y = trace_row.instruction.rs2;
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
-        let v_q: Option<u64> = Some(virtual_register_index(1));
-        // Precompile input
-        let x = trace_row.register_state.rs1_val.unwrap();
-        let y = trace_row.register_state.rs2_val.unwrap();
+        let v_ao0: Option<u64> = Some(virtual_register_index(1));
+        let v_ao1: Option<u64> = Some(virtual_register_index(2));
+        let v_ao2: Option<u64> = Some(virtual_register_index(3));
+        let v_ao3: Option<u64> = Some(virtual_register_index(4));
+        let v_ao4: Option<u64> = Some(virtual_register_index(5));
+        let v_ao5: Option<u64> = Some(virtual_register_index(6));
+        let v_ao6: Option<u64> = Some(virtual_register_index(7));
+        let v_ao7: Option<u64> = Some(virtual_register_index(8));
+        let v_ao8: Option<u64> = Some(virtual_register_index(9));
+        let v_ao9: Option<u64> = Some(virtual_register_index(10));
+        let v_ao10: Option<u64> = Some(virtual_register_index(11));
+        let v_ao11: Option<u64> = Some(virtual_register_index(12));
+        let v_ao12: Option<u64> = Some(virtual_register_index(13));
+        let v_ao13: Option<u64> = Some(virtual_register_index(14));
+        let v_ao14: Option<u64> = Some(virtual_register_index(15));
+        let v_ao15: Option<u64> = Some(virtual_register_index(16));
 
         let mut virtual_trace = vec![];
 
@@ -40,14 +52,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao0,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao0),
             },
             memory_state: None,
             advice_value: Some(precompile_output[0]),
@@ -60,14 +72,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao1,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao1),
             },
             memory_state: None,
             advice_value: Some(precompile_output[1]),
@@ -80,14 +92,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao2,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao2),
             },
             memory_state: None,
             advice_value: Some(precompile_output[2]),
@@ -100,14 +112,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao3,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao3),
             },
             memory_state: None,
             advice_value: Some(precompile_output[3]),
@@ -120,14 +132,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao4,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao4),
             },
             memory_state: None,
             advice_value: Some(precompile_output[4]),
@@ -140,14 +152,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao5,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao5),
             },
             memory_state: None,
             advice_value: Some(precompile_output[5]),
@@ -160,14 +172,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao6,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao6),
             },
             memory_state: None,
             advice_value: Some(precompile_output[6]),
@@ -180,14 +192,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao7,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao7),
             },
             memory_state: None,
             advice_value: Some(precompile_output[7]),
@@ -200,14 +212,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao8,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao8),
             },
             memory_state: None,
             advice_value: Some(precompile_output[8]),
@@ -220,14 +232,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao9,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao9),
             },
             memory_state: None,
             advice_value: Some(precompile_output[9]),
@@ -240,14 +252,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao10,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(a10),
             },
             memory_state: None,
             advice_value: Some(precompile_output[10]),
@@ -260,14 +272,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao11,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao11),
             },
             memory_state: None,
             advice_value: Some(precompile_output[11]),
@@ -280,14 +292,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_a012,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao12),
             },
             memory_state: None,
             advice_value: Some(precompile_output[12]),
@@ -300,14 +312,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao13,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao13),
             },
             memory_state: None,
             advice_value: Some(precompile_output[13]),
@@ -320,14 +332,14 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao14,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao14),
             },
             memory_state: None,
             advice_value: Some(precompile_output[14]),
@@ -340,21 +352,21 @@ impl VirtualInstructionSequence for EcallInstruction {
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: v_ao15,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(q),
+                rd_post_val: Some(ao15),
             },
             memory_state: None,
             advice_value: Some(precompile_output[15]),
         });
 
 
-
+        // TODO: Implement the precompile call instruction
 
         virtual_trace
     }
