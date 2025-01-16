@@ -2525,6 +2525,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let output = precompile.execute(input);
             let precompile_output_address = 0_u64; // @TODO: which address should be supplied to store the output?
             cpu.get_mut_mmu.set_precompile_output(output, precompile_output_address);
+            Ok(())
 
             // let exception_type = match cpu.privilege_mode {
             //     PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
