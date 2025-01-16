@@ -634,7 +634,7 @@ impl JoltDevice {
                 self.precompile_inputs[internal_address]
             }
         } else if self.is_precompile_output(address) {
-            let internal_address = self.convert_write_address(address);
+            let internal_address = self.convert_read_address(address);
             if self.precompile_outputs.len() <= internal_address {
                 0
             } else {
