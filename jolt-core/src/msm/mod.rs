@@ -9,7 +9,7 @@ use rayon::prelude::*;
 
 pub(crate) mod icicle;
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::MultilinearPolynomial};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 pub use icicle::*;
@@ -244,7 +244,7 @@ where
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
             polys.par_iter().enumerate().partition_map(|(i, poly)| {
                 let max_num_bits = poly.max_num_bits();
-                if use_icicle && max_num_bits > 10 {
+                if use_icicle && max_num_bits > 64 {
                     Either::Right((i, max_num_bits, *poly))
                 } else {
                     Either::Left((i, max_num_bits, *poly))
@@ -292,15 +292,22 @@ where
 
                 // Process GPU batches with memory constraints
                 for work_chunk in gpu_batch.chunks(slices_at_a_time) {
-                    let (scalar_types, chunk_scalars): (Vec<_>, Vec<&[Self::ScalarField]>) =
-                        work_chunk
-                            .par_iter()
-                            .map(|(_, msm_type, scalars)| (*msm_type, *scalars))
-                            .unzip();
+                    let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = work_chunk
+                        .par_iter()
+                        .map(|(_, max_num_bits, poly)| (*max_num_bits, *poly))
+                        .unzip();
 
-                    let max_scalar_type = scalar_types.par_iter().max().unwrap();
+                    let max_num_bits = max_num_bits.iter().max().unwrap();
+                    let scalars: Vec<_> = chunk_polys
+                        .into_iter()
+                        .map(|poly| {
+                            let poly: &DensePolynomial<Self::ScalarField> =
+                                poly.try_into().unwrap();
+                            poly.evals_ref()
+                        })
+                        .collect();
                     let batch_results =
-                        icicle_batch_msm(gpu_bases, &chunk_scalars, *max_scalar_type);
+                        icicle_batch_msm(gpu_bases, &scalars, *max_num_bits as usize);
 
                     // Store GPU results using original indices
                     for ((original_idx, _, _), result) in work_chunk.iter().zip(batch_results) {
@@ -562,28 +569,28 @@ fn msm_medium<F, V, T>(
     _gpu_bases: Option<&[GpuBaseType<V>]>,
     scalars: &[T],
     max_num_bits: usize,
-    use_icicle: bool,
+    _use_icicle: bool,
 ) -> V
 where
     F: JoltField,
     V: VariableBaseMSM<ScalarField = F>,
     T: Into<u64> + Zero + Copy + Sync,
 {
-    if use_icicle {
-        #[cfg(feature = "icicle")]
-        {
-            let mut backup = vec![];
-            let gpu_bases = _gpu_bases.unwrap_or_else(|| {
-                backup = Self::get_gpu_bases(bases);
-                &backup
-            });
-            return icicle_msm::<Self>(_gpu_bases, scalars, max_num_bits);
-        }
-        #[cfg(not(feature = "icicle"))]
-        {
-            unreachable!("icicle_init must not return true without the icicle feature");
-        }
-    }
+    // if use_icicle {
+    //     #[cfg(feature = "icicle")]
+    //     {
+    //         let mut backup = vec![];
+    //         let gpu_bases = _gpu_bases.unwrap_or_else(|| {
+    //             backup = VariableBaseMSM::get_gpu_bases(bases);
+    //             &backup
+    //         });
+    //         return icicle_msm(gpu_bases, scalars, max_num_bits);
+    //     }
+    //     #[cfg(not(feature = "icicle"))]
+    //     {
+    //         unreachable!("icicle_init must not return true without the icicle feature");
+    //     }
+    // }
 
     let c = if bases.len() < 32 {
         3
