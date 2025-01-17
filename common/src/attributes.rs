@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use syn::{Lit, Meta, MetaNameValue, NestedMeta};
 
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, 
+    DEFAULT_MAX_PRECOMPILE_INPUT_SIZE, DEFAULT_MAX_PRECOMPILE_OUTPUT_SIZE,
 };
 
 pub struct Attributes {
@@ -11,6 +12,8 @@ pub struct Attributes {
     pub stack_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
+    pub max_precompile_input_size: u64,
+    pub max_precompile_output_size: u64,
 }
 
 pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
@@ -30,6 +33,8 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
                     "stack_size" => attributes.insert("stack_size", value),
                     "max_input_size" => attributes.insert("max_input_size", value),
                     "max_output_size" => attributes.insert("max_output_size", value),
+                    "max_precompile_input_size" => attributes.insert("max_precompile_input_size", value),
+                    "max_precompile_output_size" => attributes.insert("max_precompile_output_size", value),
                     _ => panic!("invalid attribute"),
                 };
             }
@@ -50,6 +55,12 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let max_output_size = *attributes
         .get("max_output_size")
         .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
+    let max_precompile_input_size = *attributes
+        .get("max_precompile_input_size")
+        .unwrap_or(&DEFAULT_MAX_PRECOMPILE_INPUT_SIZE);
+    let max_precompile_output_size = *attributes
+        .get("max_precompile_output_size")
+        .unwrap_or(&DEFAULT_MAX_PRECOMPILE_OUTPUT_SIZE);
 
     Attributes {
         wasm,
@@ -57,5 +68,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         stack_size,
         max_input_size,
         max_output_size,
+        max_precompile_input_size,
+        max_precompile_output_size,
     }
 }
