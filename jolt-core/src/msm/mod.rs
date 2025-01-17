@@ -244,14 +244,20 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            polys.par_iter().enumerate().partition_map(|(i, poly)| {
-                let max_num_bits = poly.max_num_bits();
-                if use_icicle && max_num_bits > 64 {
-                    Either::Right((i, max_num_bits, *poly))
-                } else {
-                    Either::Left((i, max_num_bits, *poly))
-                }
-            });
+            polys
+                .par_iter()
+                .enumerate()
+                .partition_map(|(i, poly)| match poly {
+                    MultilinearPolynomial::LargeScalars(_) => {
+                        let max_num_bits = poly.max_num_bits();
+                        // Use GPU for large-scalar polynomials
+                        Either::Right((i, max_num_bits, *poly))
+                    }
+                    _ => {
+                        let max_num_bits = poly.max_num_bits();
+                        Either::Left((i, max_num_bits, *poly))
+                    }
+                });
         drop(_guard);
         drop(span);
         let mut results = vec![Self::zero(); polys.len()];
@@ -578,22 +584,6 @@ where
     V: VariableBaseMSM<ScalarField = F>,
     T: Into<u64> + Zero + Copy + Sync,
 {
-    // if use_icicle {
-    //     #[cfg(feature = "icicle")]
-    //     {
-    //         let mut backup = vec![];
-    //         let gpu_bases = _gpu_bases.unwrap_or_else(|| {
-    //             backup = VariableBaseMSM::get_gpu_bases(bases);
-    //             &backup
-    //         });
-    //         return icicle_msm(gpu_bases, scalars, max_num_bits);
-    //     }
-    //     #[cfg(not(feature = "icicle"))]
-    //     {
-    //         unreachable!("icicle_init must not return true without the icicle feature");
-    //     }
-    // }
-
     let c = if bases.len() < 32 {
         3
     } else {

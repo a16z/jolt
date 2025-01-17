@@ -97,8 +97,10 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U64Scalars(poly) => {
                 (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
             }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+            MultilinearPolynomial::I64Scalars(_) => {
+                // HACK(moodlezoup): i64 coefficients are converted into full-width field
+                // elements before computing the MSM
+                F::NUM_BYTES as u32 * 8
             }
         }
     }
