@@ -15,12 +15,14 @@ macro_rules! jolt_instruction_test {
         for (subtable, dimension_indices) in $instr.subtables::<Fr>(C, M) {
             let materialized_subtable = subtable.materialize(M);
             for i in dimension_indices.iter() {
-                subtable_values.push(materialized_subtable[subtable_lookup_indices[i]]);
+                subtable_values.push(Fr::from_u64(
+                    materialized_subtable[subtable_lookup_indices[i]] as u64,
+                ));
             }
         }
 
         let actual = $instr.combine_lookups(&subtable_values, C, M);
-        let expected = Fr::from_u64($instr.lookup_entry()).unwrap();
+        let expected = Fr::from_u64($instr.lookup_entry());
         assert_eq!(actual, expected, "{:?}", $instr);
     };
 }

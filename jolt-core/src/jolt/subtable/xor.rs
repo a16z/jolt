@@ -19,15 +19,15 @@ impl<F: JoltField> XorSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = x ^ y (bit-wise XOR)
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
 
         // Materialize table entries in order where (x | y) ranges 0..M
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
-            let row = F::from_u64((x ^ y) as u64).unwrap();
+            let row = (x ^ y) as u32;
             entries.push(row);
         }
         entries
@@ -43,7 +43,7 @@ impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
         for i in 0..b {
             let x = x[b - i - 1];
             let y = y[b - i - 1];
-            result += F::from_u64(1u64 << i).unwrap() * ((F::one() - x) * y + x * (F::one() - y));
+            result += F::from_u64(1u64 << i) * ((F::one() - x) * y + x * (F::one() - y));
         }
         result
     }
@@ -56,6 +56,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{xor::XorSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

@@ -1,4 +1,5 @@
-use crate::msm::{GpuBaseType, MsmType, VariableBaseMSM};
+use crate::field::JoltField;
+use crate::msm::{GpuBaseType, VariableBaseMSM};
 use ark_bn254::G1Projective;
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::{BigInteger, Field, PrimeField};
@@ -60,11 +61,11 @@ pub trait Icicle: ScalarMul {
 }
 
 #[tracing::instrument(skip_all, name = "icicle_msm")]
-pub fn icicle_msm<V: VariableBaseMSM>(
-    bases: &[GpuBaseType<V>],
-    scalars: &[V::ScalarField],
-    bit_size: usize,
-) -> V {
+pub fn icicle_msm<V>(bases: &[GpuBaseType<V>], scalars: &[V::ScalarField], max_num_bits: usize) -> V
+where
+    V: VariableBaseMSM,
+    V::ScalarField: JoltField,
+{
     assert!(scalars.len() <= bases.len());
 
     let mut bases_slice = DeviceVec::<GpuBaseType<V>>::device_malloc(bases.len()).unwrap();
@@ -99,7 +100,7 @@ pub fn icicle_msm<V: VariableBaseMSM>(
     cfg.stream_handle = IcicleStreamHandle::from(&stream);
     cfg.is_async = false;
     cfg.are_scalars_montgomery_form = true;
-    cfg.bitsize = bit_size as i32;
+    cfg.bitsize = max_num_bits as i32;
 
     let span = tracing::span!(tracing::Level::INFO, "gpu_msm");
     let _guard = span.enter();
@@ -133,11 +134,15 @@ pub fn icicle_msm<V: VariableBaseMSM>(
 /// Batch process msms - assumes batches are equal in size
 /// Variable Batch sizes is not currently supported by icicle
 #[tracing::instrument(skip_all)]
-pub fn icicle_batch_msm<V: VariableBaseMSM>(
+pub fn icicle_batch_msm<V>(
     bases: &[GpuBaseType<V>],
     scalar_batches: &[&[V::ScalarField]],
-    batch_type: MsmType,
-) -> Vec<V> {
+    max_num_bits: usize,
+) -> Vec<V>
+where
+    V: VariableBaseMSM,
+    V::ScalarField: JoltField,
+{
     let bases_len = bases.len();
     let batch_size = scalar_batches.len();
     assert!(scalar_batches.par_iter().all(|s| s.len() == bases_len));
@@ -192,7 +197,7 @@ pub fn icicle_batch_msm<V: VariableBaseMSM>(
     cfg.is_async = true;
     cfg.are_scalars_montgomery_form = true;
     cfg.batch_size = batch_size as i32;
-    cfg.bitsize = batch_type.num_bits() as i32;
+    cfg.bitsize = max_num_bits as i32;
     cfg.ext
         .set_int(icicle_core::msm::CUDA_MSM_LARGE_BUCKET_FACTOR, 5);
 
@@ -311,7 +316,7 @@ mod tests {
             let icicle_res = icicle_msm::<G1Projective>(&gpu_bases, &scalars, 256);
             let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
             let no_gpu_res: G1Projective =
-                VariableBaseMSM::inner_msm(&bases, None, &scalars, false, None).unwrap();
+                VariableBaseMSM::msm_field_elements(&bases, None, &scalars, None, false).unwrap();
 
             assert_eq!(icicle_res, arkworks_res);
             assert_eq!(icicle_res, no_gpu_res);
@@ -337,15 +342,17 @@ mod tests {
                 .par_iter()
                 .map(|base| <G1Projective as Icicle>::from_ark_affine(base))
                 .collect::<Vec<_>>();
-            let icicle_res =
-                icicle_batch_msm::<G1Projective>(&gpu_bases, &scalar_batches, MsmType::Large(256));
+            let icicle_res = icicle_batch_msm::<G1Projective>(&gpu_bases, &scalar_batches, 256);
             let arkworks_res: Vec<G1Projective> = (0..20)
                 .into_iter()
                 .map(|_| ark_VariableBaseMSM::msm(&bases, &scalars).unwrap())
                 .collect();
             let no_gpu_res: Vec<G1Projective> = (0..20)
                 .into_iter()
-                .map(|_| VariableBaseMSM::inner_msm(&bases, None, &scalars, false, None).unwrap())
+                .map(|_| {
+                    VariableBaseMSM::msm_field_elements(&bases, None, &scalars, None, false)
+                        .unwrap()
+                })
                 .collect();
 
             assert_eq!(icicle_res, arkworks_res);

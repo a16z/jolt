@@ -119,16 +119,31 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
         Self(F::random(rng))
     }
 
-    fn from_u64(n: u64) -> Option<Self> {
-        Some(Self(F::new(n)))
+    fn from_u8(n: u8) -> Self {
+        Self(F::new(n as u64))
+    }
+
+    fn from_u16(n: u16) -> Self {
+        Self(F::new(n as u64))
+    }
+
+    fn from_u32(n: u32) -> Self {
+        Self(F::new(n as u64))
+    }
+
+    fn from_u64(n: u64) -> Self {
+        Self(F::new(n))
     }
 
     fn from_i64(val: i64) -> Self {
         if val > 0 {
-            <Self as JoltField>::from_u64(val as u64).unwrap()
+            <Self as JoltField>::from_u64(val as u64)
         } else {
-            <Self as JoltField>::from_u64(-val as u64).unwrap()
+            <Self as JoltField>::from_u64(-val as u64)
         }
+    }
+    fn from_i128(_val: i128) -> Self {
+        todo!()
     }
 
     fn square(&self) -> Self {

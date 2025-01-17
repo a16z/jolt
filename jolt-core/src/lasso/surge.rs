@@ -3,6 +3,8 @@ use crate::{
     jolt::vm::{JoltCommitments, JoltPolynomials, ProverDebugInfo},
     poly::{
         commitment::commitment_scheme::BatchType,
+        compact_polynomial::{CompactPolynomial, SmallScalar},
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
 };
@@ -17,13 +19,11 @@ use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        commitment::{commitment_scheme::CommitmentScheme, hyrax::matrix_dimensions},
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
+        commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::Transcript},
+    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -41,7 +41,7 @@ pub struct SurgeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     v_init_final: VerifierComputedOpening<Vec<T>>,
 }
 
-pub type SurgePolynomials<F: JoltField> = SurgeStuff<DensePolynomial<F>>;
+pub type SurgePolynomials<F: JoltField> = SurgeStuff<MultilinearPolynomial<F>>;
 pub type SurgeOpenings<F: JoltField> = SurgeStuff<F>;
 pub type SurgeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
     SurgeStuff<PCS::Commitment>;
@@ -99,8 +99,8 @@ impl<F, PCS, Instruction, const C: usize, const M: usize, ProofTranscript: Trans
     for SurgeProof<F, PCS, Instruction, C, M, ProofTranscript>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Instruction: JoltInstruction + Default + Sync,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
 {
     type Polynomials = SurgePolynomials<F>;
     type Openings = SurgeOpenings<F>;
@@ -121,23 +121,39 @@ where
         tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
+
+        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
+        // into Montgomery form while multiplying them by gamma or gamma_squared
+        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
+            (*gamma * r2, gamma_squared * r2)
+        } else {
+            (*gamma, gamma_squared)
+        };
+
         let num_lookups = polynomials.dim[0].len();
 
         let read_write_leaves: Vec<_> = (0..Self::num_memories())
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
+                let read_cts: &CompactPolynomial<u32, F> =
+                    (&polynomials.read_cts[dim_index]).try_into().unwrap();
+                let E_poly: &CompactPolynomial<u32, F> =
+                    (&polynomials.E_polys[memory_index]).try_into().unwrap();
+                let dim: &CompactPolynomial<u16, F> =
+                    (&polynomials.dim[dim_index]).try_into().unwrap();
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
-                        mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
-                            + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                            + polynomials.dim[dim_index][i]
-                            - *tau
+                        let a = dim[i];
+                        let v = E_poly[i];
+                        let t = read_cts[i];
+                        t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
+                let t_adjustment = 1u64.field_mul(gamma_squared);
                 let write_fingerprints = read_fingerprints
                     .iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .map(|read_fingerprint| *read_fingerprint + t_adjustment)
                     .collect();
 
                 vec![read_fingerprints, write_fingerprints]
@@ -153,10 +169,8 @@ where
                 let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
                         // 0 * gamma^2 +
-                        mul_0_1_optimized(
-                            &preprocessing.materialized_subtables[subtable_index][i],
-                            gamma,
-                        ) + F::from_u64(i as u64).unwrap()
+                        preprocessing.materialized_subtables[subtable_index][i].field_mul(gamma)
+                            + F::from_u64(i as u64)
                             - *tau
                     })
                     .collect();
@@ -164,11 +178,9 @@ where
                     .iter()
                     .enumerate()
                     .map(|(i, init_fingerprint)| {
-                        *init_fingerprint
-                            + mul_0_1_optimized(
-                                &polynomials.final_cts[dim_index][i],
-                                &gamma_squared,
-                            )
+                        let final_cts: &CompactPolynomial<u32, F> =
+                            (&polynomials.final_cts[dim_index]).try_into().unwrap();
+                        *init_fingerprint + final_cts[i].field_mul(gamma_squared)
                     })
                     .collect();
 
@@ -303,7 +315,8 @@ where
     Instruction: JoltInstruction + Default,
 {
     _instruction: PhantomData<Instruction>,
-    materialized_subtables: Vec<Vec<F>>,
+    _field: PhantomData<F>,
+    materialized_subtables: Vec<Vec<u32>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -335,7 +348,7 @@ where
         let instruction = Instruction::default();
 
         let materialized_subtables = instruction
-            .subtables(C, M)
+            .subtables::<F>(C, M)
             .par_iter()
             .map(|(subtable, _)| subtable.materialize(M))
             .collect();
@@ -344,6 +357,7 @@ where
 
         Self {
             _instruction: PhantomData,
+            _field: PhantomData,
             materialized_subtables,
         }
     }
@@ -379,11 +393,10 @@ where
     /// Computes the maximum number of group generators needed to commit to Surge polynomials
     /// using Hyrax, given `M` and the maximum number of lookups.
     pub fn num_generators(max_num_lookups: usize) -> usize {
-        let max_num_lookups = max_num_lookups.next_power_of_two();
-        let num_read_write_generators = matrix_dimensions(max_num_lookups.log_2(), 16).1;
-        let num_init_final_generators =
-            matrix_dimensions((M * Self::num_memories()).next_power_of_two().log_2(), 4).1;
-        std::cmp::max(num_read_write_generators, num_init_final_generators)
+        std::cmp::max(
+            max_num_lookups.next_power_of_two(),
+            (M * Self::num_memories()).next_power_of_two(),
+        )
     }
 
     #[tracing::instrument(skip_all, name = "Surge::prove")]
@@ -404,14 +417,14 @@ where
         let mut commitments = SurgeCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
         let trace_polys = polynomials.read_write_values();
         let trace_comitments =
-            PCS::batch_commit_polys_ref(&trace_polys, generators, BatchType::SurgeReadWrite);
+            PCS::batch_commit(&trace_polys, generators, BatchType::SurgeReadWrite);
         commitments
             .read_write_values_mut()
             .into_iter()
             .zip(trace_comitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
-        commitments.final_cts = PCS::batch_commit_polys(
-            &polynomials.final_cts,
+        commitments.final_cts = PCS::batch_commit(
+            &polynomials.final_cts.iter().collect::<Vec<_>>(),
             generators,
             BatchType::SurgeInitFinal,
         );
@@ -422,8 +435,8 @@ where
         // TODO(sragss): Commit some of this stuff to transcript?
 
         // Primary sumcheck
-        let r_primary_sumcheck = transcript.challenge_vector(num_rounds);
-        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
+        let r_primary_sumcheck: Vec<F> = transcript.challenge_vector(num_rounds);
+        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_primary_sumcheck));
         let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
 
         transcript.append_scalar(&sumcheck_claim);
@@ -453,7 +466,7 @@ where
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             DensePolynomial::new(EqPolynomial::evals(&r_z)),
             r_z.clone(),
-            &sumcheck_openings.iter().collect::<Vec<_>>(),
+            &sumcheck_openings,
             &mut transcript,
         );
 
@@ -556,10 +569,10 @@ where
         ops: &[Instruction],
     ) -> SurgePolynomials<F> {
         let num_lookups = ops.len().next_power_of_two();
-        let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];
+        let mut dim: Vec<Vec<u16>> = vec![vec![0; num_lookups]; C];
 
-        let mut read_cts = vec![vec![0usize; num_lookups]; C];
-        let mut final_cts = vec![vec![0usize; M]; C];
+        let mut read_cts = vec![vec![0u32; num_lookups]; C];
+        let mut final_cts = vec![vec![0u32; M]; C];
         let log_M = ark_std::log2(M) as usize;
 
         for (op_index, op) in ops.iter().enumerate() {
@@ -570,7 +583,7 @@ where
                 let memory_address = access_sequence[dimension_index];
                 debug_assert!(memory_address < M);
 
-                dim_usize[dimension_index][op_index] = memory_address;
+                dim[dimension_index][op_index] = memory_address as u16;
 
                 let ts = final_cts[dimension_index][memory_address];
                 read_cts[dimension_index][op_index] = ts;
@@ -593,19 +606,6 @@ where
             }
         }
 
-        let dim: Vec<DensePolynomial<F>> = dim_usize
-            .iter()
-            .map(|dim| DensePolynomial::from_usize(dim))
-            .collect();
-        let read_cts: Vec<DensePolynomial<F>> = read_cts
-            .iter()
-            .map(|read| DensePolynomial::from_usize(read))
-            .collect();
-        let final_cts: Vec<DensePolynomial<F>> = final_cts
-            .iter()
-            .map(|fin| DensePolynomial::from_usize(fin))
-            .collect();
-
         // Construct E
         let mut E_i_evals = Vec::with_capacity(Self::num_memories());
         for E_index in 0..Self::num_memories() {
@@ -614,15 +614,27 @@ where
                 let dimension_index = Self::memory_to_dimension_index(E_index);
                 let subtable_index = Self::memory_to_subtable_index(E_index);
 
-                let eval_index = dim_usize[dimension_index][op_index];
-                let eval = preprocessing.materialized_subtables[subtable_index][eval_index];
+                let eval_index = dim[dimension_index][op_index];
+                let eval =
+                    preprocessing.materialized_subtables[subtable_index][eval_index as usize];
                 E_evals.push(eval);
             }
             E_i_evals.push(E_evals);
         }
-        let E_polys: Vec<DensePolynomial<F>> = E_i_evals
-            .iter()
-            .map(|E| DensePolynomial::new(E.to_vec()))
+
+        let E_polys: Vec<MultilinearPolynomial<F>> = E_i_evals
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect();
+        let dim: Vec<MultilinearPolynomial<F>> =
+            dim.into_iter().map(MultilinearPolynomial::from).collect();
+        let read_cts: Vec<MultilinearPolynomial<F>> = read_cts
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect();
+        let final_cts: Vec<MultilinearPolynomial<F>> = final_cts
+            .into_iter()
+            .map(MultilinearPolynomial::from)
             .collect();
 
         SurgePolynomials {
@@ -636,7 +648,10 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(polys: &SurgePolynomials<F>, eq: &DensePolynomial<F>) -> F {
+    fn compute_primary_sumcheck_claim(
+        polys: &SurgePolynomials<F>,
+        eq: &MultilinearPolynomial<F>,
+    ) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -649,9 +664,9 @@ where
             .into_par_iter()
             .map(|eval_index| {
                 let g_operands: Vec<F> = (0..Self::num_memories())
-                    .map(|memory_index| g_operands[memory_index][eval_index])
+                    .map(|memory_index| g_operands[memory_index].get_coeff(eval_index))
                     .collect();
-                eq[eval_index] * instruction.combine_lookups(&g_operands, C, M)
+                eq.get_coeff(eval_index) * instruction.combine_lookups(&g_operands, C, M)
             })
             .sum()
     }

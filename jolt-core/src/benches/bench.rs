@@ -4,15 +4,13 @@ use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
-use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
-use ark_bn254::{Bn254, Fr, G1Projective};
+use ark_bn254::{Bn254, Fr};
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
-    Hyrax,
     Zeromorph,
     HyperKZG,
 }
@@ -34,21 +32,6 @@ pub fn benchmarks(
     _bytecode_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
-        PCSType::Hyrax => match bench_type {
-            BenchType::Sha2 => {
-                sha2::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Sha3 => {
-                sha3::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Sha2Chain => {
-                sha2chain::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Fibonacci => {
-                fibonacci::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>()
-            }
-            _ => panic!("BenchType does not have a mapping"),
-        },
         PCSType::Zeromorph => match bench_type {
             BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
             BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
@@ -135,9 +118,9 @@ where
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
-                1 << 20,
-                1 << 20,
-                1 << 22,
+                1 << 18,
+                1 << 18,
+                1 << 18,
             );
 
         let (jolt_proof, jolt_commitments, _) =

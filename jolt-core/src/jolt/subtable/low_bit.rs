@@ -16,18 +16,14 @@ impl<F: JoltField, const OFFSET: usize> LowBitSubtable<F, OFFSET> {
 }
 
 impl<F: JoltField, const OFFSET: usize> LassoSubtable<F> for LowBitSubtable<F, OFFSET> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x] = x & (1 << OFFSET)
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
         let low_bit = 1usize << OFFSET;
 
         // Materialize table entries in order from 0..M
         for idx in 0..M {
-            entries.push(if idx & low_bit != 0 {
-                F::one()
-            } else {
-                F::zero()
-            });
+            entries.push(if idx & low_bit != 0 { 1 } else { 0 });
         }
         entries
     }
@@ -44,6 +40,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

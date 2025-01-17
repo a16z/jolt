@@ -7,7 +7,7 @@ use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use jolt_core::poly::commitment::hyperkzg::*;
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_core::SeedableRng;
 
@@ -26,7 +26,7 @@ fn main() {
     let srs = HyperKZGSRS::setup(&mut rng, n);
     let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(n);
 
-    let poly = DensePolynomial::new(
+    let poly = MultilinearPolynomial::from(
         (0..n)
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>(),

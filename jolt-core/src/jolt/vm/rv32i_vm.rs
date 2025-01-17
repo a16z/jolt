@@ -240,7 +240,7 @@ impl Serializable for JoltHyperKZGProof {}
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::{Bn254, Fr, G1Projective};
+    use ark_bn254::{Bn254, Fr};
 
     use std::collections::HashSet;
 
@@ -250,7 +250,6 @@ mod tests {
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
-    use crate::poly::commitment::hyrax::HyraxScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
@@ -287,10 +286,6 @@ mod tests {
 
     #[test]
     fn instruction_set_subtables() {
-        test_instruction_set_subtables::<
-            HyraxScheme<G1Projective, KeccakTranscript>,
-            KeccakTranscript,
-        >();
         test_instruction_set_subtables::<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
         test_instruction_set_subtables::<HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
     }
@@ -336,16 +331,6 @@ mod tests {
         fib_e2e::<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript>();
     }
 
-    #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
-    #[test]
-    fn fib_e2e_hyrax() {
-        fib_e2e::<
-            ark_bn254::Fr,
-            HyraxScheme<ark_bn254::G1Projective, KeccakTranscript>,
-            KeccakTranscript,
-        >();
-    }
-
     #[test]
     fn fib_e2e_zeromorph() {
         fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
@@ -362,78 +347,6 @@ mod tests {
     //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
     //     fib_e2e::<Field, MockCommitScheme<Field>>();
     // }
-
-    #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
-    #[test]
-    fn muldiv_e2e_hyrax() {
-        let mut program = host::Program::new("muldiv-guest");
-        program.set_input(&123u32);
-        program.set_input(&234u32);
-        program.set_input(&345u32);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
-
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                _,
-                HyraxScheme<G1Projective, KeccakTranscript>,
-                C,
-                M,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
-
-    #[ignore = "Opening proof reduction for Hyrax doesn't work right now"]
-    #[test]
-    fn sha3_e2e_hyrax() {
-        let guard = SHA3_FILE_LOCK.lock().unwrap();
-
-        let mut program = host::Program::new("sha3-guest");
-        program.set_input(&[5u8; 32]);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
-        drop(guard);
-
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                _,
-                HyraxScheme<G1Projective, KeccakTranscript>,
-                C,
-                M,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
-
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
 
     #[test]
     fn sha3_e2e_zeromorph() {

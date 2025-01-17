@@ -18,12 +18,12 @@ impl<F: JoltField> LeftIsZeroSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for LeftIsZeroSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = (x == 0)
-        let mut entries: Vec<F> = vec![F::zero(); M];
+        let mut entries = vec![0; M];
 
         for idx in 0..(1 << (log2(M) / 2)) {
-            entries[idx] = F::one();
+            entries[idx] = 1;
         }
 
         entries
@@ -50,6 +50,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{left_is_zero::LeftIsZeroSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

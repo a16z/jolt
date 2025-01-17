@@ -1,16 +1,14 @@
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
-use ark_ff::BigInteger;
 use ark_std::rand::seq::SliceRandom;
-use ark_std::rand::Rng;
 use ark_std::UniformRand;
-use ark_std::{One, Zero};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
 #[cfg(feature = "icicle")]
 use jolt_core::msm::Icicle;
-use jolt_core::msm::{icicle_init, GpuBaseType, MsmType, VariableBaseMSM};
+use jolt_core::msm::{icicle_init, GpuBaseType, VariableBaseMSM};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
@@ -21,11 +19,11 @@ const SRS_SIZE: usize = 1 << 14;
 
 // Sets up the benchmark
 fn setup_bench<PCS, F, ProofTranscript>(
-    batch_config: BatchConfig,
+    max_num_bits: Vec<usize>,
 ) -> (
     Vec<G1Affine>,
     Option<Vec<GpuBaseType<G1Projective>>>,
-    Vec<Vec<Fr>>,
+    Vec<MultilinearPolynomial<Fr>>,
 )
 where
     F: JoltField,
@@ -33,19 +31,13 @@ where
     ProofTranscript: Transcript,
 {
     let mut rng = ChaCha20Rng::seed_from_u64(SRS_SIZE as u64);
-    // For each type in the batch config create a vector of scalars
-    let mut scalar_batches: Vec<Vec<Fr>> = vec![];
+    // For each `max_num_bits` value, create a polynomial
+    let mut polys: Vec<_> = max_num_bits
+        .into_iter()
+        .map(|num_bits| random_poly(num_bits, SRS_SIZE))
+        .collect();
 
-    (0..batch_config.small)
-        .into_iter()
-        .for_each(|_| scalar_batches.push(get_scalars(MsmType::Small(0 /* unused */), SRS_SIZE)));
-    (0..batch_config.medium)
-        .into_iter()
-        .for_each(|_| scalar_batches.push(get_scalars(MsmType::Medium(0 /* unused */), SRS_SIZE)));
-    (0..batch_config.large)
-        .into_iter()
-        .for_each(|_| scalar_batches.push(get_scalars(MsmType::Large(0 /* unused */), SRS_SIZE)));
-    scalar_batches.shuffle(&mut rng);
+    polys.shuffle(&mut rng);
 
     let bases: Vec<G1Affine> = std::iter::repeat_with(|| G1Affine::rand(&mut rng))
         .take(SRS_SIZE)
@@ -59,55 +51,58 @@ where
     );
     #[cfg(not(feature = "icicle"))]
     let gpu_bases = None;
-    (bases, gpu_bases, scalar_batches)
+    (bases, gpu_bases, polys)
 }
 
-fn get_scalars(msm_type: MsmType, size: usize) -> Vec<Fr> {
-    let mut rng = ChaCha20Rng::seed_from_u64(size as u64);
-    match msm_type {
-        MsmType::Zero => {
-            vec![Fr::zero(); size]
-        }
-        MsmType::One => {
-            vec![Fr::one(); size]
-        }
-        MsmType::Small(_) => (0..size)
-            .into_iter()
-            .map(|_| {
-                let i = rng.gen_range(0..(1 << 10));
-                <Fr as JoltField>::from_u64(i).unwrap()
-            })
-            .collect(),
-        MsmType::Medium(_) => (0..size)
-            .into_iter()
-            .map(|_| {
-                let i = rng.next_u64();
-                <Fr as JoltField>::from_u64(i).unwrap()
-            })
-            .collect(),
-        MsmType::Large(_) => (0..size)
-            .into_iter()
-            .map(|_| Fr::random(&mut rng))
-            .collect(),
+fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
+    let mut rng = ChaCha20Rng::seed_from_u64(len as u64);
+    match max_num_bits {
+        0 => MultilinearPolynomial::from(vec![0u8; len]),
+        1..=8 => MultilinearPolynomial::from(
+            (0..len)
+                .into_iter()
+                .map(|_| (rng.next_u32() & ((1 << max_num_bits) - 1)) as u8)
+                .collect::<Vec<_>>(),
+        ),
+        9..=16 => MultilinearPolynomial::from(
+            (0..len)
+                .into_iter()
+                .map(|_| (rng.next_u32() & ((1 << max_num_bits) - 1)) as u16)
+                .collect::<Vec<_>>(),
+        ),
+        17..=32 => MultilinearPolynomial::from(
+            (0..len)
+                .into_iter()
+                .map(|_| (rng.next_u64() & ((1 << max_num_bits) - 1)) as u32)
+                .collect::<Vec<_>>(),
+        ),
+        33..=64 => MultilinearPolynomial::from(
+            (0..len)
+                .into_iter()
+                .map(|_| rng.next_u64() & ((1 << max_num_bits) - 1))
+                .collect::<Vec<_>>(),
+        ),
+        _ => MultilinearPolynomial::from(
+            (0..len)
+                .into_iter()
+                .map(|_| Fr::random(&mut rng))
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
 fn benchmark_msm_batch<PCS, F, ProofTranscript>(
     c: &mut Criterion,
     name: &str,
-    batch_config: BatchConfig,
+    max_num_bits: Vec<usize>,
 ) where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    let (bases, gpu_bases, scalar_batches) = setup_bench::<PCS, F, ProofTranscript>(batch_config);
-    let scalar_batches_ref: Vec<_> = scalar_batches
-        .iter()
-        .map(|inner_vec| inner_vec.as_slice())
-        .collect();
+    let (bases, gpu_bases, polys) = setup_bench::<PCS, F, ProofTranscript>(max_num_bits);
+    let polys_ref: Vec<_> = polys.iter().collect();
     icicle_init();
-    println!("Running benchmark for {:?}", batch_config);
     #[cfg(feature = "icicle")]
     let id = format!("{} [mode:Icicle]", name);
     #[cfg(not(feature = "icicle"))]
@@ -117,18 +112,11 @@ fn benchmark_msm_batch<PCS, F, ProofTranscript>(
             let msm = <G1Projective as VariableBaseMSM>::batch_msm(
                 &bases,
                 gpu_bases.as_deref(),
-                &scalar_batches_ref,
+                &polys_ref,
             );
-            assert_eq!(msm.len(), scalar_batches.len());
+            assert_eq!(msm.len(), polys.len());
         });
     });
-}
-
-#[derive(Debug, Clone, Copy)]
-struct BatchConfig {
-    small: usize,
-    medium: usize,
-    large: usize,
 }
 
 fn main() {
@@ -136,32 +124,26 @@ fn main() {
         .configure_from_args()
         .sample_size(10)
         .warm_up_time(std::time::Duration::from_secs(10));
+
+    let max_num_bits = [vec![8; 100], vec![32; 100], vec![256; 300]].concat();
     benchmark_msm_batch::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_batch(bias: Large)",
-        BatchConfig {
-            small: 100,
-            medium: 100,
-            large: 300,
-        },
+        max_num_bits,
     );
+
+    let max_num_bits = [vec![8; 100], vec![32; 300], vec![256; 100]].concat();
     benchmark_msm_batch::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_batch(bias: Medium)",
-        BatchConfig {
-            small: 100,
-            medium: 300,
-            large: 100,
-        },
+        max_num_bits,
     );
+
+    let max_num_bits = [vec![8; 300], vec![32; 100], vec![256; 100]].concat();
     benchmark_msm_batch::<Zeromorph<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
         "VariableBaseMSM::msm_batch(bias: Small)",
-        BatchConfig {
-            small: 300,
-            medium: 100,
-            large: 100,
-        },
+        max_num_bits,
     );
     criterion.final_summary();
 }
