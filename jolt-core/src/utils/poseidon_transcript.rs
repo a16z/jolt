@@ -1,18 +1,18 @@
 use crate::field::JoltField;
 use ark_crypto_primitives::sponge::{
     poseidon::{get_poseidon_parameters, PoseidonDefaultConfigEntry, PoseidonSponge},
-    Absorb, CryptographicSponge, DuplexSpongeMode,
+    Absorb, CryptographicSponge, DuplexSpongeMode, FieldBasedCryptographicSponge,
 };
 use ark_ec::CurveGroup;
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInteger, BigInteger256, PrimeField};
 
 use super::transcript::Transcript;
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Clone)]
 pub struct PoseidonTranscript<F: PrimeField> {
-    state: PoseidonSponge<F>,
+    pub state: PoseidonSponge<F>,
     /// We append an ordinal to each invocation of the hash
-    n_rounds: u32,
+    pub n_rounds: u32,
     #[cfg(test)]
     /// A complete history of the transcript's `state`; used for testing.
     state_history: Vec<F>,
@@ -200,29 +200,38 @@ impl<K: PrimeField> Transcript for PoseidonTranscript<K> {
     }
 
     fn append_u64(&mut self, x: u64) {
-        let n_rounds = self.n_rounds;
-        self.absorb(&n_rounds);
-        self.absorb(&x);
+        let n_rounds = self.n_rounds as u64;
+        self.absorb(&[n_rounds, x].to_vec());
         let new_state = self.squeeze_field_element();
         self.update_state(new_state);
     }
 
     fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
-        let n_rounds = self.n_rounds;
-        self.absorb(&n_rounds);
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
-        self.absorb(&<ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&buf));
+        let wrapped_scalar = <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&buf);
+
+        let to_absorb = [
+            <ark_bn254::Fq as ark_ff::PrimeField>::from_bigint(BigInteger256::from(
+                self.n_rounds as u32,
+            ))
+            .unwrap(),
+            wrapped_scalar,
+        ]
+        .to_vec();
+        self.absorb(&to_absorb);
+
         let new_state = self.squeeze_field_element();
+
         self.update_state(new_state);
     }
 
     fn append_scalars<F: JoltField>(&mut self, scalars: &[F]) {
-        self.append_message(b"begin_append_vector");
+        // self.append_message(b"begin_append_vector");
         for item in scalars.iter() {
             self.append_scalar(item);
         }
-        self.append_message(b"end_append_vector");
+        // self.append_message(b"end_append_vector");
     }
 
     //TODO:-
@@ -238,11 +247,11 @@ impl<K: PrimeField> Transcript for PoseidonTranscript<K> {
     }
 
     fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        self.append_message(b"begin_append_vector");
+        // self.append_message(b"begin_append_vector");
         for item in points.iter() {
             self.append_point(item);
         }
-        self.append_message(b"end_append_vector");
+        // self.append_message(b"end_append_vector");
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
