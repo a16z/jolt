@@ -984,7 +984,7 @@ where
         debug_assert_eq!(lookup_outputs_poly.len(), poly_len);
 
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+        let mut uni_polys: Vec<UniPoly<F>> = Vec::with_capacity(num_rounds);
         let num_eval_points = degree + 1;
 
         let round_uni_poly = Self::primary_sumcheck_inner_loop(
@@ -995,7 +995,7 @@ where
             lookup_outputs_poly,
             num_eval_points,
         );
-        compressed_polys.push(round_uni_poly.compress());
+        uni_polys.push(round_uni_poly.clone());
         let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
         random_vars.push(r_j);
 
@@ -1025,7 +1025,7 @@ where
                 lookup_outputs_poly,
                 num_eval_points,
             );
-            compressed_polys.push(round_uni_poly.compress());
+            uni_polys.push(round_uni_poly.clone());
             let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
             random_vars.push(r_j);
 
@@ -1061,7 +1061,7 @@ where
         drop_in_background_thread(memory_polys_updated);
 
         (
-            SumcheckInstanceProof::new(compressed_polys),
+            SumcheckInstanceProof::new(uni_polys),
             random_vars,
             flag_evals,
             memory_evals,
@@ -1193,7 +1193,7 @@ where
         round_uni_poly: UniPoly<F>,
         transcript: &mut ProofTranscript,
     ) -> F {
-        round_uni_poly.compress().append_to_transcript(transcript);
+        round_uni_poly.append_to_transcript(transcript);
 
         transcript.challenge_scalar::<F>()
     }

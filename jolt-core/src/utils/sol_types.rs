@@ -137,12 +137,8 @@ impl<F: JoltField, ProofTranscript: Transcript> Into<SumcheckProof>
     fn into(self) -> SumcheckProof {
         let mut compressed_polys = vec![];
 
-        for poly in self.compressed_polys.iter() {
-            let new_poly: Vec<U256> = poly
-                .coeffs_except_linear_term
-                .iter()
-                .map(|i| into_uint256(*i))
-                .collect();
+        for poly in self.uni_polys.iter() {
+            let new_poly: Vec<U256> = poly.coeffs.iter().map(|i| into_uint256(*i)).collect();
             compressed_polys.push(new_poly);
         }
 

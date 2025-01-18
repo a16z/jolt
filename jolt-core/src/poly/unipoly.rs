@@ -11,8 +11,8 @@ use rayon::prelude::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug, Clone, PartialEq)]
-pub struct UniPoly<F> {
+#[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct UniPoly<F: JoltField> {
     pub coeffs: Vec<F>,
 }
 
@@ -190,6 +190,13 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     fn mul(self, rhs: &F) -> Self {
         let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+    }
+}
+impl<F: JoltField> AppendToTranscript for UniPoly<F> {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        for i in 0..self.coeffs.len() {
+            transcript.append_scalar(&self.coeffs[i]);
+        }
     }
 }
 

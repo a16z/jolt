@@ -355,23 +355,25 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             .sum();
 
         let mut r: Vec<F> = Vec::new();
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut uni_polys: Vec<UniPoly<F>> = Vec::new();
         let mut bound_polys: Vec<Option<DensePolynomial<F>>> = vec![None; self.openings.len()];
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
             let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, &mut bound_polys, e);
-            let compressed_poly = uni_poly.compress();
+            // let compressed_poly = uni_poly.compress();
 
             // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
+            // compressed_poly.append_to_transcript(transcript);
+            uni_poly.append_to_transcript(transcript);
+
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
             self.bind(remaining_rounds, &mut bound_polys, r_j);
 
             e = uni_poly.evaluate(&r_j);
-            compressed_polys.push(compressed_poly);
+            uni_polys.push(uni_poly);
         }
 
         let claims: Vec<_> = bound_polys
@@ -383,7 +385,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             })
             .collect();
 
-        (SumcheckInstanceProof::new(compressed_polys), r, claims)
+        (SumcheckInstanceProof::new(uni_polys), r, claims)
     }
 
     /// Computes the univariate (quadratic) polynomial that serves as the

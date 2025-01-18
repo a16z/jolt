@@ -42,16 +42,17 @@ where
 
         let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
-        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut cubic_polys: Vec<UniPoly<F>> = Vec::new();
 
         for _ in 0..num_rounds {
             #[cfg(test)]
             self.sumcheck_sanity_check(eq_poly, previous_claim);
 
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
-            let compressed_poly = cubic_poly.compress();
+            // let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
+            cubic_poly.append_to_transcript(transcript);
+            // compressed_poly.append_to_transcript(transcript);
             // derive the verifier's challenge for the next round
             let r_j = transcript.challenge_scalar();
 
@@ -61,7 +62,7 @@ where
             eq_poly.bind(r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
-            cubic_polys.push(compressed_poly);
+            cubic_polys.push(cubic_poly);
         }
 
         #[cfg(test)]
@@ -103,7 +104,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         Func: Fn(&[F]) -> F + std::marker::Sync,
     {
         let mut r: Vec<F> = Vec::new();
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut uni_polys: Vec<UniPoly<F>> = Vec::new();
 
         for _round in 0..num_rounds {
             // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
@@ -170,10 +171,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 });
 
             let round_uni_poly = UniPoly::from_evals(&eval_points);
-            let round_compressed_poly = round_uni_poly.compress();
+            // let round_compressed_poly = round_uni_poly.compress();
 
             // append the prover's message to the transcript
-            round_compressed_poly.append_to_transcript(transcript);
+            // round_compressed_poly.append_to_transcript(transcript);
+            round_uni_poly.append_to_transcript(transcript);
+
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
@@ -181,12 +184,13 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             polys
                 .par_iter_mut()
                 .for_each(|poly| poly.bound_poly_var_top(&r_j));
-            compressed_polys.push(round_compressed_poly);
+            // compressed_polys.push(round_compressed_poly);
+            uni_polys.push(round_uni_poly);
         }
 
         let final_evals = polys.iter().map(|poly| poly[0]).collect();
 
-        (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
+        (SumcheckInstanceProof::new(uni_polys), r, final_evals)
     }
 
     #[inline]
@@ -387,7 +391,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::new();
-        let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut polys: Vec<UniPoly<F>> = Vec::new();
         let mut claim_per_round = *claim;
 
         for _ in 0..num_rounds {
@@ -406,15 +410,16 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 UniPoly::from_evals(&evals)
             };
 
-            let compressed_poly = poly.compress();
+            // let compressed_poly = poly.compress();
 
             // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
+            // compressed_poly.append_to_transcript(transcript);
+            poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar();
             r.push(r_i);
-            polys.push(compressed_poly);
+            polys.push(poly.clone());
 
             // Set up next round
             claim_per_round = poly.evaluate(&r_i);
@@ -451,7 +456,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
-        let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+        let mut polys: Vec<UniPoly<F>> = Vec::with_capacity(num_rounds);
         let mut claim_per_round = *claim;
 
         /*          Round 0 START         */
@@ -508,14 +513,15 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             UniPoly::from_evals(&evals)
         };
 
-        let compressed_poly = poly.compress();
+        // let compressed_poly = poly.compress();
         // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
+        // compressed_poly.append_to_transcript(transcript);
+        poly.append_to_transcript(transcript);
 
         //derive the verifier's challenge for the next round
         let r_i: F = transcript.challenge_scalar();
         r.push(r_i);
-        polys.push(compressed_poly);
+        polys.push(poly.clone());
 
         // Set up next round
         claim_per_round = poly.evaluate(&r_i);
@@ -555,15 +561,16 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 UniPoly::from_evals(&evals)
             };
 
-            let compressed_poly = poly.compress();
+            // let compressed_poly = poly.compress();
             // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
+            poly.append_to_transcript(transcript);
+            // compressed_poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
             let r_i: F = transcript.challenge_scalar();
 
             r.push(r_i);
-            polys.push(compressed_poly);
+            polys.push(poly.clone());
 
             // Set up next round
             claim_per_round = poly.evaluate(&r_i);
@@ -615,16 +622,14 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct SumcheckInstanceProof<F: JoltField, ProofTranscript: Transcript> {
-    pub compressed_polys: Vec<CompressedUniPoly<F>>,
+    pub uni_polys: Vec<UniPoly<F>>,
     _marker: PhantomData<ProofTranscript>,
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
-    pub fn new(
-        compressed_polys: Vec<CompressedUniPoly<F>>,
-    ) -> SumcheckInstanceProof<F, ProofTranscript> {
+    pub fn new(compressed_polys: Vec<UniPoly<F>>) -> SumcheckInstanceProof<F, ProofTranscript> {
         SumcheckInstanceProof {
-            compressed_polys,
+            uni_polys: compressed_polys,
             _marker: PhantomData,
         }
     }
@@ -653,25 +658,29 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut r: Vec<F> = Vec::new();
 
         // verify that there is a univariate polynomial for each round
-        assert_eq!(self.compressed_polys.len(), num_rounds);
-        for i in 0..self.compressed_polys.len() {
+        assert_eq!(self.uni_polys.len(), num_rounds);
+
+        for i in 0..self.uni_polys.len() {
             // verify degree bound
-            if self.compressed_polys[i].degree() != degree_bound {
+            if self.uni_polys[i].degree() != degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
-                    self.compressed_polys[i].degree(),
+                    self.uni_polys[i].degree(),
                 ));
             }
 
+            // check if G_k(0) + G_k(1) = e
+            assert_eq!(self.uni_polys[i].eval_at_zero() + self.uni_polys[i].eval_at_one(), e);
+
             // append the prover's message to the transcript
-            self.compressed_polys[i].append_to_transcript(transcript);
+            self.uni_polys[i].append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar();
             r.push(r_i);
 
             // evaluate the claimed degree-ell polynomial at r_i using the hint
-            e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
+            e = self.uni_polys[i].evaluate(&r_i);
         }
 
         Ok((e, r))
