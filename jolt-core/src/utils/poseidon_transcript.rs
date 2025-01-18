@@ -3,8 +3,9 @@ use ark_crypto_primitives::sponge::{
     poseidon::{get_poseidon_parameters, PoseidonDefaultConfigEntry, PoseidonSponge},
     Absorb, CryptographicSponge, DuplexSpongeMode, FieldBasedCryptographicSponge,
 };
-use ark_ec::CurveGroup;
-use ark_ff::{BigInteger, BigInteger256, PrimeField};
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::{BigInteger, BigInteger256, Field, PrimeField};
+use ark_serialize::CanonicalSerialize;
 
 use super::transcript::Transcript;
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
@@ -212,10 +213,7 @@ impl<K: PrimeField> Transcript for PoseidonTranscript<K> {
         let wrapped_scalar = <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&buf);
 
         let to_absorb = [
-            <ark_bn254::Fq as ark_ff::PrimeField>::from_bigint(BigInteger256::from(
-                self.n_rounds as u32,
-            ))
-            .unwrap(),
+            <ark_bn254::Fq as ark_ff::PrimeField>::from_bigint(self.n_rounds.into()).unwrap(),
             wrapped_scalar,
         ]
         .to_vec();
@@ -234,16 +232,39 @@ impl<K: PrimeField> Transcript for PoseidonTranscript<K> {
         // self.append_message(b"end_append_vector");
     }
 
-    //TODO:-
     fn append_point<G: CurveGroup>(&mut self, point: &G) {
+        if point.is_zero() {
+            let to_absorb = [
+                <ark_bn254::Fq as ark_ff::PrimeField>::from_bigint(self.n_rounds.into()).unwrap(),
+                <ark_bn254::Fq as ark_ff::Zero>::zero(),
+                <ark_bn254::Fq as ark_ff::Zero>::zero(),
+            ]
+            .to_vec();
+            self.absorb(&to_absorb);
+
+            let new_state = self.squeeze_field_element();
+            self.update_state(new_state);
+            return;
+        }
         // If we add the point at infinity then we hash over a region of zeros
-        // if point.is_zero() {
-        //     self.append_bytes(&[1_u8; 2]);
-        //     return;
-        // } else {
-        //     self.append_bytes(&[1_u8; 2]);
-        //     return;
-        // }
+        let aff = point.into_affine();
+        let mut x_bytes = vec![];
+        let mut y_bytes = vec![];
+        let x = aff.x().unwrap();
+        x.serialize_compressed(&mut x_bytes).unwrap();
+        let y = aff.y().unwrap();
+        y.serialize_compressed(&mut y_bytes).unwrap();
+        let to_absorb = [
+            <ark_bn254::Fq as ark_ff::PrimeField>::from_bigint(self.n_rounds.into()).unwrap(),
+            <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&x_bytes),
+            <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&y_bytes),
+        ]
+        .to_vec();
+        self.absorb(&to_absorb);
+
+        let new_state = self.squeeze_field_element();
+
+        self.update_state(new_state);
     }
 
     fn append_points<G: CurveGroup>(&mut self, points: &[G]) {

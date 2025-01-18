@@ -15,7 +15,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn from_u64(n: u64) -> Option<Self> {
-        <Self as ark_ff::PrimeField>::from_u64(n)
+        <Self as ark_ff::PrimeField>::from_bigint(n.into())
     }
 
     fn from_i64(val: i64) -> Self {
