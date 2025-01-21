@@ -95,7 +95,8 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 MemoryOp::noop_read(),
             ],
             RV32InstructionFormat::I => match val.instruction.opcode {
-                RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => [
+                RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+                | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT => [
                     rs1_read(),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_write(),
@@ -232,7 +233,8 @@ impl ELFInstruction {
             | RV32IM::JALR
             | RV32IM::SW
             | RV32IM::LW
-            | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+            | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+            | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT,
         );
 
         flags[CircuitFlags::Load as usize] = matches!(
@@ -275,6 +277,7 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
             | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
             | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+            | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT
         );
 
         flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
@@ -314,12 +317,10 @@ impl ELFInstruction {
             RV32IM::VIRTUAL_ASSERT_EQ                        |
             RV32IM::VIRTUAL_ASSERT_LTE                       |
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT        |
+            RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT            |
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
-            RV32IM::VIRTUAL_ASSERT_VALID_DIV0                |
-            // SW and LW perform a `AssertAlignedMemoryAccessInstruction` lookup
-            RV32IM::SW                                       |
-            RV32IM::LW
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0
         );
 
         // All instructions in virtual sequence are mapped from the same
@@ -429,6 +430,7 @@ pub enum RV32IM {
     VIRTUAL_ASSERT_EQ,
     VIRTUAL_ASSERT_VALID_DIV0,
     VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+    VIRTUAL_ASSERT_WORD_ALIGNMENT,
 }
 
 impl FromStr for RV32IM {
@@ -537,6 +539,7 @@ impl RV32IM {
             RV32IM::SLTIU        |
             RV32IM::VIRTUAL_MOVE |
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT |
+            RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT |
             RV32IM::VIRTUAL_MOVSIGN => RV32InstructionFormat::I,
 
             RV32IM::LB  |

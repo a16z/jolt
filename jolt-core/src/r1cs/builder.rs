@@ -12,7 +12,11 @@ use crate::{
 };
 use ark_ff::One;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::{
+    collections::BTreeMap,
+    marker::PhantomData,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone)]
@@ -70,7 +74,7 @@ impl Constraint {
     }
 }
 
-type AuxComputationFunction = dyn Fn(&[i64]) -> i128 + Send + Sync;
+type AuxComputationFunction = dyn Fn(&[i128]) -> i128 + Send + Sync;
 
 struct AuxComputation<F: JoltField> {
     symbolic_inputs: Vec<LC>,
@@ -131,9 +135,10 @@ impl<F: JoltField> AuxComputation<F> {
             .map(|var| var.get_ref(jolt_polynomials))
             .collect();
 
-        let mut aux_poly: Vec<u64> = vec![0; poly_len];
+        let mut aux_poly: Vec<i64> = vec![0; poly_len];
         let num_threads = rayon::current_num_threads();
         let chunk_size = poly_len.div_ceil(num_threads);
+        let contains_negative_values = AtomicBool::new(false);
 
         aux_poly
             .par_chunks_mut(chunk_size)
@@ -149,20 +154,30 @@ impl<F: JoltField> AuxComputation<F> {
                             for term in lc.terms().iter() {
                                 match term.0 {
                                     Variable::Input(index) | Variable::Auxiliary(index) => {
-                                        input += flattened_polys[index].get_coeff_i64(global_index)
-                                            * term.1;
+                                        input += flattened_polys[index]
+                                            .get_coeff_i128(global_index)
+                                            * term.1 as i128;
                                     }
-                                    Variable::Constant => input += term.1,
+                                    Variable::Constant => input += term.1 as i128,
                                 }
                             }
                             input
                         })
                         .collect();
-                    *result = u64::try_from((self.compute)(&compute_inputs)).unwrap();
+                    let aux_value = (self.compute)(&compute_inputs);
+                    if aux_value.is_negative() {
+                        contains_negative_values.store(true, Ordering::Relaxed);
+                    }
+                    *result = aux_value as i64;
                 });
             });
 
-        MultilinearPolynomial::from(aux_poly)
+        if contains_negative_values.into_inner() {
+            MultilinearPolynomial::from(aux_poly)
+        } else {
+            let aux_poly: Vec<_> = aux_poly.into_iter().map(|x| x as u64).collect();
+            MultilinearPolynomial::from(aux_poly)
+        }
     }
 }
 
@@ -295,16 +310,16 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         result_false: &LC,
     ) -> Variable {
         // aux = (condition == 1) ? result_true : result_false;
-        let if_else = |values: &[i64]| -> i128 {
+        let if_else = |values: &[i128]| -> i128 {
             assert_eq!(values.len(), 3);
             let condition = values[0];
             let result_true = values[1];
             let result_false = values[2];
 
             if condition.is_one() {
-                result_true as i128
+                result_true
             } else {
-                result_false as i128
+                result_false
             }
         };
 
@@ -386,9 +401,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
     }
 
     fn aux_prod(&mut self, aux_symbol: I, x: &LC, y: &LC) -> Variable {
-        let prod = |values: &[i64]| {
+        let prod = |values: &[i128]| {
             assert_eq!(values.len(), 2);
-            (values[0] as i128) * (values[1] as i128)
+            (values[0]) * (values[1])
         };
 
         let symbolic_inputs = vec![x.clone(), y.clone()];
