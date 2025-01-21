@@ -3,8 +3,6 @@ use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use rayon::prelude::*;
@@ -22,7 +20,7 @@ use crate::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math},
+    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -185,19 +183,19 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
-/// Note –– F: JoltField bound is not enforced.
+/// Note –– F: JoltField bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<MultilinearPolynomial<F>>;
-/// Note –– F: JoltField bound is not enforced.
+pub type ReadWriteMemoryPolynomials<F: JoltField> = ReadWriteMemoryStuff<DensePolynomial<F>>;
+/// Note –– F: JoltField bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
-/// Note –– PCS: CommitmentScheme bound is not enforced.
+/// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
@@ -239,23 +237,21 @@ impl<F: JoltField> ExogenousOpenings<F> for RegisterAddressOpenings<F> {
     }
 }
 
-fn map_to_polys<F: JoltField, const N: usize>(
-    vals: [Vec<u32>; N],
-) -> [MultilinearPolynomial<F>; N] {
-    vals.into_par_iter()
-        .map(MultilinearPolynomial::from)
-        .collect::<Vec<MultilinearPolynomial<F>>>()
+fn map_to_polys<F: JoltField, const N: usize>(vals: [&[u64]; N]) -> [DensePolynomial<F>; N] {
+    vals.par_iter()
+        .map(|vals| DensePolynomial::from_u64(vals))
+        .collect::<Vec<DensePolynomial<F>>>()
         .try_into()
         .unwrap()
 }
 
 impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
-    #[tracing::instrument(skip_all, name = "ReadWriteMemoryPolynomials::generate_witness")]
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
         trace: &[JoltTraceStep<InstructionSet>],
-    ) -> Self {
+    ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
@@ -272,14 +268,14 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             .unwrap();
 
         let memory_size = max_trace_address.next_power_of_two() as usize;
-        let mut v_init: Vec<u32> = vec![0; memory_size];
+        let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
         let mut v_init_index = memory_address_to_witness_index(
             preprocessing.min_bytecode_address,
             &program_io.memory_layout,
         );
         for word in preprocessing.bytecode_words.iter() {
-            v_init[v_init_index] = *word;
+            v_init[v_init_index] = *word as u64;
             v_init_index += 1;
         }
         // Copy input bytes
@@ -294,37 +290,37 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            v_init[v_init_index] = word;
+            v_init[v_init_index] = word as u64;
             v_init_index += 1;
         }
 
         #[cfg(test)]
-        let mut init_tuples: HashSet<(usize, u32, u32)> = HashSet::new();
+        let mut init_tuples: HashSet<(usize, u64, u64)> = HashSet::new();
         #[cfg(test)]
         {
             for (a, v) in v_init.iter().enumerate() {
-                init_tuples.insert((a, *v, 0));
+                init_tuples.insert((a, *v, 0u64));
             }
         }
         #[cfg(test)]
-        let mut read_tuples: HashSet<(usize, u32, u32)> = HashSet::new();
+        let mut read_tuples: HashSet<(usize, u64, u64)> = HashSet::new();
         #[cfg(test)]
-        let mut write_tuples: HashSet<(usize, u32, u32)> = HashSet::new();
+        let mut write_tuples: HashSet<(usize, u64, u64)> = HashSet::new();
 
-        let mut a_ram: Vec<u32> = Vec::with_capacity(m);
+        let mut a_ram: Vec<u64> = Vec::with_capacity(m);
 
-        let mut v_read_rs1: Vec<u32> = Vec::with_capacity(m);
-        let mut v_read_rs2: Vec<u32> = Vec::with_capacity(m);
-        let mut v_read_rd: Vec<u32> = Vec::with_capacity(m);
-        let mut v_read_ram: Vec<u32> = Vec::with_capacity(m);
+        let mut v_read_rs1: Vec<u64> = Vec::with_capacity(m);
+        let mut v_read_rs2: Vec<u64> = Vec::with_capacity(m);
+        let mut v_read_rd: Vec<u64> = Vec::with_capacity(m);
+        let mut v_read_ram: Vec<u64> = Vec::with_capacity(m);
 
-        let mut t_read_rs1: Vec<u32> = Vec::with_capacity(m);
-        let mut t_read_rs2: Vec<u32> = Vec::with_capacity(m);
-        let mut t_read_rd: Vec<u32> = Vec::with_capacity(m);
-        let mut t_read_ram: Vec<u32> = Vec::with_capacity(m);
+        let mut t_read_rs1: Vec<u64> = Vec::with_capacity(m);
+        let mut t_read_rs2: Vec<u64> = Vec::with_capacity(m);
+        let mut t_read_rd: Vec<u64> = Vec::with_capacity(m);
+        let mut t_read_ram: Vec<u64> = Vec::with_capacity(m);
 
-        let mut v_write_rd: Vec<u32> = Vec::with_capacity(m);
-        let mut v_write_ram: Vec<u32> = Vec::with_capacity(m);
+        let mut v_write_rd: Vec<u64> = Vec::with_capacity(m);
+        let mut v_write_ram: Vec<u64> = Vec::with_capacity(m);
 
         let mut t_final = vec![0; memory_size];
         let mut v_final = v_init.clone();
@@ -333,7 +329,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
         let _enter = span.enter();
 
         for (i, step) in trace.iter().enumerate() {
-            let timestamp = i as u32;
+            let timestamp = i as u64;
 
             match step.memory_ops[RS1] {
                 MemoryOp::Read(a) => {
@@ -389,13 +385,13 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                     #[cfg(test)]
                     {
                         read_tuples.insert((a, v_old, t_final[a]));
-                        write_tuples.insert((a, v_new as u32, timestamp));
+                        write_tuples.insert((a, v_new, timestamp));
                     }
 
                     v_read_rd.push(v_old);
                     t_read_rd.push(t_final[a]);
-                    v_write_rd.push(v_new as u32);
-                    v_final[a] = v_new as u32;
+                    v_write_rd.push(v_new);
+                    v_final[a] = v_new;
                     t_final[a] = timestamp;
                 }
             };
@@ -412,7 +408,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                         write_tuples.insert((remapped_a, v, timestamp));
                     }
 
-                    a_ram.push(remapped_a as u32);
+                    a_ram.push(remapped_a as u64);
                     v_read_ram.push(v);
                     t_read_ram.push(t_final[remapped_a]);
                     v_write_ram.push(v);
@@ -426,14 +422,14 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                     #[cfg(test)]
                     {
                         read_tuples.insert((remapped_a, v_old, t_final[remapped_a]));
-                        write_tuples.insert((remapped_a, v_new as u32, timestamp));
+                        write_tuples.insert((remapped_a, v_new, timestamp));
                     }
 
-                    a_ram.push(remapped_a as u32);
+                    a_ram.push(remapped_a as u64);
                     v_read_ram.push(v_old);
                     t_read_ram.push(t_final[remapped_a]);
-                    v_write_ram.push(v_new as u32);
-                    v_final[remapped_a] = v_new as u32;
+                    v_write_ram.push(v_new);
+                    v_final[remapped_a] = v_new;
                     t_final[remapped_a] = timestamp;
                 }
             }
@@ -444,7 +440,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
 
         #[cfg(test)]
         {
-            let mut final_tuples: HashSet<(usize, u32, u32)> = HashSet::new();
+            let mut final_tuples: HashSet<(usize, u64, u64)> = HashSet::new();
             for (a, (v, t)) in v_final.iter().zip(t_final.iter()).enumerate() {
                 final_tuples.insert((a, *v, *t));
             }
@@ -457,23 +453,23 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
 
         let [a_ram, v_read_rd, v_read_rs1, v_read_rs2, v_read_ram, v_write_rd, v_write_ram, v_final, t_read_rd_poly, t_read_rs1_poly, t_read_rs2_poly, t_read_ram_poly, t_final, v_init] =
             map_to_polys([
-                a_ram,
-                v_read_rd,
-                v_read_rs1,
-                v_read_rs2,
-                v_read_ram,
-                v_write_rd,
-                v_write_ram,
-                v_final,
-                t_read_rd,
-                t_read_rs1,
-                t_read_rs2,
-                t_read_ram,
-                t_final,
-                v_init,
+                &a_ram,
+                &v_read_rd,
+                &v_read_rs1,
+                &v_read_rs2,
+                &v_read_ram,
+                &v_write_rd,
+                &v_write_ram,
+                &v_final,
+                &t_read_rd,
+                &t_read_rs1,
+                &t_read_rs2,
+                &t_read_ram,
+                &t_final,
+                &v_init,
             ]);
 
-        ReadWriteMemoryPolynomials {
+        let polynomials = ReadWriteMemoryPolynomials {
             a_ram,
             v_read_rd,
             v_read_rs1,
@@ -490,7 +486,9 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             v_init: Some(v_init),
             a_init_final: None,
             identity: None,
-        }
+        };
+
+        (polynomials, [t_read_rd, t_read_rs1, t_read_rs2, t_read_ram])
     }
 
     /// Computes the shape of all commitments.
@@ -539,39 +537,12 @@ where
         tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
-
-        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
-        // into Montgomery form while multiplying them by gamma or gamma_squared
-        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
-            (*gamma * r2, gamma_squared * r2)
-        } else {
-            (*gamma, gamma_squared)
-        };
-
         let num_ops = polynomials.a_ram.len();
         let memory_size = polynomials.v_final.len();
 
-        let a_rd: &CompactPolynomial<u8, F> = (&jolt_polynomials.bytecode.v_read_write[2])
-            .try_into()
-            .unwrap();
-        let a_rs1: &CompactPolynomial<u8, F> = (&jolt_polynomials.bytecode.v_read_write[3])
-            .try_into()
-            .unwrap();
-        let a_rs2: &CompactPolynomial<u8, F> = (&jolt_polynomials.bytecode.v_read_write[4])
-            .try_into()
-            .unwrap();
-        let a_ram: &CompactPolynomial<u32, F> = (&polynomials.a_ram).try_into().unwrap();
-        let v_read_rs1: &CompactPolynomial<u32, F> = (&polynomials.v_read_rs1).try_into().unwrap();
-        let v_read_rs2: &CompactPolynomial<u32, F> = (&polynomials.v_read_rs2).try_into().unwrap();
-        let v_read_rd: &CompactPolynomial<u32, F> = (&polynomials.v_read_rd).try_into().unwrap();
-        let v_read_ram: &CompactPolynomial<u32, F> = (&polynomials.v_read_ram).try_into().unwrap();
-        let v_write_rd: &CompactPolynomial<u32, F> = (&polynomials.v_write_rd).try_into().unwrap();
-        let v_write_ram: &CompactPolynomial<u32, F> =
-            (&polynomials.v_write_ram).try_into().unwrap();
-        let t_read_rs1: &CompactPolynomial<u32, F> = (&polynomials.t_read_rs1).try_into().unwrap();
-        let t_read_rs2: &CompactPolynomial<u32, F> = (&polynomials.t_read_rs2).try_into().unwrap();
-        let t_read_rd: &CompactPolynomial<u32, F> = (&polynomials.t_read_rd).try_into().unwrap();
-        let t_read_ram: &CompactPolynomial<u32, F> = (&polynomials.t_read_ram).try_into().unwrap();
+        let a_rd = &jolt_polynomials.bytecode.v_read_write[2];
+        let a_rs1 = &jolt_polynomials.bytecode.v_read_write[3];
+        let a_rs2 = &jolt_polynomials.bytecode.v_read_write[4];
 
         let mut read_write_leaves: Vec<F> =
             unsafe_allocate_zero_vec(2 * MEMORY_OPS_PER_INSTRUCTION * num_ops);
@@ -582,27 +553,27 @@ where
                 .for_each(|(j, read_fingerprint)| {
                     match i {
                         RS1 => {
-                            *read_fingerprint = t_read_rs1[j].field_mul(gamma_squared)
-                                + v_read_rs1[j].field_mul(gamma)
-                                + F::from_u8(a_rs1[j])
+                            *read_fingerprint = polynomials.t_read_rs1[j] * gamma_squared
+                                + mul_0_optimized(&polynomials.v_read_rs1[j], gamma)
+                                + a_rs1[j]
                                 - *tau;
                         }
                         RS2 => {
-                            *read_fingerprint = t_read_rs2[j].field_mul(gamma_squared)
-                                + v_read_rs2[j].field_mul(gamma)
-                                + F::from_u8(a_rs2[j])
+                            *read_fingerprint = polynomials.t_read_rs2[j] * gamma_squared
+                                + mul_0_optimized(&polynomials.v_read_rs2[j], gamma)
+                                + a_rs2[j]
                                 - *tau;
                         }
                         RD => {
-                            *read_fingerprint = t_read_rd[j].field_mul(gamma_squared)
-                                + v_read_rd[j].field_mul(gamma)
-                                + F::from_u8(a_rd[j])
+                            *read_fingerprint = polynomials.t_read_rd[j] * gamma_squared
+                                + mul_0_optimized(&polynomials.v_read_rd[j], gamma)
+                                + a_rd[j]
                                 - *tau;
                         }
                         RAM => {
-                            *read_fingerprint = t_read_ram[j].field_mul(gamma_squared)
-                                + v_read_ram[j].field_mul(gamma)
-                                + F::from_u32(a_ram[j])
+                            *read_fingerprint = polynomials.t_read_ram[j] * gamma_squared
+                                + mul_0_optimized(&polynomials.v_read_ram[j], gamma)
+                                + polynomials.a_ram[j]
                                 - *tau;
                         }
                         _ => unreachable!(),
@@ -612,27 +583,27 @@ where
             chunk[num_ops..].par_iter_mut().enumerate().for_each(
                 |(j, write_fingerprint)| match i {
                     RS1 => {
-                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
-                            + v_read_rs1[j].field_mul(gamma)
-                            + F::from_u8(a_rs1[j])
+                        *write_fingerprint = F::from_u64(j as u64).unwrap() * gamma_squared
+                            + mul_0_optimized(&polynomials.v_read_rs1[j], gamma)
+                            + a_rs1[j]
                             - *tau;
                     }
                     RS2 => {
-                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
-                            + v_read_rs2[j].field_mul(gamma)
-                            + F::from_u8(a_rs2[j])
+                        *write_fingerprint = F::from_u64(j as u64).unwrap() * gamma_squared
+                            + mul_0_optimized(&polynomials.v_read_rs2[j], gamma)
+                            + a_rs2[j]
                             - *tau;
                     }
                     RD => {
-                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
-                            + v_write_rd[j].field_mul(gamma)
-                            + F::from_u8(a_rd[j])
+                        *write_fingerprint = F::from_u64(j as u64).unwrap() * gamma_squared
+                            + mul_0_optimized(&polynomials.v_write_rd[j], gamma)
+                            + a_rd[j]
                             - *tau
                     }
                     RAM => {
-                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
-                            + v_write_ram[j].field_mul(gamma)
-                            + F::from_u32(a_ram[j])
+                        *write_fingerprint = F::from_u64(j as u64).unwrap() * gamma_squared
+                            + mul_0_optimized(&polynomials.v_write_ram[j], gamma)
+                            + polynomials.a_ram[j]
                             - *tau;
                     }
                     _ => unreachable!(),
@@ -640,21 +611,17 @@ where
             );
         }
 
-        let v_init: &CompactPolynomial<u32, F> =
-            polynomials.v_init.as_ref().unwrap().try_into().unwrap();
+        let v_init = polynomials.v_init.as_ref().unwrap();
         let init_fingerprints: Vec<F> = (0..memory_size)
             .into_par_iter()
-            .map(|i| /* 0 * gamma^2 + */ v_init[i].field_mul(gamma) + F::from_u32(i as u32) - *tau)
+            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
             .collect();
-
-        let v_final: &CompactPolynomial<u32, F> = (&polynomials.v_final).try_into().unwrap();
-        let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
         let final_fingerprints = (0..memory_size)
             .into_par_iter()
             .map(|i| {
-                t_final[i].field_mul(gamma_squared)
-                    + v_final[i].field_mul(gamma)
-                    + F::from_u32(i as u32)
+                mul_0_optimized(&polynomials.t_final[i], &gamma_squared)
+                    + mul_0_optimized(&polynomials.v_final[i], gamma)
+                    + F::from_u64(i as u64).unwrap()
                     - *tau
             })
             .collect();
@@ -743,29 +710,41 @@ where
 
         let memory_layout = &preprocessing.program_io.as_ref().unwrap().memory_layout;
 
-        // TODO(moodlezoup): Compute opening without instantiating v_init polynomial itself
+        // Optimized computation of v_init opening without creating the full polynomial
         let memory_size = r_init_final.len().pow2();
-        let mut v_init: Vec<u64> = vec![0; memory_size];
-        // Copy bytecode
-        let mut v_init_index =
-            memory_address_to_witness_index(preprocessing.min_bytecode_address, memory_layout);
+        let mut v_init_eval = F::zero();
+        let mut current_power = F::one();
+        
+        // Calculate contribution from bytecode
+        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address, memory_layout);
         for word in preprocessing.bytecode_words.iter() {
-            v_init[v_init_index] = *word as u64;
-            v_init_index += 1;
-        }
-        v_init_index = memory_address_to_witness_index(memory_layout.input_start, memory_layout);
-        // Convert input bytes into words and populate `v_init`
-        for chunk in preprocessing.program_io.as_ref().unwrap().inputs.chunks(4) {
-            let mut word = [0u8; 4];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
+            if v_init_index < memory_size {
+                v_init_eval += F::from_u64(*word as u64).unwrap() * current_power;
+                for _ in 0..v_init_index {
+                    current_power *= r_init_final[0];
+                }
             }
-            let word = u32::from_le_bytes(word);
-            v_init[v_init_index] = word as u64;
             v_init_index += 1;
         }
 
-        openings.v_init = Some(DensePolynomial::from_u64(&v_init).evaluate(r_init_final));
+        // Calculate contribution from input data
+        v_init_index = memory_address_to_witness_index(memory_layout.input_start, memory_layout);
+        for chunk in preprocessing.program_io.as_ref().unwrap().inputs.chunks(4) {
+            if v_init_index < memory_size {
+                let mut word = [0u8; 4];
+                for (i, byte) in chunk.iter().enumerate() {
+                    word[i] = *byte;
+                }
+                let word = u32::from_le_bytes(word);
+                v_init_eval += F::from_u64(word as u64).unwrap() * current_power;
+                for _ in 0..v_init_index {
+                    current_power *= r_init_final[0];
+                }
+            }
+            v_init_index += 1;
+        }
+
+        openings.v_init = Some(v_init_eval);
     }
 
     fn read_tuples(
@@ -874,8 +853,8 @@ where
     ) -> Self {
         let memory_size = polynomials.v_final.len();
         let num_rounds = memory_size.log_2();
-        let r_eq: Vec<F> = transcript.challenge_vector(num_rounds);
-        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
+        let r_eq = transcript.challenge_vector(num_rounds);
+        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_eq));
 
         let input_start_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
@@ -884,17 +863,17 @@ where
         let ram_start_index =
             memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
 
-        let io_witness_range: Vec<u8> = (0..memory_size as u64)
+        let io_witness_range: Vec<_> = (0..memory_size as u64)
             .map(|i| {
                 if i >= input_start_index && i < ram_start_index {
-                    1
+                    F::one()
                 } else {
-                    0
+                    F::zero()
                 }
             })
             .collect();
 
-        let mut v_io: Vec<u32> = vec![0; memory_size];
+        let mut v_io: Vec<u64> = vec![0; memory_size];
         let mut input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -906,7 +885,7 @@ where
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            v_io[input_index] = word;
+            v_io[input_index] = word as u64;
             input_index += 1;
         }
         let mut output_index = memory_address_to_witness_index(
@@ -920,7 +899,7 @@ where
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            v_io[output_index] = word;
+            v_io[output_index] = word as u64;
             output_index += 1;
         }
 
@@ -928,7 +907,7 @@ where
         v_io[memory_address_to_witness_index(
             program_io.memory_layout.panic,
             &program_io.memory_layout,
-        )] = program_io.panic as u32;
+        )] = program_io.panic as u64;
         if !program_io.panic {
             // Set termination bit
             v_io[memory_address_to_witness_index(
@@ -939,9 +918,9 @@ where
 
         let mut sumcheck_polys = vec![
             eq,
-            MultilinearPolynomial::from(io_witness_range),
+            DensePolynomial::new(io_witness_range),
             polynomials.v_final.clone(),
-            MultilinearPolynomial::from(v_io),
+            DensePolynomial::from_u64(&v_io),
         ];
 
         // eq * io_witness_range * (v_final - v_io)
@@ -961,7 +940,7 @@ where
             &[&polynomials.v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
-            &[sumcheck_openings[2]],
+            &[&sumcheck_openings[2]],
             transcript,
         );
 
