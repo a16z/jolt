@@ -241,7 +241,7 @@ impl Serializable for JoltHyperKZGProof {}
 // ==================== TEST ====================
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use ark_bn254::{Bn254, Fr, G1Projective};
 
     use std::collections::HashSet;
@@ -250,15 +250,19 @@ mod tests {
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
+    use crate::jolt::vm::{JoltProof, JoltStuff};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::hyrax::HyraxScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
+    use crate::r1cs::inputs::JoltR1CSInputs;
     use crate::utils::poseidon_transcript::PoseidonTranscript;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use std::sync::{LazyLock, Mutex};
     use strum::{EnumCount, IntoEnumIterator};
+
+    use super::{RV32ISubtables, RV32I};
 
     // If multiple tests try to read the same trace artifacts simultaneously, they will fail
     static FIB_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -334,6 +338,46 @@ mod tests {
         );
     }
 
+    pub fn fib_e2e_circom<F, PCS, ProofTranscript>() -> (
+        JoltProof<C, M, JoltR1CSInputs, F, PCS, RV32I, RV32ISubtables<F>, ProofTranscript>,
+        JoltStuff<<PCS as CommitmentScheme<ProofTranscript>>::Commitment>,
+    )
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
+        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&9u32);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace) = program.trace();
+        drop(artifact_guard);
+
+        let preprocessing = RV32IJoltVM::preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            memory_init,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+        );
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<F, PCS, C, M, ProofTranscript>>::prove(
+                io_device,
+                trace,
+                preprocessing.clone(),
+            );
+        (proof, commitments)
+        // let verification_result =
+        //     RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+        // assert!(
+        //     verification_result.is_ok(),
+        //     "Verification failed with error: {:?}",
+        //     verification_result.err()
+        // );
+    }
+
     #[test]
     fn fib_e2e_mock() {
         fib_e2e::<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript>();
@@ -356,9 +400,13 @@ mod tests {
 
     #[test]
     fn fib_e2e_zeromorph() {
-        fib_e2e::<Fr, Zeromorph<Bn254, PoseidonTranscript<ark_bn254::Fq>>, PoseidonTranscript<ark_bn254::Fq>>();
+        fib_e2e::<
+            Fr,
+            Zeromorph<Bn254, PoseidonTranscript<ark_bn254::Fq>>,
+            PoseidonTranscript<ark_bn254::Fq>,
+        >();
     }
-    
+
     #[test]
     fn fib_e2e_hyperkzg() {
         println!("Running Fib");
@@ -368,6 +416,30 @@ mod tests {
             PoseidonTranscript<ark_bn254::Fq>,
         >();
     }
+
+    // pub fn fib_e2e_hyperkzg_circom() -> (
+    //     JoltProof<
+    //         C,
+    //         M,
+    //         JoltR1CSInputs,
+    //         ark_ff::Fp<MontBackend<FrConfig, 4>, 4>,
+    //         HyperKZG<
+    //             Bn<ark_bn254::Config>,
+    //             PoseidonTranscript<ark_ff::Fp<MontBackend<FqConfig, 4>, 4>>,
+    //         >,
+    //         RV32I,
+    //         RV32ISubtables<ark_ff::Fp<MontBackend<FrConfig, 4>, 4>>,
+    //         PoseidonTranscript<ark_ff::Fp<MontBackend<FqConfig, 4>, 4>>,
+    //     >,
+    //     JoltStuff<HyperKZGCommitment<Bn<ark_bn254::Config>>>,
+    // ) {
+    //     fib_e2e_circom::<
+    //         Fr,
+    //         HyperKZG<Bn254, PoseidonTranscript<ark_bn254::Fq>>,
+    //         PoseidonTranscript<ark_bn254::Fq>,
+    //     >()
+    // }
+
     // #[test]
     // fn fib_e2e_hyperkzg() {
     //     fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
