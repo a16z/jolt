@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      docker_image: ${{ steps.build.outputs.docker_image }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Build Docker Image
+        id: build
+        run: |
+          docker build -t custom-cuda-image:latest -f .github/workflows/Dockerfile .
+          echo "docker_image=custom-cuda-image:latest" >> $GITHUB_ENV
+
   fmt:
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +42,15 @@ jobs:
         with:
           command: fmt
           args: --all --check
+
+      - name: cargo fmt with icicle
+        needs: build-docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            custom-cuda-image:latest \
+            cargo fmt --all --check --features icicle
 
   clippy:
     runs-on: ubuntu-latest
@@ -76,6 +100,14 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
+    # Run jolt-core tests with icicle feature
+      - name: Run jolt-core tests with --features icicle
+        run: |
+          docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          custom-cuda-image:latest \
+          cargo nextest run --release -p jolt-core --features icicle
 
   on-chain:
     name: Onchain Verifier Tests
