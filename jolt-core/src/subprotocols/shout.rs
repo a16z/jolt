@@ -2,6 +2,7 @@ use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
+        identity_poly::IdentityPolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
@@ -160,6 +161,82 @@ pub fn prove_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
     )
 }
 
+/// Implements the sumcheck prover for the raf-evaluation sumcheck in step 6 of
+/// Figure 6 in the Twist+Shout paper.
+pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
+    lookup_table: Vec<F>,
+    read_addresses: Vec<usize>,
+    r_cycle: Vec<F>,
+    claimed_evaluation: F,
+    transcript: &mut ProofTranscript,
+) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
+    let K = lookup_table.len();
+    let T = read_addresses.len();
+    debug_assert_eq!(T.log_2(), r_cycle.len());
+
+    let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+    let F: Vec<_> = (0..K)
+        .into_par_iter()
+        .map(|k| {
+            read_addresses
+                .iter()
+                .enumerate()
+                .filter_map(|(cycle, address)| if *address == k { Some(E[cycle]) } else { None })
+                .sum::<F>()
+        })
+        .collect();
+
+    let num_rounds = K.log_2();
+    let mut r_address_double_prime: Vec<F> = Vec::with_capacity(num_rounds);
+
+    let mut ra = MultilinearPolynomial::from(F);
+    let mut int = IdentityPolynomial::new(num_rounds);
+
+    let mut previous_claim = claimed_evaluation;
+
+    const DEGREE: usize = 2;
+
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+    for _ in 0..num_rounds {
+        let univariate_poly_evals: [F; 2] = (0..ra.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let ra_evals = ra.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                let int_evals: Vec<F> = int.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                [ra_evals[0] * int_evals[0], ra_evals[1] * int_evals[1]]
+            })
+            .reduce(
+                || [F::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
+
+        let univariate_poly = UniPoly::from_evals(&[
+            univariate_poly_evals[0],
+            previous_claim - univariate_poly_evals[0],
+            univariate_poly_evals[1],
+        ]);
+
+        let compressed_poly = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        r_address_double_prime.push(r_j);
+
+        previous_claim = univariate_poly.evaluate(&r_j);
+
+        // Bind polynomials
+        rayon::join(
+            || ra.bind(r_j, BindingOrder::LowToHigh),
+            || int.bind(r_j, BindingOrder::LowToHigh),
+        );
+    }
+
+    let ra_claim = ra.final_sumcheck_claim();
+    (SumcheckInstanceProof::new(compressed_polys), ra_claim)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +306,45 @@ mod tests {
 
         let verification_result =
             sumcheck_proof.verify(Fr::one(), TABLE_SIZE.log_2(), 1, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn raf_evaluation_sumcheck() {
+        const TABLE_SIZE: usize = 64;
+        const NUM_LOOKUPS: usize = 1 << 10;
+
+        let mut rng = test_rng();
+
+        let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::random(&mut rng)).collect();
+        let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
+            .map(|_| rng.next_u32() as usize % TABLE_SIZE)
+            .collect();
+        let raf = MultilinearPolynomial::from(
+            read_addresses.iter().map(|a| *a as u32).collect::<Vec<_>>(),
+        );
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let raf_eval = raf.evaluate(&r_cycle);
+        let (sumcheck_proof, _) = prove_raf_evaluation(
+            lookup_table,
+            read_addresses,
+            r_cycle,
+            raf_eval,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+
+        let verification_result =
+            sumcheck_proof.verify(raf_eval, TABLE_SIZE.log_2(), 2, &mut verifier_transcript);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

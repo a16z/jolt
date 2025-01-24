@@ -28,6 +28,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
 }
 
 /// The order in which polynomial variables are bound in sumcheck
+#[derive(Debug, PartialEq)]
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
