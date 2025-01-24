@@ -1,8 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use std::{iter, marker::PhantomData};
-
 use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
@@ -17,7 +15,9 @@ use ark_std::{One, Zero};
 use itertools::izip;
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 use rand_core::{CryptoRng, RngCore};
+use std::borrow::Borrow;
 use std::sync::Arc;
+use std::{iter, marker::PhantomData};
 
 use super::{
     commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
@@ -456,11 +456,14 @@ where
         ZeromorphCommitment(UnivariateKZG::commit_as_univariate(&setup.0.commit_pp, poly).unwrap())
     }
 
-    fn batch_commit(
-        polys: &[&MultilinearPolynomial<Self::Field>],
+    fn batch_commit<U>(
+        polys: &[U],
         gens: &Self::Setup,
         _batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
+    ) -> Vec<Self::Commitment>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
+    {
         UnivariateKZG::commit_batch(&gens.0.commit_pp, polys)
             .unwrap()
             .into_iter()

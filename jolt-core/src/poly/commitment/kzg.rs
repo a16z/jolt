@@ -9,6 +9,7 @@ use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
+use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -194,25 +195,33 @@ where
     P::G1: Icicle,
 {
     #[tracing::instrument(skip_all, name = "KZG::commit_batch")]
-    pub fn commit_batch(
+    pub fn commit_batch<U>(
         pk: &KZGProverKey<P>,
-        polys: &[&MultilinearPolynomial<P::ScalarField>],
-    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        polys: &[U],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError>
+    where
+        U: Borrow<MultilinearPolynomial<P::ScalarField>> + Sync,
+    {
         let g1_powers = &pk.g1_powers();
         let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches to have the same length
-        assert!(polys.par_iter().all(|s| s.len() == polys[0].len()));
-        assert!(polys[0].len() <= g1_powers.len());
+        assert!(polys
+            .par_iter()
+            .all(|s| s.borrow().len() == polys[0].borrow().len()));
+        assert!(polys[0].borrow().len() <= g1_powers.len());
 
-        if let Some(invalid) = polys.iter().find(|coeffs| coeffs.len() > g1_powers.len()) {
+        if let Some(invalid) = polys
+            .iter()
+            .find(|coeffs| (*coeffs).borrow().len() > g1_powers.len())
+        {
             return Err(ProofVerifyError::KeyLengthError(
                 g1_powers.len(),
-                invalid.len(),
+                invalid.borrow().len(),
             ));
         }
 
-        let msm_size = polys[0].len();
+        let msm_size = polys[0].borrow().len();
         let commitments = <P::G1 as VariableBaseMSM>::batch_msm(
             &g1_powers[..msm_size],
             gpu_g1.map(|g| &g[..msm_size]),
@@ -225,7 +234,7 @@ where
     #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_with_mode")]
     pub fn commit_variable_batch(
         pk: &KZGProverKey<P>,
-        polys: &[&MultilinearPolynomial<P::ScalarField>],
+        polys: &[MultilinearPolynomial<P::ScalarField>],
     ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
         let g1_powers = &pk.g1_powers();
         let gpu_g1 = pk.gpu_g1();

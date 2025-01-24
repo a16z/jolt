@@ -30,6 +30,7 @@ use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
 };
+use std::borrow::Borrow;
 use std::{marker::PhantomData, sync::Arc};
 
 pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>)
@@ -323,11 +324,7 @@ where
         assert_eq!(polys[ell - 1].len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
-        // Compute commitments in parallel
-        // TODO: This could be done by batch too if it gets progressively smaller.
-        let com: Vec<P::G1Affine> = into_optimal_iter!(1..polys.len())
-            .map(|i| UnivariateKZG::commit_as_univariate(&pk.kzg_pk, &polys[i]).unwrap())
-            .collect();
+        let com: Vec<P::G1Affine> = UnivariateKZG::commit_variable_batch(&pk.kzg_pk, &polys[1..])?;
 
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
@@ -439,11 +436,14 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
-    fn batch_commit(
-        polys: &[&MultilinearPolynomial<Self::Field>],
+    fn batch_commit<U>(
+        polys: &[U],
         gens: &Self::Setup,
         _batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
+    ) -> Vec<Self::Commitment>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
+    {
         UnivariateKZG::commit_batch(&gens.0.kzg_pk, polys)
             .unwrap()
             .into_par_iter()

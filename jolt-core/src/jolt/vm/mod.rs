@@ -276,11 +276,7 @@ impl<F: JoltField> JoltPolynomials<F> {
             || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators)
         );
         commitments.instruction_lookups.final_cts = PCS::batch_commit(
-            &self
-                .instruction_lookups
-                .final_cts
-                .iter()
-                .collect::<Vec<_>>(),
+            &self.instruction_lookups.final_cts,
             &preprocessing.generators,
             BatchType::Big,
         );

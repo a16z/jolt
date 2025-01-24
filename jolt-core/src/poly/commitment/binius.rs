@@ -7,6 +7,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
@@ -50,11 +51,14 @@ impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     ) -> Self::Commitment {
         todo!()
     }
-    fn batch_commit(
-        _polys: &[&MultilinearPolynomial<Self::Field>],
+    fn batch_commit<P>(
+        _polys: &[P],
         _gens: &Self::Setup,
         _batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
+    ) -> Vec<Self::Commitment>
+    where
+        P: Borrow<MultilinearPolynomial<Self::Field>>,
+    {
         todo!()
     }
     fn prove(

@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -49,11 +50,14 @@ where
     fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment { poly: poly.clone() }
     }
-    fn batch_commit(
-        polys: &[&MultilinearPolynomial<Self::Field>],
+    fn batch_commit<P>(
+        polys: &[P],
         setup: &Self::Setup,
         _batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
+    ) -> Vec<Self::Commitment>
+    where
+        P: Borrow<MultilinearPolynomial<Self::Field>>,
+    {
         polys
             .into_iter()
             .map(|poly| Self::commit(poly, setup))

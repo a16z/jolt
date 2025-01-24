@@ -6,6 +6,7 @@ use ark_std::vec::Vec;
 use icicle_core::curve::Affine;
 use num_integer::Integer;
 use rayon::prelude::*;
+use std::borrow::Borrow;
 
 pub(crate) mod icicle;
 use crate::field::JoltField;
@@ -218,12 +219,15 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn batch_msm(
+    fn batch_msm<P>(
         bases: &[Self::MulBase],
         gpu_bases: Option<&[GpuBaseType<Self>]>,
-        polys: &[&MultilinearPolynomial<Self::ScalarField>],
-    ) -> Vec<Self> {
-        assert!(polys.par_iter().all(|s| s.len() == bases.len()));
+        polys: &[P],
+    ) -> Vec<Self>
+    where
+        P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
+    {
+        assert!(polys.par_iter().all(|s| s.borrow().len() == bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
         assert_eq!(bases.len(), gpu_bases.map_or(bases.len(), |b| b.len()));
@@ -235,7 +239,7 @@ where
             let _guard = span.enter();
             return polys
                 .into_par_iter()
-                .map(|poly| Self::msm(bases, None, poly, None).unwrap())
+                .map(|poly| Self::msm(bases, None, poly.borrow(), None).unwrap())
                 .collect();
         }
 
@@ -246,15 +250,16 @@ where
             polys
                 .par_iter()
                 .enumerate()
-                .partition_map(|(i, poly)| match poly {
+                .partition_map(|(i, poly)| match poly.borrow() {
                     MultilinearPolynomial::LargeScalars(_) => {
-                        let max_num_bits = poly.max_num_bits();
-                        // Use GPU for large-scalar polynomials
-                        Either::Right((i, max_num_bits, *poly))
+                        let max_num_bits = poly.borrow().max_num_bits();
+                        let poly: &DensePolynomial<Self::ScalarField> =
+                            poly.borrow().try_into().unwrap();
+                        Either::Right((i, max_num_bits, poly.evals_ref()))
                     }
                     _ => {
-                        let max_num_bits = poly.max_num_bits();
-                        Either::Left((i, max_num_bits, *poly))
+                        let max_num_bits = poly.borrow().max_num_bits();
+                        Either::Left((i, max_num_bits, poly.borrow()))
                     }
                 });
         drop(_guard);
@@ -305,16 +310,8 @@ where
                         .unzip();
 
                     let max_num_bits = max_num_bits.iter().max().unwrap();
-                    let scalars: Vec<_> = chunk_polys
-                        .into_iter()
-                        .map(|poly| {
-                            let poly: &DensePolynomial<Self::ScalarField> =
-                                poly.try_into().unwrap();
-                            poly.evals_ref()
-                        })
-                        .collect();
                     let batch_results =
-                        icicle_batch_msm(gpu_bases, &scalars, *max_num_bits as usize);
+                        icicle_batch_msm(gpu_bases, &chunk_polys, *max_num_bits as usize);
 
                     // Store GPU results using original indices
                     for ((original_idx, _, _), result) in work_chunk.iter().zip(batch_results) {
@@ -330,14 +327,18 @@ where
         results
     }
 
-    // implement variable msm batch based on the function above
+    // a "batch" msm that can handle scalars of different sizes
+    // it mostly amortizes copy costs of sending the generators to the GPU
     #[tracing::instrument(skip_all)]
-    fn variable_batch_msm(
+    fn variable_batch_msm<P>(
         bases: &[Self::MulBase],
         gpu_bases: Option<&[GpuBaseType<Self>]>,
-        polys: &[&MultilinearPolynomial<Self::ScalarField>],
-    ) -> Vec<Self> {
-        assert!(polys.par_iter().all(|s| s.len() >= bases.len()));
+        polys: &[P],
+    ) -> Vec<Self>
+    where
+        P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
+    {
+        assert!(polys.par_iter().all(|s| s.borrow().len() >= bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
 
@@ -348,7 +349,7 @@ where
             let _guard = span.enter();
             return polys
                 .into_par_iter()
-                .map(|poly| Self::msm(bases, None, poly, None).unwrap())
+                .map(|poly| Self::msm(bases, None, poly.borrow(), None).unwrap())
                 .collect();
         }
 
@@ -357,12 +358,13 @@ where
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
             polys.par_iter().enumerate().partition_map(|(i, poly)| {
-                let max_num_bits = poly.max_num_bits();
+                let max_num_bits = poly.borrow().max_num_bits();
                 if use_icicle && max_num_bits > 10 {
-                    let poly: &DensePolynomial<Self::ScalarField> = (*poly).try_into().unwrap();
+                    let poly: &DensePolynomial<Self::ScalarField> =
+                        poly.borrow().try_into().unwrap();
                     Either::Right((i, max_num_bits, poly.evals_ref()))
                 } else {
-                    Either::Left((i, max_num_bits, *poly))
+                    Either::Left((i, max_num_bits, poly.borrow()))
                 }
             });
         drop(_guard);
