@@ -132,7 +132,7 @@ where
 }
 
 // batch_info is a tuple of (batch_id, bit_size, scalars)
-pub type BatchInfo<'a, V: VariableBaseMSM> = (usize, u32, &'a[V::ScalarField]);
+pub type BatchInfo<'a, V: VariableBaseMSM> = (usize, u32, &'a [V::ScalarField]);
 
 #[tracing::instrument(skip_all, name = "icicle_msm")]
 pub fn icicle_variable_batch_msm<V>(
@@ -140,8 +140,8 @@ pub fn icicle_variable_batch_msm<V>(
     batch_info: &[BatchInfo<V>],
 ) -> Vec<(usize, V)>
 where
-V: VariableBaseMSM,
-V::ScalarField: JoltField,
+    V: VariableBaseMSM,
+    V::ScalarField: JoltField,
 {
     let mut bases_slice = DeviceVec::<GpuBaseType<V>>::device_malloc(bases.len()).unwrap();
 
@@ -194,7 +194,7 @@ V::ScalarField: JoltField,
             &cfg,
             &mut msm_result[index..index + 1],
         )
-            .unwrap();
+        .unwrap();
 
         drop(_guard);
         drop(span);

@@ -238,11 +238,7 @@ where
             ));
         }
 
-        let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(
-            &g1_powers,
-            gpu_g1,
-            polys,
-        );
+        let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(&g1_powers, gpu_g1, polys);
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 

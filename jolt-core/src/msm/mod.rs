@@ -9,7 +9,6 @@ use rayon::prelude::*;
 
 pub(crate) mod icicle;
 use crate::field::JoltField;
-#[cfg(feature = "icicle")]
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
@@ -360,8 +359,7 @@ where
             polys.par_iter().enumerate().partition_map(|(i, poly)| {
                 let max_num_bits = poly.max_num_bits();
                 if use_icicle && max_num_bits > 10 {
-                    let poly: &DensePolynomial<Self::ScalarField> =
-                        (*poly).try_into().unwrap();
+                    let poly: &DensePolynomial<Self::ScalarField> = (*poly).try_into().unwrap();
                     Either::Right((i, max_num_bits, poly.evals_ref()))
                 } else {
                     Either::Left((i, max_num_bits, *poly))
@@ -379,7 +377,13 @@ where
             .map(|(i, max_num_bits, poly)| {
                 (
                     i,
-                    Self::msm(&bases[..poly.len()], None, poly, Some(max_num_bits as usize)).unwrap(),
+                    Self::msm(
+                        &bases[..poly.len()],
+                        None,
+                        poly,
+                        Some(max_num_bits as usize),
+                    )
+                    .unwrap(),
                 )
             })
             .collect();
