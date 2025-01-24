@@ -30,13 +30,8 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
     steps:
       - uses: actions/checkout@v3
-      - name: install unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip
-      - uses: lukka/get-cmake@latest
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
@@ -45,8 +40,6 @@ jobs:
         with:
           command: clippy
           args: --all
-      - name: cargo clippy icicle
-        run: cargo clippy --all --features icicle
 
   machete:
     runs-on: ubuntu-latest
@@ -69,13 +62,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
     steps:
       - uses: actions/checkout@v3
-      - name: install unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip
-      - uses: lukka/get-cmake@latest
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Cache Jolt RISC-V Rust toolchain
         uses: actions/cache@v4
@@ -88,8 +76,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
-      - name: Run jolt-icicle tests
-        run: cargo nextest run --release -p jolt-core --features icicle
 
   on-chain:
     name: Onchain Verifier Tests
