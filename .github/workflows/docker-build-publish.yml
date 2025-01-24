@@ -1,0 +1,43 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    paths:
+      - '.github/workflows/Dockerfile'
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/Dockerfile'
+    branches: ['**', main]
+
+jobs:
+  build-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      docker_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker Image
+        id: build
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/jolt-icicle-image:latest
+          cache-to: type=inline
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/jolt-icicle-image:latest
+          outputs: type=digest
+
+      - name: Log Docker Digest
+        run:
+          echo "Image Digest: ${{ steps.build.outputs.digest }}"

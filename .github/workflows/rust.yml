@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: ['**', main]
+  workflow_run:
+    workflows:
+      - Build and Push Docker Image
+    types:
+      - completed
 
 env:
   RUSTFLAGS: -D warnings
@@ -15,21 +20,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-docker:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    outputs:
-      docker_image: ${{ steps.build.outputs.docker_image }}
-    steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-
-      - name: Build Docker Image
-        id: build
-        run: |
-          docker build -t custom-cuda-image:latest -f .github/workflows/Dockerfile .
-          echo "docker_image=custom-cuda-image:latest" >> $GITHUB_ENV
-
   fmt:
     runs-on: ubuntu-latest
     steps:
@@ -43,23 +33,10 @@ jobs:
           command: fmt
           args: --all --check
 
-  fmt-icicle:
-    name: Format Check with icicle
-    runs-on: ubuntu-latest
-    needs: [build-docker]
-    steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Run cargo fmt with icicle
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            custom-cuda-image:latest \
-            cargo fmt --all --check --features icicle
-
   clippy:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/jolt-icicle-image:latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -70,6 +47,8 @@ jobs:
         with:
           command: clippy
           args: --all
+      - name: cargo clippy icicle
+        run: cargo clippy --all --features icicle
 
   machete:
     runs-on: ubuntu-latest
@@ -92,6 +71,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/jolt-icicle-image:latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -106,21 +87,8 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
-
-  test-icicle:
-    name: Run icicle tests
-    runs-on: ubuntu-latest
-    needs: [build-docker]
-    steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Run icicle tests
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            custom-cuda-image:latest \
-            cargo nextest run --release -p jolt-core --features icicle
+      - name: Run jolt-icicle tests
+        run: cargo nextest run --release -p jolt-core --features icicle
 
   on-chain:
     name: Onchain Verifier Tests
