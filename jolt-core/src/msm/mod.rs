@@ -331,6 +331,91 @@ where
         results
     }
 
+    // implement variable msm batch based on the function above
+    #[tracing::instrument(skip_all)]
+    fn variable_batch_msm(
+        bases: &[Self::MulBase],
+        gpu_bases: Option<&[GpuBaseType<Self>]>,
+        polys: &[&MultilinearPolynomial<Self::ScalarField>],
+    ) -> Vec<Self> {
+        assert!(polys.par_iter().all(|s| s.len() >= bases.len()));
+        #[cfg(not(feature = "icicle"))]
+        assert!(gpu_bases.is_none());
+
+        let use_icicle = use_icicle();
+
+        if !use_icicle {
+            let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
+            let _guard = span.enter();
+            return polys
+                .into_par_iter()
+                .map(|poly| Self::msm(bases, None, poly, None).unwrap())
+                .collect();
+        }
+
+        // Split scalar batches into CPU and GPU workloads
+        let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
+        let _guard = span.enter();
+        let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
+            polys.par_iter().enumerate().partition_map(|(i, poly)| {
+                let max_num_bits = poly.max_num_bits();
+                if use_icicle && max_num_bits > 10 {
+                    let poly: &DensePolynomial<Self::ScalarField> =
+                        (*poly).try_into().unwrap();
+                    Either::Right((i, max_num_bits, poly.evals_ref()))
+                } else {
+                    Either::Left((i, max_num_bits, *poly))
+                }
+            });
+        drop(_guard);
+        drop(span);
+        let mut results = vec![Self::zero(); polys.len()];
+
+        // Handle CPU computations in parallel
+        let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu");
+        let _guard = span.enter();
+        let cpu_results: Vec<(usize, Self)> = cpu_batch
+            .into_par_iter()
+            .map(|(i, max_num_bits, poly)| {
+                (
+                    i,
+                    Self::msm(&bases[..poly.len()], None, poly, Some(max_num_bits as usize)).unwrap(),
+                )
+            })
+            .collect();
+        drop(_guard);
+        drop(span);
+
+        // Store CPU results
+        for (i, result) in cpu_results {
+            results[i] = result;
+        }
+
+        // Handle GPU computations if available
+        if !gpu_batch.is_empty() && use_icicle {
+            #[cfg(feature = "icicle")]
+            {
+                let span = tracing::span!(tracing::Level::INFO, "batch_msms_gpu");
+                let _guard = span.enter();
+                let mut backup = vec![];
+                let gpu_bases = gpu_bases.unwrap_or_else(|| {
+                    backup = Self::get_gpu_bases(bases);
+                    &backup
+                });
+
+                let batched_results = icicle_variable_batch_msm(gpu_bases, &gpu_batch);
+                for (index, result) in batched_results {
+                    results[index] = result;
+                }
+            }
+            #[cfg(not(feature = "icicle"))]
+            {
+                unreachable!("icicle_init must not return true without the icicle feature");
+            }
+        }
+        results
+    }
+
     #[cfg(feature = "icicle")]
     #[tracing::instrument(skip_all)]
     fn get_gpu_bases(bases: &[Self::MulBase]) -> Vec<GpuBaseType<Self>> {

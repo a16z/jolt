@@ -198,15 +198,6 @@ where
         pk: &KZGProverKey<P>,
         polys: &[&MultilinearPolynomial<P::ScalarField>],
     ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
-        Self::commit_batch_with_mode(pk, polys, CommitMode::Default)
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_batch_with_mode")]
-    pub fn commit_batch_with_mode(
-        pk: &KZGProverKey<P>,
-        polys: &[&MultilinearPolynomial<P::ScalarField>],
-        _mode: CommitMode,
-    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
         let g1_powers = &pk.g1_powers();
         let gpu_g1 = pk.gpu_g1();
 
@@ -225,6 +216,31 @@ where
         let commitments = <P::G1 as VariableBaseMSM>::batch_msm(
             &g1_powers[..msm_size],
             gpu_g1.map(|g| &g[..msm_size]),
+            polys,
+        );
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
+    // This API will try to minimize copies to the GPU or just do the batches in parallel on the CPU
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_with_mode")]
+    pub fn commit_variable_batch(
+        pk: &KZGProverKey<P>,
+        polys: &[&MultilinearPolynomial<P::ScalarField>],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches be less than the bases in size
+        if let Some(invalid) = polys.iter().find(|coeffs| coeffs.len() > g1_powers.len()) {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.len(),
+            ));
+        }
+
+        let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(
+            &g1_powers,
+            gpu_g1,
             polys,
         );
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())

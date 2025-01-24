@@ -131,6 +131,94 @@ where
     V::to_ark_projective(&msm_host_result[0])
 }
 
+// batch_info is a tuple of (batch_id, bit_size, scalars)
+pub type BatchInfo<'a, V: VariableBaseMSM> = (usize, u32, &'a[V::ScalarField]);
+
+#[tracing::instrument(skip_all, name = "icicle_msm")]
+pub fn icicle_variable_batch_msm<V>(
+    bases: &[GpuBaseType<V>],
+    batch_info: &[BatchInfo<V>],
+) -> Vec<(usize, V)>
+where
+V: VariableBaseMSM,
+V::ScalarField: JoltField,
+{
+    let mut bases_slice = DeviceVec::<GpuBaseType<V>>::device_malloc(bases.len()).unwrap();
+
+    let mut stream = IcicleStream::create().unwrap();
+    let span = tracing::span!(tracing::Level::INFO, "copy_bases_to_gpu");
+    let _guard = span.enter();
+    bases_slice
+        .copy_from_host_async(HostSlice::from_slice(bases), &stream)
+        .unwrap();
+    drop(_guard);
+    drop(span);
+
+    let num_batches = batch_info.len();
+    let mut msm_result = DeviceVec::<Projective<V::C>>::device_malloc(num_batches).unwrap();
+    let mut msm_host_results = vec![Projective::<V::C>::zero(); num_batches];
+
+    for (index, (_batch_id, bit_size, scalars)) in batch_info.iter().enumerate() {
+        let span = tracing::span!(tracing::Level::INFO, "convert_scalars");
+        let _guard = span.enter();
+
+        let mut scalars_slice =
+            DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::device_malloc(scalars.len())
+                .unwrap();
+        let scalars_mont = unsafe {
+            &*(&scalars[..] as *const _ as *const [<<V as Icicle>::C as Curve>::ScalarField])
+        };
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "copy_scalars_to_gpu");
+        let _guard = span.enter();
+        scalars_slice
+            .copy_from_host_async(HostSlice::from_slice(scalars_mont), &stream)
+            .unwrap();
+        drop(_guard);
+        drop(span);
+
+        let mut cfg = MSMConfig::default();
+        cfg.stream_handle = IcicleStreamHandle::from(&stream);
+        cfg.is_async = true;
+        cfg.are_scalars_montgomery_form = true;
+        cfg.bitsize = *bit_size as i32;
+
+        let span = tracing::span!(tracing::Level::INFO, "gpu_msm");
+        let _guard = span.enter();
+
+        msm(
+            &scalars_slice,
+            &bases_slice[..scalars.len()],
+            &cfg,
+            &mut msm_result[index..index + 1],
+        )
+            .unwrap();
+
+        drop(_guard);
+        drop(span);
+
+        // TODO(sagar): is it faster to copy all results at once? or one by one?
+    }
+
+    let span = tracing::span!(tracing::Level::INFO, "copy_msm_result");
+    let _guard = span.enter();
+    msm_result
+        .copy_to_host(HostSlice::from_mut_slice(&mut msm_host_results))
+        .unwrap();
+    drop(_guard);
+    drop(span);
+
+    stream.synchronize().unwrap();
+    stream.destroy().unwrap();
+    batch_info
+        .par_iter()
+        .zip(msm_host_results)
+        .map(|((batch_id, _, _), result)| (*batch_id, V::to_ark_projective(&result)))
+        .collect()
+}
+
 /// Batch process msms - assumes batches are equal in size
 /// Variable Batch sizes is not currently supported by icicle
 #[tracing::instrument(skip_all)]
