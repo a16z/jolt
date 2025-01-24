@@ -43,8 +43,14 @@ jobs:
           command: fmt
           args: --all --check
 
-      - name: cargo fmt with icicle
-        needs: build-docker
+  fmt-icicle:
+    name: Format Check with icicle
+    runs-on: ubuntu-latest
+    needs: [build-docker]
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+      - name: Run cargo fmt with icicle
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
@@ -100,14 +106,21 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
-    # Run jolt-core tests with icicle feature
-      - name: Run jolt-core tests with --features icicle
+
+  test-icicle:
+    name: Run icicle tests
+    runs-on: ubuntu-latest
+    needs: [build-docker]
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+      - name: Run icicle tests
         run: |
           docker run --rm \
-          -v ${{ github.workspace }}:/workspace \
-          -w /workspace \
-          custom-cuda-image:latest \
-          cargo nextest run --release -p jolt-core --features icicle
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            custom-cuda-image:latest \
+            cargo nextest run --release -p jolt-core --features icicle
 
   on-chain:
     name: Onchain Verifier Tests
