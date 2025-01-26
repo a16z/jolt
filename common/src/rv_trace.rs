@@ -32,7 +32,7 @@ impl MemoryOp {
 
 fn sum_u64_i32(a: u64, b: i32) -> u64 {
     if b.is_negative() {
-        let abs_b = b.unsigned_abs() as u64;
+        let abs_b = b.abs() as u64;
         if a < abs_b {
             panic!("overflow")
         }
