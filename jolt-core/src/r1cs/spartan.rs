@@ -137,6 +137,7 @@ where
                 &mut cz,
                 transcript,
             );
+            
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
         drop_in_background_thread((az, bz, cz, eq_tau));
 
