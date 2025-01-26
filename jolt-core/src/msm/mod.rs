@@ -338,7 +338,7 @@ where
     where
         P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
     {
-        assert!(polys.par_iter().all(|s| s.borrow().len() >= bases.len()));
+        assert!(polys.par_iter().all(|s| s.borrow().len() <= bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
 
@@ -349,7 +349,9 @@ where
             let _guard = span.enter();
             return polys
                 .into_par_iter()
-                .map(|poly| Self::msm(bases, None, poly.borrow(), None).unwrap())
+                .map(|poly| {
+                    Self::msm(&bases[..poly.borrow().len()], None, poly.borrow(), None).unwrap()
+                })
                 .collect();
         }
 

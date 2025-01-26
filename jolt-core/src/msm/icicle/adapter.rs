@@ -134,7 +134,7 @@ where
 // batch_info is a tuple of (batch_id, bit_size, scalars)
 pub type BatchInfo<'a, V: VariableBaseMSM> = (usize, u32, &'a [V::ScalarField]);
 
-#[tracing::instrument(skip_all, name = "icicle_msm")]
+#[tracing::instrument(skip_all, name = "icicle_variable_batch_msm")]
 pub fn icicle_variable_batch_msm<V>(
     bases: &[GpuBaseType<V>],
     batch_info: &[BatchInfo<V>],
@@ -143,9 +143,10 @@ where
     V: VariableBaseMSM,
     V::ScalarField: JoltField,
 {
-    let mut bases_slice = DeviceVec::<GpuBaseType<V>>::device_malloc(bases.len()).unwrap();
-
     let mut stream = IcicleStream::create().unwrap();
+
+    let mut bases_slice =
+        DeviceVec::<GpuBaseType<V>>::device_malloc_async(bases.len(), &stream).unwrap();
     let span = tracing::span!(tracing::Level::INFO, "copy_bases_to_gpu");
     let _guard = span.enter();
     bases_slice
@@ -155,7 +156,8 @@ where
     drop(span);
 
     let num_batches = batch_info.len();
-    let mut msm_result = DeviceVec::<Projective<V::C>>::device_malloc(num_batches).unwrap();
+    let mut msm_result =
+        DeviceVec::<Projective<V::C>>::device_malloc_async(num_batches, &stream).unwrap();
     let mut msm_host_results = vec![Projective::<V::C>::zero(); num_batches];
 
     for (index, (_batch_id, bit_size, scalars)) in batch_info.iter().enumerate() {
@@ -163,8 +165,11 @@ where
         let _guard = span.enter();
 
         let mut scalars_slice =
-            DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::device_malloc(scalars.len())
-                .unwrap();
+            DeviceVec::<<<V as Icicle>::C as Curve>::ScalarField>::device_malloc_async(
+                scalars.len(),
+                &stream,
+            )
+            .unwrap();
         let scalars_mont = unsafe {
             &*(&scalars[..] as *const _ as *const [<<V as Icicle>::C as Curve>::ScalarField])
         };
@@ -198,8 +203,6 @@ where
 
         drop(_guard);
         drop(span);
-
-        // TODO(sagar): is it faster to copy all results at once? or one by one?
     }
 
     let span = tracing::span!(tracing::Level::INFO, "copy_msm_result");

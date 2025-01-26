@@ -60,7 +60,7 @@ where
     {
         polys
             .into_iter()
-            .map(|poly| Self::commit(poly, setup))
+            .map(|poly| Self::commit(poly.borrow(), setup))
             .collect()
     }
     fn prove(

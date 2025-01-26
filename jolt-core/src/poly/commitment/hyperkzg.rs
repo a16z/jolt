@@ -11,11 +11,11 @@ use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
+use crate::field;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
-use crate::{field, into_optimal_iter};
 use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -102,18 +102,26 @@ pub struct HyperKZGProof<P: Pairing> {
 // the quotient of f(x)/(x-u) and (f(x) - f(v))/(x-u) is the
 // same.  One advantage is that computing f(u) could be decoupled
 // from kzg_open, it could be done later or separate from computing W.
-fn kzg_open_no_rem<P: Pairing>(
+fn kzg_batch_open_no_rem<P: Pairing>(
     f: &MultilinearPolynomial<P::ScalarField>,
-    u: P::ScalarField,
+    u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
-) -> P::G1Affine
+) -> Vec<P::G1Affine>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     let f: &DensePolynomial<P::ScalarField> = f.try_into().unwrap();
-    let h = compute_witness_polynomial::<P>(&f.evals(), u);
-    UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(h)).unwrap()
+    let h = u
+        .par_iter()
+        .map(|ui| {
+            let h = compute_witness_polynomial::<P>(&f.evals(), *ui);
+            MultilinearPolynomial::from(h)
+        })
+        .collect::<Vec<_>>();
+
+    // TODO(sagar): Are the coefficients of these witness polynomials always of the same length?
+    UnivariateKZG::commit_batch(&pk.kzg_pk, &h).unwrap()
 }
 
 fn compute_witness_polynomial<P: Pairing>(
@@ -164,9 +172,7 @@ where
     let B = MultilinearPolynomial::linear_combination(&f.iter().collect::<Vec<_>>(), &q_powers);
 
     // Now open B at u0, ..., u_{t-1}
-    let w = into_optimal_iter!(u)
-        .map(|ui| kzg_open_no_rem(&B, *ui, pk))
-        .collect::<Vec<P::G1Affine>>();
+    let w = kzg_batch_open_no_rem(&B, u, pk);
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier

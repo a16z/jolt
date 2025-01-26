@@ -257,7 +257,7 @@ where
         poly: &UniPoly<P::ScalarField>,
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, offset, CommitMode::Default)
+        Self::commit_inner(pk, &poly.coeffs, offset)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit")]
@@ -265,16 +265,7 @@ where
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, 0, CommitMode::Default)
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_with_mode")]
-    pub fn commit_with_mode(
-        pk: &KZGProverKey<P>,
-        poly: &UniPoly<P::ScalarField>,
-        mode: CommitMode,
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, 0, mode)
+        Self::commit_inner(pk, &poly.coeffs, 0)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit_as_univariate")]
@@ -304,7 +295,6 @@ where
         pk: &KZGProverKey<P>,
         coeffs: &[P::ScalarField],
         offset: usize,
-        _mode: CommitMode,
     ) -> Result<P::G1Affine, ProofVerifyError> {
         if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
@@ -372,7 +362,7 @@ mod test {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    fn run_kzg_test<F>(degree_generator: F, commit_mode: CommitMode) -> Result<(), ProofVerifyError>
+    fn run_kzg_test<F>(degree_generator: F) -> Result<(), ProofVerifyError>
     where
         F: Fn(&mut ChaCha20Rng) -> usize,
     {
@@ -384,7 +374,7 @@ mod test {
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
-            let comm = UnivariateKZG::<Bn254>::commit_with_mode(&ck, &p, commit_mode)?;
+            let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
@@ -399,12 +389,6 @@ mod test {
 
     #[test]
     fn kzg_commit_prove_verify() -> Result<(), ProofVerifyError> {
-        run_kzg_test(|rng| rng.gen_range(2..20), CommitMode::Default)
-    }
-
-    #[test]
-    fn kzg_commit_prove_verify_mode() -> Result<(), ProofVerifyError> {
-        // This test uses the grand product optimization and ensures only powers of 2 are used for degree generation
-        run_kzg_test(|rng| 1 << rng.gen_range(1..8), CommitMode::GrandProduct)
+        run_kzg_test(|rng| rng.gen_range(2..20))
     }
 }
