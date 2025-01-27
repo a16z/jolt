@@ -65,7 +65,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
         // Linear combination of the core PIOP claim and the Hamming weight claim (which is 1)
         let mut previous_claim = rv_claim + z;
 
-        let mut ra = MultilinearPolynomial::from(F);
+        let mut ra = MultilinearPolynomial::from(F.clone());
         let mut val = MultilinearPolynomial::from(lookup_table);
 
         const DEGREE: usize = 2;
@@ -116,7 +116,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
         let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
         let (booleanity_sumcheck_proof, r_address_prime, r_cycle_prime, ra_claim_prime) =
-            prove_booleanity(read_addresses, &r_address, &r_cycle, transcript);
+            prove_booleanity(read_addresses, &r_address, E, F, transcript);
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         // TODO: Append to opening proof accumulator
@@ -241,29 +241,19 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
 pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     read_addresses: Vec<usize>,
     r: &[F],
-    r_prime: &[F],
+    D: Vec<F>,
+    G: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F) {
     const DEGREE: usize = 3;
     let K = r.len().pow2();
     let T = read_addresses.len();
-    debug_assert_eq!(r_prime.len(), T.log_2());
+    debug_assert_eq!(D.len(), T);
+    debug_assert_eq!(G.len(), K);
 
     let mut B = MultilinearPolynomial::from(EqPolynomial::evals(r)); // (53)
-    let D = EqPolynomial::evals(r_prime); // (54)
 
     // First log(K) rounds of sumcheck
-
-    let G: Vec<_> = (0..K)
-        .into_par_iter()
-        .map(|k| {
-            read_addresses
-                .iter()
-                .enumerate()
-                .filter_map(|(cycle, address)| if *address == k { Some(D[cycle]) } else { None })
-                .sum::<F>()
-        })
-        .collect();
 
     let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
     F[0] = F::one();
@@ -666,8 +656,22 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r: Vec<Fr> = prover_transcript.challenge_vector(TABLE_SIZE.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let E: Vec<Fr> = EqPolynomial::evals(&r_prime);
+        let F: Vec<_> = (0..TABLE_SIZE)
+            .into_par_iter()
+            .map(|k| {
+                read_addresses
+                    .iter()
+                    .enumerate()
+                    .filter_map(
+                        |(cycle, address)| if *address == k { Some(E[cycle]) } else { None },
+                    )
+                    .sum::<Fr>()
+            })
+            .collect();
+
         let (sumcheck_proof, _, _, _) =
-            prove_booleanity(read_addresses, &r, &r_prime, &mut prover_transcript);
+            prove_booleanity(read_addresses, &r, E, F, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
