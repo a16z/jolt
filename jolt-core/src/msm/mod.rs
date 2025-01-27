@@ -512,7 +512,7 @@ where
                         None,
                         &poly.borrow().coeffs,
                         Some(max_num_bits),
-                        use_icicle,
+                        false,
                     )
                     .unwrap(),
                 )
