@@ -10,7 +10,6 @@ use std::borrow::Borrow;
 
 pub(crate) mod icicle;
 use crate::field::JoltField;
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -248,21 +247,33 @@ where
         let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            polys
-                .par_iter()
-                .enumerate()
-                .partition_map(|(i, poly)| match poly.borrow() {
-                    MultilinearPolynomial::LargeScalars(_) => {
-                        let max_num_bits = poly.borrow().max_num_bits();
-                        let poly: &DensePolynomial<Self::ScalarField> =
-                            poly.borrow().try_into().unwrap();
-                        Either::Right((i, max_num_bits, poly.evals_ref()))
+            polys.par_iter().enumerate().partition_map(|(i, poly)| {
+                let poly = poly.borrow();
+                let max_num_bits = poly.max_num_bits();
+
+                if max_num_bits > 10 {
+                    match poly {
+                        MultilinearPolynomial::LargeScalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.evals()))
+                        }
+                        MultilinearPolynomial::U16Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        MultilinearPolynomial::U32Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        MultilinearPolynomial::U64Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        MultilinearPolynomial::I64Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        _ => Either::Left((i, max_num_bits, poly)),
                     }
-                    _ => {
-                        let max_num_bits = poly.borrow().max_num_bits();
-                        Either::Left((i, max_num_bits, poly.borrow()))
-                    }
-                });
+                } else {
+                    Either::Left((i, max_num_bits, poly))
+                }
+            });
         drop(_guard);
         drop(span);
         let mut results = vec![Self::zero(); polys.len()];
@@ -273,10 +284,7 @@ where
         let cpu_results: Vec<(usize, Self)> = cpu_batch
             .into_par_iter()
             .map(|(i, max_num_bits, poly)| {
-                (
-                    i,
-                    Self::msm(bases, None, poly, Some(max_num_bits as usize)).unwrap(),
-                )
+                (i, Self::msm(bases, None, poly, Some(max_num_bits)).unwrap())
             })
             .collect();
         drop(_guard);
@@ -307,12 +315,11 @@ where
                 for work_chunk in gpu_batch.chunks(slices_at_a_time) {
                     let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = work_chunk
                         .par_iter()
-                        .map(|(_, max_num_bits, poly)| (*max_num_bits, *poly))
+                        .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
                         .unzip();
 
                     let max_num_bits = max_num_bits.iter().max().unwrap();
-                    let batch_results =
-                        icicle_batch_msm(gpu_bases, &chunk_polys, *max_num_bits as usize);
+                    let batch_results = icicle_batch_msm(gpu_bases, &chunk_polys, *max_num_bits);
 
                     // Store GPU results using original indices
                     for ((original_idx, _, _), result) in work_chunk.iter().zip(batch_results) {
@@ -361,13 +368,30 @@ where
         let _guard = span.enter();
         let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
             polys.par_iter().enumerate().partition_map(|(i, poly)| {
-                let max_num_bits = poly.borrow().max_num_bits() as usize;
-                if use_icicle && max_num_bits > 10 {
-                    let poly: &DensePolynomial<Self::ScalarField> =
-                        poly.borrow().try_into().unwrap();
-                    Either::Right((i, max_num_bits, poly.evals_ref()))
+                let poly = poly.borrow();
+                let max_num_bits = poly.max_num_bits();
+
+                if max_num_bits > 10 {
+                    match poly {
+                        MultilinearPolynomial::LargeScalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.evals()))
+                        }
+                        MultilinearPolynomial::U16Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        MultilinearPolynomial::U32Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        MultilinearPolynomial::U64Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        MultilinearPolynomial::I64Scalars(poly) => {
+                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                        }
+                        _ => Either::Left((i, max_num_bits, poly)),
+                    }
                 } else {
-                    Either::Left((i, max_num_bits, poly.borrow()))
+                    Either::Left((i, max_num_bits, poly))
                 }
             });
         drop(_guard);
@@ -406,7 +430,11 @@ where
                     &backup
                 });
 
-                let batched_results = icicle_variable_batch_msm(gpu_bases, &gpu_batch);
+                let batch = gpu_batch
+                    .iter()
+                    .map(|(i, max_num_bits, poly)| (*i, *max_num_bits, poly.as_slice()))
+                    .collect::<Vec<_>>();
+                let batched_results = icicle_variable_batch_msm(gpu_bases, &batch);
                 for (index, result) in batched_results {
                     results[index] = result;
                 }

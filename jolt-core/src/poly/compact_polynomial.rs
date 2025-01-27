@@ -1,5 +1,6 @@
 use std::ops::Index;
 
+use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{field::JoltField, utils};
@@ -8,8 +9,6 @@ use ark_serialize::{
 };
 use num_integer::Integer;
 use rayon::prelude::*;
-
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
 pub trait SmallScalar: Copy + Integer + Sync {
     /// Performs a field multiplication. Uses `JoltField::mul_u64_unchecked` under the hood.
@@ -144,6 +143,10 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.coeffs.iter()
+    }
+
+    pub fn to_field_elements(&self) -> Vec<F> {
+        self.coeffs.par_iter().map(|x| x.to_field()).collect()
     }
 }
 

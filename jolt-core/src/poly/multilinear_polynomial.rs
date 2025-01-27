@@ -78,30 +78,30 @@ impl<F: JoltField> MultilinearPolynomial<F> {
 
     /// The maximum number of bits occupied by one of the polynomial's coefficients.
     #[tracing::instrument(skip_all)]
-    pub fn max_num_bits(&self) -> u32 {
+    pub fn max_num_bits(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly
                 .evals_ref()
                 .par_iter()
                 .map(|s| s.num_bits())
                 .max()
-                .unwrap(),
+                .unwrap() as usize,
             MultilinearPolynomial::U8Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
             }
             MultilinearPolynomial::U16Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
             }
             MultilinearPolynomial::U32Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
             }
             MultilinearPolynomial::U64Scalars(poly) => {
-                (*poly.coeffs.iter().max().unwrap() as usize).num_bits() as u32
+                (*poly.coeffs.iter().max().unwrap() as usize).num_bits()
             }
             MultilinearPolynomial::I64Scalars(_) => {
                 // HACK(moodlezoup): i64 coefficients are converted into full-width field
                 // elements before computing the MSM
-                F::NUM_BYTES as u32 * 8
+                F::NUM_BYTES * 8
             }
         }
     }
