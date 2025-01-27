@@ -1,3 +1,4 @@
+use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     poly::{
@@ -9,6 +10,7 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
+        errors::ProofVerifyError,
         math::Math,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
@@ -16,11 +18,142 @@ use crate::{
 };
 use rayon::prelude::*;
 
-use super::sumcheck::SumcheckInstanceProof;
+pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
+    core_piop_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
+    booleanity_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
+    ra_claim: F,
+    ra_claim_prime: F,
+    rv_claim: F,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
+    pub fn prove(
+        lookup_table: Vec<F>,
+        read_addresses: Vec<usize>,
+        r_cycle: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> Self {
+        let K = lookup_table.len();
+        let T = read_addresses.len();
+        debug_assert_eq!(r_cycle.len(), T.log_2());
+        // Used to batch the core PIOP sumcheck and Hamming weight sumcheck
+        // (see Section 4.2.1)
+        let z: F = transcript.challenge_scalar();
+
+        let num_rounds = K.log_2();
+        let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+
+        let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+        let F: Vec<_> = (0..K)
+            .into_par_iter()
+            .map(|k| {
+                read_addresses
+                    .iter()
+                    .enumerate()
+                    .filter_map(
+                        |(cycle, address)| if *address == k { Some(E[cycle]) } else { None },
+                    )
+                    .sum::<F>()
+            })
+            .collect();
+
+        let rv_claim: F = F
+            .par_iter()
+            .zip(lookup_table.par_iter())
+            .map(|(&ra, &val)| ra * val)
+            .sum();
+        // Linear combination of the core PIOP claim and the Hamming weight claim (which is 1)
+        let mut previous_claim = rv_claim + z;
+
+        let mut ra = MultilinearPolynomial::from(F);
+        let mut val = MultilinearPolynomial::from(lookup_table);
+
+        const DEGREE: usize = 2;
+
+        // Prove the core PIOP and Hamming weight sumchecks in parallel
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+        for _ in 0..num_rounds {
+            let univariate_poly_evals: [F; 2] = (0..ra.len() / 2)
+                .into_par_iter()
+                .map(|i| {
+                    let ra_evals = ra.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                    let val_evals = val.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        ra_evals[0] * (z + val_evals[0]),
+                        ra_evals[1] * (z + val_evals[1]),
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
+
+            let univariate_poly = UniPoly::from_evals(&[
+                univariate_poly_evals[0],
+                previous_claim - univariate_poly_evals[0],
+                univariate_poly_evals[1],
+            ]);
+
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar::<F>();
+            r_address.push(r_j);
+
+            previous_claim = univariate_poly.evaluate(&r_j);
+
+            // Bind polynomials
+            rayon::join(
+                || ra.bind(r_j, BindingOrder::LowToHigh),
+                || val.bind(r_j, BindingOrder::LowToHigh),
+            );
+        }
+
+        let ra_claim = ra.final_sumcheck_claim();
+
+        let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
+
+        let (booleanity_sumcheck_proof, r_address_prime, r_cycle_prime, ra_claim_prime) =
+            prove_booleanity(read_addresses, &r_address, &r_cycle, transcript);
+
+        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
+        // TODO: Append to opening proof accumulator
+
+        Self {
+            core_piop_sumcheck: core_piop_sumcheck_proof,
+            booleanity_sumcheck: booleanity_sumcheck_proof,
+            ra_claim,
+            ra_claim_prime,
+            rv_claim,
+        }
+    }
+
+    pub fn verify(
+        &self,
+        K: usize,
+        T: usize,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        let _z: F = transcript.challenge_scalar();
+
+        self.core_piop_sumcheck
+            .verify(self.rv_claim, K.log_2(), 2, transcript)?;
+
+        self.booleanity_sumcheck
+            .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
+
+        // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
+        // TODO: Append to opening proof accumulator
+
+        Ok(())
+    }
+}
 
 /// Implements the sumcheck prover for the core Shout PIOP when d = 1. See
 /// Figure 5 from the Twist+Shout paper.
-pub fn prove_shout<F: JoltField, ProofTranscript: Transcript>(
+pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
     lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
     transcript: &mut ProofTranscript,
@@ -106,19 +239,18 @@ pub fn prove_shout<F: JoltField, ProofTranscript: Transcript>(
 /// Figure 6 in the Twist+Shout paper. The efficient implementation of this
 /// sumcheck is described in Section 6.3.
 pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
-    lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
+    r: &[F],
+    r_prime: &[F],
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F) {
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F) {
     const DEGREE: usize = 3;
-    let K = lookup_table.len();
+    let K = r.len().pow2();
     let T = read_addresses.len();
+    debug_assert_eq!(r_prime.len(), T.log_2());
 
-    let r: Vec<F> = transcript.challenge_vector(K.log_2());
-    let r_prime: Vec<F> = transcript.challenge_vector(T.log_2());
-
-    let mut B = MultilinearPolynomial::from(EqPolynomial::evals(&r)); // (53)
-    let D = EqPolynomial::evals(&r_prime); // (54)
+    let mut B = MultilinearPolynomial::from(EqPolynomial::evals(r)); // (53)
+    let D = EqPolynomial::evals(r_prime); // (54)
 
     // First log(K) rounds of sumcheck
 
@@ -137,7 +269,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     F[0] = F::one();
 
     let num_rounds = K.log_2() + T.log_2();
-    let mut r_address_prime: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address_prime: Vec<F> = Vec::with_capacity(K.log_2());
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let mut previous_claim = F::zero();
@@ -245,6 +377,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let H: Vec<F> = read_addresses.par_iter().map(|&k| F[k]).collect();
     let mut H = MultilinearPolynomial::from(H);
     let mut D = MultilinearPolynomial::from(D);
+    let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());
 
     // Last log(T) rounds of sumcheck
     for _ in 0..T.log_2() {
@@ -289,7 +422,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         compressed_polys.push(compressed_poly);
 
         let r_j = transcript.challenge_scalar::<F>();
-        r_address_prime.push(r_j);
+        r_cycle_prime.push(r_j);
 
         previous_claim = univariate_poly.evaluate(&r_j);
 
@@ -304,6 +437,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     (
         SumcheckInstanceProof::new(compressed_polys),
         r_address_prime,
+        r_cycle_prime,
         ra_claim,
     )
 }
@@ -454,6 +588,38 @@ mod tests {
     use rand_core::RngCore;
 
     #[test]
+    fn shout_e2e() {
+        const TABLE_SIZE: usize = 64;
+        const NUM_LOOKUPS: usize = 1 << 10;
+
+        let mut rng = test_rng();
+
+        let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::random(&mut rng)).collect();
+        let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
+            .map(|_| rng.next_u32() as usize % TABLE_SIZE)
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let proof = ShoutProof::prove(
+            lookup_table,
+            read_addresses,
+            &r_cycle,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let verification_result = proof.verify(TABLE_SIZE, NUM_LOOKUPS, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
     fn core_shout_sumcheck() {
         const TABLE_SIZE: usize = 64;
         const NUM_LOOKUPS: usize = 1 << 10;
@@ -467,7 +633,7 @@ mod tests {
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let (sumcheck_proof, _, sumcheck_claim, _) =
-            prove_shout(lookup_table, read_addresses, &mut prover_transcript);
+            prove_core_shout_piop(lookup_table, read_addresses, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
@@ -493,14 +659,15 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::random(&mut rng)).collect();
         let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
             .map(|_| rng.next_u32() as usize % TABLE_SIZE)
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let (sumcheck_proof, _, _) =
-            prove_booleanity(lookup_table, read_addresses, &mut prover_transcript);
+        let r: Vec<Fr> = prover_transcript.challenge_vector(TABLE_SIZE.log_2());
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let (sumcheck_proof, _, _, _) =
+            prove_booleanity(read_addresses, &r, &r_prime, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
