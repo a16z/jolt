@@ -10,6 +10,7 @@ use crate::{
     },
     utils::{
         math::Math,
+        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -97,6 +98,212 @@ pub fn prove_shout<F: JoltField, ProofTranscript: Transcript>(
         SumcheckInstanceProof::new(compressed_polys),
         r_address,
         sumcheck_claim,
+        ra_claim,
+    )
+}
+
+/// Implements the sumcheck prover for the Booleanity check in step 3 of
+/// Figure 6 in the Twist+Shout paper. The efficient implementation of this
+/// sumcheck is described in Section 6.3.
+pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
+    lookup_table: Vec<F>,
+    read_addresses: Vec<usize>,
+    transcript: &mut ProofTranscript,
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F) {
+    const DEGREE: usize = 3;
+    let K = lookup_table.len();
+    let T = read_addresses.len();
+
+    let r: Vec<F> = transcript.challenge_vector(K.log_2());
+    let r_prime: Vec<F> = transcript.challenge_vector(T.log_2());
+
+    let mut B = MultilinearPolynomial::from(EqPolynomial::evals(&r)); // (53)
+    let D = EqPolynomial::evals(&r_prime); // (54)
+
+    // First log(K) rounds of sumcheck
+
+    let G: Vec<_> = (0..K)
+        .into_par_iter()
+        .map(|k| {
+            read_addresses
+                .iter()
+                .enumerate()
+                .filter_map(|(cycle, address)| if *address == k { Some(D[cycle]) } else { None })
+                .sum::<F>()
+        })
+        .collect();
+
+    let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
+    F[0] = F::one();
+
+    let num_rounds = K.log_2() + T.log_2();
+    let mut r_address_prime: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+    let mut previous_claim = F::zero();
+
+    let eq_km_c: [[F; DEGREE]; 2] = [
+        [
+            F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
+            F::from_i64(-1), // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
+            F::from_i64(-2), // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
+        ],
+        [
+            F::zero(),     // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
+            F::from_u8(2), // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
+            F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
+        ],
+    ];
+    let eq_km_c_squared: [[F; DEGREE]; 2] = [
+        [F::one(), F::one(), F::from_u8(4)],
+        [F::zero(), F::from_u8(4), F::from_u8(9)],
+    ];
+
+    // First log(K) rounds of sumcheck
+    for round in 0..K.log_2() {
+        let m = round + 1;
+        let F_squared: Vec<_> = F[..(1 << round)]
+            .par_iter()
+            .map(|F_k| F_k.square())
+            .collect();
+
+        let univariate_poly_evals: [F; 3] = (0..B.len() / 2)
+            .into_par_iter()
+            .map(|k_prime| {
+                let B_evals = B.sumcheck_evals(k_prime, DEGREE, BindingOrder::LowToHigh);
+                let inner_sum = G[k_prime << m..(k_prime + 1) << m]
+                    .par_iter()
+                    .enumerate()
+                    .map(|(k, &G_k)| {
+                        [
+                            G_k * (eq_km_c_squared[k % 2][0] * F_squared[k >> 1]
+                                - eq_km_c[k % 2][0] * F[k >> 1]),
+                            G_k * (eq_km_c_squared[k % 2][1] * F_squared[k >> 1]
+                                - eq_km_c[k % 2][1] * F[k >> 1]),
+                            G_k * (eq_km_c_squared[k % 2][2] * F_squared[k >> 1]
+                                - eq_km_c[k % 2][2] * F[k >> 1]),
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); 3],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
+                    );
+
+                [
+                    B_evals[0] * inner_sum[0],
+                    B_evals[1] * inner_sum[1],
+                    B_evals[2] * inner_sum[2],
+                ]
+            })
+            .reduce(
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        let univariate_poly = UniPoly::from_evals(&[
+            univariate_poly_evals[0],
+            previous_claim - univariate_poly_evals[0],
+            univariate_poly_evals[1],
+            univariate_poly_evals[2],
+        ]);
+
+        let compressed_poly = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        r_address_prime.push(r_j);
+
+        previous_claim = univariate_poly.evaluate(&r_j);
+
+        B.bind(r_j, BindingOrder::LowToHigh);
+
+        // Update F for this round (see Equation 55)
+        let (F_left, F_right) = F.split_at_mut(1 << m);
+        F_left
+            .par_iter_mut()
+            .zip(F_right.par_iter_mut())
+            .for_each(|(x, y)| {
+                *y = *x + r_j;
+                *x -= *y;
+            });
+    }
+
+    let eq_r_r = B.final_sumcheck_claim();
+    let H: Vec<F> = read_addresses.par_iter().map(|&k| F[k]).collect();
+    let mut H = MultilinearPolynomial::from(H);
+    let mut D = MultilinearPolynomial::from(D);
+
+    // Last log(T) rounds of sumcheck
+    for _ in 0..T.log_2() {
+        let mut univariate_poly_evals: [F; 3] = (0..D.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let D_evals = D.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+                let H_evals = H.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
+
+                [
+                    D_evals[0] * (H_evals[0] * H_evals[0] - H_evals[0]),
+                    D_evals[1] * (H_evals[1] * H_evals[1] - H_evals[1]),
+                    D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
+                ]
+            })
+            .reduce(
+                || [F::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        univariate_poly_evals = [
+            eq_r_r * univariate_poly_evals[0],
+            eq_r_r * univariate_poly_evals[1],
+            eq_r_r * univariate_poly_evals[2],
+        ];
+
+        let univariate_poly = UniPoly::from_evals(&[
+            univariate_poly_evals[0],
+            previous_claim - univariate_poly_evals[0],
+            univariate_poly_evals[1],
+            univariate_poly_evals[2],
+        ]);
+
+        let compressed_poly = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        r_address_prime.push(r_j);
+
+        previous_claim = univariate_poly.evaluate(&r_j);
+
+        // Bind polynomials
+        rayon::join(
+            || D.bind(r_j, BindingOrder::LowToHigh),
+            || H.bind(r_j, BindingOrder::LowToHigh),
+        );
+    }
+
+    let ra_claim = H.final_sumcheck_claim();
+    (
+        SumcheckInstanceProof::new(compressed_polys),
+        r_address_prime,
         ra_claim,
     )
 }
@@ -242,7 +449,7 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use ark_ff::One;
+    use ark_ff::{One, Zero};
     use ark_std::test_rng;
     use rand_core::RngCore;
 
@@ -270,6 +477,40 @@ mod tests {
             sumcheck_claim,
             TABLE_SIZE.log_2(),
             2,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn booleanity_sumcheck() {
+        const TABLE_SIZE: usize = 64;
+        const NUM_LOOKUPS: usize = 1 << 10;
+
+        let mut rng = test_rng();
+
+        let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::random(&mut rng)).collect();
+        let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
+            .map(|_| rng.next_u32() as usize % TABLE_SIZE)
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let (sumcheck_proof, _, _) =
+            prove_booleanity(lookup_table, read_addresses, &mut prover_transcript);
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _: Vec<Fr> = verifier_transcript.challenge_vector(TABLE_SIZE.log_2());
+        let _: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+
+        let verification_result = sumcheck_proof.verify(
+            Fr::zero(),
+            TABLE_SIZE.log_2() + NUM_LOOKUPS.log_2(),
+            3,
             &mut verifier_transcript,
         );
         assert!(
