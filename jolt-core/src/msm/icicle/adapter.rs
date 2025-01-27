@@ -132,7 +132,7 @@ where
 }
 
 // batch_info is a tuple of (batch_id, bit_size, scalars)
-pub type BatchInfo<'a, V: VariableBaseMSM> = (usize, u32, &'a [V::ScalarField]);
+pub type BatchInfo<'a, V: VariableBaseMSM> = (usize, usize, &'a [V::ScalarField]);
 
 #[tracing::instrument(skip_all, name = "icicle_variable_batch_msm")]
 pub fn icicle_variable_batch_msm<V>(

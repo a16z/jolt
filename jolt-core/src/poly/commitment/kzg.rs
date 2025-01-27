@@ -240,7 +240,7 @@ where
         let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches be less than the bases in size
-        if let Some(invalid) = polys.iter().find(|coeffs| coeffs.len() > g1_powers.len()) {
+        if let Some(invalid) = polys.iter().find(|poly| poly.len() > g1_powers.len()) {
             return Err(ProofVerifyError::KeyLengthError(
                 g1_powers.len(),
                 invalid.len(),
@@ -248,6 +248,30 @@ where
         }
 
         let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(g1_powers, gpu_g1, polys);
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_with_mode")]
+    pub fn commit_variable_batch_univariate(
+        pk: &KZGProverKey<P>,
+        polys: &[UniPoly<P::ScalarField>],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches be less than the bases in size
+        if let Some(invalid) = polys
+            .iter()
+            .find(|poly| poly.coeffs.len() > g1_powers.len())
+        {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.coeffs.len(),
+            ));
+        }
+
+        let commitments =
+            <P::G1 as VariableBaseMSM>::variable_batch_msm_univariate(g1_powers, gpu_g1, polys);
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 
