@@ -64,7 +64,7 @@ for i in "${!test_directories[@]}"; do
   cargo build --release -p "$file"
 
   echo "Running $file"
-  command="cargo run --release -p \"$file\""
+  # command="cargo run --release -p \"$file\""
   # Use `time` to measure execution time
 
   # Use `time` to measure execution time and memory.
@@ -74,7 +74,9 @@ for i in "${!test_directories[@]}"; do
   # MRS: 1964 KB
 
   # exec_time=$( (time -p eval "$command") 2>&1 | grep real | awk '{print $2}')
-  output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" eval "$command" 2>&1)
+  # output=$(/usr/bin/time "${command}" 2>&1)
+  output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1)
+  # output=$(time eval "$command" 2>&1)
   echo "$output"
   # Extract 'real' time value using awk
   exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
