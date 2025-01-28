@@ -106,6 +106,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
@@ -413,6 +414,9 @@ pub trait PolynomialBinding<F: JoltField> {
     fn is_bound(&self) -> bool;
     /// Binds the polynomial to a random field element `r`.
     fn bind(&mut self, r: F, order: BindingOrder);
+    /// Binds the polynomial to a random field element `r`, parallelizing
+    /// by coefficient.
+    fn bind_parallel(&mut self, r: F, order: BindingOrder);
     /// Returns the final sumcheck claim about the polynomial.
     fn final_sumcheck_claim(&self) -> F;
 }
@@ -454,6 +458,21 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U64Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::I64Scalars(poly) => poly.bind(r, order),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
+    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => match order {
+                BindingOrder::LowToHigh => poly.bound_poly_var_bot_01_optimized(&r),
+                BindingOrder::HighToLow => poly.bound_poly_var_top_zero_optimized(&r),
+            },
+            MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::U16Scalars(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
         }
     }
 

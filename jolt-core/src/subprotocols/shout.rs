@@ -122,8 +122,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
 
             // Bind polynomials
             rayon::join(
-                || ra.bind(r_j, BindingOrder::LowToHigh),
-                || val.bind(r_j, BindingOrder::LowToHigh),
+                || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || val.bind_parallel(r_j, BindingOrder::LowToHigh),
             );
         }
 
@@ -240,8 +240,8 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
 
         // Bind polynomials
         rayon::join(
-            || ra.bind(r_j, BindingOrder::LowToHigh),
-            || val.bind(r_j, BindingOrder::LowToHigh),
+            || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || val.bind_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
 
@@ -389,7 +389,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
         previous_claim = univariate_poly.evaluate(&r_j);
 
-        B.bind(r_j, BindingOrder::LowToHigh);
+        B.bind_parallel(r_j, BindingOrder::LowToHigh);
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Update F");
         let _inner_guard = inner_span.enter();
@@ -415,7 +415,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     let eq_r_r = B.final_sumcheck_claim();
-    let H: Vec<F> = read_addresses.par_iter().map(|&k| F[k]).collect();
+    let H: Vec<F> = read_addresses.iter().map(|&k| F[k]).collect();
     let mut H = MultilinearPolynomial::from(H);
     let mut D = MultilinearPolynomial::from(D);
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());
@@ -475,8 +475,8 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
         // Bind polynomials
         rayon::join(
-            || D.bind(r_j, BindingOrder::LowToHigh),
-            || H.bind(r_j, BindingOrder::LowToHigh),
+            || D.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || H.bind_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
 
@@ -538,7 +538,7 @@ pub fn prove_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
 
         previous_claim = univariate_poly.evaluate(&r_j);
 
-        ra.bind(r_j, BindingOrder::LowToHigh);
+        ra.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     let ra_claim = ra.final_sumcheck_claim();
@@ -616,8 +616,8 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
 
         // Bind polynomials
         rayon::join(
-            || ra.bind(r_j, BindingOrder::LowToHigh),
-            || int.bind(r_j, BindingOrder::LowToHigh),
+            || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || int.bind_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
 

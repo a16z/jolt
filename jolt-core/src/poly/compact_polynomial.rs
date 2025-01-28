@@ -1,11 +1,13 @@
 use std::ops::Index;
 
 use crate::utils::math::Math;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{field::JoltField, utils};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use num_integer::Integer;
+use rayon::prelude::*;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
@@ -196,6 +198,71 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                     self.bound_coeffs = left
                         .iter()
                         .zip(right.iter())
+                        .map(|(&a, &b)| {
+                            if a == b {
+                                a.to_field()
+                            } else {
+                                a.field_mul(one_minus_r_r2) + b.field_mul(r_r2)
+                            }
+                        })
+                        .collect();
+                }
+            }
+        }
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    #[tracing::instrument(skip_all, name = "CompactPolynomial::bind")]
+    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+        let n = self.len() / 2;
+        if self.is_bound() {
+            match order {
+                BindingOrder::LowToHigh => {
+                    // TODO(moodlezoup): Use `binding_scratch_space` trick
+                    let mut new_coeffs = unsafe_allocate_zero_vec(n);
+                    for i in 0..n {
+                        if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
+                            new_coeffs[i] = self.bound_coeffs[2 * i];
+                        } else {
+                            new_coeffs[i] = self.bound_coeffs[2 * i]
+                                + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
+                        }
+                    }
+                    self.bound_coeffs = new_coeffs;
+                }
+                BindingOrder::HighToLow => {
+                    let (left, right) = self.bound_coeffs.split_at_mut(n);
+                    left.par_iter_mut()
+                        .zip(right.par_iter())
+                        .filter(|(a, b)| a != b)
+                        .for_each(|(a, b)| {
+                            *a += r * (*b - *a);
+                        });
+                }
+            }
+        } else {
+            let r_r2 = r * F::montgomery_r2().unwrap_or(F::one());
+            let one_minus_r_r2 = (F::one() - r) * F::montgomery_r2().unwrap_or(F::one());
+            match order {
+                BindingOrder::LowToHigh => {
+                    self.bound_coeffs = (0..n)
+                        .into_par_iter()
+                        .map(|i| {
+                            if self.coeffs[2 * i] == self.coeffs[2 * i + 1] {
+                                self.coeffs[2 * i].to_field()
+                            } else {
+                                self.coeffs[2 * i].field_mul(one_minus_r_r2)
+                                    + self.coeffs[2 * i + 1].field_mul(r_r2)
+                            }
+                        })
+                        .collect();
+                }
+                BindingOrder::HighToLow => {
+                    let (left, right) = self.coeffs.split_at(n);
+                    self.bound_coeffs = left
+                        .par_iter()
+                        .zip(right.par_iter())
                         .map(|(&a, &b)| {
                             if a == b {
                                 a.to_field()
