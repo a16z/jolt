@@ -75,10 +75,13 @@ for i in "${!test_directories[@]}"; do
 
   # exec_time=$( (time -p eval "$command") 2>&1 | grep real | awk '{print $2}')
   output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" "$command" 2>&1)
+  echo "$output"
   # Extract 'real' time value using awk
   exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
+  echo "$exec_time"
   # Extract 'MRS' value using awk
   mem_used=$(echo "$output" | awk '/MRS:/ {print $2}') # in KB
+  echo "$mem_used"
 
   # Append execution time to JSON file
   write_to_json "${file}-time" "$exec_time" "s"
