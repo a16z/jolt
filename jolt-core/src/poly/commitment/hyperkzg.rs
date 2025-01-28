@@ -11,7 +11,6 @@ use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
-use crate::field;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
@@ -129,7 +128,7 @@ fn compute_witness_polynomial<P: Pairing>(
     u: P::ScalarField,
 ) -> Vec<P::ScalarField>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
 {
     let d = f.len();
 
@@ -149,7 +148,7 @@ fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     let k = f.len();
@@ -167,7 +166,8 @@ where
     });
 
     // TODO(moodlezoup): Avoid cloned()
-    transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
+    let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
+    transcript.append_scalars::<P::ScalarField>(&scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
     let B = MultilinearPolynomial::linear_combination(&f.iter().collect::<Vec<_>>(), &q_powers);
 
@@ -192,13 +192,14 @@ fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
 ) -> bool
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     let k = C.len();
     let t = u.len();
 
-    transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
+    let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
+    transcript.append_scalars::<P::ScalarField>(&scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
     transcript.append_points(&W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
@@ -275,7 +276,7 @@ pub struct HyperKZG<P: Pairing, ProofTranscript: Transcript> {
 
 impl<P: Pairing, ProofTranscript: Transcript> HyperKZG<P, ProofTranscript>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     pub fn protocol_name() -> &'static [u8] {
@@ -410,7 +411,7 @@ where
 impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     for HyperKZG<P, ProofTranscript>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
