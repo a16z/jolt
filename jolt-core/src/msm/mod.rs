@@ -219,146 +219,38 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn batch_msm<P>(
+    fn batch_msm_common<P>(
         bases: &[Self::MulBase],
         gpu_bases: Option<&[GpuBaseType<Self>]>,
         polys: &[P],
+        variable_batches: bool,
     ) -> Vec<Self>
     where
         P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
     {
-        assert!(polys.par_iter().all(|s| s.borrow().len() == bases.len()));
-        #[cfg(not(feature = "icicle"))]
-        assert!(gpu_bases.is_none());
-        assert_eq!(bases.len(), gpu_bases.map_or(bases.len(), |b| b.len()));
-
-        let use_icicle = use_icicle();
-
-        if !use_icicle {
-            let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
-            let _guard = span.enter();
-            return polys
-                .into_par_iter()
-                .map(|poly| Self::msm(bases, None, poly.borrow(), None).unwrap())
-                .collect();
+        // Validate input lengths
+        if variable_batches {
+            assert!(polys.par_iter().all(|s| s.borrow().len() <= bases.len()));
+        } else {
+            assert!(polys.par_iter().all(|s| s.borrow().len() == bases.len()));
+            assert_eq!(bases.len(), gpu_bases.map_or(bases.len(), |b| b.len()));
         }
 
-        // Split scalar batches into CPU and GPU workloads
-        let span = tracing::span!(tracing::Level::INFO, "group_scalar_indices_parallel");
-        let _guard = span.enter();
-        let (cpu_batch, gpu_batch): (Vec<_>, Vec<_>) =
-            polys.par_iter().enumerate().partition_map(|(i, poly)| {
-                let poly = poly.borrow();
-                let max_num_bits = poly.max_num_bits();
-
-                if max_num_bits > 10 {
-                    match poly {
-                        MultilinearPolynomial::LargeScalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.evals()))
-                        }
-                        MultilinearPolynomial::U16Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
-                        }
-                        MultilinearPolynomial::U32Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
-                        }
-                        MultilinearPolynomial::U64Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
-                        }
-                        MultilinearPolynomial::I64Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
-                        }
-                        _ => Either::Left((i, max_num_bits, poly)),
-                    }
-                } else {
-                    Either::Left((i, max_num_bits, poly))
-                }
-            });
-        drop(_guard);
-        drop(span);
-        let mut results = vec![Self::zero(); polys.len()];
-
-        // Handle CPU computations in parallel
-        let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu");
-        let _guard = span.enter();
-        let cpu_results: Vec<(usize, Self)> = cpu_batch
-            .into_par_iter()
-            .map(|(i, max_num_bits, poly)| {
-                (i, Self::msm(bases, None, poly, Some(max_num_bits)).unwrap())
-            })
-            .collect();
-        drop(_guard);
-        drop(span);
-
-        // Store CPU results
-        for (i, result) in cpu_results {
-            results[i] = result;
-        }
-
-        // Handle GPU computations if available
-        if !gpu_batch.is_empty() && use_icicle {
-            #[cfg(feature = "icicle")]
-            {
-                let span = tracing::span!(tracing::Level::INFO, "batch_msms_gpu");
-                let _guard = span.enter();
-                let mut backup = vec![];
-                let gpu_bases = gpu_bases.unwrap_or_else(|| {
-                    backup = Self::get_gpu_bases(bases);
-                    &backup
-                });
-
-                // includes putting the scalars and bases on device
-                let slice_bit_size = 256 * gpu_batch[0].2.len() * 2;
-                let slices_at_a_time = total_memory_bits() / slice_bit_size;
-
-                // Process GPU batches with memory constraints
-                for work_chunk in gpu_batch.chunks(slices_at_a_time) {
-                    let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = work_chunk
-                        .par_iter()
-                        .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
-                        .unzip();
-
-                    let max_num_bits = max_num_bits.iter().max().unwrap();
-                    let batch_results = icicle_batch_msm(gpu_bases, &chunk_polys, *max_num_bits);
-
-                    // Store GPU results using original indices
-                    for ((original_idx, _, _), result) in work_chunk.iter().zip(batch_results) {
-                        results[*original_idx] = result;
-                    }
-                }
-            }
-            #[cfg(not(feature = "icicle"))]
-            {
-                unreachable!("icicle_init must not return true without the icicle feature");
-            }
-        }
-        results
-    }
-
-    // a "batch" msm that can handle scalars of different sizes
-    // it mostly amortizes copy costs of sending the generators to the GPU
-    #[tracing::instrument(skip_all)]
-    fn variable_batch_msm<P>(
-        bases: &[Self::MulBase],
-        gpu_bases: Option<&[GpuBaseType<Self>]>,
-        polys: &[P],
-    ) -> Vec<Self>
-    where
-        P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
-    {
-        assert!(polys.par_iter().all(|s| s.borrow().len() <= bases.len()));
         #[cfg(not(feature = "icicle"))]
         assert!(gpu_bases.is_none());
 
         let use_icicle = use_icicle();
 
+        // Handle CPU-only case
         if !use_icicle {
             let span = tracing::span!(tracing::Level::INFO, "batch_msm_cpu_only");
             let _guard = span.enter();
             return polys
                 .into_par_iter()
                 .map(|poly| {
-                    Self::msm(&bases[..poly.borrow().len()], None, poly.borrow(), None).unwrap()
+                    let poly = poly.borrow();
+                    let bases_slice = &bases[..poly.len()];
+                    Self::msm(bases_slice, None, poly, None).unwrap()
                 })
                 .collect();
         }
@@ -404,9 +296,10 @@ where
         let cpu_results: Vec<(usize, Self)> = cpu_batch
             .into_par_iter()
             .map(|(i, max_num_bits, poly)| {
+                let bases_slice = &bases[..poly.len()];
                 (
                     i,
-                    Self::msm(&bases[..poly.len()], None, poly, Some(max_num_bits)).unwrap(),
+                    Self::msm(bases_slice, None, poly, Some(max_num_bits)).unwrap(),
                 )
             })
             .collect();
@@ -430,13 +323,35 @@ where
                     &backup
                 });
 
-                let batch = gpu_batch
-                    .iter()
-                    .map(|(i, max_num_bits, poly)| (*i, *max_num_bits, poly.as_slice()))
-                    .collect::<Vec<_>>();
-                let batched_results = icicle_variable_batch_msm(gpu_bases, &batch);
-                for (index, result) in batched_results {
-                    results[index] = result;
+                if variable_batches {
+                    // Variable-length batch processing
+                    let batch = gpu_batch
+                        .iter()
+                        .map(|(i, max_num_bits, poly)| (*i, *max_num_bits, poly.as_slice()))
+                        .collect::<Vec<_>>();
+                    let batched_results = icicle_variable_batch_msm(gpu_bases, &batch);
+                    for (index, result) in batched_results {
+                        results[index] = result;
+                    }
+                } else {
+                    // Fixed-length batch processing
+                    let slice_bit_size = 256 * gpu_batch[0].2.len() * 2;
+                    let slices_at_a_time = total_memory_bits() / slice_bit_size;
+
+                    for work_chunk in gpu_batch.chunks(slices_at_a_time) {
+                        let (max_num_bits, chunk_polys): (Vec<_>, Vec<_>) = work_chunk
+                            .par_iter()
+                            .map(|(_, max_num_bits, poly)| (*max_num_bits, poly.as_slice()))
+                            .unzip();
+
+                        let max_num_bits = max_num_bits.iter().max().unwrap();
+                        let batch_results =
+                            icicle_batch_msm(gpu_bases, &chunk_polys, *max_num_bits);
+
+                        for ((index, _, _), result) in work_chunk.iter().zip(batch_results) {
+                            results[*index] = result;
+                        }
+                    }
                 }
             }
             #[cfg(not(feature = "icicle"))]
@@ -445,6 +360,32 @@ where
             }
         }
         results
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn batch_msm<P>(
+        bases: &[Self::MulBase],
+        gpu_bases: Option<&[GpuBaseType<Self>]>,
+        polys: &[P],
+    ) -> Vec<Self>
+    where
+        P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
+    {
+        Self::batch_msm_common(bases, gpu_bases, polys, false)
+    }
+
+    // a "batch" msm that can handle scalars of different sizes
+    // it mostly amortizes copy costs of sending the generators to the GPU
+    #[tracing::instrument(skip_all)]
+    fn variable_batch_msm<P>(
+        bases: &[Self::MulBase],
+        gpu_bases: Option<&[GpuBaseType<Self>]>,
+        polys: &[P],
+    ) -> Vec<Self>
+    where
+        P: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
+    {
+        Self::batch_msm_common(bases, gpu_bases, polys, true)
     }
 
     #[tracing::instrument(skip_all)]
@@ -475,7 +416,7 @@ where
                         None,
                         &poly.borrow().coeffs,
                         None,
-                        use_icicle,
+                        false,
                     )
                     .unwrap()
                 })
