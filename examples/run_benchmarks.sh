@@ -11,7 +11,7 @@
 
 # Define the exclude list
 # exclusion_list=("collatz" "overflow" "sha3-chain")
-exclusion_list=("multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
+exclusion_list=("fibonacci" "multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
 # JSON file to store results
 output_file="benchmark_results.json"
 
@@ -74,7 +74,7 @@ for i in "${!test_directories[@]}"; do
   # MRS: 1964 KB
 
   # exec_time=$( (time -p eval "$command") 2>&1 | grep real | awk '{print $2}')
-  output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" "$command" 2>&1)
+  output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" eval "$command" 2>&1)
   echo "$output"
   # Extract 'real' time value using awk
   exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
