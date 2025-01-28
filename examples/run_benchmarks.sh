@@ -82,8 +82,9 @@ for i in "${!test_directories[@]}"; do
 
   # Append execution time to JSON file
   write_to_json "${file}-time" "$exec_time" "s"
-  write_to_json "${file}-mem" "$mem_used" "KB"
+  printf "    },\n" >>"$output_file"
 
+  write_to_json "${file}-mem" "$mem_used" "KB"
   # Add a comma if it's not the last entry
   if [ "$i" -lt $((${#test_directories[@]} - 1)) ]; then
     printf "    },\n" >>"$output_file"
