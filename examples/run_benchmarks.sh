@@ -1,8 +1,35 @@
 #!/bin/bash
 
+# This script runs all the benchmarks in the current directory except the ones in the exclusion list.
+# Current script measures peak memory and wall time for each benchmark.
+#
+# TODOs - clarify requirements:
+# - Are we measuring the correct the CPU time?
+# - Build time is ignored and not included in the CPU time
+# - Are we measuring the correct peak memory usage? MRS? Heap? Stack?
+# - What about the benchmarks that require a lot of memory? These crash the github runners
+
 # Define the exclude list
-exclusion_list=("collatz" "overflow" "sha3-chain")
-# exclusion_list=("multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
+# exclusion_list=("collatz" "overflow" "sha3-chain")
+exclusion_list=("multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
+# JSON file to store results
+output_file="benchmark_results.json"
+
+# Write time or memory to JSON file
+# Args:
+# $1: name of the benchmark
+# $2: metric value
+# $3: unit of the test
+function write_to_json() {
+  # Append execution time to JSON file
+  printf "  {\n" >>"$output_file"
+  printf "        \"name\": \"%s\",\n" "$1" >>"$output_file"
+  # printf "        \"unit\": \"s\",\n" >>"$output_file"
+  printf "        \"unit\": \"%s\",\n" "$3" >>"$output_file"
+  printf "        \"value\": %.4f,\n" "$2" >>"$output_file"
+  printf "        \"extra\": \"\"\n" >>"$output_file"
+
+}
 
 
 # Initialize an array to hold directories
@@ -26,38 +53,45 @@ for dir in "${test_directories[@]}"; do
   echo "$dir"
 done
 
-
-# JSON file to store results
-output_file="benchmark_results.json"
-
 # Start creating the JSON structure
-printf "[\n" > "$output_file"
+printf "[\n" >"$output_file"
 echo "-----------------"
 for i in "${!test_directories[@]}"; do
   file="${test_directories[$i]}"
+
+  # Build the benchmark
+  echo "Building $file"
+  cargo build --release -p "$file"
 
   echo "Running $file"
   command="cargo run --release -p \"$file\""
   # Use `time` to measure execution time
 
-  # Measure the execution time using `time`
-  exec_time=$( (time -p eval "$command") 2>&1 | grep real | awk '{print $2}' )
+  # Use `time` to measure execution time and memory.
+  # Output the information in the below custom format:
+  # wall: 0:02.00 (HH:MM:SS)
+  # real: 2.00 s
+  # MRS: 1964 KB
 
-  # Append result to JSON file
-  printf "  {\n" >> "$output_file"
-  printf "        \"name\": \"%s\",\n" "$file" >> "$output_file"
-  printf "        \"unit\": \"s\",\n" >> "$output_file"
-  printf "        \"value\": %.4f,\n" "$exec_time" >> "$output_file"
-  printf "        \"extra\": \"\"\n" >> "$output_file"
+  # exec_time=$( (time -p eval "$command") 2>&1 | grep real | awk '{print $2}')
+  output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" "$command" 2>&1)
+  # Extract 'real' time value using awk
+  exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
+  # Extract 'MRS' value using awk
+  mem_used=$(echo "$output" | awk '/MRS:/ {print $2}') # in KB
+
+  # Append execution time to JSON file
+  write_to_json "${file}-time" "$exec_time" "s"
+  write_to_json "${file}-mem" "$mem_used" "KB"
 
   # Add a comma if it's not the last entry
-  if [ $i -lt $((${#test_directories[@]} - 1)) ]; then
-      printf "    },\n" >> "$output_file"
+  if [ "$i" -lt $((${#test_directories[@]} - 1)) ]; then
+    printf "    },\n" >>"$output_file"
   else
-      printf "    }\n" >> "$output_file"
+    printf "    }\n" >>"$output_file"
   fi
 
 done
 
 # Close the JSON structure
-printf "]\n" >> "$output_file"
+printf "]\n" >>"$output_file"
