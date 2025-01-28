@@ -7,7 +7,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+
 pub struct R1CSInstance<F: JoltField> {
     num_cons: usize,
     num_vars: usize,

@@ -11,7 +11,7 @@ use crate::{
     utils::{math::Math, transcript::Transcript},
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatEntry<F: JoltField> {
     row: usize,
     col: usize,
@@ -24,7 +24,7 @@ impl<F: JoltField> SparseMatEntry<F> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatPolynomial<F: JoltField> {
     num_vars_x: usize,
     num_vars_y: usize,

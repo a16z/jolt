@@ -78,6 +78,7 @@ pub type VarsAssignment<F: JoltField> = Assignment<F>;
 pub type InputsAssignment<F: JoltField> = Assignment<F>;
 
 /// `Instance` holds the description of R1CS matrices and a hash of the matrices
+#[derive(Clone)]
 pub struct Instance<F: JoltField> {
     inst: R1CSInstance<F>,
     digest: Vec<u8>,
@@ -702,3 +703,4 @@ mod errors;
 mod r1csinstance;
 mod r1csproof;
 mod sparse_mlpoly;
+mod spartan_memory_checking;
