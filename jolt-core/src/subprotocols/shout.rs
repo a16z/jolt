@@ -151,17 +151,39 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
 
     pub fn verify(
         &self,
-        K: usize,
-        T: usize,
+        lookup_table: Vec<F>,
+        r_cycle: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let _z: F = transcript.challenge_scalar();
+        let K = lookup_table.len();
+        let T = r_cycle.len().pow2();
+        let z: F = transcript.challenge_scalar();
 
-        self.core_piop_sumcheck
-            .verify(self.rv_claim, K.log_2(), 2, transcript)?;
+        let (sumcheck_claim, mut r_address) =
+            self.core_piop_sumcheck
+                .verify(self.rv_claim + z, K.log_2(), 2, transcript)?;
+        r_address = r_address.into_iter().rev().collect();
+        let val = MultilinearPolynomial::from(lookup_table);
 
-        self.booleanity_sumcheck
-            .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
+        assert_eq!(
+            self.ra_claim * (z + val.evaluate(&r_address)),
+            sumcheck_claim,
+            "Core PIOP + Hamming weight sumcheck failed"
+        );
+
+        let (sumcheck_claim, r_booleanity) =
+            self.booleanity_sumcheck
+                .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
+        let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
+        let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
+        let r_cycle: Vec<_> = r_cycle.to_vec().into_iter().rev().collect();
+        let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(r_cycle_prime);
+
+        assert_eq!(
+            eq_eval_address * eq_eval_cycle * (self.ra_claim_prime.square() - self.ra_claim_prime),
+            sumcheck_claim,
+            "Booleanity sumcheck failed"
+        );
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
         // TODO: Append to opening proof accumulator
@@ -284,6 +306,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
     let mut previous_claim = F::zero();
 
+    // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
     let eq_km_c: [[F; DEGREE]; 2] = [
         [
             F::one(),        // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
@@ -296,6 +319,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             F::from_u8(3), // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
         ],
     ];
+    // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
     let eq_km_c_squared: [[F; DEGREE]; 2] = [
         [F::one(), F::one(), F::from_u8(4)],
         [F::zero(), F::from_u8(4), F::from_u8(9)],
@@ -311,17 +335,6 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     for round in 0..K.log_2() {
         let m = round + 1;
 
-        let inner_span = tracing::span!(tracing::Level::INFO, "Compute F^2");
-        let _inner_guard = inner_span.enter();
-
-        let F_squared: Vec<_> = F[..(1 << round)]
-            .par_iter()
-            .map(|F_k| F_k.square())
-            .collect();
-
-        drop(_inner_guard);
-        drop(inner_span);
-
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
@@ -333,13 +346,19 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
                     .par_iter()
                     .enumerate()
                     .map(|(k, &G_k)| {
+                        // Since we're binding variables from low to high, k_m is the high bit
+                        let k_m = k >> (m - 1);
+                        // We then index into F using (k_{m-1}, ..., k_1)
+                        let F_k = F[k % (1 << (m - 1))];
+                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                        let G_times_F = G_k * F_k;
+                        // For c \in {0, 2, 3} compute:
+                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                         [
-                            G_k * (eq_km_c_squared[k % 2][0] * F_squared[k >> 1]
-                                - eq_km_c[k % 2][0] * F[k >> 1]),
-                            G_k * (eq_km_c_squared[k % 2][1] * F_squared[k >> 1]
-                                - eq_km_c[k % 2][1] * F[k >> 1]),
-                            G_k * (eq_km_c_squared[k % 2][2] * F_squared[k >> 1]
-                                - eq_km_c[k % 2][2] * F[k >> 1]),
+                            G_times_F * (eq_km_c_squared[k_m][0] * F_k - eq_km_c[k_m][0]),
+                            G_times_F * (eq_km_c_squared[k_m][1] * F_k - eq_km_c[k_m][1]),
+                            G_times_F * (eq_km_c_squared[k_m][2] * F_k - eq_km_c[k_m][2]),
                         ]
                     })
                     .reduce(
@@ -395,12 +414,12 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         let _inner_guard = inner_span.enter();
 
         // Update F for this round (see Equation 55)
-        let (F_left, F_right) = F.split_at_mut(1 << m);
+        let (F_left, F_right) = F.split_at_mut(1 << round);
         F_left
             .par_iter_mut()
             .zip(F_right.par_iter_mut())
             .for_each(|(x, y)| {
-                *y = *x + r_j;
+                *y = *x * r_j;
                 *x -= *y;
             });
     }
@@ -421,7 +440,23 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());
 
     // Last log(T) rounds of sumcheck
-    for _ in 0..T.log_2() {
+    for _round in 0..T.log_2() {
+        #[cfg(test)]
+        {
+            let expected: F = eq_r_r
+                * (0..H.len())
+                    .map(|j| {
+                        let D_j = D.get_bound_coeff(j);
+                        let H_j = H.get_bound_coeff(j);
+                        D_j * (H_j.square() - H_j)
+                    })
+                    .sum::<F>();
+            assert_eq!(
+                expected, previous_claim,
+                "Sumcheck sanity check failed in round {_round}"
+            );
+        }
+
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
@@ -649,7 +684,7 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
         let proof = ShoutProof::prove(
-            lookup_table,
+            lookup_table.clone(),
             read_addresses,
             &r_cycle,
             &mut prover_transcript,
@@ -657,8 +692,8 @@ mod tests {
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
-        let verification_result = proof.verify(TABLE_SIZE, NUM_LOOKUPS, &mut verifier_transcript);
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let verification_result = proof.verify(lookup_table, &r_cycle, &mut verifier_transcript);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
