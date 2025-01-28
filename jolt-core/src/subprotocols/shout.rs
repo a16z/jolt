@@ -27,6 +27,7 @@ pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
+    #[tracing::instrument(skip_all, name = "ShoutProof::prove")]
     pub fn prove(
         lookup_table: Vec<F>,
         read_addresses: Vec<usize>,
@@ -44,6 +45,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
         let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
 
         let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+
+        let span = tracing::span!(tracing::Level::INFO, "compute F");
+        let _guard = span.enter();
+
         let F: Vec<_> = (0..K)
             .into_par_iter()
             .map(|k| {
@@ -56,6 +61,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
                     .sum::<F>()
             })
             .collect();
+        drop(_guard);
+        drop(span);
 
         let rv_claim: F = F
             .par_iter()
@@ -70,9 +77,15 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
 
         const DEGREE: usize = 2;
 
+        let span = tracing::span!(tracing::Level::INFO, "core PIOP + Hamming weight sumcheck");
+        let _guard = span.enter();
+
         // Prove the core PIOP and Hamming weight sumchecks in parallel
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
         for _ in 0..num_rounds {
+            let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+            let _inner_guard = inner_span.enter();
+
             let univariate_poly_evals: [F; 2] = (0..ra.len() / 2)
                 .into_par_iter()
                 .map(|i| {
@@ -95,6 +108,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
                 univariate_poly_evals[1],
             ]);
 
+            drop(_inner_guard);
+            drop(inner_span);
+
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
@@ -110,6 +126,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
                 || val.bind(r_j, BindingOrder::LowToHigh),
             );
         }
+
+        drop(_guard);
+        drop(span);
 
         let ra_claim = ra.final_sumcheck_claim();
 
@@ -238,6 +257,7 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
 /// Implements the sumcheck prover for the Booleanity check in step 3 of
 /// Figure 6 in the Twist+Shout paper. The efficient implementation of this
 /// sumcheck is described in Section 6.3.
+#[tracing::instrument(skip_all, name = "Shout booleanity sumcheck")]
 pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     read_addresses: Vec<usize>,
     r: &[F],
@@ -282,12 +302,28 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     ];
 
     // First log(K) rounds of sumcheck
+    let span = tracing::span!(
+        tracing::Level::INFO,
+        "First log(K) rounds of Booleanity sumcheck"
+    );
+    let _guard = span.enter();
+
     for round in 0..K.log_2() {
         let m = round + 1;
+
+        let inner_span = tracing::span!(tracing::Level::INFO, "Compute F^2");
+        let _inner_guard = inner_span.enter();
+
         let F_squared: Vec<_> = F[..(1 << round)]
             .par_iter()
             .map(|F_k| F_k.square())
             .collect();
+
+        drop(_inner_guard);
+        drop(inner_span);
+
+        let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+        let _inner_guard = inner_span.enter();
 
         let univariate_poly_evals: [F; 3] = (0..B.len() / 2)
             .into_par_iter()
@@ -341,6 +377,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             univariate_poly_evals[2],
         ]);
 
+        drop(_inner_guard);
+        drop(inner_span);
+
         let compressed_poly = univariate_poly.compress();
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
@@ -351,6 +390,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         previous_claim = univariate_poly.evaluate(&r_j);
 
         B.bind(r_j, BindingOrder::LowToHigh);
+
+        let inner_span = tracing::span!(tracing::Level::INFO, "Update F");
+        let _inner_guard = inner_span.enter();
 
         // Update F for this round (see Equation 55)
         let (F_left, F_right) = F.split_at_mut(1 << m);
@@ -363,6 +405,15 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             });
     }
 
+    drop(_guard);
+    drop(span);
+
+    let span = tracing::span!(
+        tracing::Level::INFO,
+        "Last log(T) rounds of Booleanity sumcheck"
+    );
+    let _guard = span.enter();
+
     let eq_r_r = B.final_sumcheck_claim();
     let H: Vec<F> = read_addresses.par_iter().map(|&k| F[k]).collect();
     let mut H = MultilinearPolynomial::from(H);
@@ -371,6 +422,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
     // Last log(T) rounds of sumcheck
     for _ in 0..T.log_2() {
+        let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+        let _inner_guard = inner_span.enter();
+
         let mut univariate_poly_evals: [F; 3] = (0..D.len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -406,6 +460,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             univariate_poly_evals[1],
             univariate_poly_evals[2],
         ]);
+
+        drop(_inner_guard);
+        drop(inner_span);
 
         let compressed_poly = univariate_poly.compress();
         compressed_poly.append_to_transcript(transcript);
