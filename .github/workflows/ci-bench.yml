@@ -14,15 +14,10 @@ permissions:
   # contents permission to update benchmark contents in gh-pages branch
   contents: write
 
-# cancel in-progress job when a new push is performed
-concurrency:
-  group: ci-bench-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   benchmark:
     name: Performance benchmarks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
     - uses: actions-rust-lang/setup-rust-toolchain@v1
