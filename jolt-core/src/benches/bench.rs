@@ -5,8 +5,12 @@ use crate::jolt::vm::Jolt;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
+use crate::subprotocols::shout::ShoutProof;
+use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
+use ark_std::test_rng;
+use rand_core::RngCore;
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -21,6 +25,7 @@ pub enum BenchType {
     Sha2,
     Sha3,
     Sha2Chain,
+    Shout,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -41,6 +46,7 @@ pub fn benchmarks(
             BenchType::Fibonacci => {
                 fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
+            BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -52,10 +58,51 @@ pub fn benchmarks(
             BenchType::Fibonacci => {
                 fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
+            BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
     }
+}
+
+fn shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let small_value_lookup_tables = F::compute_lookup_tables();
+    F::initialize_lookup_tables(small_value_lookup_tables);
+
+    let mut tasks = Vec::new();
+
+    const TABLE_SIZE: usize = 1 << 16;
+    const NUM_LOOKUPS: usize = 1 << 20;
+
+    let mut rng = test_rng();
+
+    let lookup_table: Vec<F> = (0..TABLE_SIZE).map(|_| F::random(&mut rng)).collect();
+    let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
+        .map(|_| rng.next_u32() as usize % TABLE_SIZE)
+        .collect();
+
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    let r_cycle: Vec<F> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+
+    let task = move || {
+        let _proof = ShoutProof::prove(
+            lookup_table,
+            read_addresses,
+            &r_cycle,
+            &mut prover_transcript,
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Shout d=1"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
 }
 
 fn fibonacci<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>

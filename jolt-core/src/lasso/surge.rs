@@ -4,7 +4,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::BatchType,
         compact_polynomial::{CompactPolynomial, SmallScalar},
-        multilinear_polynomial::MultilinearPolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
 };
