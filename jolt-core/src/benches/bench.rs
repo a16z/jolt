@@ -46,7 +46,7 @@ pub fn benchmarks(
             BenchType::Fibonacci => {
                 fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
-            BenchType::Shout => shout::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -58,17 +58,16 @@ pub fn benchmarks(
             BenchType::Fibonacci => {
                 fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
-            BenchType::Shout => shout::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
     }
 }
 
-fn shout<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+fn shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
     let small_value_lookup_tables = F::compute_lookup_tables();
@@ -76,7 +75,7 @@ where
 
     let mut tasks = Vec::new();
 
-    const TABLE_SIZE: usize = 64;
+    const TABLE_SIZE: usize = 1 << 16;
     const NUM_LOOKUPS: usize = 1 << 20;
 
     let mut rng = test_rng();
@@ -86,7 +85,7 @@ where
         .map(|_| rng.next_u32() as usize % TABLE_SIZE)
         .collect();
 
-    let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
     let r_cycle: Vec<F> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 
     let task = move || {

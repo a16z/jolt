@@ -44,7 +44,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
         let num_rounds = K.log_2();
         let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
 
-        let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+        let E: Vec<F> = EqPolynomial::evals(r_cycle);
 
         let span = tracing::span!(tracing::Level::INFO, "compute F");
         let _guard = span.enter();
@@ -148,7 +148,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
 
         let core_piop_sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
-        let (booleanity_sumcheck_proof, r_address_prime, r_cycle_prime, ra_claim_prime) =
+        let (booleanity_sumcheck_proof, _r_address_prime, _r_cycle_prime, ra_claim_prime) =
             prove_booleanity(read_addresses, &r_address, E, F, transcript);
 
         // TODO: Reduce 2 ra claims to 1 (Section 4.5.2 of Proofs, Arguments, and Zero-Knowledge)
@@ -190,7 +190,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
                 .verify(F::zero(), K.log_2() + T.log_2(), 3, transcript)?;
         let (r_address_prime, r_cycle_prime) = r_booleanity.split_at(K.log_2());
         let eq_eval_address = EqPolynomial::new(r_address).evaluate(r_address_prime);
-        let r_cycle: Vec<_> = r_cycle.to_vec().into_iter().rev().collect();
+        let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
         let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(r_cycle_prime);
 
         assert_eq!(

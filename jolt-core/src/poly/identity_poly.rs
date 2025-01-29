@@ -57,8 +57,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
             .sum()
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
-        todo!()
+    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<F>, Vec<F>) {
+        unimplemented!("Currently unused")
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
