@@ -49,18 +49,32 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
         let span = tracing::span!(tracing::Level::INFO, "compute F");
         let _guard = span.enter();
 
-        let F: Vec<_> = (0..K)
-            .into_par_iter()
-            .map(|k| {
-                read_addresses
-                    .iter()
-                    .enumerate()
-                    .filter_map(
-                        |(cycle, address)| if *address == k { Some(E[cycle]) } else { None },
-                    )
-                    .sum::<F>()
+        let num_chunks = rayon::current_num_threads()
+            .next_power_of_two()
+            .min(read_addresses.len());
+        let chunk_size = (read_addresses.len() / num_chunks).max(1);
+        let F: Vec<_> = read_addresses
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, addresses)| {
+                let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
+                let mut cycle = chunk_index * chunk_size;
+                for address in addresses {
+                    result[*address] += E[cycle];
+                    cycle += 1;
+                }
+                result
             })
-            .collect();
+            .reduce(
+                || unsafe_allocate_zero_vec(K),
+                |mut running, new| {
+                    running
+                        .par_iter_mut()
+                        .zip(new.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running
+                },
+            );
         drop(_guard);
         drop(span);
 
