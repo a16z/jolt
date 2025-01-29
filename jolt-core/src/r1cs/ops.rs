@@ -3,12 +3,7 @@
 
 #[cfg(test)]
 use super::inputs::ConstraintInput;
-use crate::{
-    field::{JoltField, OptimizedMul},
-    poly::dense_mlpoly::DensePolynomial,
-    utils::thread::unsafe_allocate_zero_vec,
-};
-use rayon::prelude::*;
+use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use std::fmt::Debug;
 #[cfg(test)]
 use std::fmt::Write as _;
@@ -64,11 +59,11 @@ impl LC {
             .filter(|term| matches!(term.0, Variable::Constant))
     }
 
-    pub fn constant_term_field<F: JoltField>(&self) -> F {
+    pub fn constant_term_field(&self) -> i128 {
         if let Some(term) = self.constant_term() {
-            F::from_i64(term.1)
+            term.1 as i128
         } else {
-            F::zero()
+            0
         }
     }
 
@@ -90,51 +85,20 @@ impl LC {
             .count()
     }
 
-    pub fn evaluate<F: JoltField>(&self, values: &[F]) -> F {
-        let num_vars = self.num_vars();
-        assert_eq!(num_vars, values.len());
-
-        let mut var_index = 0;
-        let mut result = F::zero();
-        for term in self.terms().iter() {
-            match term.0 {
-                Variable::Input(_) | Variable::Auxiliary(_) => {
-                    result += values[var_index] * F::from_i64(term.1);
-                    var_index += 1;
+    pub fn evaluate_row<F: JoltField>(
+        &self,
+        flattened_polynomials: &[&MultilinearPolynomial<F>],
+        row: usize,
+    ) -> i128 {
+        self.terms()
+            .iter()
+            .map(|term| match term.0 {
+                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                    term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
                 }
-                Variable::Constant => result += F::from_i64(term.1),
-            }
-        }
-        result
-    }
-
-    pub fn evaluate_batch<F: JoltField>(
-        &self,
-        flattened_polynomials: &[&DensePolynomial<F>],
-        batch_size: usize,
-    ) -> Vec<F> {
-        let mut output = unsafe_allocate_zero_vec(batch_size);
-        self.evaluate_batch_mut::<F>(flattened_polynomials, &mut output);
-        output
-    }
-
-    pub fn evaluate_batch_mut<F: JoltField>(
-        &self,
-        flattened_polynomials: &[&DensePolynomial<F>],
-        output: &mut [F],
-    ) {
-        output.par_iter_mut().enumerate().for_each(|(i, eval)| {
-            *eval = self
-                .terms()
-                .iter()
-                .map(|term| match term.0 {
-                    Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
-                        F::from_i64(term.1).mul_01_optimized(flattened_polynomials[var_index][i])
-                    }
-                    Variable::Constant => F::from_i64(term.1),
-                })
-                .sum()
-        });
+                Variable::Constant => term.1 as i128,
+            })
+            .sum()
     }
 
     #[cfg(test)]

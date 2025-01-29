@@ -3,13 +3,11 @@ use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
-use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
+use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::KeccakTranscript;
-use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {
     std::iter::repeat_with(|| F::random(rng))
@@ -110,11 +108,11 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));
 
-    // benchmark_dense_interleaved::<Fr>(&mut criterion, 20);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 20);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 21);
-    // benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
-    // benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 25);
 
     benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);

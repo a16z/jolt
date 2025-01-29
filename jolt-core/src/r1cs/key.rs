@@ -5,8 +5,7 @@ use sha3::Sha3_256;
 
 use crate::{
     field::JoltField,
-    poly::eq_poly::EqPolynomial,
-    r1cs::special_polys::{eq_plus_one, SparsePolynomial},
+    poly::eq_poly::{eq_plus_one, EqPolynomial},
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
 
@@ -112,6 +111,11 @@ impl<F: JoltField> NonUniformR1CS<F> {
 
         (eq_constants, condition_constants)
     }
+
+    /// Unpadded number of non-uniform constraints.
+    fn num_constraints(&self) -> usize {
+        self.constraints.len()
+    }
 }
 
 /// Represents a single constraint row where the variables are either from the current step (offset = false)
@@ -139,7 +143,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 
         let total_rows = constraint_builder.constraint_rows().next_power_of_two();
-        let num_steps = constraint_builder.uniform_repeat().next_power_of_two();
+        let num_steps = constraint_builder.uniform_repeat().next_power_of_two(); // TODO(JP): Number of steps no longer need to be padded.
 
         let vk_digest = Self::digest(&uniform_r1cs, &offset_eq_r1cs, num_steps);
 
@@ -169,6 +173,18 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
 
     pub fn num_rows_total(&self) -> usize {
         self.num_cons_total
+    }
+
+    /// Padded number of constraint rows per step.
+    pub fn padded_row_constraint_per_step(&self) -> usize {
+        // JP: This is redundant with `padded_rows_per_step`. Can we reuse that instead?
+        (self.uniform_r1cs.num_rows + self.offset_eq_r1cs.num_constraints()).next_power_of_two()
+    }
+
+    /// Number of bits needed for all rows.
+    pub fn num_rows_bits(&self) -> usize {
+        let row_count = self.num_steps * self.padded_row_constraint_per_step();
+        row_count.next_power_of_two().log_2()
     }
 
     /// Evaluates A(r_x, y) + r_rlc * B(r_x, y) + r_rlc^2 * C(r_x, y) where r_x = r_constr || r_step for all y.
@@ -213,9 +229,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             };
 
         let (eq_constants, condition_constants) = self.offset_eq_r1cs.constants();
-        let sm_a_r = compute_repeated(&self.uniform_r1cs.a, Some(eq_constants));
-        let sm_b_r = compute_repeated(&self.uniform_r1cs.b, Some(condition_constants));
-        let sm_c_r = compute_repeated(&self.uniform_r1cs.c, None);
+        let sm_a_r = compute_repeated(&self.uniform_r1cs.a, Some(eq_constants)); // V var entries
+        let sm_b_r = compute_repeated(&self.uniform_r1cs.b, Some(condition_constants)); // V var entries
+        let sm_c_r = compute_repeated(&self.uniform_r1cs.c, None); // V var entries
 
         let r_rlc_sq = r_rlc.square();
         let sm_rlc = sm_a_r
@@ -298,26 +314,20 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| r_var_eq[var_index] * segment_evals[var_index])
             .sum();
-        let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(F::one(), 0)]);
-        let eval_const = const_poly.evaluate(r_rest);
+        let eval_const: F = r_rest.iter().map(|r_i| F::one() - r_i).product();
 
         (F::one() - r_const) * eval_variables + r_const * eval_const
     }
 
     /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_matrix_mles")]
-    pub fn evaluate_r1cs_matrix_mles(&self, r: &[F]) -> (F, F, F) {
-        let total_rows_bits = self.num_rows_total().log_2();
-        let total_cols_bits = self.num_cols_total().log_2();
-        let steps_bits: usize = self.num_steps.log_2();
-        let constraint_rows_bits = (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2();
+    pub fn evaluate_r1cs_matrix_mles(&self, r_row: &[F], r_col: &[F]) -> (F, F, F) {
+        let total_rows_bits = r_row.len();
+        let total_cols_bits = r_col.len();
+        let constraint_rows_bits = self.padded_row_constraint_per_step().log_2();
+        let steps_bits: usize = total_rows_bits - constraint_rows_bits;
+        let (r_row_step, r_row_constr) = r_row.split_at(total_rows_bits - constraint_rows_bits); // TMP
         let uniform_cols_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
-        assert_eq!(r.len(), total_rows_bits + total_cols_bits);
-        assert_eq!(total_rows_bits - steps_bits, constraint_rows_bits);
-
-        // Deconstruct 'r' into representitive bits
-        let (r_row, r_col) = r.split_at(total_rows_bits);
-        let (r_row_constr, r_row_step) = r_row.split_at(constraint_rows_bits);
         let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1);
         assert_eq!(r_row_step.len(), r_col_step.len());
 
@@ -427,222 +437,3 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         map_to_field(&hasher.finalize())
     }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-//     use ark_bn254::Fr;
-//     use ark_std::{One, Zero};
-
-//     use crate::{
-//         poly::dense_mlpoly::DensePolynomial,
-//         r1cs::builder::{R1CSBuilder, R1CSConstraintBuilder},
-//         utils::{index_to_field_bitvector, math::Math},
-//     };
-
-//     #[test]
-//     fn materialize() {
-//         let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
-//         // OpFlags0 * OpFlags1 == 12
-//         struct TestConstraints();
-//         impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for TestConstraints {
-//             type Inputs = TestInputs;
-//             fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
-//                 builder.constrain_prod(TestInputs::OpFlags0, TestInputs::OpFlags1, 12);
-//             }
-//         }
-
-//         let constraints = TestConstraints();
-//         constraints.build_constraints(&mut uniform_builder);
-//         let _num_steps: usize = 3;
-//         let num_steps_pad = 4;
-//         let combined_builder =
-//             CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
-//         let key = UniformSpartanKey::from_builder(&combined_builder);
-
-//         let materialized_a = materialize_full_uniform(&key, &key.uniform_r1cs.a);
-//         let materialized_b = materialize_full_uniform(&key, &key.uniform_r1cs.b);
-//         let materialized_c = materialize_full_uniform(&key, &key.uniform_r1cs.c);
-
-//         let row_width =
-//             (TestInputs::COUNT.next_power_of_two() * num_steps_pad).next_power_of_two() * 2;
-//         let op_flags_0_pos = (TestInputs::OpFlags0 as usize) * num_steps_pad;
-//         assert_eq!(materialized_a[op_flags_0_pos], Fr::one());
-//         assert_eq!(
-//             materialized_b[(TestInputs::OpFlags1 as usize) * num_steps_pad],
-//             Fr::one()
-//         );
-//         let const_col_index = row_width / 2;
-//         assert_eq!(materialized_c[const_col_index], Fr::from(12));
-//         assert_eq!(materialized_a[row_width + op_flags_0_pos + 1], Fr::one());
-//         assert_eq!(materialized_c[row_width + const_col_index], Fr::from(12));
-//         assert_eq!(
-//             materialized_c[2 * row_width + const_col_index],
-//             Fr::from(12)
-//         );
-//         assert_eq!(
-//             materialized_c[3 * row_width + const_col_index],
-//             Fr::from(12)
-//         );
-//     }
-
-//     #[test]
-//     fn evaluate_r1cs_mle_rlc() {
-//         let (_builder, key) = simp_test_builder_key();
-//         let (a, b, c) = simp_test_big_matrices();
-//         let a = DensePolynomial::new(a);
-//         let b = DensePolynomial::new(b);
-//         let c = DensePolynomial::new(c);
-
-//         let r_row_constr_len = (key.uniform_r1cs.num_rows + 1).next_power_of_two().log_2();
-//         let r_col_step_len = key.num_steps.log_2();
-
-//         let r_row_constr = vec![Fr::from(100), Fr::from(200)];
-//         let r_row_step = vec![Fr::from(100), Fr::from(200)];
-//         assert_eq!(r_row_constr.len(), r_row_constr_len);
-//         assert_eq!(r_row_step.len(), r_col_step_len);
-//         let r_rlc = Fr::from(1000);
-
-//         let rlc = key.evaluate_r1cs_mle_rlc(&r_row_constr, &r_row_step, r_rlc);
-
-//         // let row_coordinate_len = key.num_rows_total().log_2();
-//         let col_coordinate_len = key.num_cols_total().log_2();
-//         let row_coordinate: Vec<Fr> = [r_row_constr, r_row_step].concat();
-//         for i in 0..key.num_cols_total() {
-//             let col_coordinate = index_to_field_bitvector(i, col_coordinate_len);
-
-//             let coordinate: Vec<Fr> = [row_coordinate.clone(), col_coordinate].concat();
-//             let expected_rlc = a.evaluate(&coordinate)
-//                 + r_rlc * b.evaluate(&coordinate)
-//                 + r_rlc * r_rlc * c.evaluate(&coordinate);
-
-//             assert_eq!(expected_rlc, rlc[i], "Failed at {i}");
-//         }
-//     }
-
-//     #[test]
-//     fn r1cs_matrix_mles_offset_constraints() {
-//         let (_builder, key) = simp_test_builder_key();
-//         let (big_a, big_b, big_c) = simp_test_big_matrices();
-
-//         // Evaluate over boolean hypercube
-//         let total_size = key.num_cols_total() * key.num_rows_total();
-//         let r_len = total_size.log_2();
-//         for i in 0..total_size {
-//             let r = index_to_field_bitvector(i, r_len);
-//             let (a_r, b_r, c_r) = key.evaluate_r1cs_matrix_mles(&r);
-
-//             assert_eq!(big_a[i], a_r, "Error at index {}", i);
-//             assert_eq!(big_b[i], b_r, "Error at index {}", i);
-//             assert_eq!(big_c[i], c_r, "Error at index {}", i);
-//         }
-
-//         // Evaluate outside boolean hypercube
-//         let mut r_outside = Vec::new();
-//         for i in 0..9 {
-//             r_outside.push(Fr::from(100 + i * 100));
-//         }
-//         let (a_r, b_r, c_r) = key.evaluate_r1cs_matrix_mles(&r_outside);
-//         assert_eq!(
-//             DensePolynomial::new(big_a.clone()).evaluate(&r_outside),
-//             a_r
-//         );
-//         assert_eq!(
-//             DensePolynomial::new(big_b.clone()).evaluate(&r_outside),
-//             b_r
-//         );
-//         assert_eq!(
-//             DensePolynomial::new(big_c.clone()).evaluate(&r_outside),
-//             c_r
-//         );
-//     }
-
-//     #[test]
-//     fn z_mle() {
-//         let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
-//         // OpFlags0 * OpFlags1 == 12
-//         struct TestConstraints();
-//         impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for TestConstraints {
-//             type Inputs = TestInputs;
-//             fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
-//                 builder.constrain_prod(TestInputs::OpFlags0, TestInputs::OpFlags1, 12);
-//             }
-//         }
-
-//         let constraints = TestConstraints();
-//         constraints.build_constraints(&mut uniform_builder);
-//         let num_steps_pad = 4;
-//         let combined_builder =
-//             CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
-//         let mut inputs = vec![vec![Fr::zero(); num_steps_pad]; TestInputs::COUNT];
-
-//         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(1);
-//         inputs[TestInputs::OpFlags1 as usize][0] = Fr::from(12);
-
-//         inputs[TestInputs::OpFlags0 as usize][1] = Fr::from(2);
-//         inputs[TestInputs::OpFlags1 as usize][1] = Fr::from(6);
-
-//         inputs[TestInputs::OpFlags0 as usize][2] = Fr::from(3);
-//         inputs[TestInputs::OpFlags1 as usize][2] = Fr::from(4);
-
-//         inputs[TestInputs::OpFlags0 as usize][3] = Fr::from(4);
-//         inputs[TestInputs::OpFlags1 as usize][3] = Fr::from(3);
-
-//         // Confirms validity of constraints
-//         let (_az, _bz, _cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &[]);
-
-//         let key = UniformSpartanKey::from_builder(&combined_builder);
-
-//         // Z's full padded length is 2 * (num_vars * num_steps.next_power_of_two())
-//         let z_pad_len = 2 * num_steps_pad * TestInputs::COUNT.next_power_of_two();
-//         let z_bits = z_pad_len.log_2();
-//         assert_eq!(z_bits, 8);
-
-//         // 1 bit to index const
-//         // 5 bits to index variable
-//         // 2 bits to index step
-//         let r_const = vec![Fr::from(100)];
-//         let r_var = vec![
-//             Fr::from(200),
-//             Fr::from(300),
-//             Fr::from(400),
-//             Fr::from(500),
-//             Fr::from(600),
-//         ];
-//         let r_step = vec![Fr::from(100), Fr::from(200)];
-//         let r = [r_const, r_var, r_step.clone()].concat();
-
-//         let z_segment_evals: Vec<Fr> = inputs
-//             .iter()
-//             .map(|input_vec| {
-//                 let poly = DensePolynomial::new_padded(input_vec.clone());
-//                 assert_eq!(poly.len(), num_steps_pad);
-//                 poly.evaluate(&r_step)
-//             })
-//             .collect();
-
-//         // Construct the fully materialized version of 'z'
-//         // Expecting form of Z
-//         // [TestInputs::PCIn[0], ... PcIn[num_steps.next_pow_2 - 1],
-//         //  TestInputs::PCOut[0], ... PcOut[num_steps.next_pow_2 - 1],
-//         //  0 padding to num_vars.next_pow_2 * num_steps.next_pow_2
-//         //  1
-//         //  0 padding to 2 * num_vars.next_pow_2 * num_steps.next_pow_2
-//         // ]
-//         //
-//         let mut z = Vec::with_capacity(z_pad_len);
-//         for var_across_steps in inputs {
-//             let new_padded_len = z.len() + num_steps_pad;
-//             z.extend(var_across_steps);
-//             z.resize(new_padded_len, Fr::zero());
-//         }
-//         let const_index = z_pad_len / 2;
-//         z.resize(const_index, Fr::zero());
-//         z.push(Fr::one());
-//         z.resize(z_pad_len, Fr::zero());
-
-//         let actual = key.evaluate_z_mle(&z_segment_evals, &r);
-//         let expected = DensePolynomial::new(z).evaluate(&r);
-//         assert_eq!(expected, actual);
-//     }
-// }

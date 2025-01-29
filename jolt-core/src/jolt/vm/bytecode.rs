@@ -14,7 +14,8 @@ use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
 
@@ -22,9 +23,10 @@ use rayon::prelude::*;
 
 use super::{JoltPolynomials, JoltTraceStep};
 use crate::utils::transcript::Transcript;
+
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial},
+    poly::identity_poly::IdentityPolynomial,
 };
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -51,7 +53,7 @@ pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<DensePolynomial<F>>;
+pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<MultilinearPolynomial<F>>;
 /// Note –– F: JoltField bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -105,11 +107,11 @@ pub struct BytecodeRow {
     /// Packed instruction/circuit flags, used for r1cs
     pub bitflags: u64,
     /// Index of the destination register for this instruction (0 if register is unused).
-    rd: u64,
+    rd: u8,
     /// Index of the first source register for this instruction (0 if register is unused).
-    rs1: u64,
+    rs1: u8,
     /// Index of the second source register for this instruction (0 if register is unused).
-    rs2: u64,
+    rs2: u8,
     /// "Immediate" value for this instruction (0 if unused).
     imm: i64,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -121,7 +123,7 @@ pub struct BytecodeRow {
 }
 
 impl BytecodeRow {
-    pub fn new(address: usize, bitflags: u64, rd: u64, rs1: u64, rs2: u64, imm: i64) -> Self {
+    pub fn new(address: usize, bitflags: u64, rd: u8, rs1: u8, rs2: u8, imm: i64) -> Self {
         Self {
             address,
             bitflags,
@@ -196,9 +198,9 @@ impl BytecodeRow {
         Self {
             address: instruction.address as usize,
             bitflags: Self::bitflags::<InstructionSet>(instruction),
-            rd: instruction.rd.unwrap_or(0),
-            rs1: instruction.rs1.unwrap_or(0),
-            rs2: instruction.rs2.unwrap_or(0),
+            rd: instruction.rd.unwrap_or(0) as u8,
+            rs1: instruction.rs1.unwrap_or(0) as u8,
+            rs2: instruction.rs2.unwrap_or(0) as u8,
             imm,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining,
         }
@@ -224,7 +226,7 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
     /// the initial memory values. There are six values (address, bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_init_final` comprises six polynomials.
-    v_init_final: [DensePolynomial<F>; 6],
+    v_init_final: [MultilinearPolynomial<F>; 6],
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
@@ -272,21 +274,21 @@ impl<F: JoltField> BytecodePreprocessing<F> {
         let mut imm = vec![];
 
         for instruction in bytecode {
-            address.push(F::from_u64(instruction.address as u64).unwrap());
-            bitflags.push(F::from_u64(instruction.bitflags).unwrap());
-            rd.push(F::from_u64(instruction.rd).unwrap());
-            rs1.push(F::from_u64(instruction.rs1).unwrap());
-            rs2.push(F::from_u64(instruction.rs2).unwrap());
-            imm.push(F::from_i64(instruction.imm));
+            address.push(instruction.address as u64);
+            bitflags.push(instruction.bitflags);
+            rd.push(instruction.rd);
+            rs1.push(instruction.rs1);
+            rs2.push(instruction.rs2);
+            imm.push(instruction.imm);
         }
 
         let v_init_final = [
-            DensePolynomial::new(address),
-            DensePolynomial::new(bitflags),
-            DensePolynomial::new(rd),
-            DensePolynomial::new(rs1),
-            DensePolynomial::new(rs2),
-            DensePolynomial::new(imm),
+            MultilinearPolynomial::from(address),
+            MultilinearPolynomial::from(bitflags),
+            MultilinearPolynomial::from(rd),
+            MultilinearPolynomial::from(rs1),
+            MultilinearPolynomial::from(rs2),
+            MultilinearPolynomial::from(imm),
         ];
 
         Self {
@@ -303,16 +305,16 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
+    #[tracing::instrument(skip_all, name = "BytecodeProof::generate_witness")]
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut Vec<JoltTraceStep<InstructionSet>>,
     ) -> BytecodePolynomials<F> {
         let num_ops = trace.len();
 
-        let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
-        let mut read_cts: Vec<usize> = vec![0; num_ops];
-        let mut final_cts: Vec<usize> = vec![0; preprocessing.code_size];
+        let mut a_read_write: Vec<u32> = vec![0; num_ops];
+        let mut read_cts: Vec<u32> = vec![0; num_ops];
+        let mut final_cts: Vec<u32> = vec![0; preprocessing.code_size];
 
         for (step_index, step) in trace.iter_mut().enumerate() {
             if !step.bytecode_row.address.is_zero() {
@@ -331,13 +333,11 @@ where
                     step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
                 ))
                 .unwrap();
-            a_read_write_usize[step_index] = *virtual_address;
+            a_read_write[step_index] = *virtual_address as u32;
             let counter = final_cts[*virtual_address];
             read_cts[step_index] = counter;
             final_cts[*virtual_address] = counter + 1;
         }
-
-        let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
 
         let mut address = vec![];
         let mut bitflags = vec![];
@@ -347,24 +347,24 @@ where
         let mut imm = vec![];
 
         for step in trace {
-            address.push(F::from_u64(step.bytecode_row.address as u64).unwrap());
-            bitflags.push(F::from_u64(step.bytecode_row.bitflags).unwrap());
-            rd.push(F::from_u64(step.bytecode_row.rd).unwrap());
-            rs1.push(F::from_u64(step.bytecode_row.rs1).unwrap());
-            rs2.push(F::from_u64(step.bytecode_row.rs2).unwrap());
-            imm.push(F::from_i64(step.bytecode_row.imm));
+            address.push(step.bytecode_row.address as u64);
+            bitflags.push(step.bytecode_row.bitflags);
+            rd.push(step.bytecode_row.rd);
+            rs1.push(step.bytecode_row.rs1);
+            rs2.push(step.bytecode_row.rs2);
+            imm.push(step.bytecode_row.imm);
         }
 
         let v_read_write = [
-            DensePolynomial::new(address),
-            DensePolynomial::new(bitflags),
-            DensePolynomial::new(rd),
-            DensePolynomial::new(rs1),
-            DensePolynomial::new(rs2),
-            DensePolynomial::new(imm),
+            MultilinearPolynomial::from(address),
+            MultilinearPolynomial::from(bitflags),
+            MultilinearPolynomial::from(rd),
+            MultilinearPolynomial::from(rs1),
+            MultilinearPolynomial::from(rs2),
+            MultilinearPolynomial::from(imm),
         ];
-        let t_read: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts);
-        let t_final: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts);
+        let t_read: MultilinearPolynomial<F> = MultilinearPolynomial::from(read_cts);
+        let t_final = MultilinearPolynomial::from(final_cts);
 
         #[cfg(test)]
         let mut init_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
@@ -372,28 +372,29 @@ where
         let mut final_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
 
         #[cfg(test)]
-        for (a, t) in t_final.Z.iter().enumerate() {
+        for a in 0..t_final.len() {
+            let t: F = t_final.get_coeff(a);
             init_tuples.insert((
                 a as u64,
                 [
-                    preprocessing.v_init_final[0][a],
-                    preprocessing.v_init_final[1][a],
-                    preprocessing.v_init_final[2][a],
-                    preprocessing.v_init_final[3][a],
-                    preprocessing.v_init_final[4][a],
-                    preprocessing.v_init_final[5][a],
+                    preprocessing.v_init_final[0].get_coeff(a),
+                    preprocessing.v_init_final[1].get_coeff(a),
+                    preprocessing.v_init_final[2].get_coeff(a),
+                    preprocessing.v_init_final[3].get_coeff(a),
+                    preprocessing.v_init_final[4].get_coeff(a),
+                    preprocessing.v_init_final[5].get_coeff(a),
                 ],
                 0,
             ));
             final_tuples.insert((
                 a as u64,
                 [
-                    preprocessing.v_init_final[0][a],
-                    preprocessing.v_init_final[1][a],
-                    preprocessing.v_init_final[2][a],
-                    preprocessing.v_init_final[3][a],
-                    preprocessing.v_init_final[4][a],
-                    preprocessing.v_init_final[5][a],
+                    preprocessing.v_init_final[0].get_coeff(a),
+                    preprocessing.v_init_final[1].get_coeff(a),
+                    preprocessing.v_init_final[2].get_coeff(a),
+                    preprocessing.v_init_final[3].get_coeff(a),
+                    preprocessing.v_init_final[4].get_coeff(a),
+                    preprocessing.v_init_final[5].get_coeff(a),
                 ],
                 t.to_u64().unwrap(),
             ));
@@ -405,30 +406,30 @@ where
         let mut write_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
 
         #[cfg(test)]
-        for (i, a) in a_read_write_usize.iter().enumerate() {
+        for (i, a) in a_read_write.iter().enumerate() {
             read_tuples.insert((
                 *a as u64,
                 [
-                    v_read_write[0][i],
-                    v_read_write[1][i],
-                    v_read_write[2][i],
-                    v_read_write[3][i],
-                    v_read_write[4][i],
-                    v_read_write[5][i],
+                    v_read_write[0].get_coeff(i),
+                    v_read_write[1].get_coeff(i),
+                    v_read_write[2].get_coeff(i),
+                    v_read_write[3].get_coeff(i),
+                    v_read_write[4].get_coeff(i),
+                    v_read_write[5].get_coeff(i),
                 ],
-                t_read[i].to_u64().unwrap(),
+                t_read.get_coeff(i).to_u64().unwrap(),
             ));
             write_tuples.insert((
                 *a as u64,
                 [
-                    v_read_write[0][i],
-                    v_read_write[1][i],
-                    v_read_write[2][i],
-                    v_read_write[3][i],
-                    v_read_write[4][i],
-                    v_read_write[5][i],
+                    v_read_write[0].get_coeff(i),
+                    v_read_write[1].get_coeff(i),
+                    v_read_write[2].get_coeff(i),
+                    v_read_write[3].get_coeff(i),
+                    v_read_write[4].get_coeff(i),
+                    v_read_write[5].get_coeff(i),
                 ],
-                t_read[i].to_u64().unwrap() + 1,
+                t_read.get_coeff(i).to_u64().unwrap() + 1,
             ));
         }
 
@@ -439,6 +440,8 @@ where
             let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
             assert_eq!(set_difference.len(), 0);
         }
+
+        let a_read_write = MultilinearPolynomial::from(a_read_write);
 
         BytecodeStuff {
             a_read_write,
@@ -517,85 +520,94 @@ where
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
 
+        let mut gamma_terms = [F::zero(); 7];
+        let mut gamma_term = F::montgomery_r2().unwrap_or(F::one());
+        for i in 0..7 {
+            gamma_term *= *gamma;
+            gamma_terms[i] = gamma_term;
+        }
+
+        let a: &CompactPolynomial<u32, F> = (&polynomials.a_read_write).try_into().unwrap();
+        let v_address: &CompactPolynomial<u64, F> =
+            (&polynomials.v_read_write[0]).try_into().unwrap();
+        let v_bitflags: &CompactPolynomial<u64, F> =
+            (&polynomials.v_read_write[1]).try_into().unwrap();
+        let v_rd: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[2]).try_into().unwrap();
+        let v_rs1: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[3]).try_into().unwrap();
+        let v_rs2: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[4]).try_into().unwrap();
+        let v_imm: &CompactPolynomial<i64, F> = (&polynomials.v_read_write[5]).try_into().unwrap();
+        let t: &CompactPolynomial<u32, F> = (&polynomials.t_read).try_into().unwrap();
+
         let read_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                Self::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write[0][i],
-                        polynomials.v_read_write[1][i],
-                        polynomials.v_read_write[2][i],
-                        polynomials.v_read_write[3][i],
-                        polynomials.v_read_write[4][i],
-                        polynomials.v_read_write[5][i],
-                        polynomials.t_read[i],
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-
-        let init_leaves: Vec<F> = (0..bytecode_size)
-            .into_par_iter()
-            .map(|i| {
-                Self::fingerprint(
-                    &[
-                        F::from_u64(i as u64).unwrap(),
-                        preprocessing.v_init_final[0][i],
-                        preprocessing.v_init_final[1][i],
-                        preprocessing.v_init_final[2][i],
-                        preprocessing.v_init_final[3][i],
-                        preprocessing.v_init_final[4][i],
-                        preprocessing.v_init_final[5][i],
-                        F::zero(),
-                    ],
-                    gamma,
-                    tau,
-                )
+                F::from_i64(v_imm[i])
+                    + a[i].field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    + t[i].field_mul(gamma_terms[6])
+                    - tau
             })
             .collect();
 
         // TODO(moodlezoup): Compute write_leaves from read_leaves
-        let write_leaves = (0..num_ops)
+        let write_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                Self::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write[0][i],
-                        polynomials.v_read_write[1][i],
-                        polynomials.v_read_write[2][i],
-                        polynomials.v_read_write[3][i],
-                        polynomials.v_read_write[4][i],
-                        polynomials.v_read_write[5][i],
-                        polynomials.t_read[i] + F::one(),
-                    ],
-                    gamma,
-                    tau,
-                )
+                F::from_i64(v_imm[i])
+                    + a[i].field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    + (t[i] + 1).field_mul(gamma_terms[6])
+                    - tau
+            })
+            .collect();
+
+        let v_address: &CompactPolynomial<u64, F> =
+            (&preprocessing.v_init_final[0]).try_into().unwrap();
+        let v_bitflags: &CompactPolynomial<u64, F> =
+            (&preprocessing.v_init_final[1]).try_into().unwrap();
+        let v_rd: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[2]).try_into().unwrap();
+        let v_rs1: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[3]).try_into().unwrap();
+        let v_rs2: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[4]).try_into().unwrap();
+        let v_imm: &CompactPolynomial<i64, F> =
+            (&preprocessing.v_init_final[5]).try_into().unwrap();
+
+        let init_leaves: Vec<F> = (0..bytecode_size)
+            .into_par_iter()
+            .map(|i| {
+                F::from_i64(v_imm[i])
+                    + (i as u64).field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    // + gamma_terms[6] * 0
+                    - tau
             })
             .collect();
 
         // TODO(moodlezoup): Compute final_leaves from init_leaves
-        let final_leaves = (0..bytecode_size)
+        let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
+        let final_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                Self::fingerprint(
-                    &[
-                        F::from_u64(i as u64).unwrap(),
-                        preprocessing.v_init_final[0][i],
-                        preprocessing.v_init_final[1][i],
-                        preprocessing.v_init_final[2][i],
-                        preprocessing.v_init_final[3][i],
-                        preprocessing.v_init_final[4][i],
-                        preprocessing.v_init_final[5][i],
-                        polynomials.t_final[i],
-                    ],
-                    gamma,
-                    tau,
-                )
+                F::from_i64(v_imm[i])
+                    + (i as u64).field_mul(gamma_terms[0])
+                    + v_address[i].field_mul(gamma_terms[1])
+                    + v_bitflags[i].field_mul(gamma_terms[2])
+                    + v_rd[i].field_mul(gamma_terms[3])
+                    + v_rs1[i].field_mul(gamma_terms[4])
+                    + v_rs2[i].field_mul(gamma_terms[5])
+                    + t_final[i].field_mul(gamma_terms[6])
+                    - tau
             })
             .collect();
 
@@ -627,15 +639,14 @@ where
         openings.a_init_final =
             Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
 
-        let chis = EqPolynomial::evals(r_init_final);
         openings.v_init_final = Some(
-            preprocessing
-                .v_init_final
-                .par_iter()
-                .map(|poly| poly.evaluate_at_chi(&chis))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
+            MultilinearPolynomial::batch_evaluate(
+                &preprocessing.v_init_final.iter().collect::<Vec<_>>(),
+                r_init_final,
+            )
+            .0
+            .try_into()
+            .unwrap(),
         );
     }
 
@@ -645,13 +656,13 @@ where
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
+            openings.v_read_write[5], // imm
             openings.a_read_write,
             openings.v_read_write[0], // address
             openings.v_read_write[1], // opcode
             openings.v_read_write[2], // rd
             openings.v_read_write[3], // rs1
             openings.v_read_write[4], // rs2
-            openings.v_read_write[5], // imm
             openings.t_read,
         ]]
     }
@@ -661,13 +672,13 @@ where
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         vec![[
+            openings.v_read_write[5], // imm
             openings.a_read_write,
             openings.v_read_write[0], // address
             openings.v_read_write[1], // opcode
             openings.v_read_write[2], // rd
             openings.v_read_write[3], // rs1
             openings.v_read_write[4], // rs2
-            openings.v_read_write[5], // imm
             openings.t_read + F::one(),
         ]]
     }
@@ -678,13 +689,13 @@ where
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
+            v_init_final[5], // imm
             openings.a_init_final.unwrap(),
             v_init_final[0], // address
             v_init_final[1], // opcode
             v_init_final[2], // rd
             v_init_final[3], // rs1
             v_init_final[4], // rs2
-            v_init_final[5], // imm
             F::zero(),
         ]]
     }
@@ -695,13 +706,13 @@ where
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
+            v_init_final[5], // imm
             openings.a_init_final.unwrap(),
             v_init_final[0], // address
             v_init_final[1], // opcode
             v_init_final[2], // rd
             v_init_final[3], // rs1
             v_init_final[4], // rs2
-            v_init_final[5], // imm
             openings.t_final,
         ]]
     }
@@ -709,11 +720,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
+    use crate::jolt::vm::rv32i_vm::RV32I;
 
     use super::*;
-    use crate::utils::transcript::KeccakTranscript;
-    use ark_bn254::{Fr, G1Projective};
+    use ark_bn254::Fr;
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
         rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
@@ -742,50 +752,12 @@ mod tests {
     #[test]
     fn bytecode_stuff_ordering() {
         let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2i64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4i64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
+            BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
+            BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
+            BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
+            BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
         ];
         let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
         BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);
-    }
-
-    #[test]
-    #[should_panic]
-    fn bytecode_validation_fake_trace() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2i64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4i64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
-            BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32i64),
-        ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
-            BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0i64), // no_op: shouldn't exist in pgoram
-        ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
-            &program, &trace,
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn bytecode_validation_bad_prog_increment() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2i64),
-            BytecodeRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4i64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
-            BytecodeRow::new(to_ram_address(4), 16u64, 16u64, 16u64, 16u64, 16i64), // Increment by 2
-        ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16i64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8i64),
-        ];
-        BytecodeProof::<Fr, HyraxScheme<G1Projective, KeccakTranscript>, KeccakTranscript>::validate_bytecode(
-            &program, &trace,
-        );
     }
 }

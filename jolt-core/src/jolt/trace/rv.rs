@@ -76,9 +76,7 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>::default().into()),
-
-            RV32IM::LW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>::default().into()),
-            RV32IM::SW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>::default().into()),
+            RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>::default().into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
@@ -136,9 +134,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
-
-            RV32IM::LW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
-            RV32IM::SW => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 4>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

@@ -19,9 +19,9 @@ impl<F: JoltField> LtAbsSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for LtAbsSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = (x & 0b011..11) < (y & 0b011..11)
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
         // 0b01111...11
         let lower_bits_mask = (1 << (bits_per_operand - 1)) - 1;
@@ -30,9 +30,9 @@ impl<F: JoltField> LassoSubtable<F> for LtAbsSubtable<F> {
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
             let row = if (x & lower_bits_mask) < (y & lower_bits_mask) {
-                F::one()
+                1
             } else {
-                F::zero()
+                0
             };
             entries.push(row);
         }
@@ -63,6 +63,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{lt_abs::LtAbsSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

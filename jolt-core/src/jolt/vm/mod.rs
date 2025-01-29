@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
@@ -14,6 +15,7 @@ use std::marker::PhantomData;
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
+use crate::join_conditional;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -26,8 +28,8 @@ use crate::jolt::{
 use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
+use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
@@ -50,8 +52,10 @@ use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
 use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
+use super::instruction::lw::LWInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
+use super::instruction::sw::SWInstruction;
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
@@ -66,6 +70,7 @@ where
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
+    field: F::SmallValueLookupTables,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -197,7 +202,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
+pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -238,31 +243,49 @@ impl<F: JoltField> JoltPolynomials<F> {
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
+        let span = tracing::span!(tracing::Level::INFO, "commit::initialize");
+        let _guard = span.enter();
         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+        drop(_guard);
+        drop(span);
 
         let trace_polys = self.read_write_values();
-        let trace_comitments =
-            PCS::batch_commit_polys_ref(&trace_polys, &preprocessing.generators, BatchType::Big);
+        let trace_commitments =
+            PCS::batch_commit(&trace_polys, &preprocessing.generators, BatchType::Big);
+
         commitments
             .read_write_values_mut()
             .into_iter()
-            .zip(trace_comitments.into_iter())
+            .zip(trace_commitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
 
+        let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
+        let _guard = span.enter();
         commitments.bytecode.t_final =
             PCS::commit(&self.bytecode.t_final, &preprocessing.generators);
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "commit::read_write_memory");
+        let _guard = span.enter();
         (
             commitments.read_write_memory.v_final,
             commitments.read_write_memory.t_final,
-        ) = rayon::join(
+        ) = join_conditional!(
             || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
-            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators),
+            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators)
         );
-        commitments.instruction_lookups.final_cts = PCS::batch_commit_polys(
-            &self.instruction_lookups.final_cts,
+        commitments.instruction_lookups.final_cts = PCS::batch_commit(
+            &self
+                .instruction_lookups
+                .final_cts
+                .iter()
+                .collect::<Vec<_>>(),
             &preprocessing.generators,
             BatchType::Big,
         );
+        drop(_guard);
+        drop(span);
 
         commitments
     }
@@ -287,6 +310,10 @@ where
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
+        let small_value_lookup_tables = F::compute_lookup_tables();
+        F::initialize_lookup_tables(small_value_lookup_tables.clone());
+        icicle::icicle_init();
+
         let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
             max_bytecode_size,
             max_trace_length,
@@ -325,8 +352,10 @@ where
                 tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SW => SWInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LW => LWInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
@@ -352,6 +381,7 @@ where
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
+            field: small_value_lookup_tables,
         }
     }
 
@@ -359,7 +389,7 @@ where
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
-        preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             C,
@@ -374,10 +404,16 @@ where
         JoltCommitments<PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
+        icicle::icicle_init();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
 
+        F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
+
+        // TODO(moodlezoup): Truncate generators
+
+        // TODO(JP): Drop padding on number of steps
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -399,7 +435,7 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
+        let memory_polynomials = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
             &preprocessing.read_write_memory,
             &trace,
@@ -414,7 +450,7 @@ where
             },
             || {
                 TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(
-                    &read_timestamps,
+                    &memory_polynomials,
                 )
             },
         );
@@ -474,7 +510,7 @@ where
 
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
-            &jolt_polynomials,
+            &mut jolt_polynomials,
             &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,

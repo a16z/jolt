@@ -45,7 +45,7 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
     /// Computes the output lookup entry for this instruction as a u64.
     fn lookup_entry(&self) -> u64;
-    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>) {
+    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u8>, Vec<u8>) {
         assert!(
             log_M % 2 == 0,
             "log_M must be even for operand_chunks to work"
@@ -159,6 +159,7 @@ pub mod lb;
 pub mod lbu;
 pub mod lh;
 pub mod lhu;
+pub mod lw;
 pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
@@ -175,6 +176,7 @@ pub mod sltu;
 pub mod sra;
 pub mod srl;
 pub mod sub;
+pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_assert_aligned_memory_access;
 pub mod virtual_assert_lte;

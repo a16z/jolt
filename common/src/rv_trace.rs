@@ -38,7 +38,7 @@ fn sum_u64_i32(a: u64, b: i32) -> u64 {
         }
         a - abs_b
     } else {
-        let b_u64: u64 = b.try_into().expect("failed u64 convesion");
+        let b_u64: u64 = b.try_into().expect("failed u64 conversion");
         a + b_u64
     }
 }
@@ -95,7 +95,8 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 MemoryOp::noop_read(),
             ],
             RV32InstructionFormat::I => match val.instruction.opcode {
-                RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => [
+                RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+                | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT => [
                     rs1_read(),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_write(),
@@ -201,7 +202,7 @@ pub enum CircuitFlags {
     Virtual,
     /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
     Assert,
-    /// Used in virtual sequences; the program counter should be the same for the full seqeuence.
+    /// Used in virtual sequences; the program counter should be the same for the full sequence.
     DoNotUpdatePC,
 }
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -232,7 +233,8 @@ impl ELFInstruction {
             | RV32IM::JALR
             | RV32IM::SW
             | RV32IM::LW
-            | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+            | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+            | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT,
         );
 
         flags[CircuitFlags::Load as usize] = matches!(
@@ -275,6 +277,7 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
             | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
             | RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT
+            | RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT
         );
 
         flags[CircuitFlags::ConcatLookupQueryChunks as usize] = matches!(
@@ -314,12 +317,10 @@ impl ELFInstruction {
             RV32IM::VIRTUAL_ASSERT_EQ                        |
             RV32IM::VIRTUAL_ASSERT_LTE                       |
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT        |
+            RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT            |
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
-            RV32IM::VIRTUAL_ASSERT_VALID_DIV0                |
-            // SW and LW perform a `AssertAlignedMemoryAccessInstruction` lookup
-            RV32IM::SW                                       |
-            RV32IM::LW
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0
         );
 
         // All instructions in virtual sequence are mapped from the same
@@ -429,6 +430,7 @@ pub enum RV32IM {
     VIRTUAL_ASSERT_EQ,
     VIRTUAL_ASSERT_VALID_DIV0,
     VIRTUAL_ASSERT_HALFWORD_ALIGNMENT,
+    VIRTUAL_ASSERT_WORD_ALIGNMENT,
 }
 
 impl FromStr for RV32IM {
@@ -537,6 +539,7 @@ impl RV32IM {
             RV32IM::SLTIU        |
             RV32IM::VIRTUAL_MOVE |
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT |
+            RV32IM::VIRTUAL_ASSERT_WORD_ALIGNMENT |
             RV32IM::VIRTUAL_MOVSIGN => RV32InstructionFormat::I,
 
             RV32IM::LB  |

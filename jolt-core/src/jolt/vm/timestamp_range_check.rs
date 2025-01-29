@@ -1,7 +1,11 @@
-use crate::field::{JoltField, OptimizedMul};
+use super::{JoltCommitments, JoltPolynomials, JoltStuff};
+use crate::field::JoltField;
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
@@ -9,14 +13,6 @@ use crate::subprotocols::grand_product::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use itertools::interleave;
-use rayon::prelude::*;
-#[cfg(test)]
-use std::collections::HashSet;
-
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
@@ -29,7 +25,13 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 
-use super::{JoltCommitments, JoltPolynomials, JoltStuff};
+use super::read_write_memory::ReadWriteMemoryPolynomials;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use itertools::interleave;
+use rayon::prelude::*;
+#[cfg(test)]
+use std::collections::HashSet;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampRangeCheckStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
@@ -75,7 +77,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type TimestampRangeCheckPolynomials<F: JoltField> =
-    TimestampRangeCheckStuff<DensePolynomial<F>>;
+    TimestampRangeCheckStuff<MultilinearPolynomial<F>>;
 /// Note –– F: JoltField bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -127,26 +129,32 @@ where
 {
     #[tracing::instrument(skip_all, name = "TimestampRangeCheckWitness::new")]
     pub fn generate_witness(
-        read_timestamps: &[Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
+        read_write_memory_polys: &ReadWriteMemoryPolynomials<F>,
     ) -> TimestampRangeCheckPolynomials<F> {
+        let read_timestamps: [&CompactPolynomial<u32, F>; 4] = [
+            (&read_write_memory_polys.t_read_rd).try_into().unwrap(),
+            (&read_write_memory_polys.t_read_rs1).try_into().unwrap(),
+            (&read_write_memory_polys.t_read_rs2).try_into().unwrap(),
+            (&read_write_memory_polys.t_read_ram).try_into().unwrap(),
+        ];
         let M = read_timestamps[0].len();
 
         #[cfg(test)]
-        let mut init_tuples: HashSet<(u64, u64)> = HashSet::new();
+        let mut init_tuples: HashSet<(u32, u32)> = HashSet::new();
         #[cfg(test)]
         {
             for i in 0..M {
-                init_tuples.insert((i as u64, 0u64));
+                init_tuples.insert((i as u32, 0));
             }
         }
 
-        let read_and_final_cts: Vec<[Vec<u64>; 4]> = (0..MEMORY_OPS_PER_INSTRUCTION)
+        let mut read_and_final_cts: Vec<[Vec<u32>; 4]> = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
             .map(|i| {
-                let mut read_cts_read_timestamp: Vec<u64> = vec![0; M];
-                let mut read_cts_global_minus_read: Vec<u64> = vec![0; M];
-                let mut final_cts_read_timestamp: Vec<u64> = vec![0; M];
-                let mut final_cts_global_minus_read: Vec<u64> = vec![0; M];
+                let mut read_cts_read_timestamp: Vec<u32> = vec![0; M];
+                let mut read_cts_global_minus_read: Vec<u32> = vec![0; M];
+                let mut final_cts_read_timestamp: Vec<u32> = vec![0; M];
+                let mut final_cts_global_minus_read: Vec<u32> = vec![0; M];
 
                 for (j, read_timestamp) in read_timestamps[i].iter().enumerate() {
                     read_cts_read_timestamp[j] = final_cts_read_timestamp[*read_timestamp as usize];
@@ -158,36 +166,36 @@ where
 
                 #[cfg(test)]
                 {
-                    let global_minus_read_timestamps = &read_timestamps[i]
+                    let global_minus_read_timestamps: Vec<_> = read_timestamps[i]
                         .iter()
                         .enumerate()
-                        .map(|(j, timestamp)| j as u64 - *timestamp)
+                        .map(|(j, timestamp)| j as u32 - *timestamp)
                         .collect();
 
                     for (lookup_indices, read_cts, final_cts) in [
                         (
-                            &read_timestamps[i],
+                            &read_timestamps[i].coeffs,
                             &read_cts_read_timestamp,
                             &final_cts_read_timestamp,
                         ),
                         (
-                            global_minus_read_timestamps,
+                            &global_minus_read_timestamps,
                             &read_cts_global_minus_read,
                             &final_cts_global_minus_read,
                         ),
                     ]
                     .iter()
                     {
-                        let mut read_tuples: HashSet<(u64, u64)> = HashSet::new();
-                        let mut write_tuples: HashSet<(u64, u64)> = HashSet::new();
+                        let mut read_tuples: HashSet<(u32, u32)> = HashSet::new();
+                        let mut write_tuples: HashSet<(u32, u32)> = HashSet::new();
                         for (v, t) in lookup_indices.iter().zip(read_cts.iter()) {
                             read_tuples.insert((*v, *t));
                             write_tuples.insert((*v, *t + 1));
                         }
 
-                        let mut final_tuples: HashSet<(u64, u64)> = HashSet::new();
+                        let mut final_tuples: HashSet<(u32, u32)> = HashSet::new();
                         for (i, t) in final_cts.iter().enumerate() {
-                            final_tuples.insert((i as u64, *t));
+                            final_tuples.insert((i as u32, *t));
                         }
 
                         let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
@@ -208,27 +216,39 @@ where
             .collect();
 
         let read_cts_read_timestamp = read_and_final_cts
-            .par_iter()
-            .map(|cts| DensePolynomial::from_u64(&cts[0]))
-            .collect::<Vec<DensePolynomial<F>>>()
+            .par_iter_mut()
+            .map(|cts| {
+                let cts = std::mem::take(&mut cts[0]);
+                MultilinearPolynomial::from(cts)
+            })
+            .collect::<Vec<_>>()
             .try_into()
             .unwrap();
         let read_cts_global_minus_read = read_and_final_cts
-            .par_iter()
-            .map(|cts| DensePolynomial::from_u64(&cts[1]))
-            .collect::<Vec<DensePolynomial<F>>>()
+            .par_iter_mut()
+            .map(|cts| {
+                let cts = std::mem::take(&mut cts[1]);
+                MultilinearPolynomial::from(cts)
+            })
+            .collect::<Vec<_>>()
             .try_into()
             .unwrap();
         let final_cts_read_timestamp = read_and_final_cts
-            .par_iter()
-            .map(|cts| DensePolynomial::from_u64(&cts[2]))
-            .collect::<Vec<DensePolynomial<F>>>()
+            .par_iter_mut()
+            .map(|cts| {
+                let cts = std::mem::take(&mut cts[2]);
+                MultilinearPolynomial::from(cts)
+            })
+            .collect::<Vec<_>>()
             .try_into()
             .unwrap();
         let final_cts_global_minus_read = read_and_final_cts
-            .par_iter()
-            .map(|cts| DensePolynomial::from_u64(&cts[3]))
-            .collect::<Vec<DensePolynomial<F>>>()
+            .par_iter_mut()
+            .map(|cts| {
+                let cts = std::mem::take(&mut cts[3]);
+                MultilinearPolynomial::from(cts)
+            })
+            .collect::<Vec<_>>()
             .try_into()
             .unwrap();
 
@@ -289,12 +309,44 @@ where
         gamma: &F,
         tau: &F,
     ) -> ((Vec<F>, usize), ()) {
-        let read_timestamps = [
-            &jolt_polynomials.read_write_memory.t_read_rd,
-            &jolt_polynomials.read_write_memory.t_read_rs1,
-            &jolt_polynomials.read_write_memory.t_read_rs2,
-            &jolt_polynomials.read_write_memory.t_read_ram,
+        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
+        // into Montgomery form while multiplying them by gamma
+        let gamma = if let Some(r2) = F::montgomery_r2() {
+            *gamma * r2
+        } else {
+            *gamma
+        };
+
+        let read_timestamps: [&CompactPolynomial<u32, F>; 4] = [
+            (&jolt_polynomials.read_write_memory.t_read_rd)
+                .try_into()
+                .unwrap(),
+            (&jolt_polynomials.read_write_memory.t_read_rs1)
+                .try_into()
+                .unwrap(),
+            (&jolt_polynomials.read_write_memory.t_read_rs2)
+                .try_into()
+                .unwrap(),
+            (&jolt_polynomials.read_write_memory.t_read_ram)
+                .try_into()
+                .unwrap(),
         ];
+        let read_cts_read_timestamp: [&CompactPolynomial<u32, F>; MEMORY_OPS_PER_INSTRUCTION] =
+            polynomials
+                .read_cts_read_timestamp
+                .iter()
+                .map(|poly| poly.try_into().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
+        let read_cts_global_minus_read: [&CompactPolynomial<u32, F>; MEMORY_OPS_PER_INSTRUCTION] =
+            polynomials
+                .read_cts_global_minus_read
+                .iter()
+                .map(|poly| poly.try_into().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
 
         let M = read_timestamps[0].len();
 
@@ -304,9 +356,8 @@ where
                 let read_fingerprints_0: Vec<F> = (0..M)
                     .into_par_iter()
                     .map(|j| {
-                        let read_timestamp = read_timestamps[i][j];
-                        gamma.mul_01_optimized(read_timestamp)
-                            + polynomials.read_cts_read_timestamp[i][j]
+                        read_timestamps[i][j].field_mul(gamma)
+                            + F::from_u32(read_cts_read_timestamp[i][j])
                             - *tau
                     })
                     .collect();
@@ -318,9 +369,9 @@ where
                 let read_fingerprints_1: Vec<F> = (0..M)
                     .into_par_iter()
                     .map(|j| {
-                        let global_minus_read =
-                            F::from_u64(j as u64).unwrap() - read_timestamps[i][j];
-                        global_minus_read * gamma + polynomials.read_cts_global_minus_read[i][j]
+                        let global_minus_read = j as u32 - read_timestamps[i][j];
+                        global_minus_read.field_mul(gamma)
+                            + F::from_u32(read_cts_global_minus_read[i][j])
                             - *tau
                     })
                     .collect();
@@ -343,24 +394,39 @@ where
         let init_leaves: Vec<F> = (0..M)
             .into_par_iter()
             .map(|i| {
-                let index = F::from_u64(i as u64).unwrap();
                 // t = 0
-                index * gamma - *tau
+                (i as u64).field_mul(gamma) - *tau
             })
             .collect();
 
+        let final_cts_read_timestamp: [&CompactPolynomial<u32, F>; MEMORY_OPS_PER_INSTRUCTION] =
+            polynomials
+                .final_cts_read_timestamp
+                .iter()
+                .map(|poly| poly.try_into().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
+        let final_cts_global_minus_read: [&CompactPolynomial<u32, F>; MEMORY_OPS_PER_INSTRUCTION] =
+            polynomials
+                .final_cts_global_minus_read
+                .iter()
+                .map(|poly| poly.try_into().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
         leaves.par_extend(
             (0..MEMORY_OPS_PER_INSTRUCTION)
                 .into_par_iter()
                 .flat_map(|i| {
                     let final_fingerprints_0 = (0..M)
                         .into_par_iter()
-                        .map(|j| polynomials.final_cts_read_timestamp[i][j] + init_leaves[j])
+                        .map(|j| F::from_u32(final_cts_read_timestamp[i][j]) + init_leaves[j])
                         .collect();
 
                     let final_fingerprints_1 = (0..M)
                         .into_par_iter()
-                        .map(|j| polynomials.final_cts_global_minus_read[i][j] + init_leaves[j])
+                        .map(|j| F::from_u32(final_cts_global_minus_read[i][j]) + init_leaves[j])
                         .collect();
 
                     [final_fingerprints_0, final_fingerprints_1]
@@ -633,35 +699,28 @@ where
             + multiset_hashes.init_hashes.len()
             + multiset_hashes.final_hashes.len();
         let (_, r_opening) = r_grand_product.split_at(batch_size.next_power_of_two().log_2());
-        let chis = EqPolynomial::evals(r_opening);
 
-        polynomials
-            .read_write_values()
-            .into_par_iter()
-            .zip(openings.read_write_values_mut().into_par_iter())
-            .chain(
-                ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials)
-                    .into_par_iter()
-                    .zip(timestamp_openings.openings_mut().into_par_iter()),
-            )
-            .for_each(|(poly, opening)| {
-                let claim = poly.evaluate_at_chi_low_optimized(&chis);
-                *opening = claim;
-            });
+        let read_write_polys = [
+            polynomials.read_write_values(),
+            ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials),
+        ]
+        .concat();
+        let read_write_openings: Vec<&mut F> = openings
+            .read_write_values_mut()
+            .into_iter()
+            .chain(timestamp_openings.openings_mut().into_iter())
+            .collect();
+        let (read_write_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&read_write_polys, r_opening);
+        for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {
+            *opening = *eval;
+        }
 
         opening_accumulator.append(
-            &polynomials
-                .read_write_values()
-                .into_iter()
-                .chain(ReadTimestampOpenings::<F>::exogenous_data(jolt_polynomials).into_iter())
-                .collect::<Vec<_>>(),
+            &read_write_polys,
             DensePolynomial::new(chis),
             r_opening.to_vec(),
-            &openings
-                .read_write_values()
-                .into_iter()
-                .chain(timestamp_openings.openings())
-                .collect::<Vec<_>>(),
+            &read_write_evals,
             transcript,
         );
 
@@ -719,6 +778,7 @@ where
                 read_write_hashes.to_vec(),
                 init_final_hashes.to_vec(),
             );
+        #[cfg(test)]
         TimestampValidityProof::<F, PCS, ProofTranscript>::check_multiset_equality(
             &NoPreprocessing,
             &multiset_hashes,
