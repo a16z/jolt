@@ -632,3 +632,100 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{RngCore, SeedableRng};
+
+    fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
+        let mut rng = ChaCha20Rng::seed_from_u64(len as u64);
+        match max_num_bits {
+            0 => MultilinearPolynomial::from(vec![0u8; len]),
+            1..=8 => MultilinearPolynomial::from(
+                (0..len)
+                    .map(|_| {
+                        let mask = if max_num_bits == 8 {
+                            u8::MAX
+                        } else {
+                            (1u8 << max_num_bits) - 1
+                        };
+                        (rng.next_u32() & (mask as u32)) as u8
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            9..=16 => MultilinearPolynomial::from(
+                (0..len)
+                    .map(|_| {
+                        let mask = if max_num_bits == 16 {
+                            u16::MAX
+                        } else {
+                            (1u16 << max_num_bits) - 1
+                        };
+                        (rng.next_u32() & (mask as u32)) as u16
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            17..=32 => MultilinearPolynomial::from(
+                (0..len)
+                    .map(|_| {
+                        let mask = if max_num_bits == 32 {
+                            u32::MAX
+                        } else {
+                            (1u32 << max_num_bits) - 1
+                        };
+                        (rng.next_u64() & (mask as u64)) as u32
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            33..=64 => MultilinearPolynomial::from(
+                (0..len)
+                    .map(|_| {
+                        let mask = if max_num_bits == 64 {
+                            u64::MAX
+                        } else {
+                            (1u64 << max_num_bits) - 1
+                        };
+                        rng.next_u64() & mask
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => MultilinearPolynomial::from(
+                (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    #[test]
+    fn test_poly_to_field_elements() {
+        let small_value_lookup_tables = <Fr as JoltField>::compute_lookup_tables();
+        <Fr as JoltField>::initialize_lookup_tables(small_value_lookup_tables);
+
+        let max_num_bits = [
+            vec![8; 100],
+            vec![16; 100],
+            vec![32; 100],
+            vec![64; 100],
+            vec![256; 300],
+        ]
+        .concat();
+
+        for &max_num_bits in max_num_bits.iter() {
+            let len = 1 << 2;
+            let poly = random_poly(max_num_bits, len);
+            let field_elements: Vec<Fr> = match poly {
+                MultilinearPolynomial::U8Scalars(poly) => poly.coeffs_as_field_elements(),
+                MultilinearPolynomial::U16Scalars(poly) => poly.coeffs_as_field_elements(),
+                MultilinearPolynomial::U32Scalars(poly) => poly.coeffs_as_field_elements(),
+                MultilinearPolynomial::U64Scalars(poly) => poly.coeffs_as_field_elements(),
+                MultilinearPolynomial::LargeScalars(poly) => poly.evals(),
+                _ => {
+                    panic!("Unexpected MultilinearPolynomial variant");
+                }
+            };
+            assert_eq!(field_elements.len(), len);
+        }
+    }
+}

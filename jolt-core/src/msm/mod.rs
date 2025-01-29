@@ -269,16 +269,16 @@ where
                             Either::Right((i, max_num_bits, poly.evals()))
                         }
                         MultilinearPolynomial::U16Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                            Either::Right((i, max_num_bits, poly.coeffs_as_field_elements()))
                         }
                         MultilinearPolynomial::U32Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                            Either::Right((i, max_num_bits, poly.coeffs_as_field_elements()))
                         }
                         MultilinearPolynomial::U64Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                            Either::Right((i, max_num_bits, poly.coeffs_as_field_elements()))
                         }
                         MultilinearPolynomial::I64Scalars(poly) => {
-                            Either::Right((i, max_num_bits, poly.to_field_elements()))
+                            Either::Right((i, max_num_bits, poly.coeffs_as_field_elements()))
                         }
                         _ => Either::Left((i, max_num_bits, poly)),
                     }

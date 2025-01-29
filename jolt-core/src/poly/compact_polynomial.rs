@@ -145,7 +145,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
         self.coeffs.iter()
     }
 
-    pub fn to_field_elements(&self) -> Vec<F> {
+    pub fn coeffs_as_field_elements(&self) -> Vec<F> {
         self.coeffs.par_iter().map(|x| x.to_field()).collect()
     }
 }
