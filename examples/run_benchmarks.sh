@@ -66,7 +66,7 @@ for i in "${!test_directories[@]}"; do
 
   # Build the benchmark
   echo "Building $file"
-  cargo build --release -p "$file"
+  cargo build --release -p "$file" || exit 1 # Exit if build fails
 
   echo "Running $file"
   # Use `time` to measure execution time and memory.
