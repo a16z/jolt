@@ -1,17 +1,18 @@
 #!/bin/bash
 
 # This script runs all the benchmarks in the current directory except the ones in the exclusion list.
-# Current script measures peak memory and wall time for each benchmark.
+# It uses GNU time to measure peak memory (maximum resident size) and wall time for each benchmark.
+# The benchmarks in the exclusion list are not run since they require a large amount of memory and result 
+# in the github runners getting killed.
+# The results are stored in a JSON file $output_file.
 #
-# TODOs - clarify requirements:
-# - Are we measuring the correct the CPU time?
-# - Build time is ignored and not included in the CPU time
-# - Are we measuring the correct peak memory usage? MRS? Heap? Stack?
-# - What about the benchmarks that require a lot of memory? These crash the github runners
+# Nuances:
+# - Measures wall time, but CPU time might be desired in some cases.
+# - Build time is excluded by building the benchmarks before running them.
+# - Maximum resident size is being used as a surrogate to peak memory usage. 
 
 # Define the exclude list
-# exclusion_list=("collatz" "overflow" "sha3-chain")
-exclusion_list=("fibonacci" "multi-function" "collatz" "overflow" "sha3-chain" "stdlib" "alloc" "sha3-ex" "sha2-ex" "sha2-chain" "memory-ops")
+exclusion_list=("collatz" "overflow" "sha3-chain")
 # JSON file to store results
 output_file="benchmark_results.json"
 
@@ -20,6 +21,7 @@ output_file="benchmark_results.json"
 # $1: name of the benchmark
 # $2: metric value
 # $3: unit of the test
+# $4: is_last: boolean to check if it's the last entry
 function write_to_json() {
   # Append execution time to JSON file
   printf "  {\n" >>"$output_file"
@@ -28,9 +30,12 @@ function write_to_json() {
   printf "        \"unit\": \"%s\",\n" "$3" >>"$output_file"
   printf "        \"value\": %.4f,\n" "$2" >>"$output_file"
   printf "        \"extra\": \"\"\n" >>"$output_file"
-
+  if [ "$4" = false ]; then
+    printf "    },\n" >>"$output_file"
+  else
+    printf "    }\n" >>"$output_file"
+  fi
 }
-
 
 # Initialize an array to hold directories
 test_directories=()
@@ -64,38 +69,23 @@ for i in "${!test_directories[@]}"; do
   cargo build --release -p "$file"
 
   echo "Running $file"
-  # command="cargo run --release -p \"$file\""
-  # Use `time` to measure execution time
-
   # Use `time` to measure execution time and memory.
   # Output the information in the below custom format:
   # wall: 0:02.00 (HH:MM:SS)
   # real: 2.00 s
   # MRS: 1964 KB
-
-  # exec_time=$( (time -p eval "$command") 2>&1 | grep real | awk '{print $2}')
-  # output=$(/usr/bin/time "${command}" 2>&1)
   output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1)
-  # output=$(time eval "$command" 2>&1)
-  echo "$output"
   # Extract 'real' time value using awk
   exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
-  echo "$exec_time"
   # Extract 'MRS' value using awk
   mem_used=$(echo "$output" | awk '/MRS:/ {print $2}') # in KB
-  echo "$mem_used"
-
+  
   # Append execution time to JSON file
-  write_to_json "${file}-time" "$exec_time" "s"
-  printf "    },\n" >>"$output_file"
-
-  write_to_json "${file}-mem" "$mem_used" "KB"
+  write_to_json "${file}-time" "$exec_time" "s" false
   # Add a comma if it's not the last entry
-  if [ "$i" -lt $((${#test_directories[@]} - 1)) ]; then
-    printf "    },\n" >>"$output_file"
-  else
-    printf "    }\n" >>"$output_file"
-  fi
+  is_last=$([ "$i" -lt $((${#test_directories[@]} - 1)) ] && echo false || echo true)
+  # Append memory usage to JSON file
+  write_to_json "${file}-mem" "$mem_used" "KB" $is_last
 
 done
 

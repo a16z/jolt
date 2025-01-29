@@ -22,9 +22,7 @@ concurrency:
 jobs:
   benchmark:
     name: Performance benchmarks
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -43,7 +41,6 @@ jobs:
         cd examples
         ./run_benchmarks.sh
         cd ..
-
 
     - name: Publish benchmark result
       uses: benchmark-action/github-action-benchmark@v1
