@@ -11,6 +11,8 @@
 # - Build time is excluded by building the benchmarks before running them.
 # - Maximum resident size is being used as a surrogate to peak memory usage. 
 
+set -e # Exit on error
+
 # Define the exclude list
 exclusion_list=("collatz" "overflow" "sha3-chain")
 # JSON file to store results
@@ -66,7 +68,7 @@ for i in "${!test_directories[@]}"; do
 
   # Build the benchmark
   echo "Building $file"
-  cargo build --release -p "$file" || exit 1 # Exit if build fails
+  cargo build --release -p "$file"
 
   echo "Running $file"
   # Use `time` to measure execution time and memory.
