@@ -1,9 +1,10 @@
 name: CI Benchmarks
 
-on: push
-  # push:
-    # branches:
-    #   - master
+on:
+  push:
+    branches:
+      - master
+      - feature/CI-plot-benchmarks
 
 env:
   CARGO_TERM_COLOR: always
