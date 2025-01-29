@@ -81,7 +81,7 @@ for i in "${!test_directories[@]}"; do
   exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
   # Extract 'MRS' value using awk
   mem_used=$(echo "$output" | awk '/MRS:/ {print $2}') # in KB
-  
+  echo "$output" # Print the output for debugging
   # Append execution time to JSON file
   write_to_json "${file}-time" "$exec_time" "s" false
   # Add a comma if it's not the last entry
