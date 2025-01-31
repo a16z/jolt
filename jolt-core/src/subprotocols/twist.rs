@@ -1,6 +1,6 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
-    field::JoltField,
+    field::{JoltField, OptimizedMul},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -10,10 +10,559 @@ use crate::{
     },
     utils::{
         math::Math,
+        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
     },
 };
 use rayon::prelude::*;
+
+/// The Twist+Shout paper gives two different prover algorithms for the read-checking
+/// and write-checking algorithms in Twist, called the "local algorithm" and
+/// "alternative algorithm". The local algorithm has worse dependence on the pararmeter
+/// d, but benefits from locality of memory accesses.
+pub enum TwistAlgorithm {
+    /// The "local algorithm" for Twist's read-checking and write-checking sumchecks,
+    /// described in Sections 8.2.2, 8.2.3, 8.2.4. Worse dependence on d, but benefits
+    /// from locality of memory accesses.
+    Local,
+    /// The "alternative algorithm" for Twist's read-checking and write-checking sumchecks,
+    /// described in Section 8.2.5. Better dependence on d, but does not benefit
+    /// from locality of memory accesses.
+    Alternative,
+}
+
+pub fn prove_read_checking<F: JoltField, ProofTranscript: Transcript>(
+    increments: Vec<(usize, i64)>,
+    rv: MultilinearPolynomial<F>,
+    r_prime: Vec<F>,
+    K: usize,
+    transcript: &mut ProofTranscript,
+    algorithm: TwistAlgorithm,
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F, F) {
+    let rv_eval = rv.evaluate(&r_prime);
+    match algorithm {
+        TwistAlgorithm::Local => {
+            prove_read_checking_local(increments, &r_prime, K, rv_eval, transcript)
+        }
+        TwistAlgorithm::Alternative => unimplemented!(),
+    }
+}
+
+fn prove_read_checking_local<F: JoltField, ProofTranscript: Transcript>(
+    increments: Vec<(usize, i64)>,
+    r_prime: &[F],
+    K: usize,
+    claimed_evaluation: F,
+    transcript: &mut ProofTranscript,
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F, F) {
+    const DEGREE: usize = 3;
+    let T = r_prime.len().pow2();
+    debug_assert_eq!(increments.len(), T);
+
+    let num_rounds = K.log_2() + T.log_2();
+    let mut r: Vec<F> = Vec::with_capacity(num_rounds);
+
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+    let chunk_size = T / num_chunks;
+
+    #[cfg(test)]
+    let mut val_test = {
+        // Compute Val in cycle-major order, since we will be binding
+        // from low-to-high starting with the cycle variables
+        let mut val: Vec<i64> = vec![0; K * T];
+        val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
+            let mut current_val = 0;
+            for j in 0..T {
+                val_k[j] = current_val;
+                if increments[j].0 == k {
+                    current_val += increments[j].1;
+                }
+            }
+        });
+        MultilinearPolynomial::from(val)
+    };
+    #[cfg(test)]
+    let mut ra_test = {
+        // Compute ra in cycle-major order, since we will be binding
+        // from low-to-high starting with the cycle variables
+        let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
+        ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+            for j in 0..T {
+                if increments[j].0 == k {
+                    ra_k[j] = F::one();
+                }
+            }
+        });
+        MultilinearPolynomial::from(ra)
+    };
+
+    let deltas: Vec<Vec<i64>> = increments[..T - chunk_size]
+        .par_chunks_exact(chunk_size)
+        .map(|chunk| {
+            let mut delta = vec![0i64; K];
+            for (k, increment) in chunk {
+                delta[*k] += increment;
+            }
+            delta
+        })
+        .collect();
+
+    // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
+    let mut checkpoints: Vec<Vec<i64>> = Vec::with_capacity(num_chunks);
+    // TODO(moodlezoup): Initial memory state may not be all zeros
+    checkpoints.push(vec![0; K]);
+
+    for (chunk_index, delta) in deltas.iter().enumerate() {
+        let next_checkpoint = checkpoints[chunk_index]
+            .par_iter()
+            .zip(delta.par_iter())
+            .map(|(val_k, delta_k)| val_k + delta_k)
+            .collect();
+        checkpoints.push(next_checkpoint);
+    }
+    let checkpoints: Vec<Vec<F>> = checkpoints
+        .into_par_iter()
+        .map(|checkpoint| checkpoint.into_iter().map(|val| F::from_i64(val)).collect())
+        .collect();
+
+    #[cfg(test)]
+    {
+        // Check that checkpoints are correct
+        for (chunk_index, V_chunk) in checkpoints.iter().enumerate() {
+            let j = chunk_index * chunk_size;
+            for (k, V_k) in V_chunk.iter().enumerate() {
+                assert_eq!(*V_k, val_test.get_bound_coeff(k * T + j));
+            }
+        }
+    }
+
+    let mut A: Vec<F> = unsafe_allocate_zero_vec(chunk_size);
+    A[0] = F::one();
+
+    // Data structure described in Equation (72)
+    let mut I: Vec<Vec<(usize, usize, F, F)>> = increments
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, increments_chunk)| {
+            // Row index of the I matrix
+            let mut j = chunk_index * chunk_size;
+            let I_chunk = increments_chunk
+                .iter()
+                .map(|(k, increment)| {
+                    let inc = (j, *k, F::zero(), F::from_i64(*increment));
+                    j += 1;
+                    inc
+                })
+                .collect();
+            I_chunk
+        })
+        .collect();
+
+    let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
+    let mut previous_claim = claimed_evaluation;
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+    // First log(T / num_chunks) rounds of sumcheck
+    for round in 0..chunk_size.log_2() {
+        #[cfg(test)]
+        {
+            let mut expected_claim = F::zero();
+            for j in 0..(T >> round) {
+                let mut inner_sum = F::zero();
+                for k in 0..K {
+                    let kj = k * (T >> round) + j;
+                    inner_sum += ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
+                }
+                expected_claim += eq.get_bound_coeff(j) * inner_sum;
+            }
+            assert_eq!(
+                expected_claim, previous_claim,
+                "Sumcheck sanity check failed in round {round}"
+            );
+        }
+
+        let univariate_poly_evals: [F; 3] = I
+            .par_iter()
+            .enumerate()
+            .map(|(chunk_index, I_chunk)| {
+                let mut evals = [F::zero(), F::zero(), F::zero()];
+
+                // `val_j_0` will contain
+                //     Val(k, j', 0, ..., 0)
+                // as we iterate over rows j' \in {0, 1}^(log(T) - i)
+                let mut val_j_0 = checkpoints[chunk_index].clone();
+                // `val_j_r[0]` will contain
+                //     Val(k, j'', 0, r_i, ..., r_1)
+                // `val_j_r[1]` will contain
+                //     Val(k, j'', 1, r_i, ..., r_1)
+                // as we iterate over rows j' \in {0, 1}^(log(T) - i)
+                let mut val_j_r: [Vec<F>; 2] =
+                    [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)];
+                // `ra[0]` will contain
+                //     ra(k, j'', 0, r_i, ..., r_1)
+                // `ra[1]` will contain
+                //     ra(k, j'', 1, r_i, ..., r_1)
+                // as we iterate over rows j' \in {0, 1}^(log(T) - i),
+                // where j'' are the higher (log(T) - i - 1) bits of j'
+                let mut ra: [Vec<F>; 2] =
+                    [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)];
+
+                // Iterate over I_chunk, two rows at a time.
+                I_chunk
+                    .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
+                    .for_each(|inc_chunk| {
+                        let j_prime = inc_chunk[0].0; // row index
+
+                        val_j_r[0] = val_j_0.clone();
+                        for inc in inc_chunk {
+                            let (row, col, inc_lt, inc) = *inc;
+                            if row == j_prime {
+                                // First of the two rows
+                                val_j_r[0][col] += inc_lt;
+                                val_j_0[col] += inc;
+                            } else {
+                                // TODO(moodlezoup): single pass over `inc_chunk`
+                                break;
+                            }
+                        }
+                        val_j_r[1] = val_j_0.clone();
+                        for inc in inc_chunk {
+                            let (row, col, inc_lt, inc) = *inc;
+                            if row != j_prime {
+                                // Second of the two rows
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] += inc;
+                            }
+                        }
+
+                        ra[0].iter_mut().for_each(|ra_k| *ra_k = F::zero());
+                        for j in j_prime << round..(j_prime + 1) << round {
+                            let (k, _) = increments[j];
+                            let j_bound = j % (1 << round);
+                            ra[0][k] += A[j_bound];
+                        }
+                        ra[1].iter_mut().for_each(|ra_k| *ra_k = F::zero());
+                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                            let (k, _) = increments[j];
+                            let j_bound = j % (1 << round);
+                            ra[1][k] += A[j_bound];
+                        }
+
+                        #[cfg(test)]
+                        {
+                            // Check val
+                            for k in 0..K {
+                                assert_eq!(
+                                    val_test.get_bound_coeff(k * (T >> round) + j_prime),
+                                    val_j_r[0][k],
+                                );
+                                assert_eq!(
+                                    val_test.get_bound_coeff(k * (T >> round) + j_prime + 1),
+                                    val_j_r[1][k],
+                                );
+                            }
+                            // Check ra
+                            for k in 0..K {
+                                assert_eq!(
+                                    ra_test.get_bound_coeff(k * (T >> round) + j_prime),
+                                    ra[0][k]
+                                );
+                                assert_eq!(
+                                    ra_test.get_bound_coeff(k * (T >> round) + j_prime + 1),
+                                    ra[1][k]
+                                );
+                            }
+                        }
+
+                        let mut inner_sum_evals = [F::zero(); 3];
+                        for k in 0..K {
+                            let m_ra = ra[1][k] - ra[0][k];
+                            let ra_eval_2 = ra[1][k] + m_ra;
+                            let ra_eval_3 = ra_eval_2 + m_ra;
+
+                            let m_val = val_j_r[1][k] - val_j_r[0][k];
+                            let val_eval_2 = val_j_r[1][k] + m_val;
+                            let val_eval_3 = val_eval_2 + m_val;
+
+                            inner_sum_evals[0] += ra[0][k].mul_0_optimized(val_j_r[0][k]);
+                            inner_sum_evals[1] += ra_eval_2.mul_0_optimized(val_eval_2);
+                            inner_sum_evals[2] += ra_eval_3.mul_0_optimized(val_eval_3);
+                        }
+
+                        let mut eq_evals = [eq.get_bound_coeff(j_prime), F::zero(), F::zero()];
+                        let m = eq.get_bound_coeff(j_prime + 1) - eq_evals[0];
+                        eq_evals[1] = eq.get_bound_coeff(j_prime + 1) + m;
+                        eq_evals[2] = eq_evals[1] + m;
+
+                        evals[0] += eq_evals[0] * inner_sum_evals[0];
+                        evals[1] += eq_evals[1] * inner_sum_evals[1];
+                        evals[2] += eq_evals[2] * inner_sum_evals[2];
+                    });
+
+                evals
+            })
+            .reduce(
+                || [F::zero(); DEGREE],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            );
+
+        let univariate_poly = UniPoly::from_evals(&[
+            univariate_poly_evals[0],
+            previous_claim - univariate_poly_evals[0],
+            univariate_poly_evals[1],
+            univariate_poly_evals[2],
+        ]);
+
+        let compressed_poly = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        r.push(r_j);
+
+        previous_claim = univariate_poly.evaluate(&r_j);
+
+        // Bind I
+        I.par_iter_mut().for_each(|I_chunk| {
+            // Note: A given row in an I_chunk may not be ordered by k after binding
+            let mut next_bound_index = 0;
+            let mut bound_indices: Vec<Option<usize>> = vec![None; K];
+
+            for i in 0..I_chunk.len() {
+                let (j_prime, k, inc_lt, inc) = I_chunk[i];
+                if let Some(bound_index) = bound_indices[k] {
+                    if I_chunk[bound_index].0 == j_prime / 2 {
+                        // Neighbor was already processed
+                        debug_assert!(j_prime % 2 == 1);
+                        I_chunk[bound_index].2 += r_j * inc_lt;
+                        I_chunk[bound_index].3 += inc;
+                        continue;
+                    }
+                }
+                // First time this k has been encountered
+                let bound_value = if j_prime % 2 == 0 {
+                    // (1 - r_j) * inc_lt + r_j * inc
+                    inc_lt + r_j * (inc - inc_lt)
+                } else {
+                    r_j * inc_lt
+                };
+                I_chunk[next_bound_index] = (j_prime / 2, k, bound_value, inc);
+                bound_indices[k] = Some(next_bound_index);
+                next_bound_index += 1;
+            }
+            I_chunk.truncate(next_bound_index);
+        });
+
+        eq.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+        #[cfg(test)]
+        {
+            val_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+            // Check that row indices of I are non-decreasing
+            let mut current_row = 0;
+            for I_chunk in I.iter() {
+                for (row, _, _, _) in I_chunk {
+                    if *row != current_row {
+                        assert_eq!(*row, current_row + 1);
+                        current_row = *row;
+                    }
+                }
+            }
+        }
+
+        // Update A for this round (see Equation 55)
+        let (A_left, A_right) = A.split_at_mut(1 << round);
+        A_left
+            .par_iter_mut()
+            .zip(A_right.par_iter_mut())
+            .for_each(|(x, y)| {
+                *y = *x * r_j;
+                *x -= *y;
+            });
+    }
+
+    // At this point I has been bound to a point where each chunk contains a single row,
+    // so we might as well materialize the full `ra` and `Val` polynomials and perform
+    // standard sumcheck directly using those polynomials.
+
+    // TODO(moodlezoup): Generate ra and Val in address-major order and bind variables
+    // from high-to-low for remaining rounds?
+    let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
+    ra.par_chunks_mut(num_chunks)
+        .enumerate()
+        .for_each(|(k, ra_chunk)| {
+            for (j, increment) in increments.iter().enumerate() {
+                if increment.0 == k {
+                    let j_unbound = j / chunk_size;
+                    let j_bound = j % chunk_size;
+                    ra_chunk[j_unbound] += A[j_bound];
+                }
+            }
+        });
+    let mut ra = MultilinearPolynomial::from(ra);
+
+    let mut val: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
+    val.par_chunks_mut(num_chunks)
+        .enumerate()
+        .for_each(|(k, val_chunk)| {
+            let mut j = 0;
+            I.iter().enumerate().for_each(|(chunk_index, I_chunk)| {
+                let mut val_k_j_0 = checkpoints[chunk_index][k];
+                for I_row in I_chunk.chunk_by(|a, b| a.0 == b.0) {
+                    match I_row.iter().find(|inc| inc.1 == k) {
+                        Some(inc) => {
+                            let (_, _, inc_lt, inc) = *inc;
+                            val_chunk[j] = val_k_j_0 + inc_lt;
+                            val_k_j_0 += inc;
+                        }
+                        None => {
+                            val_chunk[j] = val_k_j_0;
+                        }
+                    };
+                    j += 1;
+                }
+            });
+            debug_assert_eq!(j, val_chunk.len());
+        });
+    let mut val = MultilinearPolynomial::from(val);
+
+    // `ra` and `val` should match `ra_test` and `val_test`, respectively
+    #[cfg(test)]
+    {
+        assert_eq!(ra.len(), ra_test.len());
+        for i in 0..ra.len() {
+            assert_eq!(ra.get_bound_coeff(i), ra_test.get_bound_coeff(i));
+        }
+        assert_eq!(val.len(), val_test.len());
+        for i in 0..val.len() {
+            assert_eq!(val.get_bound_coeff(i), val_test.get_bound_coeff(i));
+        }
+    }
+
+    // Remaining rounds of sumcheck
+    for _round in 0..num_rounds - chunk_size.log_2() {
+        let univariate_poly_evals: [F; 3] = if eq.len() > 1 {
+            // Not done binding cycle variables yet
+            (0..eq.len() / 2)
+                .into_par_iter()
+                .map(|j| {
+                    let eq_evals = eq.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+
+                    let inner_sum_evals: [F; 3] = (0..K)
+                        .into_par_iter()
+                        .map(|k| {
+                            let index = k * eq.len() / 2 + j;
+                            let ra_evals =
+                                ra.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+                            let val_evals =
+                                val.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+
+                            [
+                                ra_evals[0] * val_evals[0],
+                                ra_evals[1] * val_evals[1],
+                                ra_evals[2] * val_evals[2],
+                            ]
+                        })
+                        .reduce(
+                            || [F::zero(); 3],
+                            |running, new| {
+                                [
+                                    running[0] + new[0],
+                                    running[1] + new[1],
+                                    running[2] + new[2],
+                                ]
+                            },
+                        );
+
+                    [
+                        eq_evals[0] * inner_sum_evals[0],
+                        eq_evals[1] * inner_sum_evals[1],
+                        eq_evals[2] * inner_sum_evals[2],
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                )
+        } else {
+            // Cycle variables are fully bound
+            let eq_r_prime_r = eq.final_sumcheck_claim();
+            let evals = (0..ra.len() / 2)
+                .into_par_iter()
+                .map(|k| {
+                    let ra_evals = ra.sumcheck_evals(k, DEGREE, BindingOrder::LowToHigh);
+                    let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::LowToHigh);
+
+                    [
+                        ra_evals[0] * val_evals[0],
+                        ra_evals[1] * val_evals[1],
+                        ra_evals[2] * val_evals[2],
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+            [
+                eq_r_prime_r * evals[0],
+                eq_r_prime_r * evals[1],
+                eq_r_prime_r * evals[2],
+            ]
+        };
+
+        let univariate_poly = UniPoly::from_evals(&[
+            univariate_poly_evals[0],
+            previous_claim - univariate_poly_evals[0],
+            univariate_poly_evals[1],
+            univariate_poly_evals[2],
+        ]);
+
+        let compressed_poly = univariate_poly.compress();
+        compressed_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_poly);
+
+        let r_j = transcript.challenge_scalar::<F>();
+        r.push(r_j);
+
+        previous_claim = univariate_poly.evaluate(&r_j);
+
+        // Bind polynomials
+        rayon::join(
+            || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || val.bind_parallel(r_j, BindingOrder::LowToHigh),
+        );
+        if eq.len() > 1 {
+            eq.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+    }
+
+    (
+        SumcheckInstanceProof::new(compressed_polys),
+        r,
+        ra.final_sumcheck_claim(),
+        val.final_sumcheck_claim(),
+    )
+}
 
 /// Implements the sumcheck prover for the Val-evaluation sumcheck described in
 /// Section 8.1 and Appendix B of the Twist+Shout paper
@@ -159,6 +708,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
         inc_claim,
     )
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +767,47 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
+    }
+
+    #[test]
+    fn read_checking_sumcheck_local() {
+        const K: usize = 16;
+        const T: usize = 1 << 8;
+
+        let mut rng = test_rng();
+
+        let mut registers = [0u32; K];
+        let mut increments: Vec<(usize, i64)> = vec![];
+        let mut rv: Vec<u32> = vec![];
+        for _ in 0..T {
+            let k = rng.next_u32() as usize % K;
+            rv.push(registers[k]);
+            let new_value = rng.next_u32() % 10;
+            let inc = (new_value as i64) - (registers[k] as i64);
+            increments.push((k, inc));
+            registers[k] = new_value;
+        }
+        let rv = MultilinearPolynomial::from(rv);
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let rv_eval = rv.evaluate(&r_prime);
+
+        let (sumcheck_proof, _, ra_claim, val_claim) =
+            prove_read_checking_local(increments, &r_prime, K, rv_eval, &mut prover_transcript);
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        let (sumcheck_claim, mut r) = sumcheck_proof
+            .verify(rv_eval, T.log_2() + K.log_2(), 3, &mut verifier_transcript)
+            .unwrap();
+        r = r.into_iter().rev().collect();
+        let (_r_address, r_cycle) = r.split_at(K.log_2());
+
+        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(r_cycle);
+
+        assert_eq!(eq_eval_cycle * ra_claim * val_claim, sumcheck_claim);
     }
 }
