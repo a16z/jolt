@@ -43,7 +43,11 @@ impl<P: Pairing> AppendToTranscript for DoryCommitment<P> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryPublicParameters<P: Pairing>(Vec<PublicParameters<P>>);
+pub struct DoryPublicParameters<P: Pairing> {
+    pub h: P::G1,
+    pub pp: Vec<PublicParameters<P>>,
+    pub gens: PedersenGenerators<P::G2> // todo(pat): these should be generated at each instance of the protocol I believe. They are just pedersen generators needed for the inner-product opposite the h^a_i points.
+}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Default)]
 pub struct PublicParameters<P: Pairings> {
@@ -170,10 +174,16 @@ where
             max_len /= 2;
         }
 
-        return res
+        let h = Γ1[0];
+
+        Self::Setup {
+            h,
+            pp: res
+        }
     }
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
+        Self::commit_slice(poly.evals_ref(), setup) 
     }
 
     fn batch_commit(
@@ -184,8 +194,22 @@ where
         todo!()
     }
 
-    fn commit_slice(_evals: &[Self::Field], _setup: &Self::Setup) -> Self::Commitment {
-        todo!()
+    fn commit_slice(evals_slice: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
+        let v1 = eval_slice
+        .par_iter
+        .map(|eval|
+            setup.h * eval    
+        ).collect(); 
+        let d1 = P::multi_pairing(v1, setup.Γ2);
+        //todo(pat): We can precompute this I think? Hard to distinguish between inner product protocol and Multilinear PCS. Follow up with Micheal.
+        let d2 = P::multi_pairing(setup.gens, setup.Γ1);
+        let c = P::multi_pairing(v2, setup.gens);
+
+        Self::Commitment {
+            d1,
+            d2,
+            c
+        }
     }
 
     fn prove(
