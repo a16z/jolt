@@ -52,10 +52,8 @@ use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
 use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
-use super::instruction::lw::LWInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
-use super::instruction::sw::SWInstruction;
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
@@ -352,10 +350,8 @@ where
                 tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::SW => SWInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LW => LWInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
                 tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
