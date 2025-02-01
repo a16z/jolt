@@ -24,7 +24,7 @@ Program inputs populate the designated input space upon initialization:
 
 The verifier can efficiently compute the MLE of this initial memory state on its own (i.e. in time proportional to the IO size, not the total memory size).
 
-### Ouputs and panic
+### Outputs and panic
 
 On the other hand, the verifier cannot compute the MLE of the final memory state on its own –– though the program I/O is known to the verifier, the final memory state contains values written to registers/RAM over the course of program execution, which are *not* known to the verifier.
 
