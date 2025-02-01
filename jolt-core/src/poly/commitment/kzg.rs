@@ -231,7 +231,7 @@ where
     }
 
     // This API will try to minimize copies to the GPU or just do the batches in parallel on the CPU
-    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_with_mode")]
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch")]
     pub fn commit_variable_batch(
         pk: &KZGProverKey<P>,
         polys: &[MultilinearPolynomial<P::ScalarField>],
@@ -251,7 +251,7 @@ where
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 
-    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_with_mode")]
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_univariate")]
     pub fn commit_variable_batch_univariate(
         pk: &KZGProverKey<P>,
         polys: &[UniPoly<P::ScalarField>],

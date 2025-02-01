@@ -280,7 +280,9 @@ where
                         MultilinearPolynomial::I64Scalars(poly) => {
                             Either::Right((i, max_num_bits, poly.coeffs_as_field_elements()))
                         }
-                        _ => Either::Left((i, max_num_bits, poly)),
+                        MultilinearPolynomial::U8Scalars(_) => unreachable!(
+                            "MultilinearPolynomial::U8Scalars cannot have more than 10 bits"
+                        ),
                     }
                 } else {
                     Either::Left((i, max_num_bits, poly))

@@ -289,10 +289,6 @@ where
         assert_eq!(quotients.len(), poly.get_num_vars());
         assert_eq!(remainder, *eval);
 
-        // TODO(sagar): support variable_batch msms - or decide not to support them altogether
-        // let q_k_com: Vec<P::G1Affine> = optimal_iter!(quotients)
-        //     .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())
-        //     .collect();
         let q_k_com = UnivariateKZG::commit_variable_batch_univariate(&pp.commit_pp, &quotients)?;
         let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
         // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})

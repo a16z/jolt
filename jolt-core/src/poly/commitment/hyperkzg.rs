@@ -119,7 +119,6 @@ where
         })
         .collect::<Vec<_>>();
 
-    // TODO(sagar): Are the coefficients of these witness polynomials always of the same length?
     UnivariateKZG::commit_batch(&pk.kzg_pk, &h).unwrap()
 }
 
