@@ -424,7 +424,7 @@ where
             .zip(trace_comitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
         commitments.final_cts = PCS::batch_commit(
-            &polynomials.final_cts.iter().collect::<Vec<_>>(),
+            &polynomials.final_cts,
             generators,
             BatchType::SurgeInitFinal,
         );

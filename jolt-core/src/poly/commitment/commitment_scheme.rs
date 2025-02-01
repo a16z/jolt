@@ -1,4 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::borrow::Borrow;
 use std::fmt::Debug;
 
 use crate::utils::transcript::Transcript;
@@ -48,11 +49,13 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup;
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
-    fn batch_commit(
-        polys: &[&MultilinearPolynomial<Self::Field>],
+    fn batch_commit<U>(
+        polys: &[U],
         gens: &Self::Setup,
         batch_type: BatchType,
-    ) -> Vec<Self::Commitment>;
+    ) -> Vec<Self::Commitment>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
     /// Homomorphically combines multiple commitments into a single commitment, computed as a
     /// linear combination with the given coefficients.
