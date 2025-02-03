@@ -63,7 +63,7 @@ commitment time, and that our grand product prover does not pay any field work f
 There are alternative approaches we could take to achieve "a la carte" prover costs, e.g., [vRAM](https://web.eecs.umich.edu/~genkin/papers/vram.pdf)'s approach
 of having the prover sort all cycles by which primitive operation or pre-compile was executed at that cycle
 (see also the much more recent work [Ceno](https://eprint.iacr.org/2024/387)).
-But the above approach is compatable with a streaming prover, avoids committing to the same data multiple times,
+But the above approach is compatible with a streaming prover, avoids committing to the same data multiple times,
 and has other benefits.
 
 We call this technique (fast proving for) "sparse constraint systems". Note that the term sparse here
