@@ -1,0 +1,25 @@
+[package]
+name = "zklean-extractor"
+version = "0.1.0"
+authors = [
+    "Ben Hamlin <hamlinb@galois.com>",
+]
+description = "Extracts an IR suitable for the ZKLean library for Jolt instructions"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+edition = "2021"
+
+[dependencies]
+ark-std = { version = "0.4.0" }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
+clap = { version = "4.3.10", features = ["derive"] }
+rand_core = { version = "0.6.4", default-features = false }
+
+jolt-core = { path = "../jolt-core" }
+
+[dev-dependencies]
+proptest = "1.6.0"
