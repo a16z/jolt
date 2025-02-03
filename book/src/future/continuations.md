@@ -45,7 +45,7 @@ A generic config parameter will be added to the `Jolt` struct called `Continuati
 
 <LI> Public-coin zero-knowledge arguments with (almost) minimal time and space overheads. AR Block, J Holmgren, A Rosen, RD Rothblum, P Soni. Theory of Cryptography Conference, 168-197.
 
-<LI> Gemini: Elastic SNARKs for diverse environments J Bootle, A Chiesa, Y Hu, M Orru. EUROCRYPT 2022
+<LI> Gemini: Elastic SNARKs for diverse environments J Bottle, A Chiesa, Y Hu, M Orru. EUROCRYPT 2022
 
 <LI> On black-box constructions of time and space efficient sublinear arguments from symmetric-key primitives. Laasya Bangalore, Rishabh Bhadauria, Carmit Hazay & Muthuramakrishnan Venkitasubramaniam. TCC 2022.
 
