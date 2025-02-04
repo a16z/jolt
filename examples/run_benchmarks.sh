@@ -78,7 +78,7 @@ for i in "${!test_directories[@]}"; do
   # MRS: 1964 KB
   output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1)
   # Extract 'real' time value using awk
-  exec_time=$(echo "$output" | awk '/real:/ {print $2}') # in seconds
+  exec_time=$(echo "$output" | awk '/Prover runtime:/ {print $3}') # in seconds
   # Extract 'MRS' value using awk
   mem_used=$(echo "$output" | awk '/MRS:/ {print $2}') # in KB
   echo "$output" # Print the output for debugging
