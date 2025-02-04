@@ -15,7 +15,6 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
-use crate::{field, into_optimal_iter};
 use crate::{
     msm::{Icicle, VariableBaseMSM},
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -30,6 +29,7 @@ use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
 };
+use std::borrow::Borrow;
 use std::{marker::PhantomData, sync::Arc};
 
 pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>)
@@ -101,18 +101,25 @@ pub struct HyperKZGProof<P: Pairing> {
 // the quotient of f(x)/(x-u) and (f(x) - f(v))/(x-u) is the
 // same.  One advantage is that computing f(u) could be decoupled
 // from kzg_open, it could be done later or separate from computing W.
-fn kzg_open_no_rem<P: Pairing>(
+fn kzg_batch_open_no_rem<P: Pairing>(
     f: &MultilinearPolynomial<P::ScalarField>,
-    u: P::ScalarField,
+    u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
-) -> P::G1Affine
+) -> Vec<P::G1Affine>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     let f: &DensePolynomial<P::ScalarField> = f.try_into().unwrap();
-    let h = compute_witness_polynomial::<P>(&f.evals(), u);
-    UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(h)).unwrap()
+    let h = u
+        .par_iter()
+        .map(|ui| {
+            let h = compute_witness_polynomial::<P>(&f.evals(), *ui);
+            MultilinearPolynomial::from(h)
+        })
+        .collect::<Vec<_>>();
+
+    UnivariateKZG::commit_batch(&pk.kzg_pk, &h).unwrap()
 }
 
 fn compute_witness_polynomial<P: Pairing>(
@@ -120,7 +127,7 @@ fn compute_witness_polynomial<P: Pairing>(
     u: P::ScalarField,
 ) -> Vec<P::ScalarField>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
 {
     let d = f.len();
 
@@ -140,7 +147,7 @@ fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     let k = f.len();
@@ -158,14 +165,13 @@ where
     });
 
     // TODO(moodlezoup): Avoid cloned()
-    transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
+    let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
+    transcript.append_scalars::<P::ScalarField>(&scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
     let B = MultilinearPolynomial::linear_combination(&f.iter().collect::<Vec<_>>(), &q_powers);
 
     // Now open B at u0, ..., u_{t-1}
-    let w = into_optimal_iter!(u)
-        .map(|ui| kzg_open_no_rem(&B, *ui, pk))
-        .collect::<Vec<P::G1Affine>>();
+    let w = kzg_batch_open_no_rem(&B, u, pk);
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier
@@ -185,13 +191,14 @@ fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
 ) -> bool
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     let k = C.len();
     let t = u.len();
 
-    transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
+    let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
+    transcript.append_scalars::<P::ScalarField>(&scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
     transcript.append_points(&W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
@@ -268,7 +275,7 @@ pub struct HyperKZG<P: Pairing, ProofTranscript: Transcript> {
 
 impl<P: Pairing, ProofTranscript: Transcript> HyperKZG<P, ProofTranscript>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     pub fn protocol_name() -> &'static [u8] {
@@ -323,11 +330,7 @@ where
         assert_eq!(polys[ell - 1].len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
-        // Compute commitments in parallel
-        // TODO: This could be done by batch too if it gets progressively smaller.
-        let com: Vec<P::G1Affine> = into_optimal_iter!(1..polys.len())
-            .map(|i| UnivariateKZG::commit_as_univariate(&pk.kzg_pk, &polys[i]).unwrap())
-            .collect();
+        let com: Vec<P::G1Affine> = UnivariateKZG::commit_variable_batch(&pk.kzg_pk, &polys[1..])?;
 
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
@@ -407,7 +410,7 @@ where
 impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     for HyperKZG<P, ProofTranscript>
 where
-    <P as Pairing>::ScalarField: field::JoltField,
+    <P as Pairing>::ScalarField: JoltField,
     <P as Pairing>::G1: Icicle,
 {
     type Field = P::ScalarField;
@@ -439,11 +442,14 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
-    fn batch_commit(
-        polys: &[&MultilinearPolynomial<Self::Field>],
+    fn batch_commit<U>(
+        polys: &[U],
         gens: &Self::Setup,
         _batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
+    ) -> Vec<Self::Commitment>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
+    {
         UnivariateKZG::commit_batch(&gens.0.kzg_pk, polys)
             .unwrap()
             .into_par_iter()

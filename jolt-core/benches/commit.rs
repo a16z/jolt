@@ -89,11 +89,7 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
         &format!("{} Commit(mode:{:?}): {}% Ones", name, mode, threshold),
         |b| {
             b.iter(|| {
-                PCS::batch_commit(
-                    &leaves.iter().collect::<Vec<_>>(),
-                    &setup,
-                    batch_type.clone(),
-                );
+                PCS::batch_commit(&leaves, &setup, batch_type.clone());
             });
         },
     );

@@ -101,6 +101,9 @@ where
 }
 
 fn main() {
+    let small_value_lookup_tables = <Fr as JoltField>::compute_lookup_tables();
+    <Fr as JoltField>::initialize_lookup_tables(small_value_lookup_tables);
+
     let mut criterion = Criterion::default()
         .configure_from_args()
         .sample_size(20)

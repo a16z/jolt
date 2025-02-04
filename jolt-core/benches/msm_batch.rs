@@ -60,34 +60,55 @@ fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
         0 => MultilinearPolynomial::from(vec![0u8; len]),
         1..=8 => MultilinearPolynomial::from(
             (0..len)
-                .into_iter()
-                .map(|_| (rng.next_u32() & ((1 << max_num_bits) - 1)) as u8)
+                .map(|_| {
+                    let mask = if max_num_bits == 8 {
+                        u8::MAX
+                    } else {
+                        (1u8 << max_num_bits) - 1
+                    };
+                    (rng.next_u32() & (mask as u32)) as u8
+                })
                 .collect::<Vec<_>>(),
         ),
         9..=16 => MultilinearPolynomial::from(
             (0..len)
-                .into_iter()
-                .map(|_| (rng.next_u32() & ((1 << max_num_bits) - 1)) as u16)
+                .map(|_| {
+                    let mask = if max_num_bits == 16 {
+                        u16::MAX
+                    } else {
+                        (1u16 << max_num_bits) - 1
+                    };
+                    (rng.next_u32() & (mask as u32)) as u16
+                })
                 .collect::<Vec<_>>(),
         ),
         17..=32 => MultilinearPolynomial::from(
             (0..len)
-                .into_iter()
-                .map(|_| (rng.next_u64() & ((1 << max_num_bits) - 1)) as u32)
+                .map(|_| {
+                    let mask = if max_num_bits == 32 {
+                        u32::MAX
+                    } else {
+                        (1u32 << max_num_bits) - 1
+                    };
+                    (rng.next_u64() & (mask as u64)) as u32
+                })
                 .collect::<Vec<_>>(),
         ),
         33..=64 => MultilinearPolynomial::from(
             (0..len)
-                .into_iter()
-                .map(|_| rng.next_u64() & ((1 << max_num_bits) - 1))
+                .map(|_| {
+                    let mask = if max_num_bits == 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << max_num_bits) - 1
+                    };
+                    rng.next_u64() & mask
+                })
                 .collect::<Vec<_>>(),
         ),
-        _ => MultilinearPolynomial::from(
-            (0..len)
-                .into_iter()
-                .map(|_| Fr::random(&mut rng))
-                .collect::<Vec<_>>(),
-        ),
+        _ => {
+            MultilinearPolynomial::from((0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>())
+        }
     }
 }
 
@@ -120,6 +141,9 @@ fn benchmark_msm_batch<PCS, F, ProofTranscript>(
 }
 
 fn main() {
+    let small_value_lookup_tables = <Fr as JoltField>::compute_lookup_tables();
+    <Fr as JoltField>::initialize_lookup_tables(small_value_lookup_tables);
+
     let mut criterion = Criterion::default()
         .configure_from_args()
         .sample_size(10)

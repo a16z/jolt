@@ -9,6 +9,7 @@ use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
+use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -194,39 +195,83 @@ where
     P::G1: Icicle,
 {
     #[tracing::instrument(skip_all, name = "KZG::commit_batch")]
-    pub fn commit_batch(
+    pub fn commit_batch<U>(
         pk: &KZGProverKey<P>,
-        polys: &[&MultilinearPolynomial<P::ScalarField>],
-    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
-        Self::commit_batch_with_mode(pk, polys, CommitMode::Default)
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_batch_with_mode")]
-    pub fn commit_batch_with_mode(
-        pk: &KZGProverKey<P>,
-        polys: &[&MultilinearPolynomial<P::ScalarField>],
-        _mode: CommitMode,
-    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        polys: &[U],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError>
+    where
+        U: Borrow<MultilinearPolynomial<P::ScalarField>> + Sync,
+    {
         let g1_powers = &pk.g1_powers();
         let gpu_g1 = pk.gpu_g1();
 
         // batch commit requires all batches to have the same length
-        assert!(polys.par_iter().all(|s| s.len() == polys[0].len()));
-        assert!(polys[0].len() <= g1_powers.len());
+        assert!(polys
+            .par_iter()
+            .all(|s| s.borrow().len() == polys[0].borrow().len()));
+        assert!(polys[0].borrow().len() <= g1_powers.len());
 
-        if let Some(invalid) = polys.iter().find(|coeffs| coeffs.len() > g1_powers.len()) {
+        if let Some(invalid) = polys
+            .iter()
+            .find(|coeffs| (*coeffs).borrow().len() > g1_powers.len())
+        {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.borrow().len(),
+            ));
+        }
+
+        let msm_size = polys[0].borrow().len();
+        let commitments = <P::G1 as VariableBaseMSM>::batch_msm(
+            &g1_powers[..msm_size],
+            gpu_g1.map(|g| &g[..msm_size]),
+            polys,
+        );
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
+    // This API will try to minimize copies to the GPU or just do the batches in parallel on the CPU
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch")]
+    pub fn commit_variable_batch(
+        pk: &KZGProverKey<P>,
+        polys: &[MultilinearPolynomial<P::ScalarField>],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches be less than the bases in size
+        if let Some(invalid) = polys.iter().find(|poly| poly.len() > g1_powers.len()) {
             return Err(ProofVerifyError::KeyLengthError(
                 g1_powers.len(),
                 invalid.len(),
             ));
         }
 
-        let msm_size = polys[0].len();
-        let commitments = <P::G1 as VariableBaseMSM>::batch_msm(
-            &g1_powers[..msm_size],
-            gpu_g1.map(|g| &g[..msm_size]),
-            polys,
-        );
+        let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(g1_powers, gpu_g1, polys);
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_univariate")]
+    pub fn commit_variable_batch_univariate(
+        pk: &KZGProverKey<P>,
+        polys: &[UniPoly<P::ScalarField>],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches be less than the bases in size
+        if let Some(invalid) = polys
+            .iter()
+            .find(|poly| poly.coeffs.len() > g1_powers.len())
+        {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.coeffs.len(),
+            ));
+        }
+
+        let commitments =
+            <P::G1 as VariableBaseMSM>::variable_batch_msm_univariate(g1_powers, gpu_g1, polys);
         Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
     }
 
@@ -236,7 +281,7 @@ where
         poly: &UniPoly<P::ScalarField>,
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, offset, CommitMode::Default)
+        Self::commit_inner(pk, &poly.coeffs, offset)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit")]
@@ -244,16 +289,7 @@ where
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, 0, CommitMode::Default)
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_with_mode")]
-    pub fn commit_with_mode(
-        pk: &KZGProverKey<P>,
-        poly: &UniPoly<P::ScalarField>,
-        mode: CommitMode,
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, 0, mode)
+        Self::commit_inner(pk, &poly.coeffs, 0)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit_as_univariate")]
@@ -283,7 +319,6 @@ where
         pk: &KZGProverKey<P>,
         coeffs: &[P::ScalarField],
         offset: usize,
-        _mode: CommitMode,
     ) -> Result<P::G1Affine, ProofVerifyError> {
         if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
@@ -351,7 +386,7 @@ mod test {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    fn run_kzg_test<F>(degree_generator: F, commit_mode: CommitMode) -> Result<(), ProofVerifyError>
+    fn run_kzg_test<F>(degree_generator: F) -> Result<(), ProofVerifyError>
     where
         F: Fn(&mut ChaCha20Rng) -> usize,
     {
@@ -363,7 +398,7 @@ mod test {
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
-            let comm = UnivariateKZG::<Bn254>::commit_with_mode(&ck, &p, commit_mode)?;
+            let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
@@ -378,12 +413,6 @@ mod test {
 
     #[test]
     fn kzg_commit_prove_verify() -> Result<(), ProofVerifyError> {
-        run_kzg_test(|rng| rng.gen_range(2..20), CommitMode::Default)
-    }
-
-    #[test]
-    fn kzg_commit_prove_verify_mode() -> Result<(), ProofVerifyError> {
-        // This test uses the grand product optimization and ensures only powers of 2 are used for degree generation
-        run_kzg_test(|rng| 1 << rng.gen_range(1..8), CommitMode::GrandProduct)
+        run_kzg_test(|rng| rng.gen_range(2..20))
     }
 }
