@@ -1,5 +1,6 @@
 #![allow(clippy::len_without_is_empty)]
 
+use tracing::{span, Level}; 
 // use core::range;
 use std::marker::PhantomData;
 
@@ -170,7 +171,24 @@ where
         let is_last_step = EqPolynomial::new(r_x_step.to_vec()).evaluate(&vec![F::one(); r_x_step.len()]);
         let eq_rx_step = EqPolynomial::evals(r_x_step);
 
-        let mut evals: Vec<F> = flattened_polys
+        let num_vars_padded = key.num_vars_uniform().next_power_of_two();
+        let mut evals: Vec<F> = Vec::with_capacity(num_vars_padded * 2);
+        let mut evals_shifted: Vec<F> = Vec::with_capacity(num_vars_padded * 2);
+        let mut eq_plus_one_rx_step: Vec<F> = Vec::with_capacity(num_steps_padded);
+
+        let span = span!(Level::INFO, "eq_plus_one_rx_step");
+        {
+        let _enter = span.enter();
+        eq_plus_one_rx_step = (0..num_steps_padded)
+            .into_par_iter()
+            .map(|t| eq_plus_one(r_x_step, &crate::utils::index_to_field_bitvector(t, num_steps_bits), num_steps_bits))
+            .collect();
+        }
+
+        let span = span!(Level::INFO, "evals and evals_shifted");
+        {
+        let _enter = span.enter();
+        evals = flattened_polys
             .par_iter()
             .map(|poly| {
                 poly.Z
@@ -190,11 +208,7 @@ where
         evals.push(F::one() - is_last_step); // Constant, ignores the last step.
         evals.resize(evals.len().next_power_of_two(), F::zero());
 
-        let eq_plus_one_rx_step: Vec<F> = (0..num_steps_padded)
-            .map(|t| eq_plus_one(r_x_step, &crate::utils::index_to_field_bitvector(t, num_steps_bits), num_steps_bits))
-            .collect();
-
-        let mut evals_shifted: Vec<F> = flattened_polys
+        evals_shifted = flattened_polys
             .par_iter()
             .map(|poly| {
                 poly.Z
@@ -211,6 +225,7 @@ where
             })
             .collect();
         evals_shifted.resize(evals.len(), F::zero());
+        }
 
         let poly_z = DensePolynomial::new(evals.into_iter().chain(evals_shifted.into_iter()).collect());
 
@@ -251,7 +266,13 @@ where
             TODO(arasuarun): this might lead to inefficient memory paging 
             as we access each poly in flattened_poly num_steps_padded-many times.
         */ 
-        let mut evals_z_r_y_var: Vec<F> = (0..constraint_builder.uniform_repeat())
+        let mut evals_z_r_y_var: Vec<F> = Vec::with_capacity(num_steps_padded);
+
+        let span = span!(Level::INFO, "evals_z_r_y_var");
+        {
+        let _enter = span.enter();
+        evals_z_r_y_var = (0..constraint_builder.uniform_repeat())
+            .into_par_iter()
             .map(|t| {
                 flattened_polys
                     .par_iter()
@@ -266,7 +287,8 @@ where
                     .sum()
             })
             .collect();
-        evals_z_r_y_var.resize(num_steps_padded, F::zero());
+        // evals_z_r_y_var.resize(num_steps_padded, F::zero());
+        }
 
         let num_rounds_shift_sumcheck = num_steps_bits; 
         let mut shift_sumcheck_polys = vec![DensePolynomial::new(evals_z_r_y_var), DensePolynomial::new(eq_plus_one_rx_step.clone())];
