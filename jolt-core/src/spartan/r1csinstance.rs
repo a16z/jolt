@@ -1,4 +1,4 @@
-use super::sparse_mlpoly::{SparseMatPolyEvalProof, SparseMatPolynomial};
+use super::sparse_mlpoly::SparseMatPolynomial;
 use crate::{
     field::JoltField,
     poly::dense_mlpoly::DensePolynomial,
@@ -141,7 +141,9 @@ impl<F: JoltField> R1CSInstance<F> {
     pub fn get_num_inputs(&self) -> usize {
         self.num_inputs
     }
-
+    pub fn get_matrices(&self) -> [&SparseMatPolynomial<F>; 3] {
+        [&self.A, &self.B, &self.C]
+    }
     // pub fn get_digest(&self) -> Vec<u8> {
     //     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     //     bincode::serialize_into(&mut encoder, &self).unwrap();
@@ -309,51 +311,51 @@ impl<F: JoltField> R1CSInstance<F> {
     // }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct R1CSEvalProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    proof: SparseMatPolyEvalProof<F, ProofTranscript>,
-}
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct R1CSEvalProof<F, ProofTranscript>
+// where
+//     F: JoltField,
+//     ProofTranscript: Transcript,
+// {
+//     proof: SparseMatPolyEvalProof<F, ProofTranscript>,
+// }
 
-impl<F: JoltField, ProofTranscript: Transcript> R1CSEvalProof<F, ProofTranscript> {
-    pub fn prove(
-        // decomm: &R1CSDecommitment,
-        rx: &[F], // point at which the polynomial is evaluated
-        ry: &[F],
-        evals: &(F, F, F),
-        // gens: &R1CSCommitmentGens,
-        transcript: &mut ProofTranscript,
-    ) -> R1CSEvalProof<F, ProofTranscript> {
-        let proof = SparseMatPolyEvalProof::prove(
-            // &decomm.dense,
-            rx,
-            ry,
-            &[evals.0, evals.1, evals.2],
-            // &gens.gens,
-            transcript,
-        );
-        R1CSEvalProof { proof }
-    }
+// impl<F: JoltField, ProofTranscript: Transcript> R1CSEvalProof<F, ProofTranscript> {
+//     pub fn prove(
+//         // decomm: &R1CSDecommitment,
+//         rx: &[F], // point at which the polynomial is evaluated
+//         ry: &[F],
+//         evals: &(F, F, F),
+//         // gens: &R1CSCommitmentGens,
+//         transcript: &mut ProofTranscript,
+//     ) -> R1CSEvalProof<F, ProofTranscript> {
+//         let proof = SparseMatPolyEvalProof::prove(
+//             // &decomm.dense,
+//             rx,
+//             ry,
+//             &[evals.0, evals.1, evals.2],
+//             // &gens.gens,
+//             transcript,
+//         );
+//         R1CSEvalProof { proof }
+//     }
 
-    // pub fn verify(
-    //     &self,
-    //     comm: &R1CSCommitment,
-    //     rx: &[Scalar], // point at which the R1CS matrix polynomials are evaluated
-    //     ry: &[Scalar],
-    //     evals: &(Scalar, Scalar, Scalar),
-    //     gens: &R1CSCommitmentGens,
-    //     transcript: &mut Transcript,
-    // ) -> Result<(), ProofVerifyError> {
-    //     self.proof.verify(
-    //         &comm.comm,
-    //         rx,
-    //         ry,
-    //         &[evals.0, evals.1, evals.2],
-    //         &gens.gens,
-    //         transcript,
-    //     )
-    // }
-}
+// pub fn verify(
+//     &self,
+//     comm: &R1CSCommitment,
+//     rx: &[Scalar], // point at which the R1CS matrix polynomials are evaluated
+//     ry: &[Scalar],
+//     evals: &(Scalar, Scalar, Scalar),
+//     gens: &R1CSCommitmentGens,
+//     transcript: &mut Transcript,
+// ) -> Result<(), ProofVerifyError> {
+//     self.proof.verify(
+//         &comm.comm,
+//         rx,
+//         ry,
+//         &[evals.0, evals.1, evals.2],
+//         &gens.gens,
+//         transcript,
+//     )
+// }
+// }

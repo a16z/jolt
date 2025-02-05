@@ -1,7 +1,6 @@
 use crate::{field::JoltField, utils::transcript::Transcript};
 use errors::R1CSError;
-use r1csinstance::{R1CSEvalProof, R1CSInstance};
-use r1csproof::R1CSProof;
+use r1csinstance::R1CSInstance;
 use serde::{Deserialize, Serialize};
 
 extern crate core;
@@ -276,140 +275,140 @@ pub struct Instance<F: JoltField> {
 // }
 
 /// `SNARK` holds a proof produced by Spartan SNARK
-#[derive(Debug)]
-pub struct SpartanProof<F, ProofTranscript>
-where
-    F: JoltField,
-    ProofTranscript: Transcript,
-{
-    r1cs_proof: R1CSProof<F, ProofTranscript>,
-    inst_evals: (F, F, F),
-    r1cs_eval_proof: R1CSEvalProof<F, ProofTranscript>,
-}
+// #[derive(Debug)]
+// pub struct SpartanProof<F, ProofTranscript>
+// where
+//     F: JoltField,
+//     ProofTranscript: Transcript,
+// {
+//     r1cs_proof: R1CSProof<F, ProofTranscript>,
+//     inst_evals: (F, F, F),
+//     r1cs_eval_proof: R1CSEvalProof<F, ProofTranscript>,
+// }
 
-impl<F: JoltField, ProofTranscript: Transcript> SpartanProof<F, ProofTranscript> {
-    fn protocol_name() -> &'static [u8] {
-        b"Spartan SNARK proof"
-    }
+// impl<F: JoltField, ProofTranscript: Transcript> SpartanProof<F, ProofTranscript> {
+//     fn protocol_name() -> &'static [u8] {
+//         b"Spartan SNARK proof"
+//     }
 
-    // /// A public computation to create a commitment to an R1CS instance
-    // pub fn encode(
-    //     inst: &Instance,
-    //     gens: &SNARKGens,
-    // ) -> (ComputationCommitment, ComputationDecommitment) {
-    //     let timer_encode = Timer::new("SNARK::encode");
-    //     let (comm, decomm) = inst.inst.commit(&gens.gens_r1cs_eval);
-    //     timer_encode.stop();
-    //     (
-    //         ComputationCommitment { comm },
-    //         ComputationDecommitment { decomm },
-    //     )
-    // }
+// /// A public computation to create a commitment to an R1CS instance
+// pub fn encode(
+//     inst: &Instance,
+//     gens: &SNARKGens,
+// ) -> (ComputationCommitment, ComputationDecommitment) {
+//     let timer_encode = Timer::new("SNARK::encode");
+//     let (comm, decomm) = inst.inst.commit(&gens.gens_r1cs_eval);
+//     timer_encode.stop();
+//     (
+//         ComputationCommitment { comm },
+//         ComputationDecommitment { decomm },
+//     )
+// }
 
-    /// A method to produce a SNARK proof of the satisfiability of an R1CS instance
-    pub fn prove(
-        inst: &Instance<F>,
-        // comm: &ComputationCommitment,
-        // decomm: &ComputationDecommitment,
-        vars: VarsAssignment<F>,
-        inputs: &InputsAssignment<F>,
-        // gens: &SNARKGens,
-        transcript: &mut ProofTranscript,
-    ) -> Self {
-        // comm.comm.append_to_transcript(b"comm", transcript);
+/// A method to produce a SNARK proof of the satisfiability of an R1CS instance
+// pub fn prove(
+//     inst: &Instance<F>,
+//     // comm: &ComputationCommitment,
+//     // decomm: &ComputationDecommitment,
+//     vars: VarsAssignment<F>,
+//     inputs: &InputsAssignment<F>,
+//     // gens: &SNARKGens,
+//     transcript: &mut ProofTranscript,
+// ) -> Self {
+//     // comm.comm.append_to_transcript(b"comm", transcript);
 
-        let (r1cs_proof, rx, ry) = {
-            // we might need to pad variables
-            let padded_vars = {
-                let num_padded_vars = inst.inst.get_num_vars();
-                let num_vars = vars.assignment.len();
-                if num_padded_vars > num_vars {
-                    vars.pad(num_padded_vars)
-                } else {
-                    vars
-                }
-            };
+//     let (r1cs_proof, rx, ry) = {
+//         // we might need to pad variables
+//         let padded_vars = {
+//             let num_padded_vars = inst.inst.get_num_vars();
+//             let num_vars = vars.assignment.len();
+//             if num_padded_vars > num_vars {
+//                 vars.pad(num_padded_vars)
+//             } else {
+//                 vars
+//             }
+//         };
 
-            R1CSProof::prove(
-                &inst.inst,
-                padded_vars.assignment,
-                &inputs.assignment,
-                transcript,
-            )
+//         R1CSProof::prove(
+//             &inst.inst,
+//             padded_vars.assignment,
+//             &inputs.assignment,
+//             transcript,
+//         )
 
-            // let proof_encoded: Vec<u8> = bincode::serialize(&proof).unwrap();
-        };
+//         // let proof_encoded: Vec<u8> = bincode::serialize(&proof).unwrap();
+//     };
 
-        // We send evaluations of A, B, C at r = (rx, ry) as claims
-        // to enable the verifier complete the first sum-check
-        let inst_evals = {
-            let (Ar, Br, Cr) = inst.inst.evaluate(&rx, &ry);
-            transcript.append_scalar(&Ar);
-            transcript.append_scalar(&Br);
-            transcript.append_scalar(&Cr);
-            (Ar, Br, Cr)
-        };
+//     // We send evaluations of A, B, C at r = (rx, ry) as claims
+//     // to enable the verifier complete the first sum-check
+//     let inst_evals = {
+//         let (Ar, Br, Cr) = inst.inst.evaluate(&rx, &ry);
+//         transcript.append_scalar(&Ar);
+//         transcript.append_scalar(&Br);
+//         transcript.append_scalar(&Cr);
+//         (Ar, Br, Cr)
+//     };
 
-        let r1cs_eval_proof = R1CSEvalProof::prove(
-            // &decomm.decomm,
-            &rx,
-            &ry,
-            &inst_evals,
-            // &gens.gens_r1cs_eval,
-            transcript,
-        );
+//     let r1cs_eval_proof = R1CSEvalProof::prove(
+//         // &decomm.decomm,
+//         &rx,
+//         &ry,
+//         &inst_evals,
+//         // &gens.gens_r1cs_eval,
+//         transcript,
+//     );
 
-        SpartanProof {
-            r1cs_proof,
-            inst_evals,
-            r1cs_eval_proof,
-        }
-    }
+//     SpartanProof {
+//         r1cs_proof,
+//         inst_evals,
+//         r1cs_eval_proof,
+//     }
+// }
 
-    // /// A method to verify the SNARK proof of the satisfiability of an R1CS instance
-    // pub fn verify(
-    //     &self,
-    //     comm: &ComputationCommitment,
-    //     input: &InputsAssignment,
-    //     transcript: &mut Transcript,
-    //     gens: &SNARKGens,
-    // ) -> Result<(), ProofVerifyError> {
-    //     let timer_verify = Timer::new("SNARK::verify");
-    //     transcript.append_protocol_name(SNARK::protocol_name());
+// /// A method to verify the SNARK proof of the satisfiability of an R1CS instance
+// pub fn verify(
+//     &self,
+//     comm: &ComputationCommitment,
+//     input: &InputsAssignment,
+//     transcript: &mut Transcript,
+//     gens: &SNARKGens,
+// ) -> Result<(), ProofVerifyError> {
+//     let timer_verify = Timer::new("SNARK::verify");
+//     transcript.append_protocol_name(SNARK::protocol_name());
 
-    //     // append a commitment to the computation to the transcript
-    //     comm.comm.append_to_transcript(b"comm", transcript);
+//     // append a commitment to the computation to the transcript
+//     comm.comm.append_to_transcript(b"comm", transcript);
 
-    //     let timer_sat_proof = Timer::new("verify_sat_proof");
-    //     assert_eq!(input.assignment.len(), comm.comm.get_num_inputs());
-    //     let (rx, ry) = self.r1cs_sat_proof.verify(
-    //         comm.comm.get_num_vars(),
-    //         comm.comm.get_num_cons(),
-    //         &input.assignment,
-    //         &self.inst_evals,
-    //         transcript,
-    //         &gens.gens_r1cs_sat,
-    //     )?;
-    //     timer_sat_proof.stop();
+//     let timer_sat_proof = Timer::new("verify_sat_proof");
+//     assert_eq!(input.assignment.len(), comm.comm.get_num_inputs());
+//     let (rx, ry) = self.r1cs_sat_proof.verify(
+//         comm.comm.get_num_vars(),
+//         comm.comm.get_num_cons(),
+//         &input.assignment,
+//         &self.inst_evals,
+//         transcript,
+//         &gens.gens_r1cs_sat,
+//     )?;
+//     timer_sat_proof.stop();
 
-    //     let timer_eval_proof = Timer::new("verify_eval_proof");
-    //     let (Ar, Br, Cr) = &self.inst_evals;
-    //     Ar.append_to_transcript(b"Ar_claim", transcript);
-    //     Br.append_to_transcript(b"Br_claim", transcript);
-    //     Cr.append_to_transcript(b"Cr_claim", transcript);
-    //     self.r1cs_eval_proof.verify(
-    //         &comm.comm,
-    //         &rx,
-    //         &ry,
-    //         &self.inst_evals,
-    //         &gens.gens_r1cs_eval,
-    //         transcript,
-    //     )?;
-    //     timer_eval_proof.stop();
-    //     timer_verify.stop();
-    //     Ok(())
-    // }
-}
+//     let timer_eval_proof = Timer::new("verify_eval_proof");
+//     let (Ar, Br, Cr) = &self.inst_evals;
+//     Ar.append_to_transcript(b"Ar_claim", transcript);
+//     Br.append_to_transcript(b"Br_claim", transcript);
+//     Cr.append_to_transcript(b"Cr_claim", transcript);
+//     self.r1cs_eval_proof.verify(
+//         &comm.comm,
+//         &rx,
+//         &ry,
+//         &self.inst_evals,
+//         &gens.gens_r1cs_eval,
+//         transcript,
+//     )?;
+//     timer_eval_proof.stop();
+//     timer_verify.stop();
+//     Ok(())
+// }
+// }
 
 // /// `NIZKGens` holds public parameters for producing and verifying proofs with the Spartan NIZK
 // pub struct NIZKGens {
@@ -698,9 +697,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SpartanProof<F, ProofTranscript>
 //             .is_ok());
 //     }
 // }
-
 mod errors;
 mod r1csinstance;
-mod r1csproof;
 mod sparse_mlpoly;
 mod spartan_memory_checking;
