@@ -115,7 +115,7 @@ contract SpartanVerifier is HyperKZG {
             mstore(new_ptr, sub(len, n_prefix))
             r_y := new_ptr
         }
-        // Assembly conversion because we know this will is sampled within the modulus
+        // Assembly conversion because we know this is sampled within the modulus
         assembly ("memory-safe") {
             opening_r := r_y
         }
