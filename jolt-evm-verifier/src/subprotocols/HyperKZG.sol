@@ -20,7 +20,7 @@ contract HyperKZG {
     using FrLib for Fr;
 
     // These are initialized using the trusted setup values. NOTE - You must negate the point
-    // VK_g2 in order to have the checks pass, unlike the the rust which checks e(L, VK_G2) =
+    // VK_g2 in order to have the checks pass, unlike the rust which checks e(L, VK_G2) =
     // e(R, VK_Beta_G2) we use a precompile which checks e(L,-VK_G2)e(R, VK_Beta_G2) = 1
     uint256 immutable VK_g1_x;
     uint256 immutable VK_g1_y;
