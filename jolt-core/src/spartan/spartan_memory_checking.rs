@@ -176,8 +176,11 @@ where
         init_values: &Vec<T>,
         final_values: &Vec<T>,
     ) -> (Vec<T>, Vec<T>) {
-        //TODO(Ritwik):-
-        todo!()
+
+        let read_write_values = interleave(read_values, write_values).cloned().collect();
+        let init_final_values = interleave(init_values, final_values).cloned().collect();
+
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
@@ -185,15 +188,51 @@ where
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        //TODO(Ritwik):-
-        todo!()
+        assert_eq!(read_write_hashes.len() % 2, 0);
+        let num_memories = read_write_hashes.len() / 2;
+
+        let mut read_hashes = Vec::with_capacity(num_memories);
+        let mut write_hashes = Vec::with_capacity(num_memories);
+        for i in 0..num_memories {
+            read_hashes.push(read_write_hashes[2 * i]);
+            write_hashes.push(read_write_hashes[2 * i + 1]);
+        }
+
+        let mut init_hashes = Vec::with_capacity(num_memories);
+        let mut final_hashes = Vec::with_capacity(num_memories);
+        for i in 0..num_memories {
+            init_hashes.push(init_final_hashes[2 * i]);
+            final_hashes.push(init_final_hashes[2 * i + 1]);
+        }
+
+        MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes,
+            final_hashes,
+        }
     }
 
     fn check_multiset_equality(
         prerocessing: &SpartanPreprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
-        //TODO(Ritwik):-
+        let num_memories = multiset_hashes.read_hashes.len();
+        assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.init_hashes.len(), num_memories);
+
+        (0..num_memories).into_par_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[i];
+            let write_hash = multiset_hashes.write_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[i];
+            let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
     }
 
     fn protocol_name() -> &'static [u8] {
