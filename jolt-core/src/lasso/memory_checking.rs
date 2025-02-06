@@ -5,7 +5,6 @@ use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::subprotocols::grand_product_quarks::QuarkGrandProduct;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -211,9 +210,9 @@ where
     Self: Sync,
 {
     type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
-        QuarkGrandProduct<F, ProofTranscript>;
+        BatchedDenseGrandProduct<F>;
     type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
-        QuarkGrandProduct<F, ProofTranscript>;
+        BatchedDenseGrandProduct<F>;
 
     type Polynomials: StructuredPolynomialData<DensePolynomial<F>>;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;

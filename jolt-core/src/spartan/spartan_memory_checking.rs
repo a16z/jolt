@@ -1,10 +1,13 @@
 use crate::field::{JoltField, OptimizedMul};
 use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::lasso::memory_checking::{
-    ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
+    ExogenousOpenings, Initializable, NoExogenousOpenings, StructuredPolynomialData,
+    VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::{
+    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
+};
 use crate::r1cs::spartan::SpartanError;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
@@ -41,25 +44,34 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     final_cts_rows: Vec<T>,
     final_cts_cols: Vec<T>,
     vals: Vec<T>,
+    e_rx: Vec<T>,
+    e_ry: Vec<T>,
+    witness: T,
     // identity: VerifierComputedOpening<T>,
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
     for SpartanStuff<T>
 {
-    //TODO(Ashish):- add init_final also.
     fn read_write_values(&self) -> Vec<&T> {
-        self.read_cts_rows
-            .iter()
-            .chain(self.read_cts_cols.iter())
-            .collect()
+        todo!()
+        // self.read_cts_rows
+        //     .iter()
+        //     .chain(self.read_cts_cols.iter())
+        //     .collect()
     }
-
+    fn init_final_values(&self) -> Vec<&T> {
+        todo!()
+    }
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        todo!()
+    }
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        self.read_cts_rows
-            .iter_mut()
-            .chain(self.read_cts_cols.iter_mut())
-            .collect()
+        todo!()
+        // self.read_cts_rows
+        //     .iter_mut()
+        //     .chain(self.read_cts_cols.iter_mut())
+        //     .collect()
     }
 }
 
@@ -83,8 +95,9 @@ pub struct SpartanPreprocessing<F: JoltField> {
 }
 
 impl<F: JoltField> SpartanPreprocessing<F> {
-    #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
+    #[tracing::instrument(skip_all, name = "Spartan::preprocess")]
     pub fn preprocess(circuit_file: &str) -> Self {
+        //TODO(Ashish):- if circuit_file exist then construct A,B,C from that otherwise run a test case.
         // let r1cs = parse_circuit(circuit_file);
 
         // let matrices = r1cs.to_sparse_matrices();
@@ -98,50 +111,27 @@ impl<F: JoltField> SpartanPreprocessing<F> {
     }
 }
 
-//TODO:- This can be moved to impl of SpartanProof
-impl<F: JoltField> SpartanPolynomials<F> {
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
-    pub fn generate_witness(preprocessing: &SpartanPreprocessing<F>) {
-        let r1cs_instance = &preprocessing.inst.inst;
-        let matrices = r1cs_instance.get_matrices();
-        SparseMatPolynomial::multi_sparse_to_dense_rep(&matrices);
-        todo!("Return Polynomials and commmitments.")
-    }
-    // /// Computes the shape of all commitments.
-    // pub fn commitment_shapes(
-    //     max_memory_address: usize,
-    //     max_trace_length: usize,
-    // ) -> Vec<CommitShape> {
-    //     let max_memory_address = max_memory_address.next_power_of_two();
-    //     let max_trace_length = max_trace_length.next_power_of_two();
+// pub type ReadSpartanMemoryOpenings<F> = [F; 3];
+// impl<F: JoltField> ExogenousOpenings<F> for ReadSpartanMemoryOpenings<F> {
+//     fn openings(&self) -> Vec<&F> {
+//         self.iter().collect()
+//     }
 
-    //     let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
-    //     let init_final_shape = CommitShape::new(max_memory_address, BatchType::Small);
+//     fn openings_mut(&mut self) -> Vec<&mut F> {
+//         self.iter_mut().collect()
+//     }
 
-    //     vec![read_write_shape, init_final_shape]
-    // }
-}
-pub type ReadSpartanMemoryOpenings<F> = [F; 3];
-impl<F: JoltField> ExogenousOpenings<F> for ReadSpartanMemoryOpenings<F> {
-    fn openings(&self) -> Vec<&F> {
-        self.iter().collect()
-    }
-
-    fn openings_mut(&mut self) -> Vec<&mut F> {
-        self.iter_mut().collect()
-    }
-
-    fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
-        polys_or_commitments: &JoltStuff<T>,
-    ) -> Vec<&T> {
-        vec![
-            &polys_or_commitments.read_write_memory.t_read_rd,
-            &polys_or_commitments.read_write_memory.t_read_rs1,
-            &polys_or_commitments.read_write_memory.t_read_rs2,
-            &polys_or_commitments.read_write_memory.t_read_ram,
-        ]
-    }
-}
+//     fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
+//         polys_or_commitments: &JoltStuff<T>,
+//     ) -> Vec<&T> {
+//         vec![
+//             &polys_or_commitments.read_write_memory.t_read_rd,
+//             &polys_or_commitments.read_write_memory.t_read_rs1,
+//             &polys_or_commitments.read_write_memory.t_read_rs2,
+//             &polys_or_commitments.read_write_memory.t_read_ram,
+//         ]
+//     }
+// }
 
 impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
     for SpartanProof<F, PCS, ProofTranscript>
@@ -159,8 +149,8 @@ where
     type Preprocessing = SpartanPreprocessing<F>;
 
     type Commitments = SpartanCommitments<PCS, ProofTranscript>;
-    type ExogenousOpenings = ReadSpartanMemoryOpenings<F>; //TODO:- Check if exogenous is required or not.
-    type MemoryTuple = (F, F); //TODO:- Change this if required.
+    // type ExogenousOpenings = >; //TODO:- Check if exogenous is required or not.
+    type MemoryTuple = (F, F); //TODO(Ritwik):- Change this if required.
 
     fn fingerprint(inputs: &(F, F), gamma: &F, tau: &F) -> F {
         //TODO(Ritwik):-
@@ -234,7 +224,7 @@ where
     fn read_tuples(
         _: &SpartanPreprocessing<F>,
         openings: &Self::Openings,
-        read_timestamp_openings: &[F; 3],
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         //TODO(Ritwik):-
 
@@ -244,7 +234,7 @@ where
     fn write_tuples(
         _: &SpartanPreprocessing<F>,
         openings: &Self::Openings,
-        read_timestamp_openings: &[F; 3],
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         //TODO(Ritwik):-
 
@@ -254,7 +244,7 @@ where
     fn init_tuples(
         _: &SpartanPreprocessing<F>,
         openings: &Self::Openings,
-        _: &[F; 3],
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         //TODO(Ritwik):-
 
@@ -264,7 +254,7 @@ where
     fn final_tuples(
         _: &SpartanPreprocessing<F>,
         openings: &Self::Openings,
-        _: &[F; 3],
+        _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
         //TODO(Ritwik):-
 
@@ -283,13 +273,9 @@ where
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
 
-    memory_checking: MemoryCheckingProof<
-        F,
-        PCS,
-        SpartanOpenings<F>,
-        ReadSpartanMemoryOpenings<F>,
-        ProofTranscript,
-    >,
+    pub(crate) memory_checking:
+        MemoryCheckingProof<F, PCS, SpartanOpenings<F>, NoExogenousOpenings, ProofTranscript>,
+    pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
 }
 
 impl<F, PCS, ProofTranscript> SpartanProof<F, PCS, ProofTranscript>
@@ -298,14 +284,25 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    #[tracing::instrument(skip_all, name = "SpartanProof::generate_witness")]
+    pub fn generate_witness(preprocessing: &SpartanPreprocessing<F>) {
+        let r1cs_instance = &preprocessing.inst.inst;
+        let matrices = r1cs_instance.get_matrices();
+        SparseMatPolynomial::multi_sparse_to_dense_rep(&matrices);
+        //TODO(Ashish):- Return Polynomials and commmitments.
+    }
+
     #[tracing::instrument(skip_all, name = "SpartanProof::prove")]
     pub fn prove<'a>(
-        generators: &PCS::Setup,
-        polynomials: &'a SpartanPolynomials<F>,
+        pcs_setup: &PCS::Setup,
+        polynomials: &mut SpartanPolynomials<F>,
+        commitments: &mut SpartanCommitments<PCS, ProofTranscript>,
         preprocessing: &SpartanPreprocessing<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
+        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+            ProverOpeningAccumulator::new();
+
         let num_inputs = preprocessing.inputs.assignment.len();
         let num_vars = preprocessing.vars.assignment.len();
 
@@ -349,7 +346,7 @@ where
                 transcript,
             );
 
-        //TODO(Ashish):- Do we need to reverse?
+        //TODO(Ashish):- Do we need to do reverse?
         // let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
@@ -401,15 +398,29 @@ where
             );
 
         //TODO(Ritwik):- Add spark sum check;
+        //TODO(Ritwik):- Change e_rx, e_ry poly appropriately.
+        polynomials.e_rx = core::array::from_fn::<DensePolynomial<F>, 1, _>(|_| {
+            DensePolynomial::new(vec![F::zero()])
+        })
+        .to_vec();
+        polynomials.e_ry = core::array::from_fn::<DensePolynomial<F>, 1, _>(|_| {
+            DensePolynomial::new(vec![F::zero()])
+        })
+        .to_vec();
+
+        commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
+        commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
 
         let memory_checking = Self::prove_memory_checking(
-            generators,
+            pcs_setup,
             preprocessing,
             &polynomials,
             &JoltPolynomials::default(),
-            opening_accumulator,
+            &mut opening_accumulator,
             transcript,
         );
+
+        let opening_proof = opening_accumulator.reduce_and_prove::<PCS>(pcs_setup, transcript);
         SpartanProof {
             outer_sumcheck_proof,
             inner_sumcheck_proof,
@@ -419,6 +430,7 @@ where
                 outer_sumcheck_claims[2],
             ),
             memory_checking,
+            opening_proof,
         }
     }
 
@@ -430,10 +442,11 @@ where
         num_cons: usize,
         input: &[F],
         proof: SpartanProof<F, PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // input.append_to_transcript(b"input", transcript);
+        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
+            VerifierOpeningAccumulator::new();
 
         let n = num_vars;
         // add the commitment to the verifier's transcript
@@ -489,14 +502,18 @@ where
             proof.memory_checking,
             &commitments,
             &JoltCommitments::<PCS, ProofTranscript>::default(),
-            opening_accumulator,
+            &mut opening_accumulator,
             transcript,
         )?;
+
+        // Batch-verify all openings
+        opening_accumulator.reduce_and_verify(pcs_setup, &proof.opening_proof, transcript)?;
         Ok(())
     }
 
     /// Computes the shape of all commitments.
     pub fn commitment_shapes(max_trace_length: usize) -> Vec<CommitShape> {
+        //TODO(Ashish):- Check if this need to be changed.
         let max_trace_length = max_trace_length.next_power_of_two();
 
         vec![CommitShape::new(max_trace_length, BatchType::Big)]
