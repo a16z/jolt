@@ -12,9 +12,9 @@ use crate::jolt::instruction::{
 /// Call a precompile based on the value in to register,
 /// fetch the input from the precompile input memory region,
 /// and write the output to the precompile output memory region.
-pub struct EcallInstruction;
+pub struct EcallInstruction<const WORD_SIZE: usize>;
 
-impl VirtualInstructionSequence for EcallInstruction {
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction {
     const SEQUENCE_LENGTH: usize = 16; // 16 or 17?
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
@@ -45,7 +45,7 @@ impl VirtualInstructionSequence for EcallInstruction {
 
         let precompile_output: &[u32; 16] = &[0u32; 16];  // compute precompile output based on t0 register
 
-        let  ao0 = ADVICEInstruction::(precompile_output[0]).lookup_entry();
+        let  ao0 = ADVICEInstruction::<WORD_SIZE>(precompile_output[0]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -65,7 +65,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[0]),
         });
 
-        let  ao1 = ADVICEInstruction::(precompile_output[1]).lookup_entry();
+        let  ao1 = ADVICEInstruction::<WORD_SIZE>(precompile_output[1]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -85,7 +85,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[1]),
         });
 
-        let  ao2 = ADVICEInstruction::(precompile_output[2]).lookup_entry();
+        let  ao2 = ADVICEInstruction::<WORD_SIZE>(precompile_output[2]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -105,7 +105,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[2]),
         });
 
-        let  ao3 = ADVICEInstruction::(precompile_output[3]).lookup_entry();
+        let  ao3 = ADVICEInstruction::<WORD_SIZE>(precompile_output[3]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -125,7 +125,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[3]),
         });
 
-        let  ao4 = ADVICEInstruction::(precompile_output[4]).lookup_entry();
+        let  ao4 = ADVICEInstruction::<WORD_SIZE>(precompile_output[4]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -145,7 +145,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[4]),
         });
 
-        let  ao5 = ADVICEInstruction::(precompile_output[5]).lookup_entry();
+        let  ao5 = ADVICEInstruction::<WORD_SIZE>(precompile_output[5]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -165,7 +165,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[5]),
         });
 
-        let  ao6 = ADVICEInstruction::(precompile_output[6]).lookup_entry();
+        let  ao6 = ADVICEInstruction::<WORD_SIZE>(precompile_output[6]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -185,7 +185,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[6]),
         });
 
-        let  ao7 = ADVICEInstruction::(precompile_output[7]).lookup_entry();
+        let  ao7 = ADVICEInstruction::<WORD_SIZE>(precompile_output[7]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -205,7 +205,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[7]),
         });
 
-        let  ao8 = ADVICEInstruction::(precompile_output[8]).lookup_entry();
+        let  ao8 = ADVICEInstruction::<WORD_SIZE>(precompile_output[8]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -225,7 +225,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[8]),
         });
 
-        let  ao9 = ADVICEInstruction::(precompile_output[9]).lookup_entry();
+        let  ao9 = ADVICEInstruction::<WORD_SIZE>(precompile_output[9]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -245,7 +245,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[9]),
         });
 
-        let  ao10 = ADVICEInstruction::(precompile_output[10]).lookup_entry();
+        let  ao10 = ADVICEInstruction::<WORD_SIZE>(precompile_output[10]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -265,7 +265,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[10]),
         });
 
-        let  ao11 = ADVICEInstruction::(precompile_output[11]).lookup_entry();
+        let  ao11 = ADVICEInstruction::<WORD_SIZE>(precompile_output[11]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -285,7 +285,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[11]),
         });
 
-        let  ao12 = ADVICEInstruction::(precompile_output[12]).lookup_entry();
+        let  ao12 = ADVICEInstruction::<WORD_SIZE>(precompile_output[12]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -305,7 +305,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[12]),
         });
 
-        let  ao13 = ADVICEInstruction::(precompile_output[13]).lookup_entry();
+        let  ao13 = ADVICEInstruction::<WORD_SIZE>(precompile_output[13]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -325,7 +325,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[13]),
         });
 
-        let  ao14 = ADVICEInstruction::(precompile_output[14]).lookup_entry();
+        let  ao14 = ADVICEInstruction::<WORD_SIZE>(precompile_output[14]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -345,7 +345,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[14]),
         });
 
-        let  ao15 = ADVICEInstruction::(precompile_output[15]).lookup_entry();
+        let  ao15 = ADVICEInstruction::<WORD_SIZE>(precompile_output[15]).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
