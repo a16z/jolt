@@ -46,6 +46,8 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     vals: Vec<T>,
     e_rx: Vec<T>,
     e_ry: Vec<T>,
+    eq_rx: Vec<T>,
+    eq_ry: Vec<T>,
     witness: T,
     // identity: VerifierComputedOpening<T>,
 }
@@ -156,17 +158,29 @@ where
 
     #[tracing::instrument(skip_all, name = "SpartanPolynomials::compute_leaves")]
     fn compute_leaves(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         polynomials: &Self::Polynomials,
         _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
-    ) {
+    ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
+        let batch_size = 2;
+
         //TODO(Ritwik):-
-        todo!()
+        let read_cts_rows = &polynomials.read_cts_rows;
+        let read_cts_cols = &polynomials.read_cts_cols;
+        let final_cts_rows = &polynomials.final_cts_rows;
+        let final_cts_cols = &polynomials.final_cts_cols;
+        let e_rx = &polynomials.e_rx;
+        let e_ry = &polynomials.e_ry;
+        let eq_rx = &polynomials.eq_rx;
+        let eq_ry = &polynomials.eq_ry;
+
+
+        let read_leaves = (0..read_cts_cols.len());
+        //Length of reads and thus writes in this case should be equal to the length of vals, which is the length of non-zero values in the sparse matrix being opened.
+
+        ((vec![F::zero()], 2), (vec![F::zero()],2))
     }
 
     fn interleave<T: Copy + Clone>(
@@ -178,8 +192,10 @@ where
     ) -> (Vec<T>, Vec<T>) {
 
         let read_write_values = interleave(read_values, write_values).cloned().collect();
-        let init_final_values = interleave(init_values, final_values).cloned().collect();
 
+        //eq_rx init, A_rx_final, B_rx_final, C_rx_final, eq_ry init, A_ry_final, B_ry_final, C_ry_final
+        let mut init_final_values:Vec<T> = vec![init_values[0], final_values[0],final_values[1], final_values[2], init_values[1], final_values[3],final_values[4], final_values[5]];
+      
         (read_write_values, init_final_values)
     }
 
