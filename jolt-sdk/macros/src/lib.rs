@@ -44,7 +44,7 @@ struct MacroBuilder {
     std: bool,
     func_args: Vec<(Ident, Box<Type>)>,
     precompile_func: Option<ItemFn>,
-    precompile_func_args: Option<Vec<(Ident, Box<Type>)>>,
+    precompile_func_args: Option<Vec<(Ident, Box<Type>)>>, // should be Option<Vec<Vec<(Ident, Box<Type>)>>> for multiple precompiles?
 }
 
 impl MacroBuilder {
@@ -333,8 +333,39 @@ impl MacroBuilder {
             },
         };
 
+        // How should we handle multiple precompiles in one provable function?
+        let get_precompile_input_slice = quote! {
+            let precompile_input_ptr = #precompile_input_start as *const u8;
+            let precompile_input_slice = unsafe {
+                core::slice::from_raw_parts(precompile_input_ptr, #max_precompile_input_len)
+            };
+        };
 
-        let precompile_fn = self.make_precompile_fn(PrecompileEnum); // check with Michael
+        let precompile_args = &self.precompile_func_args;
+        let precompile_args_fetch = precompile_args.iter().map(|(name, ty)| {
+            quote! {
+                let (#name, precompile_input_slice) =
+                    jolt::postcard::take_from_bytes::<#ty>(precompile_input_slice).unwrap();
+            }
+        });
+
+        // I'm unsure about this bit of code for the precompile output
+        let precompile_block = &self.precompile_func.block;
+        let precompile_block = quote! {let to_return = (|| -> _ { #precompile_block })();};
+
+        let handle_precompile_return = match &self.precompile_func.sig.output {
+            ReturnType::Default => quote! {},
+            ReturnType::Type(_, ty) => quote! {
+                let precompile_output_ptr = #precompile_output_start as *mut u8;
+                let precompile_output_slice = unsafe {
+                    core::slice::from_raw_parts_mut(precompile_output_ptr, #max_precompile_output_len)
+                };
+
+                jolt::postcard::to_slice::<#ty>(&to_return, precompile_output_slice).unwrap();
+            },
+        };
+
+        // let precompile_fn = self.make_precompile_fn(PrecompileEnum); // check with Michael
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
@@ -543,6 +574,27 @@ impl MacroBuilder {
         &self.func.sig.ident
     }
 
+    fn get_precompile_args(precompile: &ItemFn) -> Vec<(Ident, Box<Type>)> {
+        let mut args = Vec::new();
+        for arg in &precompile.sig.inputs {
+            if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
+                if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
+                    args.push((pat_ident.ident.clone(), ty.clone()));
+                } else {
+                    panic!("cannot parse arg");
+                }
+            } else {
+                panic!("cannot parse arg");
+            }
+        }
+
+        args
+    }
+
+    fn get_precompile_fn_name(&self) -> &Ident {
+        &self.precompile_func.sig.ident
+    }
+
     fn get_guest_name(&self) -> String {
         proc_macro::tracked_env::var("CARGO_PKG_NAME").unwrap()
     }
@@ -606,6 +658,7 @@ impl MacroBuilder {
         witness: Self::Witness,
     ) -> Self::Proof {
         // This is a placeholder for the actual implementation.
+        // Will likely require pattern matching on the precompile enum to determine which precompile to run.
     }
 
     #[cfg(not(feature = "guest"))]
