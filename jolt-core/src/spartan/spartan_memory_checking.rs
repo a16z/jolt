@@ -140,9 +140,6 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
-    type InitFinalGrandProduct = ToggledBatchedGrandProduct<F>;
-
     type Polynomials = SpartanPolynomials<F>;
     type Openings = SpartanOpenings<F>;
 
