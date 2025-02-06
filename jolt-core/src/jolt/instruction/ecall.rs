@@ -365,8 +365,9 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[15]),
         });
 
-
-        // TODO: Implement the precompile call instruction
+        // Precompile instruction
+        let precompile_instruction = PRECOMPILEInstructionInstruction::(trace_row.register_state.t0).lookup_entry();
+        // Need to set the precompile flag to 1 here.
 
         virtual_trace
     }
