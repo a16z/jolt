@@ -310,6 +310,12 @@ impl ELFInstruction {
             | RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
 
+        // Need code for precompile.  Check with Michael.
+        flags[CircuitFlags::Precompile as usize] = matches!(
+            self.opcode,
+            RV32IM::PRECOMPILE
+        );
+
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
 
         flags[CircuitFlags::Assert as usize] = matches!(self.opcode,

@@ -365,9 +365,26 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[15]),
         });
 
-        // Precompile instruction
+        // Precompile instruction.  Where do we set the precompile flag to 1?
         let precompile_instruction = PRECOMPILEInstructionInstruction::(trace_row.register_state.t0).lookup_entry();
-        // Need to set the precompile flag to 1 here.
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::PRECOMPILE,
+                rs1: None,
+                rs2: None,
+                rd: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: None,
+                rs2_val: None,
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
 
         virtual_trace
     }
