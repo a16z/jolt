@@ -147,11 +147,11 @@ where
 
     type Commitments = SpartanCommitments<PCS, ProofTranscript>;
     // type ExogenousOpenings = >; //TODO:- Check if exogenous is required or not.
-    type MemoryTuple = (F, F); //TODO(Ritwik):- Change this if required.
+    type MemoryTuple = (F, F, F); //TODO(Ritwik):- Change this if required.
 
-    fn fingerprint(inputs: &(F, F), gamma: &F, tau: &F) -> F {
-        //TODO(Ritwik):-
-        todo!();
+    fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
+        let (a, v, t) = *inputs;
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "SpartanPolynomials::compute_leaves")]
