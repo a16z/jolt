@@ -421,6 +421,7 @@ pub enum RV32IM {
     REMU,
     FENCE,
     UNIMPL,
+    PRECOMPILE,
     // Virtual instructions
     VIRTUAL_MOVSIGN,
     VIRTUAL_MOVE,
@@ -489,6 +490,7 @@ impl FromStr for RV32IM {
             "REMU" => Ok(Self::REMU),
             "FENCE" => Ok(Self::FENCE),
             "UNIMPL" => Ok(Self::UNIMPL),
+            "PRECOMPILE" => Ok(Self::PRECOMPILE),
             _ => Err("Could not match instruction to RV32IM set.".to_string()),
         }
     }
