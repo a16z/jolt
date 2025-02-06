@@ -578,9 +578,9 @@ impl RV32IM {
 
             RV32IM::ECALL  |
             RV32IM::EBREAK |
+            RV32IM::PRECOMPILE |
+            RV32IM::VIRTUAL_PRECOMPILE |
             RV32IM::UNIMPL => unimplemented!(),
-
-            RV32IM::PRECOMPILE | &RV32IM::VIRTUAL_PRECOMPILE => todo!()|
         }
     }
 }
