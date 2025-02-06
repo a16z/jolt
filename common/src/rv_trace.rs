@@ -579,6 +579,8 @@ impl RV32IM {
             RV32IM::ECALL  |
             RV32IM::EBREAK |
             RV32IM::UNIMPL => unimplemented!(),
+
+            RV32IM::PRECOMPILE | &RV32IM::VIRTUAL_PRECOMPILE => todo!()|
         }
     }
 }
@@ -633,17 +635,17 @@ impl JoltDevice {
             }
         } else if self.is_precompile_input(address) {
             let internal_address = self.convert_read_address(address);
-            if self.precompile_inputs.len() <= internal_address {
+            if self.precompile_input.len() <= internal_address {
                 0
             } else {
-                self.precompile_inputs[internal_address]
+                self.precompile_input[internal_address]
             }
         } else if self.is_precompile_output(address) {
             let internal_address = self.convert_read_address(address);
-            if self.precompile_outputs.len() <= internal_address {
+            if self.precompile_output.len() <= internal_address {
                 0
             } else {
-                self.precompile_outputs[internal_address]
+                self.precompile_output[internal_address]
             }
         } else {
             0 // zero-padding

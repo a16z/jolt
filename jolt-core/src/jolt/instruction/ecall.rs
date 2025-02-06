@@ -365,7 +365,7 @@ impl VirtualInstructionSequence for EcallInstruction {
             advice_value: Some(precompile_output[15]),
         });
 
-        // Precompile instruction.  Where do we set the precompile flag to 1?
+        // Precompile instruction.  How do we set the precompile circuit flag to 1?
         let precompile_instruction = PRECOMPILEInstructionInstruction::(trace_row.register_state.t0).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
