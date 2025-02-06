@@ -634,6 +634,7 @@ impl MacroBuilder {
         }
     }
 
+    //  Not sure if I should move the precompile code in `make_main_func` to this function...
     fn make_build_precompile_fn(&self, precompile_enum: PrecompileEnum) -> TokenStream2 {
         // Iterate over the inputs
         // Serialize the inputs from the array using correct type
