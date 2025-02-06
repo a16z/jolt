@@ -12,14 +12,16 @@ use super::{
     commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
+    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     unipoly::{CompressedUniPoly, UniPoly},
 };
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::{
-    field::{JoltField, OptimizedMul},
+    field::JoltField,
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         errors::ProofVerifyError,
-        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -34,11 +36,11 @@ use crate::{
 pub struct ProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
-    pub polynomial: DensePolynomial<F>,
+    pub polynomial: MultilinearPolynomial<F>,
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
-    pub eq_poly: DensePolynomial<F>,
+    pub eq_poly: MultilinearPolynomial<F>,
     /// The point at which the `polynomial` is being evaluated.
     pub opening_point: Vec<F>,
     /// The claimed opening.
@@ -46,7 +48,7 @@ pub struct ProverOpening<F: JoltField> {
     #[cfg(test)]
     /// If this is a batched opening, this `Vec` contains the individual
     /// polynomials in the batch.
-    batch: Vec<DensePolynomial<F>>,
+    batch: Vec<MultilinearPolynomial<F>>,
 }
 
 /// An opening that the verifier must verify.
@@ -74,14 +76,14 @@ where
 
 impl<F: JoltField> ProverOpening<F> {
     fn new(
-        polynomial: DensePolynomial<F>,
+        polynomial: MultilinearPolynomial<F>,
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
         ProverOpening {
             polynomial,
-            eq_poly,
+            eq_poly: MultilinearPolynomial::LargeScalars(eq_poly),
             opening_point,
             claim,
             #[cfg(test)]
@@ -169,26 +171,30 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
     pub fn append(
         &mut self,
-        polynomials: &[&DensePolynomial<F>],
+        polynomials: &[&MultilinearPolynomial<F>],
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
-        claims: &[&F],
+        claims: &[F],
         transcript: &mut ProofTranscript,
     ) {
         assert_eq!(polynomials.len(), claims.len());
         #[cfg(test)]
         {
+            for poly in polynomials.iter() {
+                if let MultilinearPolynomial::LargeScalars(dense_polynomial) = poly {
+                    assert!(!dense_polynomial.is_bound())
+                }
+            }
+
             let expected_eq_poly = EqPolynomial::evals(&opening_point);
             assert!(
                 eq_poly.Z == expected_eq_poly,
                 "eq_poly and opening point are inconsistent"
             );
 
-            let expected_claims: Vec<F> = polynomials
-                .iter()
-                .map(|poly| poly.evaluate_at_chi(&expected_eq_poly))
-                .collect();
-            for (claim, expected_claim) in claims.iter().zip(expected_claims.iter()) {
+            let expected_claims: Vec<F> =
+                MultilinearPolynomial::batch_evaluate(polynomials, &opening_point).0;
+            for (claim, expected_claim) in claims.iter().zip(expected_claims.into_iter()) {
                 assert_eq!(*claim, expected_claim, "Unexpected claim");
             }
         }
@@ -207,40 +213,16 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
-        // Compute the random linear combination of the polynomials
-        let total_evals_len = 1 << opening_point.len();
-        // Only use as many chunks as there are threads, or the total number of evaluations
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(total_evals_len);
-        let chunk_size = (total_evals_len / num_chunks).max(1);
-        let f_batched = (0..num_chunks)
-            .into_par_iter()
-            .flat_map_iter(|chunk_index| {
-                let index = chunk_index * chunk_size;
-                let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
-
-                for (coeff, poly) in rho_powers.iter().zip(polynomials.iter()) {
-                    let poly_len = poly.evals().len();
-                    if index >= poly_len {
-                        continue;
-                    }
-                    let poly_evals = &poly.evals_ref()[index..];
-                    for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                        *rlc += poly_eval.mul_01_optimized(*coeff);
-                    }
-                }
-                chunk
-            })
-            .collect::<Vec<_>>();
-        let batched_poly = DensePolynomial::new(f_batched);
+        let batched_poly = MultilinearPolynomial::linear_combination(polynomials, &rho_powers);
 
         #[cfg(test)]
         {
+            let batched_eval = batched_poly.evaluate(&opening_point);
+            assert_eq!(batched_eval, batched_claim);
             let mut opening =
                 ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim);
             for poly in polynomials.into_iter() {
-                opening.batch.push(DensePolynomial::clone(poly));
+                opening.batch.push((*poly).clone());
             }
             self.openings.push(opening);
         }
@@ -266,6 +248,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        // TODO(moodlezoup): surely there's a better way to do this
+        let unbound_polys = self
+            .openings
+            .iter()
+            .map(|opening| opening.polynomial.clone())
+            .collect::<Vec<_>>();
+
         // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(&rho_powers, transcript);
@@ -278,44 +267,19 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        let max_len = self
-            .openings
-            .iter()
-            .map(|opening| opening.polynomial.len())
-            .max()
-            .unwrap();
-        // Only use as many chunks as there are threads, or the total number of evaluations
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(max_len);
-        let chunk_size = (max_len / num_chunks).max(1);
-
-        // Compute random linear combination of the polynomials, accounting for the fact
-        // that they may be of different sizes
-        let joint_poly: Vec<F> = (0..num_chunks)
-            .into_par_iter()
-            .flat_map_iter(|chunk_index| {
-                let index = chunk_index * chunk_size;
-
-                let mut chunk = unsafe_allocate_zero_vec(chunk_size);
-                for (coeff, opening) in gamma_powers.iter().zip(self.openings.iter()) {
-                    let poly_len = opening.polynomial.Z.len();
-                    if index >= poly_len {
-                        continue;
-                    }
-                    let poly_evals = &opening.polynomial.Z[index..];
-
-                    for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                        *rlc += coeff.mul_01_optimized(*poly_eval);
-                    }
-                }
-                chunk
-            })
-            .collect();
-        let joint_poly = DensePolynomial::new(joint_poly);
+        let joint_poly = MultilinearPolynomial::linear_combination(
+            &unbound_polys.iter().collect::<Vec<_>>(),
+            &gamma_powers,
+        );
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, transcript);
+
+        #[cfg(test)]
+        self.openings
+            .iter_mut()
+            .zip(unbound_polys.into_iter())
+            .for_each(|(opening, poly)| opening.polynomial = poly);
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -345,7 +309,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             .zip(self.openings.par_iter())
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.polynomial.get_num_vars() != max_num_vars {
-                    F::from_u64(1 << (max_num_vars - opening.polynomial.get_num_vars())).unwrap()
+                    F::from_u64(1 << (max_num_vars - opening.polynomial.get_num_vars()))
                         * opening.claim
                 } else {
                     opening.claim
@@ -356,11 +320,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
 
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-        let mut bound_polys: Vec<Option<DensePolynomial<F>>> = vec![None; self.openings.len()];
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
-            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, &mut bound_polys, e);
+            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, e);
             let compressed_poly = uni_poly.compress();
 
             // append the prover's message to the transcript
@@ -368,62 +331,66 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
-            self.bind(remaining_rounds, &mut bound_polys, r_j);
+            self.openings.par_iter_mut().for_each(|opening| {
+                if remaining_rounds <= opening.opening_point.len() {
+                    rayon::join(
+                        || opening.eq_poly.bind(r_j, BindingOrder::HighToLow),
+                        || opening.polynomial.bind(r_j, BindingOrder::HighToLow),
+                    );
+                }
+            });
 
             e = uni_poly.evaluate(&r_j);
             compressed_polys.push(compressed_poly);
         }
 
-        let claims: Vec<_> = bound_polys
-            .into_iter()
-            .map(|poly| {
-                let poly = poly.unwrap();
-                debug_assert_eq!(poly.len(), 1);
-                poly[0]
-            })
+        let claims: Vec<_> = self
+            .openings
+            .iter()
+            .map(|opening| opening.polynomial.final_sumcheck_claim())
             .collect();
 
         (SumcheckInstanceProof::new(compressed_polys), r, claims)
     }
 
     /// Computes the univariate (quadratic) polynomial that serves as the
-    /// prover's message in each round of the sumchecj in `prove_batch_opening_reduction`.
-    #[tracing::instrument(skip_all, name = "compute_quadratic")]
+    /// prover's message in each round of the sumcheck in `prove_batch_opening_reduction`.
+    #[tracing::instrument(skip_all)]
     fn compute_quadratic(
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
-        bound_polys: &mut Vec<Option<DensePolynomial<F>>>,
         previous_round_claim: F,
     ) -> UniPoly<F> {
         let evals: Vec<(F, F)> = self
             .openings
             .par_iter()
-            .zip(bound_polys.par_iter())
-            .map(|(opening, bound_poly)| {
+            .map(|opening| {
                 if remaining_sumcheck_rounds <= opening.opening_point.len() {
-                    let poly = bound_poly.as_ref().unwrap_or(&opening.polynomial);
-                    let mle_half = poly.len() / 2;
+                    let mle_half = opening.polynomial.len() / 2;
                     let eval_0: F = (0..mle_half)
-                        .map(|i| poly[i].mul_01_optimized(opening.eq_poly[i]))
+                        .map(|i| {
+                            opening.polynomial.get_bound_coeff(i)
+                                * opening.eq_poly.get_bound_coeff(i)
+                        })
                         .sum();
                     let eval_2: F = (0..mle_half)
                         .map(|i| {
-                            let poly_bound_point =
-                                poly[i + mle_half] + poly[i + mle_half] - poly[i];
-                            let eq_bound_point = opening.eq_poly[i + mle_half]
-                                + opening.eq_poly[i + mle_half]
-                                - opening.eq_poly[i];
-                            poly_bound_point.mul_01_optimized(eq_bound_point)
+                            let poly_bound_point = opening.polynomial.get_bound_coeff(i + mle_half)
+                                + opening.polynomial.get_bound_coeff(i + mle_half)
+                                - opening.polynomial.get_bound_coeff(i);
+                            let eq_bound_point = opening.eq_poly.get_bound_coeff(i + mle_half)
+                                + opening.eq_poly.get_bound_coeff(i + mle_half)
+                                - opening.eq_poly.get_bound_coeff(i);
+                            poly_bound_point * eq_bound_point
                         })
                         .sum();
                     (eval_0, eval_2)
                 } else {
-                    debug_assert!(bound_poly.is_none());
+                    debug_assert!(!opening.polynomial.is_bound());
                     let remaining_variables =
                         remaining_sumcheck_rounds - opening.opening_point.len() - 1;
-                    let scaled_claim =
-                        F::from_u64(1 << remaining_variables).unwrap() * opening.claim;
+                    let scaled_claim = F::from_u64(1 << remaining_variables) * opening.claim;
                     (scaled_claim, scaled_claim)
                 }
             })
@@ -438,41 +405,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
         ];
 
         UniPoly::from_evals(&evals)
-    }
-
-    /// Binds the top variable of the accumulated polynomials to `r_j`.
-    /// In the 0th round, `bound_polys` is all `None`, and is overwritten
-    /// with the results of binding the polynomials in `self.openings`.
-    /// In subsequent rounds, `bound_polys` is itself bound to `r_j`.
-    #[tracing::instrument(skip_all, name = "bind")]
-    fn bind(
-        &mut self,
-        remaining_sumcheck_rounds: usize,
-        bound_polys: &mut Vec<Option<DensePolynomial<F>>>,
-        r_j: F,
-    ) {
-        self.openings
-            .par_iter_mut()
-            .zip(bound_polys.par_iter_mut())
-            .for_each(|(opening, bound_poly)| {
-                if remaining_sumcheck_rounds <= opening.opening_point.len() {
-                    match bound_poly {
-                        Some(bound_poly) => {
-                            rayon::join(
-                                || opening.eq_poly.bound_poly_var_top(&r_j),
-                                || bound_poly.bound_poly_var_top(&r_j),
-                            );
-                        }
-                        None => {
-                            *bound_poly = rayon::join(
-                                || opening.eq_poly.bound_poly_var_top(&r_j),
-                                || Some(opening.polynomial.new_poly_from_bound_poly_var_top(&r_j)),
-                            )
-                            .1;
-                        }
-                    };
-                }
-            });
     }
 }
 
@@ -580,6 +512,14 @@ where
                     i
                 );
             }
+            let batched_poly = MultilinearPolynomial::linear_combination(
+                &prover_opening.batch.iter().collect::<Vec<_>>(),
+                &rho_powers,
+            );
+            assert!(
+                batched_poly == prover_opening.polynomial,
+                "batched poly mismatch"
+            );
             let prover_joint_commitment =
                 PCS::commit(&prover_opening.polynomial, self.pcs_setup.as_ref().unwrap());
             assert_eq!(
@@ -699,7 +639,7 @@ where
             .zip(self.openings.par_iter())
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.opening_point.len() != num_sumcheck_rounds {
-                    F::from_u64(1 << (num_sumcheck_rounds - opening.opening_point.len())).unwrap()
+                    F::from_u64(1 << (num_sumcheck_rounds - opening.opening_point.len()))
                         * opening.claim
                 } else {
                     opening.claim

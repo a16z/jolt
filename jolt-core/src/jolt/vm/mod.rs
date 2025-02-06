@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
@@ -29,7 +30,6 @@ use crate::lasso::memory_checking::{
 };
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
@@ -68,6 +68,7 @@ where
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
+    field: F::SmallValueLookupTables,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -199,7 +200,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type JoltPolynomials<F: JoltField> = JoltStuff<DensePolynomial<F>>;
+pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -247,12 +248,8 @@ impl<F: JoltField> JoltPolynomials<F> {
         drop(span);
 
         let trace_polys = self.read_write_values();
-        let span = tracing::span!(tracing::Level::INFO, "commit::trace_commitments");
-        let _guard = span.enter();
         let trace_commitments =
-            PCS::batch_commit_polys_ref(&trace_polys, &preprocessing.generators, BatchType::Big);
-        drop(_guard);
-        drop(span);
+            PCS::batch_commit(&trace_polys, &preprocessing.generators, BatchType::Big);
 
         commitments
             .read_write_values_mut()
@@ -276,15 +273,7 @@ impl<F: JoltField> JoltPolynomials<F> {
             || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
             || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators)
         );
-        drop(_guard);
-        drop(span);
-
-        let span = tracing::span!(
-            tracing::Level::INFO,
-            "commit::commit_instructions_final_cts"
-        );
-        let _guard = span.enter();
-        commitments.instruction_lookups.final_cts = PCS::batch_commit_polys(
+        commitments.instruction_lookups.final_cts = PCS::batch_commit(
             &self.instruction_lookups.final_cts,
             &preprocessing.generators,
             BatchType::Big,
@@ -315,6 +304,8 @@ where
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
+        let small_value_lookup_tables = F::compute_lookup_tables();
+        F::initialize_lookup_tables(small_value_lookup_tables.clone());
         icicle::icicle_init();
 
         let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
@@ -382,6 +373,7 @@ where
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
+            field: small_value_lookup_tables,
         }
     }
 
@@ -389,7 +381,7 @@ where
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
-        preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             C,
@@ -409,6 +401,11 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
 
+        F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
+
+        // TODO(moodlezoup): Truncate generators
+
+        // TODO(JP): Drop padding on number of steps
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -430,7 +427,7 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        let (memory_polynomials, read_timestamps) = ReadWriteMemoryPolynomials::generate_witness(
+        let memory_polynomials = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
             &preprocessing.read_write_memory,
             &trace,
@@ -445,7 +442,7 @@ where
             },
             || {
                 TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(
-                    &read_timestamps,
+                    &memory_polynomials,
                 )
             },
         );
@@ -505,7 +502,7 @@ where
 
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
-            &jolt_polynomials,
+            &mut jolt_polynomials,
             &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,

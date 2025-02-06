@@ -10,9 +10,8 @@ use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
@@ -138,7 +137,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type R1CSPolynomials<F: JoltField> = R1CSStuff<DensePolynomial<F>>;
+pub type R1CSPolynomials<F: JoltField> = R1CSStuff<MultilinearPolynomial<F>>;
 /// Openings specific to Jolt's R1CS constraints (i.e. not used
 /// for any offline memory-checking instances).
 ///
@@ -169,23 +168,23 @@ impl<F: JoltField> R1CSPolynomials<F> {
     ) -> Self {
         let log_M = log2(M) as usize;
 
-        let mut chunks_x = vec![unsafe_allocate_zero_vec(trace.len()); C];
-        let mut chunks_y = vec![unsafe_allocate_zero_vec(trace.len()); C];
-        let mut circuit_flags = vec![unsafe_allocate_zero_vec(trace.len()); NUM_CIRCUIT_FLAGS];
+        let mut chunks_x = vec![vec![0u8; trace.len()]; C];
+        let mut chunks_y = vec![vec![0u8; trace.len()]; C];
+        let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
 
         // TODO(moodlezoup): Can be parallelized
         for (step_index, step) in trace.iter().enumerate() {
             if let Some(instr) = &step.instruction_lookup {
                 let (x, y) = instr.operand_chunks(C, log_M);
                 for i in 0..C {
-                    chunks_x[i][step_index] = F::from_u64(x[i]).unwrap();
-                    chunks_y[i][step_index] = F::from_u64(y[i]).unwrap();
+                    chunks_x[i][step_index] = x[i];
+                    chunks_y[i][step_index] = y[i];
                 }
             }
 
             for j in 0..NUM_CIRCUIT_FLAGS {
                 if step.circuit_flags[j] {
-                    circuit_flags[j][step_index] = F::one();
+                    circuit_flags[j][step_index] = 1;
                 }
             }
         }
@@ -193,15 +192,15 @@ impl<F: JoltField> R1CSPolynomials<F> {
         Self {
             chunks_x: chunks_x
                 .into_iter()
-                .map(|vals| DensePolynomial::new(vals))
+                .map(MultilinearPolynomial::from)
                 .collect(),
             chunks_y: chunks_y
                 .into_iter()
-                .map(|vals| DensePolynomial::new(vals))
+                .map(MultilinearPolynomial::from)
                 .collect(),
             circuit_flags: circuit_flags
                 .into_iter()
-                .map(|vals| DensePolynomial::new(vals))
+                .map(MultilinearPolynomial::from)
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap(),
@@ -451,8 +450,8 @@ mod tests {
                 .collect(),
             _ => vec![JoltR1CSInputs::Aux(aux)],
         }) {
-            let ref_ptr = aux.get_ref(&jolt_polys) as *const DensePolynomial<Fr>;
-            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const DensePolynomial<Fr>;
+            let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
+            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const MultilinearPolynomial<Fr>;
             assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
         }
     }

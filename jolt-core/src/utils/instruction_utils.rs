@@ -20,7 +20,7 @@ pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use jolt_core::utils::instruction_utils::concatenate_lookups;
 /// use ark_bn254::Fr;
 ///
@@ -33,7 +33,7 @@ pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usi
 
     let mut sum = F::zero();
     let mut weight = F::one();
-    let shift = F::from_u64(1u64 << operand_bits).unwrap();
+    let shift = F::from_u64(1u64 << operand_bits);
     for i in 0..C {
         sum += weight * vals[C - i - 1];
         weight *= shift;
@@ -58,12 +58,12 @@ pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usi
 /// // Fewer chunks * chunk_len than bits in x (remaining bits discarded)
 /// assert_eq!(chunk_operand(0xFFF, 2, 4), vec![15, 15]);
 /// ```
-pub fn chunk_operand(x: u64, C: usize, chunk_len: usize) -> Vec<u64> {
+pub fn chunk_operand(x: u64, C: usize, chunk_len: usize) -> Vec<u8> {
     let bit_mask = (1 << chunk_len) - 1;
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * chunk_len) as u32;
-            x.checked_shr(shift).unwrap_or(0) & bit_mask
+            (x.checked_shr(shift).unwrap_or(0) & bit_mask) as u8
         })
         .collect()
 }

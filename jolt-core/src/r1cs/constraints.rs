@@ -138,7 +138,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let is_mul = JoltR1CSInputs::InstructionFlags(MULInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(MULUInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(MULHUInstruction::default().into());
-        let product = cs.allocate_prod(JoltR1CSInputs::Aux(AuxVariable::Product), x, y);
+        let product = cs.allocate_prod(
+            JoltR1CSInputs::Aux(AuxVariable::Product),
+            JoltR1CSInputs::RS1_Read,
+            JoltR1CSInputs::RS2_Read,
+        );
         cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
         cs.constrain_eq_conditional(
             JoltR1CSInputs::InstructionFlags(MOVSIGNInstruction::default().into())

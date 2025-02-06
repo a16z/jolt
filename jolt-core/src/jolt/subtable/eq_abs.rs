@@ -18,12 +18,12 @@ impl<F: JoltField> EqAbsSubtable<F> {
 }
 
 impl<F: JoltField> LassoSubtable<F> for EqAbsSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // Materialize table entries in order where (x | y) ranges 0..M
         // Below is the optimized loop for the condition:
         // lower_bits_mask = 0b01111...11
         // table[x | y] == (x & lower_bits_mask) == (y & lower_bits_mask)
-        let mut entries: Vec<F> = vec![F::zero(); M];
+        let mut entries = vec![0; M];
         let bits_per_operand = (log2(M) / 2) as usize;
 
         for idx in 0..(1 << (bits_per_operand)) {
@@ -33,8 +33,8 @@ impl<F: JoltField> LassoSubtable<F> for EqAbsSubtable<F> {
             // we also set the bit where x == y except for their leading bit
             // e.g. 11010011 | 01010011 = 0
             let concat_index_2 = idx | ((idx ^ (1 << (bits_per_operand - 1))) << bits_per_operand);
-            entries[concat_index_1] = F::one();
-            entries[concat_index_2] = F::one();
+            entries[concat_index_1] = 1;
+            entries[concat_index_2] = 1;
         }
 
         entries
@@ -62,6 +62,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{eq_abs::EqAbsSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

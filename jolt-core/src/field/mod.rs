@@ -39,16 +39,53 @@ pub trait JoltField:
     + CanonicalDeserialize
     + Hash
 {
+    /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
-    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
+    /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
+    /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
+    /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
+    /// requires a field multiplication, but can instead be looked up.
+    type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize = ();
 
-    fn from_u64(n: u64) -> Option<Self>;
+    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
+    /// Computes the small-value lookup tables.
+    fn compute_lookup_tables() -> Self::SmallValueLookupTables {
+        unimplemented!("Small-value lookup tables are unimplemented")
+    }
+    /// Initializes the static lookup tables using the provided values.
+    fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
+        unimplemented!("Small-value lookup tables are unimplemented")
+    }
+    fn from_u8(n: u8) -> Self;
+    fn from_u16(n: u16) -> Self;
+    fn from_u32(n: u32) -> Self;
+    fn from_u64(n: u64) -> Self;
     fn from_i64(val: i64) -> Self;
+    fn from_i128(val: i128) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");
+    }
+    fn num_bits(&self) -> u32 {
+        unimplemented!("num_bits is not implemented");
+    }
+
+    /// The R^2 value used in Montgomery arithmetic for some prime fields.
+    /// Returns `None` if the field doesn't use Montgomery arithmetic.
+    fn montgomery_r2() -> Option<Self> {
+        None
+    }
+
+    /// Does an "unchecked" field multiplication with a `u64`.
+    /// WARNING: For `x.mul_u64_unchecked(y)` to be equal to `x * F::from_u64(y)`,
+    /// which is presumably what you want, we need to correct for the fact that `y` is
+    /// not in Montgomery form. This is typically accomplished by multiplying the left
+    /// operand by an additional R^2 factor (see `JoltField::montgomery_r2`).
+    #[inline(always)]
+    fn mul_u64_unchecked(&self, n: u64) -> Self {
+        *self * Self::from_u64(n)
     }
 }
 

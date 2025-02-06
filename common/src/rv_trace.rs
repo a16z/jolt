@@ -324,10 +324,7 @@ impl ELFInstruction {
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT        |
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
-            RV32IM::VIRTUAL_ASSERT_VALID_DIV0                |
-            // SW and LW perform a `AssertAlignedMemoryAccessInstruction` lookup
-            RV32IM::SW                                       |
-            RV32IM::LW
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0
         );
 
         // All instructions in virtual sequence are mapped from the same

@@ -6,6 +6,8 @@ use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
@@ -17,7 +19,6 @@ use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
-use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -110,12 +111,12 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let flattened_polys: Vec<&DensePolynomial<F>> = I::flatten::<C>()
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
             .collect();
 
-        let num_rounds_x = key.num_rows_total().log_2();
+        let num_rounds_x = key.num_rows_bits();
         let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
@@ -124,21 +125,16 @@ where
             .collect::<Vec<F>>();
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
-        let (mut az, mut bz, mut cz) =
-            constraint_builder.compute_spartan_Az_Bz_Cz::<PCS, ProofTranscript>(&flattened_polys);
-
+        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
-                &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut eq_tau,
-                &mut az,
-                &mut bz,
-                &mut cz,
+                &mut az_bz_cz_poly,
                 transcript,
             );
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        drop_in_background_thread((az, bz, cz, eq_tau));
+        drop_in_background_thread((az_bz_cz_poly, eq_tau));
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
         // claims from the end of sum-check
@@ -156,12 +152,8 @@ where
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-        let num_steps_bits = constraint_builder
-            .uniform_repeat()
-            .next_power_of_two()
-            .ilog2();
-        let (rx_con, rx_ts) =
-            outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
+        let num_constr_bits = constraint_builder.padded_rows_per_step().ilog2() as usize;
+        let (rx_ts, rx_con) = outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_constr_bits);
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
@@ -179,17 +171,14 @@ where
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
         let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
 
-        let chi = EqPolynomial::evals(r_col_step);
-        let claimed_witness_evals: Vec<_> = flattened_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi_low_optimized(&chi))
-            .collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys, r_col_step);
 
         opening_accumulator.append(
             &flattened_polys,
-            DensePolynomial::new(chi),
+            DensePolynomial::new(chis),
             r_col_step.to_vec(),
-            &claimed_witness_evals.iter().collect::<Vec<_>>(),
+            &claimed_witness_evals,
             transcript,
         );
 
@@ -221,7 +210,7 @@ where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
-        let num_rounds_x = key.num_rows_total().log_2();
+        let num_rounds_x = key.num_rows_bits();
         let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
@@ -271,8 +260,7 @@ where
         let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &inner_sumcheck_r);
 
         let r_y = inner_sumcheck_r.clone();
-        let r = [r_x, r_y].concat();
-        let (eval_a, eval_b, eval_c) = key.evaluate_r1cs_matrix_mles(&r);
+        let (eval_a, eval_b, eval_c) = key.evaluate_r1cs_matrix_mles(&r_x, &r_y);
 
         let left_expected = eval_a
             + r_inner_sumcheck_RLC * eval_b

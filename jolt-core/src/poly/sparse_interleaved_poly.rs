@@ -13,13 +13,13 @@ use crate::{
 use rayon::prelude::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
-pub struct SparseCoefficient<F: JoltField> {
+pub struct SparseCoefficient<T> {
     pub(crate) index: usize,
-    pub(crate) value: F,
+    pub(crate) value: T,
 }
 
-impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
-    fn from(x: (usize, F)) -> Self {
+impl<T> From<(usize, T)> for SparseCoefficient<T> {
+    fn from(x: (usize, T)) -> Self {
         Self {
             index: x.0,
             value: x.1,

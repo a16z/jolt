@@ -5,6 +5,7 @@ use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitShape, Com
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
 use jolt_core::poly::commitment::kzg::CommitMode;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
@@ -77,8 +78,8 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
     let (leaves, setup, _) =
         setup_bench::<PCS, F, ProofTranscript>(num_layer, layer_size, threshold);
     let leaves = leaves
-        .iter()
-        .map(|layer| layer.as_slice())
+        .into_iter()
+        .map(|layer| MultilinearPolynomial::from(layer))
         .collect::<Vec<_>>();
     let mode = match batch_type {
         BatchType::GrandProduct => CommitMode::GrandProduct,
