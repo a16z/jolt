@@ -6,6 +6,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
+use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
@@ -26,6 +27,7 @@ pub enum BenchType {
     Sha3,
     Sha2Chain,
     Shout,
+    Twist,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -47,6 +49,7 @@ pub fn benchmarks(
                 fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
+            BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -59,6 +62,7 @@ pub fn benchmarks(
                 fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
+            BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
@@ -99,6 +103,72 @@ where
 
     tasks.push((
         tracing::info_span!("Shout d=1"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn twist<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let small_value_lookup_tables = F::compute_lookup_tables();
+    F::initialize_lookup_tables(small_value_lookup_tables);
+
+    let mut tasks = Vec::new();
+
+    const K: usize = 64;
+    const T: usize = 1 << 20;
+
+    let mut rng = test_rng();
+
+    let mut registers = [0u32; K];
+    let mut read_addresses: Vec<usize> = Vec::with_capacity(T);
+    let mut read_values: Vec<u32> = Vec::with_capacity(T);
+    let mut write_addresses: Vec<usize> = Vec::with_capacity(T);
+    let mut write_values: Vec<u32> = Vec::with_capacity(T);
+    let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+    for _ in 0..T {
+        // Random read register
+        let read_address = rng.next_u32() as usize % K;
+        // Random write register
+        let write_address = rng.next_u32() as usize % K;
+        read_addresses.push(read_address);
+        write_addresses.push(write_address);
+        // Read the value currently in the read register
+        read_values.push(registers[read_address]);
+        // Random write value
+        let write_value = rng.next_u32();
+        write_values.push(write_value);
+        // The increment is the difference between the new value and the old value
+        let write_increment = (write_value as i64) - (registers[write_address] as i64);
+        write_increments.push(write_increment);
+        // Write the new value to the write register
+        registers[write_address] = write_value;
+    }
+
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    let r: Vec<F> = prover_transcript.challenge_vector(K.log_2());
+    let r_prime: Vec<F> = prover_transcript.challenge_vector(T.log_2());
+
+    let task = move || {
+        let _proof = TwistProof::prove(
+            read_addresses,
+            read_values,
+            write_addresses,
+            write_values,
+            write_increments,
+            r.clone(),
+            r_prime.clone(),
+            &mut prover_transcript,
+            TwistAlgorithm::Local,
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Twist d=1"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
