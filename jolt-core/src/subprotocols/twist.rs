@@ -9,6 +9,7 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     utils::{
+        errors::ProofVerifyError,
         math::Math,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
@@ -32,9 +33,17 @@ pub enum TwistAlgorithm {
 }
 
 pub struct TwistProof<F: JoltField, ProofTranscript: Transcript> {
+    /// Proof for the read-checking and write-checking sumchecks
+    /// (steps 3 and 4 of Figure 9).
+    read_write_checking_proof: ReadWriteCheckingProof<F, ProofTranscript>,
+    /// Proof of the Val-evaluation sumcheck (step 6 of Figure 9).
+    val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
+}
+
+pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     /// Joint sumcheck proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
-    read_write_checking_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     /// The claimed evaluation ra(r_address, r_cycle) output by the read/write-
     /// checking sumcheck.
     ra_claim: F,
@@ -53,42 +62,169 @@ pub struct TwistProof<F: JoltField, ProofTranscript: Transcript> {
     inc_claim: F,
 }
 
-pub fn prove_read_write_checking<F: JoltField, ProofTranscript: Transcript>(
-    read_addresses: Vec<usize>,
-    read_values: Vec<u32>,
-    write_addresses: Vec<usize>,
-    write_values: Vec<u32>,
-    write_increments: Vec<i64>,
-    r: Vec<F>,
-    r_prime: Vec<F>,
-    transcript: &mut ProofTranscript,
-    algorithm: TwistAlgorithm,
-) -> TwistProof<F, ProofTranscript> {
-    match algorithm {
-        TwistAlgorithm::Local => prove_read_write_checking_local(
+pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
+    /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
+    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    /// The claimed evaluation Inc(r_address, r_cycle') output by the Val-evaluation sumcheck.
+    inc_claim: F,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> TwistProof<F, ProofTranscript> {
+    pub fn prove(
+        read_addresses: Vec<usize>,
+        read_values: Vec<u32>,
+        write_addresses: Vec<usize>,
+        write_values: Vec<u32>,
+        write_increments: Vec<i64>,
+        r: Vec<F>,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+        algorithm: TwistAlgorithm,
+    ) -> TwistProof<F, ProofTranscript> {
+        let (read_write_checking_proof, mut r_address, mut r_cycle) = ReadWriteCheckingProof::prove(
             read_addresses,
             read_values,
-            write_addresses,
+            &write_addresses,
             write_values,
-            write_increments,
-            &r,
-            &r_prime,
+            &write_increments,
+            r,
+            r_prime,
             transcript,
-        ),
-        TwistAlgorithm::Alternative => unimplemented!(),
+            algorithm,
+        );
+
+        r_address = r_address.into_iter().rev().collect();
+        r_cycle = r_cycle.into_iter().rev().collect();
+
+        let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
+            write_addresses,
+            write_increments,
+            r_address,
+            r_cycle,
+            read_write_checking_proof.val_claim,
+            transcript,
+        );
+
+        // TODO: Append to opening proof accumulator
+
+        TwistProof {
+            read_write_checking_proof,
+            val_evaluation_proof,
+        }
+    }
+
+    pub fn verify(
+        &self,
+        r: Vec<F>,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        let log_T = r_prime.len();
+
+        let r_cycle = self
+            .read_write_checking_proof
+            .verify(r, r_prime, transcript);
+
+        let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
+            self.read_write_checking_proof.val_claim,
+            log_T,
+            2,
+            transcript,
+        )?;
+
+        // Compute LT(r_cycle', r_cycle)
+        let mut lt_eval = F::zero();
+        let mut eq_term = F::one();
+        for (x, y) in r_cycle_prime.iter().rev().zip(r_cycle.iter()) {
+            lt_eval += (F::one() - x) * y * eq_term;
+            eq_term *= F::one() - x - y + *x * y + *x * y;
+        }
+
+        assert_eq!(
+            sumcheck_claim,
+            lt_eval * self.val_evaluation_proof.inc_claim,
+            "Val evaluation sumcheck failed"
+        );
+
+        // TODO: Append Inc claim to opening proof accumulator
+
+        Ok(())
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
+    pub fn prove(
+        read_addresses: Vec<usize>,
+        read_values: Vec<u32>,
+        write_addresses: &[usize],
+        write_values: Vec<u32>,
+        write_increments: &[i64],
+        r: Vec<F>,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+        algorithm: TwistAlgorithm,
+    ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        match algorithm {
+            TwistAlgorithm::Local => prove_read_write_checking_local(
+                read_addresses,
+                read_values,
+                write_addresses,
+                write_values,
+                write_increments,
+                &r,
+                &r_prime,
+                transcript,
+            ),
+            TwistAlgorithm::Alternative => unimplemented!(),
+        }
+    }
+
+    pub fn verify(&self, r: Vec<F>, r_prime: Vec<F>, transcript: &mut ProofTranscript) -> Vec<F> {
+        let K = r.len().pow2();
+        let T = r_prime.len().pow2();
+        let z: F = transcript.challenge_scalar();
+
+        let (sumcheck_claim, mut r_sumcheck) = self
+            .sumcheck_proof
+            .verify(
+                self.rv_claim + z * self.inc_claim,
+                T.log_2() + K.log_2(),
+                3,
+                transcript,
+            )
+            .unwrap();
+        r_sumcheck = r_sumcheck.into_iter().rev().collect();
+        let (r_address, r_cycle) = r_sumcheck.split_at(K.log_2());
+
+        // eq(r', r_cycle)
+        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(r_cycle);
+        // eq(r, r_address)
+        let eq_eval_address = EqPolynomial::new(r).evaluate(r_address);
+
+        assert_eq!(
+            eq_eval_cycle * self.ra_claim * self.val_claim
+                + z * eq_eval_address
+                    * eq_eval_cycle
+                    * self.wa_claim
+                    * (self.wv_claim - self.val_claim),
+            sumcheck_claim,
+            "Read/write-checking sumcheck failed"
+        );
+
+        r_cycle.to_vec()
     }
 }
 
 fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     read_addresses: Vec<usize>,
     read_values: Vec<u32>,
-    write_addresses: Vec<usize>,
+    write_addresses: &[usize],
     write_values: Vec<u32>,
-    write_increments: Vec<i64>,
+    write_increments: &[i64],
     r: &[F],
     r_prime: &[F],
     transcript: &mut ProofTranscript,
-) -> TwistProof<F, ProofTranscript> {
+) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
     const DEGREE: usize = 3;
     let K = r.len().pow2();
     let T = r_prime.len().pow2();
@@ -734,15 +870,18 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         }
     }
 
-    TwistProof {
-        read_write_checking_sumcheck: SumcheckInstanceProof::new(compressed_polys),
+    let proof = ReadWriteCheckingProof {
+        sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
         ra_claim: ra.final_sumcheck_claim(),
         rv_claim: rv_eval,
         wa_claim: wa.final_sumcheck_claim(),
         wv_claim: wv.final_sumcheck_claim(),
         val_claim: val.final_sumcheck_claim(),
         inc_claim: inc_eval,
-    }
+    };
+    let (r_cycle, r_address) = r_sumcheck.split_at(T.log_2());
+
+    (proof, r_address.to_vec(), r_cycle.to_vec())
 }
 
 /// Implements the sumcheck prover for the Val-evaluation sumcheck described in
@@ -750,12 +889,13 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 /// TODO(moodlezoup): incorporate optimization from Appendix B.2
 #[tracing::instrument(skip_all)]
 pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
-    increments: Vec<(usize, i64)>,
+    write_addresses: Vec<usize>,
+    write_increments: Vec<i64>,
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     claimed_evaluation: F,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F) {
+) -> (ValEvaluationProof<F, ProofTranscript>, Vec<F>) {
     let T = r_cycle.len().pow2();
 
     // Compute the size-K table storing all eq(r_address, k) evaluations for
@@ -766,8 +906,9 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     // Compute the Inc polynomial using the above table
-    let inc: Vec<F> = increments
+    let inc: Vec<F> = write_addresses
         .par_iter()
+        .zip(write_increments.par_iter())
         .map(|(k, increment)| eq_r_address[*k] * F::from_i64(*increment))
         .collect();
     let mut inc = MultilinearPolynomial::from(inc);
@@ -883,11 +1024,11 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
 
     let inc_claim = inc.final_sumcheck_claim();
 
-    (
-        SumcheckInstanceProof::new(compressed_polys),
-        r_cycle_prime,
+    let proof = ValEvaluationProof {
+        sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
         inc_claim,
-    )
+    };
+    (proof, r_cycle_prime)
 }
 
 #[cfg(test)]
@@ -895,9 +1036,69 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use ark_ff::Zero;
     use ark_std::test_rng;
     use rand_core::RngCore;
+
+    #[test]
+    fn twist_e2e() {
+        const K: usize = 16;
+        const T: usize = 1 << 8;
+
+        let mut rng = test_rng();
+
+        let mut registers = [0u32; K];
+        let mut read_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut read_values: Vec<u32> = Vec::with_capacity(T);
+        let mut write_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut write_values: Vec<u32> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+        for _ in 0..T {
+            // Random read register
+            let read_address = rng.next_u32() as usize % K;
+            // Random write register
+            let write_address = rng.next_u32() as usize % K;
+            read_addresses.push(read_address);
+            write_addresses.push(write_address);
+            // Read the value currently in the read register
+            read_values.push(registers[read_address]);
+            // Random write value
+            let write_value = rng.next_u32();
+            write_values.push(write_value);
+            // The increment is the difference between the new value and the old value
+            let write_increment = (write_value as i64) - (registers[write_address] as i64);
+            write_increments.push(write_increment);
+            // Write the new value to the write register
+            registers[write_address] = write_value;
+        }
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let proof = TwistProof::prove(
+            read_addresses,
+            read_values,
+            write_addresses,
+            write_values,
+            write_increments,
+            r.clone(),
+            r_prime.clone(),
+            &mut prover_transcript,
+            TwistAlgorithm::Local,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+
+        let verification_result = proof.verify(r, r_prime, &mut verifier_transcript);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
 
     #[test]
     fn val_evaluation_sumcheck() {
@@ -906,20 +1107,22 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let increments: Vec<(usize, i64)> = (0..T)
-            .map(|_| {
-                let address = rng.next_u32() as usize % K;
-                let increment = rng.next_u32() as i32 as i64;
-                (address, increment)
-            })
-            .collect();
-
-        // Compute the Val polynomial from increments
-        let mut values = vec![Fr::zero(); K];
-        let mut val: Vec<Fr> = Vec::with_capacity(K * T);
-        for (k, increment) in increments.iter() {
-            val.extend(values.iter());
-            values[*k] += Fr::from_i64(*increment);
+        let mut registers = [0u32; K];
+        let mut write_addresses: Vec<usize> = Vec::with_capacity(T);
+        let mut write_increments: Vec<i64> = Vec::with_capacity(T);
+        let mut val: Vec<u32> = Vec::with_capacity(K * T);
+        for _ in 0..T {
+            val.extend(registers.iter());
+            // Random write register
+            let write_address = rng.next_u32() as usize % K;
+            write_addresses.push(write_address);
+            // Random write value
+            let write_value = rng.next_u32();
+            // The increment is the difference between the new value and the old value
+            let write_increment = (write_value as i64) - (registers[write_address] as i64);
+            write_increments.push(write_increment);
+            // Write the new value to the write register
+            registers[write_address] = write_value;
         }
         let val = MultilinearPolynomial::from(val);
 
@@ -928,8 +1131,9 @@ mod tests {
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
         let val_evaluation = val.evaluate(&[r_cycle.clone(), r_address.clone()].concat());
-        let (sumcheck_proof, _, _) = prove_val_evaluation(
-            increments,
+        let (proof, _) = prove_val_evaluation(
+            write_addresses,
+            write_increments,
             r_address,
             r_cycle,
             val_evaluation,
@@ -942,7 +1146,9 @@ mod tests {
         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
         let verification_result =
-            sumcheck_proof.verify(val_evaluation, T.log_2(), 2, &mut verifier_transcript);
+            proof
+                .sumcheck_proof
+                .verify(val_evaluation, T.log_2(), 2, &mut verifier_transcript);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -986,12 +1192,12 @@ mod tests {
         let r: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
         let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        let twist_proof = prove_read_write_checking_local(
+        let (proof, _, _) = prove_read_write_checking_local(
             read_addresses,
             read_values,
-            write_addresses,
+            &write_addresses,
             write_values,
-            write_increments,
+            &write_increments,
             &r,
             &r_prime,
             &mut prover_transcript,
@@ -1001,34 +1207,7 @@ mod tests {
         verifier_transcript.compare_to(prover_transcript);
         let _r: Vec<Fr> = verifier_transcript.challenge_vector(K.log_2());
         let _r_prime: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-        let z: Fr = verifier_transcript.challenge_scalar();
 
-        let initial_sumcheck_claim = twist_proof.rv_claim + z * twist_proof.inc_claim;
-
-        let (sumcheck_claim, mut r_sumcheck) = twist_proof
-            .read_write_checking_sumcheck
-            .verify(
-                initial_sumcheck_claim,
-                T.log_2() + K.log_2(),
-                3,
-                &mut verifier_transcript,
-            )
-            .unwrap();
-        r_sumcheck = r_sumcheck.into_iter().rev().collect();
-        let (r_address, r_cycle) = r_sumcheck.split_at(K.log_2());
-
-        // eq(r', r_cycle)
-        let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(r_cycle);
-        // eq(r, r_address)
-        let eq_eval_address = EqPolynomial::new(r).evaluate(r_address);
-
-        assert_eq!(
-            eq_eval_cycle * twist_proof.ra_claim * twist_proof.val_claim
-                + z * eq_eval_address
-                    * eq_eval_cycle
-                    * twist_proof.wa_claim
-                    * (twist_proof.wv_claim - twist_proof.val_claim),
-            sumcheck_claim
-        );
+        proof.verify(r, r_prime, &mut verifier_transcript);
     }
 }
