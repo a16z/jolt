@@ -167,8 +167,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
-        let batch_size = 2;
-
+        let read_write_batch_size = 12;
+        let init_final_batch_size = 8;
         //TODO(Ritwik):-
 
         //Assuming the sparsity of all the matrices are the same, their read_ts count will be the same for rows and columns.
@@ -179,80 +179,114 @@ where
         let final_cts_cols = &polynomials.final_cts_cols;
         let rows = &polynomials.rows;
         let cols = &polynomials.cols;
-        let vals = &polynomials.vals;
         let e_rx = &polynomials.e_rx;
         let e_ry = &polynomials.e_ry;
         let eq_rx = &polynomials.eq_rx;
         let eq_ry = &polynomials.eq_ry;
 
-        //Interleaved A_row_reads A_col_reads B_row_reads B_col_reads C_row_reads C_col_reads
+        //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
 
-        let read_leaves:Vec<F> = (0..3).into_par_iter().flat_map(|i| {
-            (0..n_reads).into_par_iter().flat_map(move |j| {
-                [
-                    Self::fingerprint(&(rows[i][j], e_rx[i][j], read_cts_rows[i][j]), gamma, tau),
-                    Self::fingerprint(&(cols[i][j], e_ry[i][j], read_cts_cols[i][j]), gamma, tau),
-                ]
+        let read_leaves: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..n_reads).into_par_iter().map(move |j| {
+                    Self::fingerprint(&(rows[i][j], e_rx[i][j], read_cts_rows[i][j]), gamma, tau)
+                })
             })
-        }).collect();
+            .chain((0..3).into_par_iter().flat_map(|i| {
+                (0..n_reads).into_par_iter().map(move |j| {
+                    Self::fingerprint(&(cols[i][j], e_ry[i][j], read_cts_cols[i][j]), gamma, tau)
+                })
+            }))
+            .collect();
 
-        let write_leaves:Vec<F> = (0..3).into_par_iter().flat_map(|i| {
-            (0..n_reads).into_par_iter().flat_map(move |j| {
-                [
+        let write_leaves: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..n_reads).into_par_iter().map(move |j| {
                     Self::fingerprint(
                         &(rows[i][j], e_rx[i][j], read_cts_rows[i][j] + F::one()),
                         gamma,
                         tau,
-                    ),
+                    )
+                })
+            })
+            .chain((0..3).into_par_iter().flat_map(|i| {
+                (0..n_reads).into_par_iter().map(move |j| {
                     Self::fingerprint(
                         &(cols[i][j], e_ry[i][j], read_cts_cols[i][j] + F::one()),
                         gamma,
                         tau,
-                    ),
-                ]
-            })
-        }).collect();
+                    )
+                })
+            }))
+            .collect();
 
-        let init_leaves:Vec<F> = (0..eq_rx.len()).into_par_iter().map(|i| {
-            Self::fingerprint(
-                &(F::from_u64(i as u64).unwrap(), eq_rx[i], F::zero()),
-                gamma,
-                tau,
-            )
-        }).chain(
-            (0..eq_rx.len()).into_par_iter().map(|i| {
+        let init_leaves: Vec<F> = (0..eq_rx.len())
+            .into_par_iter()
+            .map(|i| {
+                Self::fingerprint(
+                    &(F::from_u64(i as u64).unwrap(), eq_rx[i], F::zero()),
+                    gamma,
+                    tau,
+                )
+            })
+            .chain((0..eq_rx.len()).into_par_iter().map(|i| {
                 Self::fingerprint(
                     &(F::from_u64(i as u64).unwrap(), eq_ry[i], F::zero()),
                     gamma,
                     tau,
                 )
-            })
+            }))
+            .collect();
 
-        ).collect();
-
-        let final_leaves:Vec<F> = (0..3).into_par_iter().flat_map(|i| {
-            (0..e_rx.len()).into_par_iter().flat_map(move |j| {
-                [
+        let final_leaves: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..eq_rx.len()).into_par_iter().map(move |j| {
                     Self::fingerprint(
-                        &(F::from_u64(i as u64).unwrap(), eq_rx[j], final_cts_rows[i][j]),
+                        &(
+                            F::from_u64(j as u64).unwrap(),
+                            eq_rx[j],
+                            final_cts_rows[i][j],
+                        ),
                         gamma,
                         tau,
-                    ),
+                    )
+                })
+            })
+            .chain((0..3).into_par_iter().flat_map(|i| {
+                (0..eq_ry.len()).into_par_iter().map(move |j| {
                     Self::fingerprint(
-                        &(F::from_u64(i as u64).unwrap(), eq_ry[j], final_cts_cols[i][j]),
+                        &(
+                            F::from_u64(j as u64).unwrap(),
+                            eq_ry[j],
+                            final_cts_cols[i][j],
+                        ),
                         gamma,
                         tau,
-                    ),
-                ]
-            })
-        }).collect();
+                    )
+                })
+            }))
+            .collect();
         //Length of reads and thus writes in this case should be equal to the length of vals, which is the length of non-zero values in the sparse matrix being opened.
 
-        ((vec![F::zero()], 2), (vec![F::zero()], 2))
+        let (read_write_leaves, init_final_leaves) = Self::interleave(
+            &preprocessing,
+            &read_leaves,
+            &write_leaves,
+            &init_leaves,
+            &final_leaves,
+        );
+
+        (
+            (read_write_leaves, read_write_batch_size),
+            (init_final_leaves, init_final_batch_size),
+        )
     }
 
     fn interleave<T: Copy + Clone>(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         read_values: &Vec<T>,
         write_values: &Vec<T>,
         init_values: &Vec<T>,
@@ -261,40 +295,34 @@ where
         let read_write_values = interleave(read_values, write_values).cloned().collect();
 
         //eq_rx init, A_rx_final, B_rx_final, C_rx_final, eq_ry init, A_ry_final, B_ry_final, C_ry_final
-        let mut init_final_values: Vec<T> = vec![
-            init_values[0],
-            final_values[0],
-            final_values[1],
-            final_values[2],
-            init_values[1],
-            final_values[3],
-            final_values[4],
-            final_values[5],
-        ];
+        let mut init_final_values: Vec<T> = init_values
+            .iter()
+            .zip(final_values.chunks(3))
+            .flat_map(|(init, final_vals)| [*init, final_vals[0], final_vals[1], final_vals[2]])
+            .collect();
 
         (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        assert_eq!(read_write_hashes.len() % 2, 0);
-        let num_memories = read_write_hashes.len() / 2;
-
-        let mut read_hashes = Vec::with_capacity(num_memories);
-        let mut write_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
+        let mut read_hashes = Vec::with_capacity(6);
+        let mut write_hashes = Vec::with_capacity(6);
+        for i in 0..6 {
             read_hashes.push(read_write_hashes[2 * i]);
             write_hashes.push(read_write_hashes[2 * i + 1]);
         }
 
-        let mut init_hashes = Vec::with_capacity(num_memories);
-        let mut final_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
-            init_hashes.push(init_final_hashes[2 * i]);
-            final_hashes.push(init_final_hashes[2 * i + 1]);
+        let mut init_hashes = Vec::with_capacity(2);
+        let mut final_hashes = Vec::with_capacity(6);
+        for i in 0..2 {
+            init_hashes.push(init_final_hashes[4 * i]);
+            final_hashes.push(init_final_hashes[4 * i + 1]);
+            final_hashes.push(init_final_hashes[4 * i + 2]);
+            final_hashes.push(init_final_hashes[4 * i + 3]);
         }
 
         MultisetHashes {
@@ -306,19 +334,30 @@ where
     }
 
     fn check_multiset_equality(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
         let num_memories = multiset_hashes.read_hashes.len();
-        assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
-        assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
-        assert_eq!(multiset_hashes.init_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.final_hashes.len(), 6);
+        assert_eq!(multiset_hashes.write_hashes.len(), 6);
+        assert_eq!(multiset_hashes.init_hashes.len(), 2);
 
-        (0..num_memories).into_par_iter().for_each(|i| {
+        (0..3).into_iter().for_each(|i| {
             let read_hash = multiset_hashes.read_hashes[i];
             let write_hash = multiset_hashes.write_hashes[i];
-            let init_hash = multiset_hashes.init_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[0]; //row_init hash
             let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
+        (0..3).into_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[3 + i];
+            let write_hash = multiset_hashes.write_hashes[3 + i];
+            let init_hash = multiset_hashes.init_hashes[1]; //col_init hash
+            let final_hash = multiset_hashes.final_hashes[3 + i];
             assert_eq!(
                 init_hash * write_hash,
                 final_hash * read_hash,
