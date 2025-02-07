@@ -1,4 +1,5 @@
 use crate::field::{JoltField, OptimizedMul};
+use crate::jolt::subtable::eq;
 use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, NoExogenousOpenings, StructuredPolynomialData,
@@ -51,8 +52,7 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     e_ry: Vec<T>,
     eq_rx: T,
     eq_ry: T,
-    witness: T,
-    // identity: VerifierComputedOpening<T>,
+    identity: VerifierComputedOpening<T>,
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
@@ -381,11 +381,17 @@ where
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
         prerocessing: &SpartanPreprocessing<F>,
-        _: &[F],
-        _: &[F],
+        rx_ry: &[F],
+        r_init_final: &[F],
     ) {
-        //TODO(Ritwik):-
-        //This will require changes in SpartanOpenings.
+        let (rx, ry) = rx_ry.split_at(rx_ry.len() / 2);
+        let eq_rx = EqPolynomial::new(rx.to_vec());
+        let eq_ry = EqPolynomial::new(ry.to_vec());
+
+        openings.eq_rx = eq_rx.evaluate(r_init_final);
+        openings.eq_ry = eq_ry.evaluate(r_init_final);
+        openings.identity =
+            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
     }
 
     fn read_tuples(
@@ -393,9 +399,23 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
+        let read_cts_rows_opening = &openings.read_cts_rows;
+        let read_cts_cols_opening = &openings.read_cts_cols;
+        let rows_opening = &openings.rows;
+        let cols_opening = &openings.cols;
+        let e_rx_opening = &openings.e_rx;
+        let e_ry_opening = &openings.e_ry;
 
-        todo!()
+        let mut read_tuples = Vec::new();
+
+        for i in 0..3 {
+            read_tuples.push((rows_opening[i], e_rx_opening[i], read_cts_rows_opening[i]))
+        }
+        for i in 0..3 {
+            read_tuples.push((cols_opening[i], e_ry_opening[i], read_cts_cols_opening[i]))
+        }
+
+        read_tuples
     }
 
     fn write_tuples(
@@ -403,9 +423,31 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
+        let read_cts_rows_opening = &openings.read_cts_rows;
+        let read_cts_cols_opening = &openings.read_cts_cols;
+        let rows_opening = &openings.rows;
+        let cols_opening = &openings.cols;
+        let e_rx_opening = &openings.e_rx;
+        let e_ry_opening = &openings.e_ry;
 
-        todo!()
+        let mut write_tuples = Vec::new();
+
+        for i in 0..3 {
+            write_tuples.push((
+                rows_opening[i],
+                e_rx_opening[i],
+                read_cts_rows_opening[i] + F::one(),
+            ))
+        }
+        for i in 0..3 {
+            write_tuples.push((
+                cols_opening[i],
+                e_ry_opening[i],
+                read_cts_cols_opening[i] + F::one(),
+            ))
+        }
+
+        write_tuples
     }
 
     fn init_tuples(
@@ -413,9 +455,22 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
-
-        todo!()
+        vec![
+            (
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.eq_rx,
+                F::zero(),
+            ),
+            (
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.eq_ry,
+                F::zero(),
+            ),
+        ]
     }
 
     fn final_tuples(
@@ -423,9 +478,27 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
+        let mut final_tuples = Vec::new();
 
-        todo!()
+        for i in 0..3 {
+            final_tuples.push((
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.e_rx[i],
+                openings.final_cts_rows[i],
+            ))
+        }
+        for i in 0..3 {
+            final_tuples.push((
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.e_ry[i],
+                openings.final_cts_cols[i],
+            ))
+        }
+        final_tuples
     }
 }
 
