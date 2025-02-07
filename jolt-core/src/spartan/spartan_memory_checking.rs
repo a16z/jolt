@@ -8,6 +8,7 @@ use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, Commitm
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
+use crate::r1cs::inputs;
 use crate::r1cs::spartan::SpartanError;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
@@ -43,11 +44,13 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     read_cts_cols: Vec<T>,
     final_cts_rows: Vec<T>,
     final_cts_cols: Vec<T>,
+    rows: Vec<T>,
+    cols: Vec<T>,
     vals: Vec<T>,
     e_rx: Vec<T>,
     e_ry: Vec<T>,
-    eq_rx: Vec<T>,
-    eq_ry: Vec<T>,
+    eq_rx: T,
+    eq_ry: T,
     witness: T,
     // identity: VerifierComputedOpening<T>,
 }
@@ -167,20 +170,85 @@ where
         let batch_size = 2;
 
         //TODO(Ritwik):-
+
+        //Assuming the sparsity of all the matrices are the same, their read_ts count will be the same for rows and columns.
+        let n_reads = polynomials.rows[0].len();
         let read_cts_rows = &polynomials.read_cts_rows;
         let read_cts_cols = &polynomials.read_cts_cols;
         let final_cts_rows = &polynomials.final_cts_rows;
         let final_cts_cols = &polynomials.final_cts_cols;
+        let rows = &polynomials.rows;
+        let cols = &polynomials.cols;
+        let vals = &polynomials.vals;
         let e_rx = &polynomials.e_rx;
         let e_ry = &polynomials.e_ry;
         let eq_rx = &polynomials.eq_rx;
         let eq_ry = &polynomials.eq_ry;
 
+        //Interleaved A_row_reads A_col_reads B_row_reads B_col_reads C_row_reads C_col_reads
 
-        let read_leaves = (0..read_cts_cols.len());
+        let read_leaves:Vec<F> = (0..3).into_par_iter().flat_map(|i| {
+            (0..n_reads).into_par_iter().flat_map(move |j| {
+                [
+                    Self::fingerprint(&(rows[i][j], e_rx[i][j], read_cts_rows[i][j]), gamma, tau),
+                    Self::fingerprint(&(cols[i][j], e_ry[i][j], read_cts_cols[i][j]), gamma, tau),
+                ]
+            })
+        }).collect();
+
+        let write_leaves:Vec<F> = (0..3).into_par_iter().flat_map(|i| {
+            (0..n_reads).into_par_iter().flat_map(move |j| {
+                [
+                    Self::fingerprint(
+                        &(rows[i][j], e_rx[i][j], read_cts_rows[i][j] + F::one()),
+                        gamma,
+                        tau,
+                    ),
+                    Self::fingerprint(
+                        &(cols[i][j], e_ry[i][j], read_cts_cols[i][j] + F::one()),
+                        gamma,
+                        tau,
+                    ),
+                ]
+            })
+        }).collect();
+
+        let init_leaves:Vec<F> = (0..eq_rx.len()).into_par_iter().map(|i| {
+            Self::fingerprint(
+                &(F::from_u64(i as u64).unwrap(), eq_rx[i], F::zero()),
+                gamma,
+                tau,
+            )
+        }).chain(
+            (0..eq_rx.len()).into_par_iter().map(|i| {
+                Self::fingerprint(
+                    &(F::from_u64(i as u64).unwrap(), eq_ry[i], F::zero()),
+                    gamma,
+                    tau,
+                )
+            })
+
+        ).collect();
+
+        let final_leaves:Vec<F> = (0..3).into_par_iter().flat_map(|i| {
+            (0..e_rx.len()).into_par_iter().flat_map(move |j| {
+                [
+                    Self::fingerprint(
+                        &(F::from_u64(i as u64).unwrap(), eq_rx[j], final_cts_rows[i][j]),
+                        gamma,
+                        tau,
+                    ),
+                    Self::fingerprint(
+                        &(F::from_u64(i as u64).unwrap(), eq_ry[j], final_cts_cols[i][j]),
+                        gamma,
+                        tau,
+                    ),
+                ]
+            })
+        }).collect();
         //Length of reads and thus writes in this case should be equal to the length of vals, which is the length of non-zero values in the sparse matrix being opened.
 
-        ((vec![F::zero()], 2), (vec![F::zero()],2))
+        ((vec![F::zero()], 2), (vec![F::zero()], 2))
     }
 
     fn interleave<T: Copy + Clone>(
@@ -190,12 +258,20 @@ where
         init_values: &Vec<T>,
         final_values: &Vec<T>,
     ) -> (Vec<T>, Vec<T>) {
-
         let read_write_values = interleave(read_values, write_values).cloned().collect();
 
         //eq_rx init, A_rx_final, B_rx_final, C_rx_final, eq_ry init, A_ry_final, B_ry_final, C_ry_final
-        let mut init_final_values:Vec<T> = vec![init_values[0], final_values[0],final_values[1], final_values[2], init_values[1], final_values[3],final_values[4], final_values[5]];
-      
+        let mut init_final_values: Vec<T> = vec![
+            init_values[0],
+            final_values[0],
+            final_values[1],
+            final_values[2],
+            init_values[1],
+            final_values[3],
+            final_values[4],
+            final_values[5],
+        ];
+
         (read_write_values, init_final_values)
     }
 
