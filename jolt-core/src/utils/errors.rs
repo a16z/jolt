@@ -18,4 +18,6 @@ pub enum ProofVerifyError {
     KeyLengthError(usize, usize),
     #[error("Invalid key length: {0}, expected power of 2")]
     InvalidKeyLength(usize),
+    #[error("Verification was incorrect")]
+    VerificationFailed,
 }

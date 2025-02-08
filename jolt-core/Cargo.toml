@@ -53,7 +53,7 @@ num-integer = "0.1.45"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
-rand = "0.7.3"
+rand = "0.8.0"
 rand_chacha = { version = "0.3.0", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 rayon = { version = "^1.8.0", optional = true }
