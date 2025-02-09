@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::panic;
+use std::time::Instant;
 
 pub fn main() {
     let (prove_overflow_stack, _) = guest::build_overflow_stack();
@@ -24,7 +25,9 @@ pub fn main() {
     let (prove_allocate_stack_with_increased_size, verfiy_allocate_stack_with_increased_size) =
         guest::build_allocate_stack_with_increased_size();
 
+    let now = Instant::now();
     let (output, proof) = prove_allocate_stack_with_increased_size();
+    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verfiy_allocate_stack_with_increased_size(proof);
 
     println!("output: {}", output);
