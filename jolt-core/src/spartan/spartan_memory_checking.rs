@@ -660,80 +660,80 @@ where
         let B = matrices[1];
         let C = matrices[2];
 
-        let (a_rows, a_cols, a_vals, a_rx, a_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
-            A.M.iter()
-                .map(|entry| {
-                    (
-                        F::from_u64(entry.row as u64).unwrap(),
-                        F::from_u64(entry.col as u64).unwrap(),
-                        entry.val,
-                        eq_rx[entry.row],
-                        eq_ry[entry.col],
-                    )
-                })
-                .multiunzip();
-        let (b_rows, b_cols, b_vals, b_rx, b_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
-            B.M.iter()
-                .map(|entry| {
-                    (
-                        F::from_u64(entry.row as u64).unwrap(),
-                        F::from_u64(entry.col as u64).unwrap(),
-                        entry.val,
-                        eq_rx[entry.row],
-                        eq_ry[entry.col],
-                    )
-                })
-                .multiunzip();
-        let (c_rows, c_cols, c_vals, c_rx, c_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
-            C.M.iter()
-                .map(|entry| {
-                    (
-                        F::from_u64(entry.row as u64).unwrap(),
-                        F::from_u64(entry.col as u64).unwrap(),
-                        entry.val,
-                        eq_rx[entry.row],
-                        eq_ry[entry.col],
-                    )
-                })
-                .multiunzip();
+        // let (a_rows, a_cols, a_vals, a_rx, a_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
+        //     A.M.iter()
+        //         .map(|entry| {
+        //             (
+        //                 F::from_u64(entry.row as u64).unwrap(),
+        //                 F::from_u64(entry.col as u64).unwrap(),
+        //                 entry.val,
+        //                 eq_rx[entry.row],
+        //                 eq_ry[entry.col],
+        //             )
+        //         })
+        //         .multiunzip();
+        // let (b_rows, b_cols, b_vals, b_rx, b_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
+        //     B.M.iter()
+        //         .map(|entry| {
+        //             (
+        //                 F::from_u64(entry.row as u64).unwrap(),
+        //                 F::from_u64(entry.col as u64).unwrap(),
+        //                 entry.val,
+        //                 eq_rx[entry.row],
+        //                 eq_ry[entry.col],
+        //             )
+        //         })
+        //         .multiunzip();
+        // let (c_rows, c_cols, c_vals, c_rx, c_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
+        //     C.M.iter()
+        //         .map(|entry| {
+        //             (
+        //                 F::from_u64(entry.row as u64).unwrap(),
+        //                 F::from_u64(entry.col as u64).unwrap(),
+        //                 entry.val,
+        //                 eq_rx[entry.row],
+        //                 eq_ry[entry.col],
+        //             )
+        //         })
+        //         .multiunzip();
 
-        polynomials.rows = vec![
-            DensePolynomial::new(a_rows),
-            DensePolynomial::new(b_rows),
-            DensePolynomial::new(c_rows),
-        ];
+        // polynomials.rows = vec![
+        //     DensePolynomial::new(a_rows),
+        //     DensePolynomial::new(b_rows),
+        //     DensePolynomial::new(c_rows),
+        // ];
 
-        polynomials.cols = vec![
-            DensePolynomial::new(a_cols),
-            DensePolynomial::new(b_cols),
-            DensePolynomial::new(c_cols),
-        ];
+        // polynomials.cols = vec![
+        //     DensePolynomial::new(a_cols),
+        //     DensePolynomial::new(b_cols),
+        //     DensePolynomial::new(c_cols),
+        // ];
 
-        polynomials.vals = vec![
-            DensePolynomial::new(a_vals),
-            DensePolynomial::new(b_vals),
-            DensePolynomial::new(c_vals),
-        ];
+        // polynomials.vals = vec![
+        //     DensePolynomial::new(a_vals),
+        //     DensePolynomial::new(b_vals),
+        //     DensePolynomial::new(c_vals),
+        // ];
 
-        polynomials.e_rx = vec![
-            DensePolynomial::new(a_rx),
-            DensePolynomial::new(b_rx),
-            DensePolynomial::new(c_rx),
-        ];
+        // polynomials.e_rx = vec![
+        //     DensePolynomial::new(a_rx),
+        //     DensePolynomial::new(b_rx),
+        //     DensePolynomial::new(c_rx),
+        // ];
 
-        polynomials.e_ry = vec![
-            DensePolynomial::new(a_ry),
-            DensePolynomial::new(b_ry),
-            DensePolynomial::new(c_ry),
-        ];
+        // polynomials.e_ry = vec![
+        //     DensePolynomial::new(a_ry),
+        //     DensePolynomial::new(b_ry),
+        //     DensePolynomial::new(c_ry),
+        // ];
 
         let (a_claim, b_claim, c_claim) = (claims_inner[0], claims_inner[1], claims_inner[2]);
 
-        commitments.rows = PCS::batch_commit_polys(&polynomials.rows, pcs_setup, BatchType::Big);
-        commitments.cols = PCS::batch_commit_polys(&polynomials.cols, pcs_setup, BatchType::Big);
-        commitments.vals = PCS::batch_commit_polys(&polynomials.vals, pcs_setup, BatchType::Big);
-        commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
-        commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
+        // commitments.rows = PCS::batch_commit_polys(&polynomials.rows, pcs_setup, BatchType::Big);
+        // commitments.cols = PCS::batch_commit_polys(&polynomials.cols, pcs_setup, BatchType::Big);
+        // commitments.vals = PCS::batch_commit_polys(&polynomials.vals, pcs_setup, BatchType::Big);
+        // commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
+        // commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
 
         //Appending commitments to the transcript
         for i in 0..3 {
@@ -864,11 +864,13 @@ where
 
         let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+        
         if claim_outer_final != claim_outer_final_expected {
             return Err(ProofVerifyError::SpartanError(
                 "Invalid Outer Sumcheck Claim".to_string(),
             ));
         }
+
 
         transcript.append_scalars(
             [
@@ -939,6 +941,17 @@ where
                 "Invalid Spark Sumcheck Claim".to_string(),
             ));
         }
+
+        let spark_commitment_refs: Vec<&<PCS as CommitmentScheme<ProofTranscript>>::Commitment> = chain![
+            commitments.vals.iter().map(|reference| reference),
+            commitments.e_rx.iter().map(|reference| reference),
+            commitments.e_ry.iter().map(|reference| reference)
+        ]
+        .collect();
+
+        let spark_claims_refs: Vec<&F> = spark_claims.iter().map(|reference| reference).collect();
+
+        opening_accumulator.append(&spark_commitment_refs, spark_sumcheck_r, &spark_claims_refs, transcript);
 
         Self::verify_memory_checking(
             preprocessing,
