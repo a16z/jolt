@@ -192,43 +192,28 @@ where
 
         //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
 
-        let read_leaves: Vec<F> = (0..3)
+        let read_row: Vec<F> = (0..3)
             .into_par_iter()
             .flat_map(|i| {
                 (0..n_reads).into_par_iter().map(move |j| {
                     Self::fingerprint(&(rows[i][j], e_rx[i][j], read_cts_rows[i][j]), gamma, tau)
                 })
-            })
-            .chain((0..3).into_par_iter().flat_map(|i| {
+            }).collect();
+        
+        let read_col: Vec<F> = (0..3).into_par_iter().flat_map(|i| {
                 (0..n_reads).into_par_iter().map(move |j| {
                     Self::fingerprint(&(cols[i][j], e_ry[i][j], read_cts_cols[i][j]), gamma, tau)
                 })
-            }))
-            .collect();
+            }).collect();
+        
 
-        let write_leaves: Vec<F> = (0..3)
-            .into_par_iter()
-            .flat_map(|i| {
-                (0..n_reads).into_par_iter().map(move |j| {
-                    Self::fingerprint(
-                        &(rows[i][j], e_rx[i][j], read_cts_rows[i][j] + F::one()),
-                        gamma,
-                        tau,
-                    )
-                })
-            })
-            .chain((0..3).into_par_iter().flat_map(|i| {
-                (0..n_reads).into_par_iter().map(move |j| {
-                    Self::fingerprint(
-                        &(cols[i][j], e_ry[i][j], read_cts_cols[i][j] + F::one()),
-                        gamma,
-                        tau,
-                    )
-                })
-            }))
-            .collect();
+        //Write tuples are just read tuples with the timestamps incremented by one.
+        let write_row: Vec<F> = read_row.par_iter().map(|leaf| *leaf + gamma.square()).collect();
 
-        let init_leaves: Vec<F> = (0..eq_rx.len())
+        let write_col:Vec<F> = read_col.par_iter().map(|leaf| *leaf + gamma.square()).collect();
+        
+
+        let init_row: Vec<F> = (0..eq_rx.len())
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -236,17 +221,18 @@ where
                     gamma,
                     tau,
                 )
-            })
-            .chain((0..eq_rx.len()).into_par_iter().map(|i| {
+            }).collect();
+            
+        let init_col:Vec<F> = (0..eq_rx.len()).into_par_iter().map(|i| {
                 Self::fingerprint(
                     &(F::from_u64(i as u64).unwrap(), eq_ry[i], F::zero()),
                     gamma,
                     tau,
                 )
-            }))
+            })
             .collect();
 
-        let final_leaves: Vec<F> = (0..3)
+        let final_row: Vec<F> = (0..3)
             .into_par_iter()
             .flat_map(|i| {
                 (0..eq_rx.len()).into_par_iter().map(move |j| {
@@ -260,8 +246,9 @@ where
                         tau,
                     )
                 })
-            })
-            .chain((0..3).into_par_iter().flat_map(|i| {
+            }).collect();
+
+        let final_col: Vec<F> = (0..3).into_par_iter().flat_map(|i| {
                 (0..eq_ry.len()).into_par_iter().map(move |j| {
                     Self::fingerprint(
                         &(
@@ -273,18 +260,12 @@ where
                         tau,
                     )
                 })
-            }))
-            .collect();
+            }).collect();
         //Length of reads and thus writes in this case should be equal to the length of vals, which is the length of non-zero values in the sparse matrix being opened.
-
-        let (read_write_leaves, init_final_leaves) = Self::interleave(
-            &preprocessing,
-            &read_leaves,
-            &write_leaves,
-            &init_leaves,
-            &final_leaves,
-        );
-
+       
+        let read_write_leaves = vec![read_row, write_row, read_col, write_col].concat();
+        let init_final_leaves = vec![init_row, final_row, init_col, final_col].concat();
+        
         (
             (read_write_leaves, read_write_batch_size),
             (init_final_leaves, init_final_batch_size),
