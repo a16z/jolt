@@ -1,12 +1,15 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
+use std::{collections::HashMap, fs::File};
+
 use crate::{
     field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatEntry<F: JoltField> {
@@ -20,6 +23,10 @@ impl<F: JoltField> SparseMatEntry<F> {
         SparseMatEntry { row, col, val }
     }
 }
+#[derive(Debug, Deserialize)]
+pub struct CircuitConfig {
+    pub constraints: Vec<Vec<HashMap<String, String>>>, // List of lists of HashMaps
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatPolynomial<F: JoltField> {
@@ -27,73 +34,6 @@ pub struct SparseMatPolynomial<F: JoltField> {
     num_vars_y: usize,
     M: Vec<SparseMatEntry<F>>,
 }
-
-// #[derive(Serialize, Deserialize)]
-// pub struct MultiSparseMatPolynomialAsDense {
-//     batch_size: usize,
-//     val: Vec<DensePolynomial>,
-//     row: AddrTimestamps,
-//     col: AddrTimestamps,
-//     comb_ops: DensePolynomial,
-//     comb_mem: DensePolynomial,
-// }
-
-// #[derive(Serialize, Deserialize)]
-// pub struct SparseMatPolyCommitmentGens {
-//     gens_ops: PolyCommitmentGens,
-//     gens_mem: PolyCommitmentGens,
-//     gens_derefs: PolyCommitmentGens,
-// }
-
-// impl SparseMatPolyCommitmentGens {
-//     pub fn new(
-//         label: &'static [u8],
-//         num_vars_x: usize,
-//         num_vars_y: usize,
-//         num_nz_entries: usize,
-//         batch_size: usize,
-//     ) -> SparseMatPolyCommitmentGens {
-//         let num_vars_ops = num_nz_entries.next_power_of_two().log_2()
-//             + (batch_size * 5).next_power_of_two().log_2();
-//         let num_vars_mem = if num_vars_x > num_vars_y {
-//             num_vars_x
-//         } else {
-//             num_vars_y
-//         } + 1;
-//         let num_vars_derefs = num_nz_entries.next_power_of_two().log_2()
-//             + (batch_size * 2).next_power_of_two().log_2();
-
-//         let gens_ops = PolyCommitmentGens::new(num_vars_ops, label);
-//         let gens_mem = PolyCommitmentGens::new(num_vars_mem, label);
-//         let gens_derefs = PolyCommitmentGens::new(num_vars_derefs, label);
-//         SparseMatPolyCommitmentGens {
-//             gens_ops,
-//             gens_mem,
-//             gens_derefs,
-//         }
-//     }
-// }
-
-// #[derive(Debug, Serialize, Deserialize)]
-// pub struct SparseMatPolyCommitment {
-//     batch_size: usize,
-//     num_ops: usize,
-//     num_mem_cells: usize,
-//     comm_comb_ops: PolyCommitment,
-//     comm_comb_mem: PolyCommitment,
-// }
-
-// impl AppendToTranscript for SparseMatPolyCommitment {
-//     fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
-//         transcript.append_u64(b"batch_size", self.batch_size as u64);
-//         transcript.append_u64(b"num_ops", self.num_ops as u64);
-//         transcript.append_u64(b"num_mem_cells", self.num_mem_cells as u64);
-//         self.comm_comb_ops
-//             .append_to_transcript(b"comm_comb_ops", transcript);
-//         self.comm_comb_mem
-//             .append_to_transcript(b"comm_comb_mem", transcript);
-//     }
-// }
 
 impl<F: JoltField> SparseMatPolynomial<F> {
     pub fn new(num_vars_x: usize, num_vars_y: usize, M: Vec<SparseMatEntry<F>>) -> Self {
@@ -122,7 +62,17 @@ impl<F: JoltField> SparseMatPolynomial<F> {
         (ops_row, ops_col, val)
     }
 
-    pub fn multi_sparse_to_dense_rep(sparse_polys: &[&SparseMatPolynomial<F>]) {
+    pub fn multi_sparse_to_dense_rep(
+        sparse_polys: &[&SparseMatPolynomial<F>],
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         assert!(!sparse_polys.is_empty());
         for i in 1..sparse_polys.len() {
             assert_eq!(sparse_polys[i].num_vars_x, sparse_polys[0].num_vars_x);
@@ -153,29 +103,17 @@ impl<F: JoltField> SparseMatPolynomial<F> {
             any_poly.num_vars_y.pow2()
         };
 
-        compute_ts::<F>(num_mem_cells, N, ops_row_vec);
-        compute_ts::<F>(num_mem_cells, N, ops_col_vec);
-
-        // combine polynomials into a single polynomial for commitment purposes
-        // let comb_ops = DensePolynomial::merge(
-        //     row.ops_addr
-        //         .iter()
-        //         .chain(row.read_ts.iter())
-        //         .chain(col.ops_addr.iter())
-        //         .chain(col.read_ts.iter())
-        //         .chain(val_vec.iter()),
-        // );
-        // let mut comb_mem = row.audit_ts.clone();
-        // comb_mem.extend(&col.audit_ts);
-
-        // MultiSparseMatPolynomialAsDense {
-        //     batch_size: sparse_polys.len(),
-        //     row,
-        //     col,
-        //     val: val_vec,
-        //     comb_ops,
-        //     comb_mem,
-        // }
+        let (read_ts_rows, final_ts_rows, rows) = compute_ts::<F>(num_mem_cells, N, ops_row_vec);
+        let (read_ts_cols, final_ts_cols, cols) = compute_ts::<F>(num_mem_cells, N, ops_col_vec);
+        (
+            read_ts_rows,
+            read_ts_cols,
+            final_ts_rows,
+            final_ts_cols,
+            rows,
+            cols,
+            val_vec,
+        )
     }
 
     fn evaluate_with_tables(&self, eval_table_rx: &[F], eval_table_ry: &[F]) -> F {
@@ -221,28 +159,6 @@ impl<F: JoltField> SparseMatPolynomial<F> {
             },
         )
     }
-
-    // pub fn multi_commit(
-    //     sparse_polys: &[&SparseMatPolynomial],
-    //     gens: &SparseMatPolyCommitmentGens,
-    // ) -> (SparseMatPolyCommitment, MultiSparseMatPolynomialAsDense) {
-    //     let batch_size = sparse_polys.len();
-    //     let dense = SparseMatPolynomial::multi_sparse_to_dense_rep(sparse_polys);
-
-    //     let (comm_comb_ops, _blinds_comb_ops) = dense.comb_ops.commit(&gens.gens_ops, None);
-    //     let (comm_comb_mem, _blinds_comb_mem) = dense.comb_mem.commit(&gens.gens_mem, None);
-
-    //     (
-    //         SparseMatPolyCommitment {
-    //             batch_size,
-    //             num_mem_cells: dense.row.audit_ts.len(),
-    //             num_ops: dense.row.read_ts[0].len(),
-    //             comm_comb_ops,
-    //             comm_comb_mem,
-    //         },
-    //         dense,
-    //     )
-    // }
 }
 
 pub fn compute_ts<F: JoltField>(

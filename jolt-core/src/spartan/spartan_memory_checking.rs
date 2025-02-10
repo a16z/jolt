@@ -9,6 +9,9 @@ use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
 use crate::r1cs::spartan::SpartanError;
+use crate::spartan::r1csinstance::R1CSInstance;
+use crate::spartan::sparse_mlpoly::CircuitConfig;
+use crate::spartan::sparse_mlpoly::SparseMatEntry;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
@@ -27,11 +30,13 @@ use crate::{
     },
     utils::errors::ProofVerifyError,
 };
+use ark_ff::BigInt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::prelude::*;
 #[cfg(test)]
 use std::collections::HashSet;
+use std::fs::File;
 use std::ops;
 
 use super::sparse_mlpoly::SparseMatPolynomial;
@@ -45,11 +50,13 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     final_cts_rows: Vec<T>,
     final_cts_cols: Vec<T>,
     vals: Vec<T>,
+    rows: Vec<T>,
+    cols: Vec<T>,
     e_rx: Vec<T>,
     e_ry: Vec<T>,
     eq_rx: VerifierComputedOpening<T>,
     eq_ry: VerifierComputedOpening<T>,
-    // identity: VerifierComputedOpening<T>,
+    identity: VerifierComputedOpening<T>,
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
@@ -99,17 +106,67 @@ pub struct SpartanPreprocessing<F: JoltField> {
 impl<F: JoltField> SpartanPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "Spartan::preprocess")]
     pub fn preprocess(circuit_file: &str) -> Self {
-        //TODO(Ashish):- if circuit_file exist then construct A,B,C from that otherwise run a test case.
-        // let r1cs = parse_circuit(circuit_file);
+        let file = File::open(circuit_file);
 
-        // let matrices = r1cs.to_sparse_matrices();
+        if file.is_err() {
+            let reader = std::io::BufReader::new(file.unwrap());
+            let config: CircuitConfig = serde_json::from_reader(reader).unwrap();
 
-        // SpartanPreprocessing {
-        //     inst: Instance::new(matrices),
-        //     vars: Assignment::new(r1cs.num_vars),
-        //     inputs: Assignment::new(r1cs.num_inputs)
-        // }
-        todo!()
+            let mut sparse_entries = vec![Vec::new(); 3];
+
+            // Reading JSON file
+            for (row, constraint) in config.constraints.iter().enumerate() {
+                for (j, dict) in constraint.iter().enumerate() {
+                    for (key, value) in dict {
+                        let col = key.parse::<usize>().unwrap();
+                        let val = value.as_bytes();
+
+                        sparse_entries[j].push(SparseMatEntry::new(
+                            row,
+                            col as usize,
+                            F::from_bytes(val),
+                        ));
+                    }
+                }
+            }
+
+            let num_cons = sparse_entries[0].len();
+            let num_vars = 10; //TODO(Ashish):- fix num_vars.
+            let num_inputs = 0; //TODO(Ashish):- fix num_inputs.
+            let num_poly_vars_x = num_cons.log_2();
+            let num_poly_vars_y = (2 * num_vars).log_2();
+
+            let poly_A = SparseMatPolynomial::new(
+                num_poly_vars_x,
+                num_poly_vars_y,
+                sparse_entries[0].clone(),
+            );
+            let poly_B = SparseMatPolynomial::new(
+                num_poly_vars_x,
+                num_poly_vars_y,
+                sparse_entries[1].clone(),
+            );
+            let poly_C = SparseMatPolynomial::new(
+                num_poly_vars_x,
+                num_poly_vars_y,
+                sparse_entries[2].clone(),
+            );
+            let inst = R1CSInstance::new(num_cons, num_vars, num_inputs, poly_A, poly_B, poly_C);
+
+            //TODO():- Implement
+            SpartanPreprocessing {
+                inst: Instance { inst },
+                vars: todo!(),
+                inputs: todo!(),
+            }
+        } else {
+            let num_vars = (2_usize).pow(10 as u32);
+            let num_cons = num_vars;
+            let num_inputs = 10;
+            let (inst, vars, inputs) =
+                Instance::<F>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+            SpartanPreprocessing { inst, vars, inputs }
+        }
     }
 }
 
@@ -284,11 +341,64 @@ where
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "SpartanProof::generate_witness")]
-    pub fn generate_witness(preprocessing: &SpartanPreprocessing<F>) {
+    pub fn generate_witness(
+        preprocessing: &SpartanPreprocessing<F>,
+        pcs_setup: &PCS::Setup,
+    ) -> (
+        SpartanPolynomials<F>,
+        SpartanCommitments<PCS, ProofTranscript>,
+    ) {
         let r1cs_instance = &preprocessing.inst.inst;
         let matrices = r1cs_instance.get_matrices();
-        SparseMatPolynomial::multi_sparse_to_dense_rep(&matrices);
-        //TODO(Ashish):- Return Polynomials and commmitments.
+        let (read_cts_rows, read_cts_cols, final_cts_rows, final_cts_cols, rows, cols, vals) =
+            SparseMatPolynomial::multi_sparse_to_dense_rep(&matrices);
+        let polys = SpartanPolynomials {
+            witness: DensePolynomial::default(),
+            read_cts_rows,
+            read_cts_cols,
+            final_cts_rows,
+            final_cts_cols,
+            vals,
+            rows,
+            cols,
+            e_rx: std::iter::repeat_with(|| DensePolynomial::default())
+                .take(3)
+                .collect(),
+            e_ry: std::iter::repeat_with(|| DensePolynomial::default())
+                .take(3)
+                .collect(),
+            eq_rx: None,
+            eq_ry: None,
+            identity: None,
+        };
+        let commits = SpartanCommitments::<PCS, ProofTranscript> {
+            witness: PCS::Commitment::default(),
+            read_cts_rows: PCS::batch_commit_polys(&polys.read_cts_rows, pcs_setup, BatchType::Big),
+            read_cts_cols: PCS::batch_commit_polys(&polys.read_cts_cols, pcs_setup, BatchType::Big),
+            final_cts_rows: PCS::batch_commit_polys(
+                &polys.final_cts_rows,
+                pcs_setup,
+                BatchType::Big,
+            ),
+            final_cts_cols: PCS::batch_commit_polys(
+                &polys.final_cts_cols,
+                pcs_setup,
+                BatchType::Big,
+            ),
+            vals: PCS::batch_commit_polys(&polys.vals, pcs_setup, BatchType::Big),
+            rows: PCS::batch_commit_polys(&polys.rows, pcs_setup, BatchType::Big),
+            cols: PCS::batch_commit_polys(&polys.cols, pcs_setup, BatchType::Big),
+            e_rx: std::iter::repeat_with(|| PCS::Commitment::default())
+                .take(3)
+                .collect(),
+            e_ry: std::iter::repeat_with(|| PCS::Commitment::default())
+                .take(3)
+                .collect(),
+            eq_rx: None,
+            eq_ry: None,
+            identity: None,
+        };
+        (polys, commits)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProof::prove")]

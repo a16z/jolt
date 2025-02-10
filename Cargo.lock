@@ -1965,6 +1965,7 @@ dependencies = [
  "rayon",
  "reqwest",
  "serde",
+ "serde_json",
  "sha3",
  "strum",
  "strum_macros",
