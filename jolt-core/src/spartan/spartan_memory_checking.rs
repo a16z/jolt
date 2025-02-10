@@ -19,7 +19,7 @@ use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::Transcript;
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -30,8 +30,8 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::interleave;
-use rayon::prelude::*;
+use itertools::{chain, interleave, MultiUnzip};
+use rayon::{prelude::*, vec};
 #[cfg(test)]
 use std::collections::HashSet;
 use std::ops;
@@ -50,8 +50,8 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     vals: Vec<T>,
     e_rx: Vec<T>,
     e_ry: Vec<T>,
-    eq_rx: T,
-    eq_ry: T,
+    eq_rx: VerifierComputedOpening<T>,
+    eq_ry: VerifierComputedOpening<T>,
     identity: VerifierComputedOpening<T>,
 }
 
@@ -181,8 +181,14 @@ where
         let cols = &polynomials.cols;
         let e_rx = &polynomials.e_rx;
         let e_ry = &polynomials.e_ry;
-        let eq_rx = &polynomials.eq_rx;
-        let eq_ry = &polynomials.eq_ry;
+        let eq_rx = match &polynomials.eq_rx {
+            Some(eq) => eq,
+            None => panic!(),
+        };
+        let eq_ry = match &polynomials.eq_ry {
+            Some(eq) => eq,
+            None => panic!(),
+        };
 
         //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
 
@@ -388,8 +394,8 @@ where
         let eq_rx = EqPolynomial::new(rx.to_vec());
         let eq_ry = EqPolynomial::new(ry.to_vec());
 
-        openings.eq_rx = eq_rx.evaluate(r_init_final);
-        openings.eq_ry = eq_ry.evaluate(r_init_final);
+        openings.eq_rx = Some(eq_rx.evaluate(r_init_final));
+        openings.eq_ry = Some(eq_ry.evaluate(r_init_final));
         openings.identity =
             Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
     }
@@ -460,14 +466,14 @@ where
                 openings
                     .identity
                     .expect("Expected identity polynomial evaluation"),
-                openings.eq_rx,
+                openings.eq_rx.expect("Expected eq polynomial evaluation"),
                 F::zero(),
             ),
             (
                 openings
                     .identity
                     .expect("Expected identity polynomial evaluation"),
-                openings.eq_ry,
+                openings.eq_ry.expect("Expected eq polynomial evaluation"),
                 F::zero(),
             ),
         ]
@@ -627,7 +633,7 @@ where
         };
 
         let comb_func = |polys: &[F]| -> F { polys[0] * polys[1] };
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+        let (inner_sumcheck_proof, inner_sumcheck_r, claims_inner) =
             SumcheckInstanceProof::prove_arbitrary(
                 &claim_inner_joint,
                 num_rounds_y,
@@ -637,20 +643,156 @@ where
                 transcript,
             );
 
-        //TODO(Ritwik):- Add spark sum check;
-        //TODO(Ritwik):- Change e_rx, e_ry poly appropriately.
-        polynomials.e_rx = core::array::from_fn::<DensePolynomial<F>, 1, _>(|_| {
-            DensePolynomial::new(vec![F::zero()])
-        })
-        .to_vec();
-        polynomials.e_ry = core::array::from_fn::<DensePolynomial<F>, 1, _>(|_| {
-            DensePolynomial::new(vec![F::zero()])
-        })
-        .to_vec();
+        transcript.append_scalars(&claims_inner);
 
+        //Spark preprocessing
+
+        let (rx, ry) = inner_sumcheck_r.split_at(inner_sumcheck_r.len() / 2);
+
+        let eq_rx = EqPolynomial::evals(rx);
+        let eq_ry = EqPolynomial::evals(ry);
+
+        let matrices = preprocessing.inst.inst.get_matrices();
+
+        let A = matrices[0];
+        let B = matrices[1];
+        let C = matrices[2];
+
+        let (a_rows, a_cols, a_vals, a_rx, a_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
+            A.M.iter()
+                .map(|entry| {
+                    (
+                        F::from_u64(entry.row as u64).unwrap(),
+                        F::from_u64(entry.col as u64).unwrap(),
+                        entry.val,
+                        eq_rx[entry.row],
+                        eq_ry[entry.col],
+                    )
+                })
+                .multiunzip();
+        let (b_rows, b_cols, b_vals, b_rx, b_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
+            B.M.iter()
+                .map(|entry| {
+                    (
+                        F::from_u64(entry.row as u64).unwrap(),
+                        F::from_u64(entry.col as u64).unwrap(),
+                        entry.val,
+                        eq_rx[entry.row],
+                        eq_ry[entry.col],
+                    )
+                })
+                .multiunzip();
+        let (c_rows, c_cols, c_vals, c_rx, c_ry): (Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) =
+            C.M.iter()
+                .map(|entry| {
+                    (
+                        F::from_u64(entry.row as u64).unwrap(),
+                        F::from_u64(entry.col as u64).unwrap(),
+                        entry.val,
+                        eq_rx[entry.row],
+                        eq_ry[entry.col],
+                    )
+                })
+                .multiunzip();
+
+        polynomials.rows = vec![
+            DensePolynomial::new(a_rows),
+            DensePolynomial::new(b_rows),
+            DensePolynomial::new(c_rows),
+        ];
+
+        polynomials.cols = vec![
+            DensePolynomial::new(a_cols),
+            DensePolynomial::new(b_cols),
+            DensePolynomial::new(c_cols),
+        ];
+
+        polynomials.vals = vec![
+            DensePolynomial::new(a_vals),
+            DensePolynomial::new(b_vals),
+            DensePolynomial::new(c_vals),
+        ];
+
+        polynomials.e_rx = vec![
+            DensePolynomial::new(a_rx),
+            DensePolynomial::new(b_rx),
+            DensePolynomial::new(c_rx),
+        ];
+
+        polynomials.e_ry = vec![
+            DensePolynomial::new(a_ry),
+            DensePolynomial::new(b_ry),
+            DensePolynomial::new(c_ry),
+        ];
+
+        let (a_claim, b_claim, c_claim) = (claims_inner[0], claims_inner[1], claims_inner[2]);
+
+        commitments.rows = PCS::batch_commit_polys(&polynomials.rows, pcs_setup, BatchType::Big);
+        commitments.cols = PCS::batch_commit_polys(&polynomials.cols, pcs_setup, BatchType::Big);
+        commitments.vals = PCS::batch_commit_polys(&polynomials.vals, pcs_setup, BatchType::Big);
         commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
-        commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
+        commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
 
+        //Appending commitments to the transcript
+        for i in 0..3 {
+            commitments.rows[i].append_to_transcript(transcript);
+            commitments.cols[i].append_to_transcript(transcript);
+            commitments.vals[i].append_to_transcript(transcript);
+            commitments.e_rx[i].append_to_transcript(transcript);
+            commitments.e_ry[i].append_to_transcript(transcript);
+        }
+
+        //batching scalar for the spark sum check
+        let batching_scalar: F = transcript.challenge_scalar();
+
+        let spark_claim = batching_scalar.square() * a_claim + batching_scalar * b_claim + c_claim;
+
+        let spark_func = |polys: &[F]| -> F {
+            let mut val = F::zero();
+            for i in 0..3 {
+                val = (polys[i] + polys[i + 3] + polys[i + 6]) + val * batching_scalar
+            }
+            val
+        };
+
+        //Flattened vec of polynomials required for spark.
+        let mut spark_polys = [
+            polynomials.vals.clone(),
+            polynomials.e_rx.clone(),
+            polynomials.e_ry.clone(),
+        ]
+        .concat();
+
+        //Vector of references required for opening accumulation.
+        let spark_polys_refs: Vec<&DensePolynomial<F>> = chain![
+            polynomials.vals.iter().map(|reference| reference),
+            polynomials.e_rx.iter().map(|reference| reference),
+            polynomials.e_ry.iter().map(|reference| reference)
+        ]
+        .collect();
+
+        let (spark_proof, spark_r, spark_claims) = SumcheckInstanceProof::prove_arbitrary(
+            &spark_claim,
+            rx.len(),
+            &mut spark_polys,
+            spark_func,
+            3,
+            transcript,
+        );
+
+        transcript.append_scalars(&spark_claims);
+
+        let spark_claim_refs: Vec<&F> = spark_claims.iter().map(|reference| reference).collect();
+        let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_r));
+
+        opening_accumulator.append(
+            &spark_polys_refs,
+            spark_eq,
+            spark_r,
+            &spark_claim_refs,
+            transcript,
+        );
+  
         let memory_checking = Self::prove_memory_checking(
             pcs_setup,
             preprocessing,

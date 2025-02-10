@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatEntry<F: JoltField> {
-    row: usize,
-    col: usize,
-    val: F,
+    pub row: usize,
+    pub col: usize,
+    pub val: F,
 }
 
 impl<F: JoltField> SparseMatEntry<F> {
@@ -25,7 +25,7 @@ impl<F: JoltField> SparseMatEntry<F> {
 pub struct SparseMatPolynomial<F: JoltField> {
     num_vars_x: usize,
     num_vars_y: usize,
-    M: Vec<SparseMatEntry<F>>,
+    pub M: Vec<SparseMatEntry<F>>,
 }
 
 // #[derive(Serialize, Deserialize)]
