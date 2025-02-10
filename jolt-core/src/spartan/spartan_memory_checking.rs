@@ -34,7 +34,7 @@ use itertools::{chain, interleave, MultiUnzip};
 use rayon::{prelude::*, vec};
 #[cfg(test)]
 use std::collections::HashSet;
-use std::ops;
+use std::{array, ops};
 
 use super::sparse_mlpoly::SparseMatPolynomial;
 use super::{Assignment, Instance};
@@ -343,7 +343,6 @@ where
         preprocessing: &SpartanPreprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
-        let num_memories = multiset_hashes.read_hashes.len();
         assert_eq!(multiset_hashes.final_hashes.len(), 6);
         assert_eq!(multiset_hashes.write_hashes.len(), 6);
         assert_eq!(multiset_hashes.init_hashes.len(), 2);
@@ -517,8 +516,10 @@ where
 {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub(crate) spark_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
-
+    pub(crate) inner_sumcheck_claims: (F, F, F, F),
+    pub(crate) spark_sumcheck_claims: [F; 9],
     pub(crate) memory_checking:
         MemoryCheckingProof<F, PCS, SpartanOpenings<F>, NoExogenousOpenings, ProofTranscript>,
     pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
@@ -643,6 +644,7 @@ where
                 transcript,
             );
 
+        //TODO:Add inner sum check openings to accumulator
         transcript.append_scalars(&claims_inner);
 
         //Spark preprocessing
@@ -771,7 +773,7 @@ where
         ]
         .collect();
 
-        let (spark_proof, spark_r, spark_claims) = SumcheckInstanceProof::prove_arbitrary(
+        let (spark_sumcheck_proof, spark_r, spark_claims) = SumcheckInstanceProof::prove_arbitrary(
             &spark_claim,
             rx.len(),
             &mut spark_polys,
@@ -792,7 +794,7 @@ where
             &spark_claim_refs,
             transcript,
         );
-  
+
         let memory_checking = Self::prove_memory_checking(
             pcs_setup,
             preprocessing,
@@ -802,15 +804,26 @@ where
             transcript,
         );
 
+        let spark_sumcheck_claims = array::from_fn(|i| spark_claims[i]);
+
         let opening_proof = opening_accumulator.reduce_and_prove::<PCS>(pcs_setup, transcript);
+
         SpartanProof {
             outer_sumcheck_proof,
             inner_sumcheck_proof,
+            spark_sumcheck_proof,
             outer_sumcheck_claims: (
                 outer_sumcheck_claims[0],
                 outer_sumcheck_claims[1],
                 outer_sumcheck_claims[2],
             ),
+            inner_sumcheck_claims: (
+                claims_inner[0],
+                claims_inner[1],
+                claims_inner[2],
+                claims_inner[3],
+            ),
+            spark_sumcheck_claims,
             memory_checking,
             opening_proof,
         }
@@ -876,7 +889,56 @@ where
             .verify(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|e| e)?;
 
+        let (claim_A, claim_B, claim_C, claim_Z) = proof.inner_sumcheck_claims;
+
+        let claim_inner_final_expected = claim_Z
+            * (claim_A + r_inner_sumcheck_RLC * claim_B + r_inner_sumcheck_RLC.square() * claim_C);
+
+        if claim_inner_final != claim_inner_final_expected {
+            return Err(ProofVerifyError::SpartanError(
+                "Invalid Inner Sumcheck Claim".to_string(),
+            ));
+        }
+
+        transcript.append_scalars(
+            [
+                proof.inner_sumcheck_claims.0,
+                proof.inner_sumcheck_claims.1,
+                proof.inner_sumcheck_claims.2,
+                proof.inner_sumcheck_claims.3,
+            ]
+            .as_slice(),
+        );
+
+        //Spark
+        let (rx, ry) = inner_sumcheck_r.split_at(inner_sumcheck_r.len()/2);
+        for i in 0..3 {
+            commitments.rows[i].append_to_transcript(transcript);
+            commitments.cols[i].append_to_transcript(transcript);
+            commitments.vals[i].append_to_transcript(transcript);
+            commitments.e_rx[i].append_to_transcript(transcript);
+            commitments.e_ry[i].append_to_transcript(transcript);
+        }
+        
+        let batching_scalar:F = transcript.challenge_scalar();
+        let spark_claim = batching_scalar.square()*claim_A + batching_scalar*claim_B + claim_C;
         //TODO(Ritwik):- Add Spark sum check verification.
+         let (claim_spark_final, spark_sumcheck_r) = proof
+            .spark_sumcheck_proof
+            .verify(spark_claim, rx.len(), 3, transcript)
+            .map_err(|e| e)?;
+
+        let spark_claims = proof.spark_sumcheck_claims;
+
+        let mut expected_spark_claim = F::zero();
+        for i in 0..3 {
+            expected_spark_claim = (spark_claims[i] + spark_claims[i + 3] + spark_claims[i + 6]) + expected_spark_claim * batching_scalar
+        }
+        if claim_spark_final != expected_spark_claim {
+            return Err(ProofVerifyError::SpartanError(
+                "Invalid Spark Sumcheck Claim".to_string(),
+            ));
+        }
 
         Self::verify_memory_checking(
             preprocessing,
