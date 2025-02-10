@@ -1,4 +1,5 @@
 use crate::field::{JoltField, OptimizedMul};
+use crate::jolt::subtable::eq;
 use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff};
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, NoExogenousOpenings, StructuredPolynomialData,
@@ -8,6 +9,7 @@ use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, Commitm
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
+use crate::r1cs::inputs;
 use crate::r1cs::spartan::SpartanError;
 use crate::spartan::r1csinstance::R1CSInstance;
 use crate::spartan::sparse_mlpoly::CircuitConfig;
@@ -20,7 +22,7 @@ use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::Transcript;
+use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -32,12 +34,11 @@ use crate::{
 };
 use ark_ff::BigInt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::interleave;
-use rayon::prelude::*;
-#[cfg(test)]
+use itertools::{chain, interleave, MultiUnzip};
+use rayon::{prelude::*, vec};
 use std::collections::HashSet;
 use std::fs::File;
-use std::ops;
+use std::{array, ops};
 
 use super::sparse_mlpoly::SparseMatPolynomial;
 use super::{Assignment, Instance};
@@ -49,9 +50,9 @@ pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     read_cts_cols: Vec<T>,
     final_cts_rows: Vec<T>,
     final_cts_cols: Vec<T>,
-    vals: Vec<T>,
     rows: Vec<T>,
     cols: Vec<T>,
+    vals: Vec<T>,
     e_rx: Vec<T>,
     e_ry: Vec<T>,
     eq_rx: VerifierComputedOpening<T>,
@@ -206,53 +207,219 @@ where
 
     type Commitments = SpartanCommitments<PCS, ProofTranscript>;
     // type ExogenousOpenings = >; //TODO:- Check if exogenous is required or not.
-    type MemoryTuple = (F, F); //TODO(Ritwik):- Change this if required.
+    type MemoryTuple = (F, F, F); //TODO(Ritwik):- Change this if required.
 
-    fn fingerprint(inputs: &(F, F), gamma: &F, tau: &F) -> F {
-        //TODO(Ritwik):-
-        todo!();
+    fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
+        let (a, v, t) = *inputs;
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "SpartanPolynomials::compute_leaves")]
     fn compute_leaves(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         polynomials: &Self::Polynomials,
         _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
-    ) {
+    ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
+        let read_write_batch_size = 12;
+        let init_final_batch_size = 8;
         //TODO(Ritwik):-
-        todo!()
+
+        //Assuming the sparsity of all the matrices are the same, their read_ts count will be the same for rows and columns.
+        let n_reads = polynomials.rows[0].len();
+        let read_cts_rows = &polynomials.read_cts_rows;
+        let read_cts_cols = &polynomials.read_cts_cols;
+        let final_cts_rows = &polynomials.final_cts_rows;
+        let final_cts_cols = &polynomials.final_cts_cols;
+        let rows = &polynomials.rows;
+        let cols = &polynomials.cols;
+        let e_rx = &polynomials.e_rx;
+        let e_ry = &polynomials.e_ry;
+        let eq_rx = match &polynomials.eq_rx {
+            Some(eq) => eq,
+            None => panic!(),
+        };
+        let eq_ry = match &polynomials.eq_ry {
+            Some(eq) => eq,
+            None => panic!(),
+        };
+
+        //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
+
+        let read_row: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..n_reads).into_par_iter().map(move |j| {
+                    Self::fingerprint(&(rows[i][j], e_rx[i][j], read_cts_rows[i][j]), gamma, tau)
+                })
+            })
+            .collect();
+
+        let read_col: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..n_reads).into_par_iter().map(move |j| {
+                    Self::fingerprint(&(cols[i][j], e_ry[i][j], read_cts_cols[i][j]), gamma, tau)
+                })
+            })
+            .collect();
+
+        //Write tuples are just read tuples with the timestamps incremented by one.
+        let write_row: Vec<F> = read_row
+            .par_iter()
+            .map(|leaf| *leaf + gamma.square())
+            .collect();
+
+        let write_col: Vec<F> = read_col
+            .par_iter()
+            .map(|leaf| *leaf + gamma.square())
+            .collect();
+
+        let init_row: Vec<F> = (0..eq_rx.len())
+            .into_par_iter()
+            .map(|i| {
+                Self::fingerprint(
+                    &(F::from_u64(i as u64).unwrap(), eq_rx[i], F::zero()),
+                    gamma,
+                    tau,
+                )
+            })
+            .collect();
+
+        let init_col: Vec<F> = (0..eq_rx.len())
+            .into_par_iter()
+            .map(|i| {
+                Self::fingerprint(
+                    &(F::from_u64(i as u64).unwrap(), eq_ry[i], F::zero()),
+                    gamma,
+                    tau,
+                )
+            })
+            .collect();
+
+        let final_row: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..eq_rx.len()).into_par_iter().map(move |j| {
+                    Self::fingerprint(
+                        &(
+                            F::from_u64(j as u64).unwrap(),
+                            eq_rx[j],
+                            final_cts_rows[i][j],
+                        ),
+                        gamma,
+                        tau,
+                    )
+                })
+            })
+            .collect();
+
+        let final_col: Vec<F> = (0..3)
+            .into_par_iter()
+            .flat_map(|i| {
+                (0..eq_ry.len()).into_par_iter().map(move |j| {
+                    Self::fingerprint(
+                        &(
+                            F::from_u64(j as u64).unwrap(),
+                            eq_ry[j],
+                            final_cts_cols[i][j],
+                        ),
+                        gamma,
+                        tau,
+                    )
+                })
+            })
+            .collect();
+        //Length of reads and thus writes in this case should be equal to the length of vals, which is the length of non-zero values in the sparse matrix being opened.
+
+        let read_write_leaves = vec![read_row, write_row, read_col, write_col].concat();
+        let init_final_leaves = vec![init_row, final_row, init_col, final_col].concat();
+
+        (
+            (read_write_leaves, read_write_batch_size),
+            (init_final_leaves, init_final_batch_size),
+        )
     }
 
     fn interleave<T: Copy + Clone>(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         read_values: &Vec<T>,
         write_values: &Vec<T>,
         init_values: &Vec<T>,
         final_values: &Vec<T>,
     ) -> (Vec<T>, Vec<T>) {
-        //TODO(Ritwik):-
-        todo!()
+        let read_write_values = interleave(read_values, write_values).cloned().collect();
+
+        //eq_rx init, A_rx_final, B_rx_final, C_rx_final, eq_ry init, A_ry_final, B_ry_final, C_ry_final
+        let mut init_final_values: Vec<T> = init_values
+            .iter()
+            .zip(final_values.chunks(3))
+            .flat_map(|(init, final_vals)| [*init, final_vals[0], final_vals[1], final_vals[2]])
+            .collect();
+
+        (read_write_values, init_final_values)
     }
 
     fn uninterleave_hashes(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        //TODO(Ritwik):-
-        todo!()
+        let mut read_hashes = Vec::with_capacity(6);
+        let mut write_hashes = Vec::with_capacity(6);
+        for i in 0..6 {
+            read_hashes.push(read_write_hashes[2 * i]);
+            write_hashes.push(read_write_hashes[2 * i + 1]);
+        }
+
+        let mut init_hashes = Vec::with_capacity(2);
+        let mut final_hashes = Vec::with_capacity(6);
+        for i in 0..2 {
+            init_hashes.push(init_final_hashes[4 * i]);
+            final_hashes.push(init_final_hashes[4 * i + 1]);
+            final_hashes.push(init_final_hashes[4 * i + 2]);
+            final_hashes.push(init_final_hashes[4 * i + 3]);
+        }
+
+        MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes,
+            final_hashes,
+        }
     }
 
     fn check_multiset_equality(
-        prerocessing: &SpartanPreprocessing<F>,
+        preprocessing: &SpartanPreprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
-        //TODO(Ritwik):-
+        assert_eq!(multiset_hashes.final_hashes.len(), 6);
+        assert_eq!(multiset_hashes.write_hashes.len(), 6);
+        assert_eq!(multiset_hashes.init_hashes.len(), 2);
+
+        (0..3).into_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[i];
+            let write_hash = multiset_hashes.write_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[0]; //row_init hash
+            let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
+        (0..3).into_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[3 + i];
+            let write_hash = multiset_hashes.write_hashes[3 + i];
+            let init_hash = multiset_hashes.init_hashes[1]; //col_init hash
+            let final_hash = multiset_hashes.final_hashes[3 + i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -270,11 +437,17 @@ where
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
         prerocessing: &SpartanPreprocessing<F>,
-        _: &[F],
-        _: &[F],
+        rx_ry: &[F],
+        r_init_final: &[F],
     ) {
-        //TODO(Ritwik):-
-        //This will require changes in SpartanOpenings.
+        let (rx, ry) = rx_ry.split_at(rx_ry.len() / 2);
+        let eq_rx = EqPolynomial::new(rx.to_vec());
+        let eq_ry = EqPolynomial::new(ry.to_vec());
+
+        openings.eq_rx = Some(eq_rx.evaluate(r_init_final));
+        openings.eq_ry = Some(eq_ry.evaluate(r_init_final));
+        openings.identity =
+            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
     }
 
     fn read_tuples(
@@ -282,9 +455,23 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
+        let read_cts_rows_opening = &openings.read_cts_rows;
+        let read_cts_cols_opening = &openings.read_cts_cols;
+        let rows_opening = &openings.rows;
+        let cols_opening = &openings.cols;
+        let e_rx_opening = &openings.e_rx;
+        let e_ry_opening = &openings.e_ry;
 
-        todo!()
+        let mut read_tuples = Vec::new();
+
+        for i in 0..3 {
+            read_tuples.push((rows_opening[i], e_rx_opening[i], read_cts_rows_opening[i]))
+        }
+        for i in 0..3 {
+            read_tuples.push((cols_opening[i], e_ry_opening[i], read_cts_cols_opening[i]))
+        }
+
+        read_tuples
     }
 
     fn write_tuples(
@@ -292,9 +479,31 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
+        let read_cts_rows_opening = &openings.read_cts_rows;
+        let read_cts_cols_opening = &openings.read_cts_cols;
+        let rows_opening = &openings.rows;
+        let cols_opening = &openings.cols;
+        let e_rx_opening = &openings.e_rx;
+        let e_ry_opening = &openings.e_ry;
 
-        todo!()
+        let mut write_tuples = Vec::new();
+
+        for i in 0..3 {
+            write_tuples.push((
+                rows_opening[i],
+                e_rx_opening[i],
+                read_cts_rows_opening[i] + F::one(),
+            ))
+        }
+        for i in 0..3 {
+            write_tuples.push((
+                cols_opening[i],
+                e_ry_opening[i],
+                read_cts_cols_opening[i] + F::one(),
+            ))
+        }
+
+        write_tuples
     }
 
     fn init_tuples(
@@ -302,9 +511,22 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
-
-        todo!()
+        vec![
+            (
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.eq_rx.expect("Expected eq polynomial evaluation"),
+                F::zero(),
+            ),
+            (
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.eq_ry.expect("Expected eq polynomial evaluation"),
+                F::zero(),
+            ),
+        ]
     }
 
     fn final_tuples(
@@ -312,9 +534,27 @@ where
         openings: &Self::Openings,
         _: &NoExogenousOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        //TODO(Ritwik):-
+        let mut final_tuples = Vec::new();
 
-        todo!()
+        for i in 0..3 {
+            final_tuples.push((
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.e_rx[i],
+                openings.final_cts_rows[i],
+            ))
+        }
+        for i in 0..3 {
+            final_tuples.push((
+                openings
+                    .identity
+                    .expect("Expected identity polynomial evaluation"),
+                openings.e_ry[i],
+                openings.final_cts_cols[i],
+            ))
+        }
+        final_tuples
     }
 }
 
@@ -327,8 +567,10 @@ where
 {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub(crate) spark_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
-
+    pub(crate) inner_sumcheck_claims: (F, F, F, F),
+    pub(crate) spark_sumcheck_claims: [F; 9],
     pub(crate) memory_checking:
         MemoryCheckingProof<F, PCS, SpartanOpenings<F>, NoExogenousOpenings, ProofTranscript>,
     pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
@@ -496,7 +738,7 @@ where
         };
 
         let comb_func = |polys: &[F]| -> F { polys[0] * polys[1] };
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+        let (inner_sumcheck_proof, inner_sumcheck_r, claims_inner) =
             SumcheckInstanceProof::prove_arbitrary(
                 &claim_inner_joint,
                 num_rounds_y,
@@ -506,19 +748,89 @@ where
                 transcript,
             );
 
-        //TODO(Ritwik):- Add spark sum check;
-        //TODO(Ritwik):- Change e_rx, e_ry poly appropriately.
-        polynomials.e_rx = core::array::from_fn::<DensePolynomial<F>, 1, _>(|_| {
-            DensePolynomial::new(vec![F::zero()])
-        })
-        .to_vec();
-        polynomials.e_ry = core::array::from_fn::<DensePolynomial<F>, 1, _>(|_| {
-            DensePolynomial::new(vec![F::zero()])
-        })
-        .to_vec();
+        //TODO:Add inner sum check openings to accumulator
+        transcript.append_scalars(&claims_inner);
 
-        commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
-        commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
+        //Spark preprocessing
+
+        let (rx, ry) = inner_sumcheck_r.split_at(inner_sumcheck_r.len() / 2);
+
+        let eq_rx = EqPolynomial::evals(rx);
+        let eq_ry = EqPolynomial::evals(ry);
+
+        let matrices = preprocessing.inst.inst.get_matrices();
+
+        let A = matrices[0];
+        let B = matrices[1];
+        let C = matrices[2];
+
+        let (a_claim, b_claim, c_claim) = (claims_inner[0], claims_inner[1], claims_inner[2]);
+
+        // commitments.rows = PCS::batch_commit_polys(&polynomials.rows, pcs_setup, BatchType::Big);
+        // commitments.cols = PCS::batch_commit_polys(&polynomials.cols, pcs_setup, BatchType::Big);
+        // commitments.vals = PCS::batch_commit_polys(&polynomials.vals, pcs_setup, BatchType::Big);
+        // commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
+        // commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
+
+        //Appending commitments to the transcript
+        for i in 0..3 {
+            commitments.rows[i].append_to_transcript(transcript);
+            commitments.cols[i].append_to_transcript(transcript);
+            commitments.vals[i].append_to_transcript(transcript);
+            commitments.e_rx[i].append_to_transcript(transcript);
+            commitments.e_ry[i].append_to_transcript(transcript);
+        }
+
+        //batching scalar for the spark sum check
+        let batching_scalar: F = transcript.challenge_scalar();
+
+        let spark_claim = batching_scalar.square() * a_claim + batching_scalar * b_claim + c_claim;
+
+        let spark_func = |polys: &[F]| -> F {
+            let mut val = F::zero();
+            for i in 0..3 {
+                val = (polys[i] + polys[i + 3] + polys[i + 6]) + val * batching_scalar
+            }
+            val
+        };
+
+        //Flattened vec of polynomials required for spark.
+        let mut spark_polys = [
+            polynomials.vals.clone(),
+            polynomials.e_rx.clone(),
+            polynomials.e_ry.clone(),
+        ]
+        .concat();
+
+        //Vector of references required for opening accumulation.
+        let spark_polys_refs: Vec<&DensePolynomial<F>> = chain![
+            polynomials.vals.iter().map(|reference| reference),
+            polynomials.e_rx.iter().map(|reference| reference),
+            polynomials.e_ry.iter().map(|reference| reference)
+        ]
+        .collect();
+
+        let (spark_sumcheck_proof, spark_r, spark_claims) = SumcheckInstanceProof::prove_arbitrary(
+            &spark_claim,
+            rx.len(),
+            &mut spark_polys,
+            spark_func,
+            3,
+            transcript,
+        );
+
+        transcript.append_scalars(&spark_claims);
+
+        let spark_claim_refs: Vec<&F> = spark_claims.iter().map(|reference| reference).collect();
+        let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_r));
+
+        opening_accumulator.append(
+            &spark_polys_refs,
+            spark_eq,
+            spark_r,
+            &spark_claim_refs,
+            transcript,
+        );
 
         let memory_checking = Self::prove_memory_checking(
             pcs_setup,
@@ -529,15 +841,26 @@ where
             transcript,
         );
 
+        let spark_sumcheck_claims = array::from_fn(|i| spark_claims[i]);
+
         let opening_proof = opening_accumulator.reduce_and_prove::<PCS>(pcs_setup, transcript);
+
         SpartanProof {
             outer_sumcheck_proof,
             inner_sumcheck_proof,
+            spark_sumcheck_proof,
             outer_sumcheck_claims: (
                 outer_sumcheck_claims[0],
                 outer_sumcheck_claims[1],
                 outer_sumcheck_claims[2],
             ),
+            inner_sumcheck_claims: (
+                claims_inner[0],
+                claims_inner[1],
+                claims_inner[2],
+                claims_inner[3],
+            ),
+            spark_sumcheck_claims,
             memory_checking,
             opening_proof,
         }
@@ -578,6 +901,7 @@ where
 
         let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+
         if claim_outer_final != claim_outer_final_expected {
             return Err(ProofVerifyError::SpartanError(
                 "Invalid Outer Sumcheck Claim".to_string(),
@@ -603,7 +927,74 @@ where
             .verify(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|e| e)?;
 
+        let (claim_A, claim_B, claim_C, claim_Z) = proof.inner_sumcheck_claims;
+
+        let claim_inner_final_expected = claim_Z
+            * (claim_A + r_inner_sumcheck_RLC * claim_B + r_inner_sumcheck_RLC.square() * claim_C);
+
+        if claim_inner_final != claim_inner_final_expected {
+            return Err(ProofVerifyError::SpartanError(
+                "Invalid Inner Sumcheck Claim".to_string(),
+            ));
+        }
+
+        transcript.append_scalars(
+            [
+                proof.inner_sumcheck_claims.0,
+                proof.inner_sumcheck_claims.1,
+                proof.inner_sumcheck_claims.2,
+                proof.inner_sumcheck_claims.3,
+            ]
+            .as_slice(),
+        );
+
+        //Spark
+        let (rx, ry) = inner_sumcheck_r.split_at(inner_sumcheck_r.len() / 2);
+        for i in 0..3 {
+            commitments.rows[i].append_to_transcript(transcript);
+            commitments.cols[i].append_to_transcript(transcript);
+            commitments.vals[i].append_to_transcript(transcript);
+            commitments.e_rx[i].append_to_transcript(transcript);
+            commitments.e_ry[i].append_to_transcript(transcript);
+        }
+
+        let batching_scalar: F = transcript.challenge_scalar();
+        let spark_claim = batching_scalar.square() * claim_A + batching_scalar * claim_B + claim_C;
         //TODO(Ritwik):- Add Spark sum check verification.
+        let (claim_spark_final, spark_sumcheck_r) = proof
+            .spark_sumcheck_proof
+            .verify(spark_claim, rx.len(), 3, transcript)
+            .map_err(|e| e)?;
+
+        let spark_claims = proof.spark_sumcheck_claims;
+
+        let mut expected_spark_claim = F::zero();
+        for i in 0..3 {
+            expected_spark_claim = (spark_claims[i] + spark_claims[i + 3] + spark_claims[i + 6])
+                + expected_spark_claim * batching_scalar
+        }
+        if claim_spark_final != expected_spark_claim {
+            return Err(ProofVerifyError::SpartanError(
+                "Invalid Spark Sumcheck Claim".to_string(),
+            ));
+        }
+
+        let spark_commitment_refs: Vec<&<PCS as CommitmentScheme<ProofTranscript>>::Commitment> =
+            chain![
+                commitments.vals.iter().map(|reference| reference),
+                commitments.e_rx.iter().map(|reference| reference),
+                commitments.e_ry.iter().map(|reference| reference)
+            ]
+            .collect();
+
+        let spark_claims_refs: Vec<&F> = spark_claims.iter().map(|reference| reference).collect();
+
+        opening_accumulator.append(
+            &spark_commitment_refs,
+            spark_sumcheck_r,
+            &spark_claims_refs,
+            transcript,
+        );
 
         Self::verify_memory_checking(
             preprocessing,
