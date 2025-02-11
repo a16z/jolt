@@ -1,4 +1,4 @@
-use crate::{field::JoltField, utils::transcript::Transcript};
+use crate::field::JoltField;
 use errors::R1CSError;
 use r1csinstance::R1CSInstance;
 use serde::{Deserialize, Serialize};
