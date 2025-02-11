@@ -85,7 +85,7 @@ impl<F: JoltField, ProofTranscript: Transcript> TwistProof<F, ProofTranscript> {
         transcript: &mut ProofTranscript,
         algorithm: TwistAlgorithm,
     ) -> TwistProof<F, ProofTranscript> {
-        let (read_write_checking_proof, mut r_address, mut r_cycle) = ReadWriteCheckingProof::prove(
+        let (read_write_checking_proof, r_address, r_cycle) = ReadWriteCheckingProof::prove(
             read_addresses,
             read_values,
             &write_addresses,
@@ -96,9 +96,6 @@ impl<F: JoltField, ProofTranscript: Transcript> TwistProof<F, ProofTranscript> {
             transcript,
             algorithm,
         );
-
-        r_address = r_address.into_iter().rev().collect();
-        r_cycle = r_cycle.into_iter().rev().collect();
 
         let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
             write_addresses,
@@ -198,16 +195,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 transcript,
             )
             .unwrap();
-        // First `sumcheck_switch_index` rounds bind cycle variables
-        let mut r_cycle = r_sumcheck[..self.sumcheck_switch_index].to_vec();
-        // Next log(K) ronuds bind address variables
-        let mut r_address =
-            r_sumcheck[self.sumcheck_switch_index..self.sumcheck_switch_index + K.log_2()].to_vec();
-        // Remaining rounds go back to binding cycle variables
-        r_cycle.extend_from_slice(&r_sumcheck[self.sumcheck_switch_index + K.log_2()..]);
 
-        r_address = r_address.into_iter().rev().collect();
-        r_cycle = r_cycle.into_iter().rev().collect();
+        // The high-order cycle variables are bound after the switch
+        let mut r_cycle = r_sumcheck[self.sumcheck_switch_index..T.log_2()].to_vec();
+        // First `sumcheck_switch_index` rounds bind cycle variables from low to high
+        r_cycle.extend(r_sumcheck[..self.sumcheck_switch_index].iter().rev());
+        // Final log(K) rounds bind address variables
+        let r_address = r_sumcheck[T.log_2()..].to_vec();
 
         // eq(r', r_cycle)
         let eq_eval_cycle = EqPolynomial::new(r_prime).evaluate(&r_cycle);
@@ -682,7 +676,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         compressed_polys.push(compressed_poly);
 
         let r_j = transcript.challenge_scalar::<F>();
-        r_cycle.push(r_j);
+        r_cycle.insert(0, r_j);
 
         previous_claim = univariate_poly.evaluate(&r_j);
 
@@ -832,46 +826,39 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     // Remaining rounds of sumcheck
-    for _round in 0..num_rounds - chunk_size.log_2() {
+    for round in 0..num_rounds - chunk_size.log_2() {
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
-        let univariate_poly_evals: [F; 3] = if eq_r.len() > 1 {
-            (0..eq_r.len() / 2)
+        let univariate_poly_evals: [F; 3] = if eq_r_prime.len() > 1 {
+            // Not done binding cycle variables yet
+            (0..eq_r_prime.len() / 2)
                 .into_par_iter()
-                .map(|k| {
-                    let eq_r_evals = eq_r.sumcheck_evals(k, DEGREE, BindingOrder::LowToHigh);
+                .map(|j| {
+                    let eq_r_prime_evals =
+                        eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
+                    let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
 
-                    (0..wv.len())
+                    let inner_sum_evals: [F; 3] = (0..K)
                         .into_par_iter()
-                        .map(|j| {
-                            let index = j * eq_r.len() / 2 + k;
+                        .map(|k| {
+                            let index = j * K + k;
                             let ra_evals =
-                                ra.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+                                ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
                             let wa_evals =
-                                wa.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+                                wa.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
                             let val_evals =
-                                val.sumcheck_evals(index, DEGREE, BindingOrder::LowToHigh);
+                                val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
 
-                            let wv_eval = wv.get_bound_coeff(j);
-                            let eq_r_prime_eval = eq_r_prime.get_bound_coeff(j);
+                            let z_eq_r = z * eq_r.get_coeff(k);
 
                             [
-                                eq_r_prime_eval
-                                    * (ra_evals[0] * val_evals[0]
-                                        + z * eq_r_evals[0]
-                                            * wa_evals[0]
-                                            * (wv_eval - val_evals[0])),
-                                eq_r_prime_eval
-                                    * (ra_evals[1] * val_evals[1]
-                                        + z * eq_r_evals[1]
-                                            * wa_evals[1]
-                                            * (wv_eval - val_evals[1])),
-                                eq_r_prime_eval
-                                    * (ra_evals[2] * val_evals[2]
-                                        + z * eq_r_evals[2]
-                                            * wa_evals[2]
-                                            * (wv_eval - val_evals[2])),
+                                ra_evals[0] * val_evals[0]
+                                    + z_eq_r * wa_evals[0] * (wv_evals[0] - val_evals[0]),
+                                ra_evals[1] * val_evals[1]
+                                    + z_eq_r * wa_evals[1] * (wv_evals[1] - val_evals[1]),
+                                ra_evals[2] * val_evals[2]
+                                    + z_eq_r * wa_evals[2] * (wv_evals[2] - val_evals[2]),
                             ]
                         })
                         .reduce(
@@ -883,42 +870,12 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                                     running[2] + new[2],
                                 ]
                             },
-                        )
-                })
-                .reduce(
-                    || [F::zero(); 3],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                        ]
-                    },
-                )
-        } else {
-            // Address variables are fully bound, so eq(r, r_address) is a constant:
-            let z_eq_r_eval = z * eq_r.final_sumcheck_claim();
-
-            (0..ra.len() / 2)
-                .into_par_iter()
-                .map(|j| {
-                    let eq_r_prime_evals =
-                        eq_r_prime.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let ra_evals = ra.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let wa_evals = wa.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let val_evals = val.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let wv_evals = wv.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                        );
 
                     [
-                        eq_r_prime_evals[0]
-                            * (ra_evals[0] * val_evals[0]
-                                + z_eq_r_eval * wa_evals[0] * (wv_evals[0] - val_evals[0])),
-                        eq_r_prime_evals[1]
-                            * (ra_evals[1] * val_evals[1]
-                                + z_eq_r_eval * wa_evals[1] * (wv_evals[1] - val_evals[1])),
-                        eq_r_prime_evals[2]
-                            * (ra_evals[2] * val_evals[2]
-                                + z_eq_r_eval * wa_evals[2] * (wv_evals[2] - val_evals[2])),
+                        eq_r_prime_evals[0] * inner_sum_evals[0],
+                        eq_r_prime_evals[1] * inner_sum_evals[1],
+                        eq_r_prime_evals[2] * inner_sum_evals[2],
                     ]
                 })
                 .reduce(
@@ -931,6 +888,45 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                         ]
                     },
                 )
+        } else {
+            // Cycle variables are fully bound, so:
+            // eq(r', r_cycle) is a constant
+            let eq_r_prime_eval = eq_r_prime.final_sumcheck_claim();
+            // ...and wv(r_cycle) is a constant
+            let wv_eval = wv.final_sumcheck_claim();
+
+            let evals = (0..ra.len() / 2)
+                .into_par_iter()
+                .map(|k| {
+                    let eq_r_evals = eq_r.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                    let ra_evals = ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                    let wa_evals = wa.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                    let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+
+                    [
+                        ra_evals[0] * val_evals[0]
+                            + z * eq_r_evals[0] * wa_evals[0] * (wv_eval - val_evals[0]),
+                        ra_evals[1] * val_evals[1]
+                            + z * eq_r_evals[1] * wa_evals[1] * (wv_eval - val_evals[1]),
+                        ra_evals[2] * val_evals[2]
+                            + z * eq_r_evals[2] * wa_evals[2] * (wv_eval - val_evals[2]),
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                        ]
+                    },
+                );
+            [
+                eq_r_prime_eval * evals[0],
+                eq_r_prime_eval * evals[1],
+                eq_r_prime_eval * evals[2],
+            ]
         };
 
         let univariate_poly = UniPoly::from_evals(&[
@@ -951,22 +947,22 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         previous_claim = univariate_poly.evaluate(&r_j);
 
         // Bind polynomials
-        if eq_r.len() > 1 {
+        if eq_r_prime.len() > 1 {
+            // Bind a cycle variable j
+            r_cycle.insert(round, r_j);
+            // Note that `eq_r` is a polynomial over only the address variables,
+            // so it is not bound here
+            [&mut ra, &mut wa, &mut wv, &mut val, &mut eq_r_prime]
+                .into_par_iter()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+        } else {
             // Bind an address variable k
             r_address.push(r_j);
             // Note that `wv` and `eq_r_prime` are polynomials over only the cycle
             // variables, so they are not bound here
             [&mut ra, &mut wa, &mut val, &mut eq_r]
                 .into_par_iter()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-        } else {
-            // Bind a cycle variable j
-            r_cycle.push(r_j);
-            // Note that `eq_r` is a polynomial over only the address variables,
-            // so it is not bound here
-            [&mut ra, &mut wa, &mut wv, &mut val, &mut eq_r_prime]
-                .into_par_iter()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
         }
     }
 
