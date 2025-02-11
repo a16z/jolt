@@ -8,8 +8,8 @@ pub trait ZkLeanReprField: JoltField + Sized {
     fn as_computation(&self) -> String;
 
     fn write_lean_mle(&self, f: &mut impl std::io::Write, name: &String, reg_size: usize) -> std::io::Result<()> {
-        f.write_fmt(format_args!("def {name} [Field f]: Subtable f "))?;
-        f.write_fmt(format_args!(":= SubtableFromMLE {reg_size} (fun x => {})\n", self.as_computation()))?;
+        f.write_fmt(format_args!("def {name} [Field f]: Subtable f {reg_size}"))?;
+        f.write_fmt(format_args!(" := subtableFromMLE (fun x => {})\n", self.as_computation()))?;
         Ok(())
     }
 }
