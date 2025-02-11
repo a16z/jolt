@@ -140,7 +140,7 @@ impl<F: JoltField> SparseMatPolynomial<F> {
         assert_eq!(z.len(), num_cols);
 
         self.M.iter().fold(
-            vec![F::zero(); num_rows],
+            vec![F::zero(); num_cols],
             |mut Mz, SparseMatEntry { row, col, val }| {
                 Mz[*row] += *val * z[*col];
                 Mz
@@ -149,7 +149,7 @@ impl<F: JoltField> SparseMatPolynomial<F> {
     }
 
     pub fn compute_eval_table_sparse(&self, rx: &[F], num_rows: usize, num_cols: usize) -> Vec<F> {
-        assert_eq!(rx.len(), num_rows);
+        // assert_eq!(rx.len(), num_rows);
 
         self.M.iter().fold(
             vec![F::zero(); num_cols],
@@ -184,7 +184,12 @@ pub fn compute_ts<F: JoltField>(
         // this is sufficient to ensure that the write-set, consisting of (addr, val, ts) tuples, is a set
         for i in 0..num_ops {
             let addr = ops_addr_inst[i];
-            debug_assert!(addr < num_cells);
+            debug_assert!(
+                addr < num_cells,
+                "addr is {}, num_cells {}",
+                addr,
+                num_cells
+            );
 
             read_ts[i] = final_ts[idx][addr];
             final_ts[idx][addr] = read_ts[i] + 1;

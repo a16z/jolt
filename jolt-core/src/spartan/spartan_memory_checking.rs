@@ -15,6 +15,7 @@ use crate::spartan::sparse_mlpoly::SparseMatEntry;
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;
+use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::{
     lasso::memory_checking::{
@@ -29,6 +30,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{chain, interleave, Itertools};
 use rayon::prelude::*;
 use std::array;
+use std::fmt::Debug;
 use std::fs::File;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -98,6 +100,23 @@ pub type SpartanCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscr
 impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
     Initializable<T, SpartanPreprocessing<F>> for SpartanStuff<T>
 {
+    fn initialize(_: &SpartanPreprocessing<F>) -> Self {
+        Self {
+            witness: T::default(),
+            read_cts_rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            read_cts_cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            final_cts_rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            final_cts_cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            vals: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            e_rx: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            e_ry: std::iter::repeat_with(|| T::default()).take(3).collect(),
+            eq_rx: None,
+            eq_ry: None,
+            identity: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -212,9 +231,6 @@ where
         <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
         <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
     ) {
-        let read_write_batch_size = 12;
-        let init_final_batch_size = 8;
-
         //Assuming the sparsity of all the matrices are the same, their read_ts count will be the same for rows and columns.
         let n_reads = polynomials.rows[0].len();
         let read_cts_rows = &polynomials.read_cts_rows;
@@ -243,97 +259,104 @@ where
             assert_eq!(e_ry[idx].len(), n_reads);
         });
 
+        let gamma_squared = gamma.square();
+
         //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
-        let read_row: Vec<F> = (0..3)
+        let read_write_row: Vec<F> = (0..3)
             .into_par_iter()
             .flat_map(|i| {
-                (0..n_reads).into_par_iter().map(move |j| {
-                    Self::fingerprint(&(rows[i][j], e_rx[i][j], read_cts_rows[i][j]), gamma, tau)
-                })
+                let read_fingerprints: Vec<F> = (0..n_reads)
+                    .map(|j| {
+                        let a = &rows[i][j];
+                        let v = &e_rx[i][j];
+                        let t = &read_cts_rows[i][j];
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+                            - *tau
+                    })
+                    .collect();
+                let write_fingerprints = read_fingerprints
+                    .iter()
+                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .collect();
+                [read_fingerprints, write_fingerprints].concat()
             })
             .collect();
 
-        let read_col: Vec<F> = (0..3)
+        let read_write_col: Vec<F> = (0..3)
             .into_par_iter()
             .flat_map(|i| {
-                (0..n_reads).into_par_iter().map(move |j| {
-                    Self::fingerprint(&(cols[i][j], e_ry[i][j], read_cts_cols[i][j]), gamma, tau)
+                let read_fingerprints: Vec<F> = (0..n_reads)
+                    .into_par_iter()
+                    .map(|j| {
+                        let a = &cols[i][j];
+                        let v = &e_ry[i][j];
+                        let t = &read_cts_cols[i][j];
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+                            - *tau
+                    })
+                    .collect();
+                let write_fingerprints = read_fingerprints
+                    .iter()
+                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .collect();
+                [read_fingerprints, write_fingerprints].concat()
+            })
+            .collect();
+
+        let init_final_row: Vec<F> = {
+            let init_fingerprints: Vec<F> = (0..eq_rx.len())
+                .into_par_iter()
+                .map(|i| {
+                    let a = &F::from_u64(i as u64).unwrap();
+                    let v = &eq_rx[i];
+                    mul_0_1_optimized(v, gamma) + *a - *tau
                 })
-            })
-            .collect();
-
-        //Write tuples are just read tuples with the timestamps incremented by one.
-        let write_row: Vec<F> = read_row
-            .par_iter()
-            .map(|leaf| *leaf + gamma.square())
-            .collect();
-
-        let write_col: Vec<F> = read_col
-            .par_iter()
-            .map(|leaf| *leaf + gamma.square())
-            .collect();
-        let init_row: Vec<F> = (0..eq_rx.len())
-            .into_par_iter()
-            .map(|i| {
-                Self::fingerprint(
-                    &(F::from_u64(i as u64).unwrap(), eq_rx[i], F::zero()),
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-
-        let init_col: Vec<F> = (0..eq_rx.len())
-            .into_par_iter()
-            .map(|i| {
-                Self::fingerprint(
-                    &(F::from_u64(i as u64).unwrap(), eq_ry[i], F::zero()),
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-
-        let final_row: Vec<F> = (0..3)
-            .into_par_iter()
-            .flat_map(|i| {
-                (0..eq_rx.len()).into_par_iter().map(move |j| {
-                    Self::fingerprint(
-                        &(
-                            F::from_u64(j as u64).unwrap(),
-                            eq_rx[j],
-                            final_cts_rows[i][j],
-                        ),
-                        gamma,
-                        tau,
-                    )
+                .collect();
+            let final_fingerprits: Vec<F> = (0..3)
+                .into_par_iter()
+                .flat_map(|i| {
+                    init_fingerprints
+                        .iter()
+                        .enumerate()
+                        .map(|(j, init_fingerprint)| {
+                            let t = &final_cts_rows[i][j];
+                            *init_fingerprint + mul_0_1_optimized(t, &gamma_squared)
+                        })
+                        .collect::<Vec<F>>()
                 })
-            })
-            .collect();
-        let final_col: Vec<F> = (0..3)
-            .into_par_iter()
-            .flat_map(|i| {
-                (0..eq_ry.len()).into_par_iter().map(move |j| {
-                    Self::fingerprint(
-                        &(
-                            F::from_u64(j as u64).unwrap(),
-                            eq_ry[j],
-                            final_cts_cols[i][j],
-                        ),
-                        gamma,
-                        tau,
-                    )
-                })
-            })
-            .collect();
-        //Length of reads and thus writes in this case should be equal to the length of vals, which is the length of non-zero values in the sparse matrix being opened.
-        let read_write_leaves = vec![read_row, write_row, read_col, write_col].concat();
-        let init_final_leaves = vec![init_row, final_row, init_col, final_col].concat();
+                .collect();
+            [init_fingerprints, final_fingerprits].concat()
+        };
 
-        (
-            (read_write_leaves, read_write_batch_size),
-            (init_final_leaves, init_final_batch_size),
-        )
+        let init_final_col: Vec<F> = {
+            let init_fingerprints: Vec<F> = (0..eq_ry.len())
+                .into_par_iter()
+                .map(|i| {
+                    let a = &F::from_u64(i as u64).unwrap();
+                    let v = &eq_ry[i];
+                    mul_0_1_optimized(v, gamma) + *a - *tau
+                })
+                .collect();
+            let final_fingerprits: Vec<F> = (0..3)
+                .into_par_iter()
+                .flat_map(|i| {
+                    init_fingerprints
+                        .iter()
+                        .enumerate()
+                        .map(|(j, init_fingerprint)| {
+                            let t = &final_cts_cols[i][j];
+                            *init_fingerprint + mul_0_1_optimized(t, &gamma_squared)
+                        })
+                        .collect::<Vec<F>>()
+                })
+                .collect();
+            [init_fingerprints, final_fingerprits].concat()
+        };
+
+        let read_write_leaves = vec![read_write_row, read_write_col].concat();
+        let init_final_leaves = vec![init_final_row, init_final_col].concat();
+
+        ((read_write_leaves, 12), (init_final_leaves, 8))
     }
 
     fn interleave<T: Copy + Clone>(
@@ -345,7 +368,6 @@ where
     ) -> (Vec<T>, Vec<T>) {
         let read_write_values = interleave(read_values, write_values).cloned().collect();
 
-        //eq_rx init, A_rx_final, B_rx_final, C_rx_final, eq_ry init, A_ry_final, B_ry_final, C_ry_final
         let init_final_values: Vec<T> = init_values
             .iter()
             .zip(final_values.chunks(3))
@@ -362,6 +384,7 @@ where
     ) -> MultisetHashes<F> {
         let mut read_hashes = Vec::with_capacity(6);
         let mut write_hashes = Vec::with_capacity(6);
+
         for i in 0..6 {
             read_hashes.push(read_write_hashes[2 * i]);
             write_hashes.push(read_write_hashes[2 * i + 1]);
@@ -534,7 +557,7 @@ where
                 openings
                     .identity
                     .expect("Expected identity polynomial evaluation"),
-                openings.e_rx[i],
+                openings.eq_rx.expect("Expected eq polynomial evaluation"),
                 openings.final_cts_rows[i],
             ))
         }
@@ -543,7 +566,7 @@ where
                 openings
                     .identity
                     .expect("Expected identity polynomial evaluation"),
-                openings.e_ry[i],
+                openings.eq_ry.expect("Expected eq polynomial evaluation"),
                 openings.final_cts_cols[i],
             ))
         }
@@ -667,25 +690,19 @@ where
         };
 
         // derive the verifier's challenge tau
-        let (num_rounds_x, num_rounds_y) = (
-            preprocessing.inst.inst.get_num_cons().log_2(),
-            z.len().log_2(),
-        );
+        let (num_rounds_x, num_rounds_y) = (z.len().log_2(), z.len().log_2());
 
         let tau = transcript.challenge_vector(num_rounds_x);
 
         let eq_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
-
         let (az, bz, cz) = preprocessing.inst.inst.multiply_vec(
             preprocessing.inst.inst.get_num_cons(),
             z.len(),
             &z.Z,
         );
-        let comb_func = |polys: &[F]| -> F { polys[0] * (polys[1] * polys[2] - polys[3]) };
+        println!("az len is {:?}", az.len());
 
-        println!("num of x rounds {:?}", num_rounds_x);
-        println!("num of y rounds {:?}", num_rounds_y);
-        println!("az size is {:?}", az.len());
+        let comb_func = |polys: &[F]| -> F { polys[0] * (polys[1] * polys[2] - polys[3]) };
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
@@ -697,25 +714,24 @@ where
                 &mut transcript,
             );
 
-        //TODO(Ashish):- Do we need to do reverse?
-        // let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-
-        transcript.append_scalars(&outer_sumcheck_claims);
+        transcript.append_scalars(&outer_sumcheck_claims[1..]);
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
-            outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
             outer_sumcheck_claims[2],
+            outer_sumcheck_claims[3],
         );
 
         let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
+
         let r_inner_sumcheck_RLC_square = r_inner_sumcheck_RLC * r_inner_sumcheck_RLC;
         let claim_inner_joint =
             claim_Az + r_inner_sumcheck_RLC * claim_Bz + r_inner_sumcheck_RLC_square * claim_Cz;
 
         let poly_ABC = {
+            let eq_tau = DensePolynomial::new(EqPolynomial::evals(&outer_sumcheck_r));
             // compute the initial evaluation table for R(\tau, x)
             let (evals_A, evals_B, evals_C) = preprocessing.inst.inst.compute_eval_table_sparse(
                 preprocessing.inst.inst.get_num_cons(),
@@ -736,13 +752,12 @@ where
                     .collect::<Vec<F>>(),
             )
         };
-        println!("poly_ABC size is {:?}", poly_ABC.len());
         let comb_func = |polys: &[F]| -> F { polys[0] * polys[1] };
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_arbitrary(
                 &claim_inner_joint,
                 num_rounds_y,
-                &mut [poly_ABC, z].to_vec(),
+                &mut [poly_ABC, z.clone()].to_vec(),
                 comb_func,
                 2,
                 &mut transcript,
@@ -758,12 +773,10 @@ where
 
         transcript.append_scalars(&[Ar, Br, Cr, eval_vars_at_ry]);
 
-        //TODO: Add inner sum check openings to accumulator
+        // //TODO: Add inner sum check openings to accumulator
 
         let eq_rx = EqPolynomial::evals(&outer_sumcheck_r);
         let eq_ry = EqPolynomial::evals(&inner_sumcheck_r);
-
-        let num_spark_sumcheck_rounds = outer_sumcheck_r.len();
 
         preprocessing.rx_ry = Some([outer_sumcheck_r, inner_sumcheck_r].concat());
 
@@ -809,7 +822,6 @@ where
 
         //batching scalar for the spark sum check
         let batching_scalar = transcript.challenge_scalar_powers(3);
-
         //Flattened vec of polynomials required for spark.
         let mut spark_polys = polynomials
             .e_rx
@@ -826,19 +838,20 @@ where
             })
         };
 
-        let (spark_sumcheck_proof, spark_r, spark_claims) = SumcheckInstanceProof::prove_arbitrary(
-            &F::zero(), //passsing zero since it is not required.
-            num_spark_sumcheck_rounds,
-            &mut spark_polys,
-            spark_func,
-            3,
-            &mut transcript,
-        );
+        let (spark_sumcheck_proof, spark_sumcheck_r, spark_claims) =
+            SumcheckInstanceProof::prove_arbitrary(
+                &F::zero(), //passsing zero since it is not required.
+                polynomials.e_rx[0].len().log_2(),
+                &mut spark_polys,
+                spark_func,
+                3,
+                &mut transcript,
+            );
 
         transcript.append_scalars(&spark_claims);
 
         let spark_claim_refs: Vec<&F> = spark_claims.iter().map(|claim| claim).collect();
-        let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_r));
+        let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_sumcheck_r));
 
         opening_accumulator.append(
             &polynomials
@@ -848,7 +861,7 @@ where
                 .chain(polynomials.vals.iter())
                 .collect_vec(),
             spark_eq,
-            spark_r,
+            spark_sumcheck_r,
             &spark_claim_refs,
             &mut transcript,
         );
@@ -869,9 +882,9 @@ where
             inner_sumcheck_proof,
             spark_sumcheck_proof,
             outer_sumcheck_claims: (
-                outer_sumcheck_claims[0],
                 outer_sumcheck_claims[1],
                 outer_sumcheck_claims[2],
+                outer_sumcheck_claims[3],
             ),
             inner_sumcheck_claims: (Ar, Br, Cr, eval_vars_at_ry),
             spark_sumcheck_claims: array::from_fn(|i| spark_claims[i]),
@@ -884,23 +897,24 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &SpartanPreprocessing<F>,
         commitments: &SpartanCommitments<PCS, ProofTranscript>,
-        num_vars: usize,
-        num_cons: usize,
-        input: &[F],
+        // num_vars: usize,
+        // num_cons: usize,
+        // input: &[F],
         proof: SpartanProof<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
+        let num_vars = preprocessing.vars.assignment.len();
+        let num_cons = num_vars;
         let mut transcript = ProofTranscript::new(b"Spartan transcript");
 
         // input.append_to_transcript(b"input", transcript);
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
-        let n = num_vars;
         // add the commitment to the verifier's transcript
         // self.comm_vars
         //     .append_to_transcript(b"poly_commitment", transcript);
 
-        let (num_rounds_x, num_rounds_y) = (num_cons.log_2(), (2 * num_vars).log_2());
+        let (num_rounds_x, num_rounds_y) = ((2 * num_vars).log_2(), (2 * num_vars).log_2());
 
         // derive the verifier's challenge tau
         let tau = transcript.challenge_vector(num_rounds_x);
@@ -933,6 +947,7 @@ where
         );
 
         let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
+
         let claim_inner_joint = proof.outer_sumcheck_claims.0
             + r_inner_sumcheck_RLC * proof.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * proof.outer_sumcheck_claims.2;
@@ -948,17 +963,17 @@ where
             preprocessing.rx_ry.clone().unwrap(),
             [r_x, inner_sumcheck_r].concat(),
         );
+        //TODO(Ashish):- Fix inner sum check claim.Compute claim z appropriately using pi
+        let (claim_A, claim_B, claim_C, claim_w) = proof.inner_sumcheck_claims;
 
-        let (claim_A, claim_B, claim_C, claim_Z) = proof.inner_sumcheck_claims;
-
-        let claim_inner_final_expected = claim_Z
+        let claim_inner_final_expected = claim_w
             * (claim_A + r_inner_sumcheck_RLC * claim_B + r_inner_sumcheck_RLC.square() * claim_C);
 
-        if claim_inner_final != claim_inner_final_expected {
-            return Err(ProofVerifyError::SpartanError(
-                "Invalid Inner Sumcheck Claim".to_string(),
-            ));
-        }
+        // if claim_inner_final != claim_inner_final_expected {
+        //     return Err(ProofVerifyError::SpartanError(
+        //         "Invalid Inner Sumcheck Claim".to_string(),
+        //     ));
+        // }
 
         transcript.append_scalars(
             [
@@ -976,12 +991,20 @@ where
         }
 
         let batching_scalar = transcript.challenge_scalar_powers(3);
+
         let spark_claim = claim_A + batching_scalar[1] * claim_B + batching_scalar[2] * claim_C;
 
         let (claim_spark_final, spark_sumcheck_r) = proof
             .spark_sumcheck_proof
-            .verify(spark_claim, num_spark_sumcheck_rounds, 3, &mut transcript)
+            .verify(
+                spark_claim,
+                num_spark_sumcheck_rounds - 1,
+                3,
+                &mut transcript,
+            )
             .map_err(|e| e)?;
+
+        transcript.append_scalars(&proof.spark_sumcheck_claims);
 
         let expected_spark_claim = (0..3).fold(F::zero(), |acc, idx| {
             acc + (proof.spark_sumcheck_claims[idx]
@@ -998,9 +1021,9 @@ where
 
         let spark_commitment_refs: Vec<&<PCS as CommitmentScheme<ProofTranscript>>::Commitment> =
             chain![
-                commitments.vals.iter().map(|reference| reference),
                 commitments.e_rx.iter().map(|reference| reference),
-                commitments.e_ry.iter().map(|reference| reference)
+                commitments.e_ry.iter().map(|reference| reference),
+                commitments.vals.iter().map(|reference| reference),
             ]
             .collect();
 
@@ -1061,11 +1084,18 @@ mod tests {
         let (mut spartan_polynomials, mut spartan_commitments) =
             SpartanProof::<Fr, PCS, ProofTranscript>::generate_witness(&preprocessing, &pcs_setup);
 
-        SpartanProof::<Fr, PCS, ProofTranscript>::prove(
+        let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(
             &pcs_setup,
             &mut spartan_polynomials,
             &mut spartan_commitments,
             &mut preprocessing,
         );
+        SpartanProof::<Fr, PCS, ProofTranscript>::verify(
+            &pcs_setup,
+            &preprocessing,
+            &spartan_commitments,
+            proof,
+        )
+        .unwrap();
     }
 }

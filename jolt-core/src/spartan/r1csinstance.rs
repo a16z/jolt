@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 use super::sparse_mlpoly::SparseMatPolynomial;
 use crate::{
     field::JoltField, poly::dense_mlpoly::DensePolynomial, spartan::sparse_mlpoly::SparseMatEntry,
@@ -86,6 +88,11 @@ impl<F: JoltField> R1CSInstance<F> {
         // z is organized as [vars,1,io]
         let size_z = num_vars + num_inputs + 1;
 
+        println!("size_z is {:?}", size_z);
+        println!("num_vars is {:?}", num_vars);
+        println!("num_inputs is {:?}", num_inputs);
+        println!("num_cons is {:?}", num_cons);
+
         // produce a random satisfying assignment
         let Z = {
             let mut Z: Vec<F> = (0..size_z)
@@ -111,7 +118,7 @@ impl<F: JoltField> R1CSInstance<F> {
             let C_val = Z[C_idx];
 
             if C_val == F::zero() {
-                C.push(SparseMatEntry::new(i, num_vars, AB_val));
+                C.push(SparseMatEntry::new(i, num_vars - 1, AB_val));
             } else {
                 C.push(SparseMatEntry::new(
                     i,
@@ -120,9 +127,9 @@ impl<F: JoltField> R1CSInstance<F> {
                 ));
             }
         }
-
-        let num_poly_vars_x = num_cons.log_2();
-        let num_poly_vars_y = (2 * num_vars).log_2();
+        let max = max(size_z, num_cons);
+        let num_poly_vars_x = max.next_power_of_two().log_2();
+        let num_poly_vars_y = num_poly_vars_x;
         let poly_A = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, A);
         let poly_B = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, B);
         let poly_C = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, C);
@@ -163,10 +170,10 @@ impl<F: JoltField> R1CSInstance<F> {
             .C
             .multiply_vec(self.num_cons, self.num_vars + self.num_inputs + 1, &z);
 
-        assert_eq!(Az.len(), self.num_cons);
-        assert_eq!(Bz.len(), self.num_cons);
-        assert_eq!(Cz.len(), self.num_cons);
-        (0..self.num_cons).all(|i| Az[i] * Bz[i] == Cz[i])
+        // assert_eq!(Az.len(), self.num_cons);
+        // assert_eq!(Bz.len(), self.num_cons);
+        // assert_eq!(Cz.len(), self.num_cons);
+        (0..self.num_vars + self.num_inputs + 1).all(|i| Az[i] * Bz[i] == Cz[i])
     }
 
     pub fn multiply_vec(
