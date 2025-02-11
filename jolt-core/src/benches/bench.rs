@@ -12,6 +12,7 @@ use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
 use rand_core::RngCore;
+use rand_distr::{Distribution, Zipf};
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -119,8 +120,10 @@ where
 
     let mut tasks = Vec::new();
 
-    const K: usize = 64;
+    const K: usize = 1 << 10;
     const T: usize = 1 << 20;
+    const ZIPF_S: f64 = 0.0;
+    let zipf = Zipf::new(K as u64, ZIPF_S).unwrap();
 
     let mut rng = test_rng();
 
@@ -132,9 +135,9 @@ where
     let mut write_increments: Vec<i64> = Vec::with_capacity(T);
     for _ in 0..T {
         // Random read register
-        let read_address = rng.next_u32() as usize % K;
+        let read_address = zipf.sample(&mut rng) as usize - 1;
         // Random write register
-        let write_address = rng.next_u32() as usize % K;
+        let write_address = zipf.sample(&mut rng) as usize - 1;
         read_addresses.push(read_address);
         write_addresses.push(write_address);
         // Read the value currently in the read register
