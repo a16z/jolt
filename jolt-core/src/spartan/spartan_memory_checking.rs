@@ -132,13 +132,36 @@ pub struct SpartanPreprocessing<F: JoltField> {
 impl<F: JoltField> SpartanPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "Spartan::preprocess")]
     pub fn preprocess(
-        circuit_file: Option<&str>,
+        constraints_file: Option<&str>,
         witness_file: Option<&str>,
         num_inputs: usize,
     ) -> Self {
-        match circuit_file {
-            Some(circuit_file) => {
-                let file = File::open(circuit_file);
+        match constraints_file {
+            Some(constraints_file) => {
+                let file = File::open(witness_file.unwrap()).expect("File not found");
+                let reader = std::io::BufReader::new(file);
+                let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
+                let mut z = Vec::new();
+                for value in witness {
+                    let val = value.as_bytes();
+                    z.push(F::from_bytes(val));
+                }
+
+                let num_vars = z.len() - num_inputs - 1;
+                assert!(num_inputs < num_vars);
+
+                let append_zeroes = num_vars.next_power_of_two() - num_inputs - 1;
+                let size_z = num_vars.next_power_of_two() + append_zeroes + num_inputs + 1;
+
+                let vars = [
+                    z[num_inputs + 1..].to_vec(),
+                    vec![F::zero(); num_vars.next_power_of_two() - num_vars],
+                ]
+                .concat();
+
+                let inputs = z[1..num_inputs].to_vec();
+
+                let file = File::open(constraints_file);
                 let reader = std::io::BufReader::new(file.unwrap());
                 let config: CircuitConfig = serde_json::from_reader(reader).unwrap();
 
@@ -151,7 +174,11 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                         for (key, value) in dict {
                             let col = key.parse::<usize>().unwrap();
                             let val = value.as_bytes();
-
+                            let col = if col > 1 + num_inputs {
+                                col + append_zeroes
+                            } else {
+                                col
+                            };
                             sparse_entries[j].push(SparseMatEntry::new(
                                 row,
                                 col as usize,
@@ -160,19 +187,6 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                         }
                     }
                 }
-                let file = File::open(witness_file.unwrap()).expect("File not found");
-                let reader = std::io::BufReader::new(file);
-                let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
-                let mut z = Vec::new();
-                for value in witness {
-                    let val = value.as_bytes();
-                    z.push(F::from_bytes(val));
-                }
-
-                let size_z = z.len();
-
-                let vars = z[num_inputs + 1..].to_vec();
-                let inputs = z[1..num_inputs].to_vec();
 
                 let num_vars = size_z - num_inputs - 1;
                 let max = max(size_z, num_cons);

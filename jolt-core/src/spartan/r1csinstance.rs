@@ -85,11 +85,7 @@ impl<F: JoltField> R1CSInstance<F> {
         // num_inputs + 1 <= num_vars
         assert!(num_inputs < num_vars);
 
-        let append_zeroes = if num_inputs > num_vars {
-            num_inputs - num_vars - 1
-        } else {
-            num_vars - num_inputs - 1
-        };
+        let append_zeroes = num_vars - num_inputs - 1;
 
         // z is organized as [vars,1,io]
         let size_z = append_zeroes + num_vars + num_inputs + 1;
@@ -161,11 +157,7 @@ impl<F: JoltField> R1CSInstance<F> {
         assert_eq!(vars.len(), self.num_vars);
         assert_eq!(input.len(), self.num_inputs);
 
-        let append_zeroes = if self.num_inputs > self.num_vars {
-            self.num_inputs - self.num_vars - 1
-        } else {
-            self.num_vars - self.num_inputs - 1
-        };
+        let append_zeroes = self.num_vars - self.num_inputs - 1;
 
         let z = {
             let mut z = vec![F::one()];
