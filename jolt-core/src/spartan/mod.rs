@@ -1,68 +1,9 @@
 use crate::field::JoltField;
-use errors::R1CSError;
 use r1csinstance::R1CSInstance;
-use serde::{Deserialize, Serialize};
 
 extern crate core;
 extern crate rand;
 extern crate sha3;
-
-/// `Assignment` holds an assignment of values to either the inputs or variables in an `Instance`
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Assignment<F: JoltField> {
-    assignment: Vec<F>,
-}
-
-impl<F: JoltField> Assignment<F> {
-    /// Constructs a new `Assignment` from a vector
-    pub fn new(assignment: &[[u8; 32]]) -> Result<Assignment<F>, R1CSError> {
-        let bytes_to_scalar = |vec: &[[u8; 32]]| -> Result<Vec<F>, R1CSError> {
-            let mut vec_scalar: Vec<F> = Vec::new();
-            for v in vec {
-                let val = F::from_bytes(v);
-                if val.is_one() {
-                    vec_scalar.push(val);
-                } else {
-                    return Err(R1CSError::InvalidScalar);
-                }
-            }
-            Ok(vec_scalar)
-        };
-
-        let assignment_scalar = bytes_to_scalar(assignment);
-
-        // check for any parsing errors
-        if assignment_scalar.is_err() {
-            return Err(R1CSError::InvalidScalar);
-        }
-
-        Ok(Assignment {
-            assignment: assignment_scalar.unwrap(),
-        })
-    }
-
-    /// pads Assignment to the specified length
-    fn pad(&self, len: usize) -> VarsAssignment<F> {
-        // check that the new length is higher than current length
-        assert!(len > self.assignment.len());
-
-        let padded_assignment = {
-            let mut padded_assignment = self.assignment.clone();
-            padded_assignment.extend(vec![F::zero(); len - self.assignment.len()]);
-            padded_assignment
-        };
-
-        VarsAssignment {
-            assignment: padded_assignment,
-        }
-    }
-}
-
-/// `VarsAssignment` holds an assignment of values to variables in an `Instance`
-pub type VarsAssignment<F: JoltField> = Assignment<F>;
-
-/// `InputsAssignment` holds an assignment of values to variables in an `Instance`
-pub type InputsAssignment<F: JoltField> = Assignment<F>;
 
 /// `Instance` holds the description of R1CS matrices and a hash of the matrices
 #[derive(Clone)]
@@ -216,15 +157,11 @@ impl<F: JoltField> Instance<F> {
         num_cons: usize,
         num_vars: usize,
         num_inputs: usize,
-    ) -> (Instance<F>, VarsAssignment<F>, InputsAssignment<F>) {
-        let (inst, vars, inputs) =
+    ) -> (Instance<F>, Vec<F>, Vec<F>) {
+        let (inst, inputs, vars) =
             R1CSInstance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
         // let digest = inst.get_digest();
-        (
-            Instance { inst },
-            VarsAssignment { assignment: vars },
-            InputsAssignment { assignment: inputs },
-        )
+        (Instance { inst }, vars, inputs)
     }
 }
 

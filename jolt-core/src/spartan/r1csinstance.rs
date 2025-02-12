@@ -85,23 +85,28 @@ impl<F: JoltField> R1CSInstance<F> {
         // num_inputs + 1 <= num_vars
         assert!(num_inputs < num_vars);
 
-        // z is organized as [vars,1,io]
-        let size_z = num_vars + num_inputs + 1;
+        let append_zeroes = if num_inputs > num_vars {
+            num_inputs - num_vars - 1
+        } else {
+            num_vars - num_inputs - 1
+        };
 
-        println!("size_z is {:?}", size_z);
-        println!("num_vars is {:?}", num_vars);
-        println!("num_inputs is {:?}", num_inputs);
-        println!("num_cons is {:?}", num_cons);
+        // z is organized as [vars,1,io]
+        let size_z = append_zeroes + num_vars + num_inputs + 1;
 
         // produce a random satisfying assignment
         let Z = {
-            let mut Z: Vec<F> = (0..size_z)
-                .map(|_i| F::random::<ChaCha8Rng>(&mut rng))
-                .collect::<Vec<F>>();
-            Z[num_vars] = F::one(); // set the constant term to 1
+            let mut Z = vec![F::zero(); size_z];
+            Z[0] = F::one(); // set the constant term to 1
+            Z.iter_mut()
+                .take(num_inputs + 1)
+                .skip(1)
+                .for_each(|z| *z = F::random::<ChaCha8Rng>(&mut rng));
+            Z.iter_mut()
+                .skip(append_zeroes + num_inputs + 1)
+                .for_each(|z| *z = F::random::<ChaCha8Rng>(&mut rng));
             Z
         };
-
         // three sparse matrices
         let mut A: Vec<SparseMatEntry<F>> = Vec::new();
         let mut B: Vec<SparseMatEntry<F>> = Vec::new();
@@ -118,7 +123,7 @@ impl<F: JoltField> R1CSInstance<F> {
             let C_val = Z[C_idx];
 
             if C_val == F::zero() {
-                C.push(SparseMatEntry::new(i, num_vars - 1, AB_val));
+                C.push(SparseMatEntry::new(i, 0, AB_val));
             } else {
                 C.push(SparseMatEntry::new(
                     i,
@@ -143,19 +148,30 @@ impl<F: JoltField> R1CSInstance<F> {
             C: poly_C,
         };
 
-        assert!(inst.is_sat(&Z[..num_vars], &Z[num_vars + 1..]));
+        assert!(inst.is_sat(&Z[1..num_inputs + 1], &Z[num_inputs + append_zeroes + 1..]));
 
-        (inst, Z[..num_vars].to_vec(), Z[num_vars + 1..].to_vec())
+        (
+            inst,
+            Z[1..num_inputs + 1].to_vec(),
+            Z[num_inputs + append_zeroes + 1..].to_vec(),
+        )
     }
 
-    pub fn is_sat(&self, vars: &[F], input: &[F]) -> bool {
+    pub fn is_sat(&self, input: &[F], vars: &[F]) -> bool {
         assert_eq!(vars.len(), self.num_vars);
         assert_eq!(input.len(), self.num_inputs);
 
+        let append_zeroes = if self.num_inputs > self.num_vars {
+            self.num_inputs - self.num_vars - 1
+        } else {
+            self.num_vars - self.num_inputs - 1
+        };
+
         let z = {
-            let mut z = vars.to_vec();
-            z.extend(&vec![F::one()]);
+            let mut z = vec![F::one()];
             z.extend(input);
+            z.extend(&vec![F::zero(); append_zeroes]);
+            z.extend(vars.to_vec());
             z
         };
 
@@ -173,7 +189,7 @@ impl<F: JoltField> R1CSInstance<F> {
         // assert_eq!(Az.len(), self.num_cons);
         // assert_eq!(Bz.len(), self.num_cons);
         // assert_eq!(Cz.len(), self.num_cons);
-        (0..self.num_vars + self.num_inputs + 1).all(|i| Az[i] * Bz[i] == Cz[i])
+        (0..z.len()).all(|i| Az[i] * Bz[i] == Cz[i])
     }
 
     pub fn multiply_vec(

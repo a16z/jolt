@@ -43,7 +43,7 @@ impl<F: JoltField> SparsePolynomial<F> {
         (0..self.Z.len())
             .into_par_iter()
             .map(|i| {
-                let bits = get_bits(self.Z[0].1, r.len());
+                let bits = get_bits(self.Z[i].1, r.len());
                 SparsePolynomial::compute_chi(&bits, r) * self.Z[i].0
             })
             .sum()
