@@ -333,10 +333,18 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         checkpoints.push(next_checkpoint);
     }
     // TODO(moodlezoup): could potentially generate these checkpoints in the tracer
-    let checkpoints: Vec<Vec<F>> = checkpoints
-        .into_par_iter()
-        .map(|checkpoint| checkpoint.into_iter().map(|val| F::from_i64(val)).collect())
-        .collect();
+    // Generate checkpoints as a flat vector because it will be turned into the
+    // materialized Val polynomial after the first half of sumcheck.
+    let mut val_checkpoints: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
+    val_checkpoints
+        .par_chunks_mut(K)
+        .zip(checkpoints.into_par_iter())
+        .for_each(|(val_checkpoint, checkpoint)| {
+            val_checkpoint
+                .iter_mut()
+                .zip(checkpoint.iter())
+                .for_each(|(dest, src)| *dest = F::from_i64(*src))
+        });
 
     drop(_guard);
     drop(span);
@@ -344,9 +352,9 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     #[cfg(test)]
     {
         // Check that checkpoints are correct
-        for (chunk_index, V_chunk) in checkpoints.iter().enumerate() {
+        for (chunk_index, checkpoint) in val_checkpoints.chunks(K).enumerate() {
             let j = chunk_index * chunk_size;
-            for (k, V_k) in V_chunk.iter().enumerate() {
+            for (k, V_k) in checkpoint.iter().enumerate() {
                 assert_eq!(*V_k, val_test.get_bound_coeff(k * T + j));
             }
         }
@@ -498,8 +506,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         let univariate_poly_evals: [F; 3] = I
             .par_iter()
             .zip(data_buffers.par_iter_mut())
-            .enumerate()
-            .map(|(chunk_index, (I_chunk, buffers))| {
+            .zip(val_checkpoints.par_chunks(K))
+            .map(|((I_chunk, buffers), checkpoint)| {
                 let mut evals = [F::zero(), F::zero(), F::zero()];
 
                 let DataBuffers {
@@ -510,7 +518,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                     dirty_indices,
                 } = buffers;
 
-                *val_j_0 = checkpoints[chunk_index].clone();
+                *val_j_0 = checkpoint.to_vec();
 
                 // Iterate over I_chunk, two rows at a time.
                 I_chunk
@@ -803,14 +811,11 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     let span = tracing::span!(tracing::Level::INFO, "Materialize Val polynomial");
     let _guard = span.enter();
 
-    let mut val: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
+    let mut val: Vec<F> = val_checkpoints;
     val.par_chunks_mut(K)
-        .zip(checkpoints.into_par_iter())
         .zip(I.into_par_iter())
         .enumerate()
-        .for_each(|(chunk_index, ((val_chunk, checkpoint), I_chunk))| {
-            // TODO(moodlezoup): Can avoid this copy
-            val_chunk.copy_from_slice(checkpoint.as_slice());
+        .for_each(|(chunk_index, (val_chunk, I_chunk))| {
             for (j, k, inc_lt, _inc) in I_chunk.into_iter() {
                 debug_assert_eq!(j, chunk_index);
                 val_chunk[k] += inc_lt;
