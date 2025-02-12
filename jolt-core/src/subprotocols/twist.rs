@@ -850,15 +850,22 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                             let val_evals =
                                 val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
 
+                            // TODO(moodlezoup): Multiply `eq_r` by `z` at initialization
                             let z_eq_r = z * eq_r.get_coeff(k);
 
                             [
-                                ra_evals[0] * val_evals[0]
-                                    + z_eq_r * wa_evals[0] * (wv_evals[0] - val_evals[0]),
-                                ra_evals[1] * val_evals[1]
-                                    + z_eq_r * wa_evals[1] * (wv_evals[1] - val_evals[1]),
-                                ra_evals[2] * val_evals[2]
-                                    + z_eq_r * wa_evals[2] * (wv_evals[2] - val_evals[2]),
+                                ra_evals[0].mul_0_optimized(val_evals[0])
+                                    + z_eq_r
+                                        .mul_0_optimized(wa_evals[0])
+                                        .mul_0_optimized(wv_evals[0] - val_evals[0]),
+                                ra_evals[1].mul_0_optimized(val_evals[1])
+                                    + z_eq_r
+                                        .mul_0_optimized(wa_evals[1])
+                                        .mul_0_optimized(wv_evals[1] - val_evals[1]),
+                                ra_evals[2].mul_0_optimized(val_evals[2])
+                                    + z_eq_r
+                                        .mul_0_optimized(wa_evals[2])
+                                        .mul_0_optimized(wv_evals[2] - val_evals[2]),
                             ]
                         })
                         .reduce(
@@ -1096,12 +1103,13 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
         );
     }
 
-    let inc_claim = inc.final_sumcheck_claim();
-
     let proof = ValEvaluationProof {
         sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
-        inc_claim,
+        inc_claim: inc.final_sumcheck_claim(),
     };
+
+    drop_in_background_thread((inc, eq_r_address, lt));
+
     (proof, r_cycle_prime)
 }
 
