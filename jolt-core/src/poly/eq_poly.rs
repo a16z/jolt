@@ -23,11 +23,9 @@ impl<F: JoltField> EqPolynomial<F> {
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
     pub fn evals(r: &[F]) -> Vec<F> {
-        let ell = r.len();
-
-        match ell {
-            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, ell, None),
-            _ => Self::evals_parallel(r, ell, None),
+        match r.len() {
+            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, None),
+            _ => Self::evals_parallel(r, None),
         }
     }
 
@@ -45,19 +43,19 @@ impl<F: JoltField> EqPolynomial<F> {
     /// the dynamic programming tree to R^2 instead of 1.
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_with_r2")]
     pub fn evals_with_r2(r: &[F]) -> Vec<F> {
-        let ell = r.len();
-
-        match ell {
-            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, ell, F::montgomery_r2()),
-            _ => Self::evals_parallel(r, ell, F::montgomery_r2()),
+        match r.len() {
+            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, F::montgomery_r2()),
+            _ => Self::evals_parallel(r, F::montgomery_r2()),
         }
     }
 
-    /// Computes evals serially. Uses less memory (and fewer allocations) than `evals_parallel`.
-    fn evals_serial(r: &[F], ell: usize, r2: Option<F>) -> Vec<F> {
-        let mut evals: Vec<F> = vec![r2.unwrap_or(F::one()); ell.pow2()];
+    /// Computes the table of coefficients:
+    ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
+    /// serially. More efficient for short `r`.
+    fn evals_serial(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+        let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
         let mut size = 1;
-        for j in 0..ell {
+        for j in 0..r.len() {
             // in each iteration, we double the size of chis
             size *= 2;
             for i in (0..size).rev().step_by(2) {
@@ -70,14 +68,15 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
-    /// Computes evals in parallel. Uses more memory and allocations than `evals_serial`, but
-    /// evaluates biggest layers of the dynamic programming tree in parallel.
+    /// Computes the table of coefficients:
+    ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
+    /// computing biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
-    pub fn evals_parallel(r: &[F], ell: usize, r2: Option<F>) -> Vec<F> {
-        let final_size = (2usize).pow(ell as u32);
+    pub fn evals_parallel(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+        let final_size = r.len().pow2();
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;
-        evals[0] = r2.unwrap_or(F::one());
+        evals[0] = scaling_factor.unwrap_or(F::one());
 
         for r in r.iter().rev() {
             let (evals_left, evals_right) = evals.split_at_mut(size);

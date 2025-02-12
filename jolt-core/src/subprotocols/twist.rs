@@ -393,8 +393,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     let rv = MultilinearPolynomial::from(read_values);
     let mut wv = MultilinearPolynomial::from(write_values);
 
-    // eq(r, k)
-    let mut eq_r = MultilinearPolynomial::from(EqPolynomial::evals(r));
+    // z * eq(r, k)
+    let mut z_eq_r = MultilinearPolynomial::from(EqPolynomial::evals_parallel(r, Some(z)));
     // eq(r', j)
     let mut eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(r_prime));
 
@@ -404,13 +404,13 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     let span = tracing::span!(tracing::Level::INFO, "compute Inc(r, r')");
     let _guard = span.enter();
 
-    // Inc(r, r')
+    // z * Inc(r, r')
     let inc_eval: F = write_addresses
         .par_iter()
         .zip(write_increments.par_iter())
         .enumerate()
         .map(|(cycle, (address, increment))| {
-            eq_r.get_coeff(*address) * eq_r_prime.get_coeff(cycle) * F::from_i64(*increment)
+            z_eq_r.get_coeff(*address) * eq_r_prime.get_coeff(cycle) * F::from_i64(*increment)
         })
         .sum();
 
@@ -419,7 +419,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
     // Linear combination of the read-checking claim (which is rv(r')) and the
     // write-checking claim (which is Inc(r, r'))
-    let mut previous_claim = rv_eval + z * inc_eval;
+    let mut previous_claim = rv_eval + inc_eval;
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let span = tracing::span!(
@@ -480,8 +480,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                     // read-checking sumcheck
                     inner_sum += ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
                     // write-checking sumcheck
-                    inner_sum += z
-                        * eq_r.get_bound_coeff(k)
+                    inner_sum += z_eq_r.get_bound_coeff(k)
                         * wa_test.get_bound_coeff(kj)
                         * (wv.get_bound_coeff(j) - val_test.get_bound_coeff(kj))
                 }
@@ -614,16 +613,16 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                             if !wa[0][k].is_zero() || !wa[1][k].is_zero() {
                                 // Write-checking sumcheck
 
-                                // Save a mult by multiplying by `z_eq_r` sooner rather than later
-                                let z_eq_r = z * eq_r.get_coeff(k);
+                                // Save a mult by multiplying by `z_eq_r_eval` sooner rather than later
+                                let z_eq_r_eval = z_eq_r.get_coeff(k);
                                 let wa_eval_0 = if wa[0][k].is_zero() {
                                     F::zero()
                                 } else {
-                                    let eval = z_eq_r * wa[0][k];
+                                    let eval = z_eq_r_eval * wa[0][k];
                                     inner_sum_evals[0] += eval * (wv_evals[0] - val_j_r[0][k]);
                                     eval
                                 };
-                                let wa_eval_1 = z_eq_r.mul_0_optimized(wa[1][k]);
+                                let wa_eval_1 = z_eq_r_eval.mul_0_optimized(wa[1][k]);
                                 let m_wa = wa_eval_1 - wa_eval_0;
                                 let wa_eval_2 = wa_eval_1 + m_wa;
                                 let wa_eval_3 = wa_eval_2 + m_wa;
@@ -845,27 +844,27 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                             let index = j * K + k;
                             let ra_evals =
                                 ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-                            let wa_evals =
-                                wa.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
                             let val_evals =
                                 val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
 
-                            // TODO(moodlezoup): Multiply `eq_r` by `z` at initialization
-                            let z_eq_r = z * eq_r.get_coeff(k);
+                            // Save a mult by multiplying by `z_eq_r_eval` sooner rather than later
+                            let z_eq_r_eval = z_eq_r.get_coeff(k);
+                            let wa_eval_0 = wa.get_bound_coeff(index).mul_0_optimized(z_eq_r_eval);
+                            let wa_eval_1 = wa
+                                .get_bound_coeff(index + wa.len() / 2)
+                                .mul_0_optimized(z_eq_r_eval);
+                            let m_wa = wa_eval_1 - wa_eval_0;
+                            let wa_eval_2 = wa_eval_1 + m_wa;
+                            let wa_eval_3 = wa_eval_2 + m_wa;
+                            let wa_evals = [wa_eval_0, wa_eval_2, wa_eval_3];
 
                             [
                                 ra_evals[0].mul_0_optimized(val_evals[0])
-                                    + z_eq_r
-                                        .mul_0_optimized(wa_evals[0])
-                                        .mul_0_optimized(wv_evals[0] - val_evals[0]),
+                                    + wa_evals[0].mul_0_optimized(wv_evals[0] - val_evals[0]),
                                 ra_evals[1].mul_0_optimized(val_evals[1])
-                                    + z_eq_r
-                                        .mul_0_optimized(wa_evals[1])
-                                        .mul_0_optimized(wv_evals[1] - val_evals[1]),
+                                    + wa_evals[1].mul_0_optimized(wv_evals[1] - val_evals[1]),
                                 ra_evals[2].mul_0_optimized(val_evals[2])
-                                    + z_eq_r
-                                        .mul_0_optimized(wa_evals[2])
-                                        .mul_0_optimized(wv_evals[2] - val_evals[2]),
+                                    + wa_evals[2].mul_0_optimized(wv_evals[2] - val_evals[2]),
                             ]
                         })
                         .reduce(
@@ -905,18 +904,18 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
             let evals = (0..ra.len() / 2)
                 .into_par_iter()
                 .map(|k| {
-                    let eq_r_evals = eq_r.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
+                    let z_eq_r_evals = z_eq_r.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
                     let ra_evals = ra.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
                     let wa_evals = wa.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
                     let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
 
                     [
                         ra_evals[0] * val_evals[0]
-                            + z * eq_r_evals[0] * wa_evals[0] * (wv_eval - val_evals[0]),
+                            + z_eq_r_evals[0] * wa_evals[0] * (wv_eval - val_evals[0]),
                         ra_evals[1] * val_evals[1]
-                            + z * eq_r_evals[1] * wa_evals[1] * (wv_eval - val_evals[1]),
+                            + z_eq_r_evals[1] * wa_evals[1] * (wv_eval - val_evals[1]),
                         ra_evals[2] * val_evals[2]
-                            + z * eq_r_evals[2] * wa_evals[2] * (wv_eval - val_evals[2]),
+                            + z_eq_r_evals[2] * wa_evals[2] * (wv_eval - val_evals[2]),
                     ]
                 })
                 .reduce(
@@ -967,7 +966,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
             r_address.push(r_j);
             // Note that `wv` and `eq_r_prime` are polynomials over only the cycle
             // variables, so they are not bound here
-            [&mut ra, &mut wa, &mut val, &mut eq_r]
+            [&mut ra, &mut wa, &mut val, &mut z_eq_r]
                 .into_par_iter()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
         }
@@ -980,11 +979,11 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         wa_claim: wa.final_sumcheck_claim(),
         wv_claim: wv.final_sumcheck_claim(),
         val_claim: val.final_sumcheck_claim(),
-        inc_claim: inc_eval,
+        inc_claim: inc_eval * z.inverse().unwrap(),
         sumcheck_switch_index: chunk_size.log_2(),
     };
 
-    drop_in_background_thread((ra, wa, wv, val, data_buffers, eq_r, eq_r_prime, A));
+    drop_in_background_thread((ra, wa, wv, val, data_buffers, z_eq_r, eq_r_prime, A));
 
     (proof, r_address, r_cycle)
 }
