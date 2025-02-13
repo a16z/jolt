@@ -338,46 +338,6 @@ pub mod tests {
         );
     }
 
-    pub fn fib_e2e_circom<F, PCS, ProofTranscript>() -> (
-        JoltProof<C, M, JoltR1CSInputs, F, PCS, RV32I, RV32ISubtables<F>, ProofTranscript>,
-        JoltStuff<<PCS as CommitmentScheme<ProofTranscript>>::Commitment>,
-    )
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
-    {
-        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
-        drop(artifact_guard);
-
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<F, PCS, C, M, ProofTranscript>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
-        (proof, commitments)
-        // let verification_result =
-        //     RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
-        // assert!(
-        //     verification_result.is_ok(),
-        //     "Verification failed with error: {:?}",
-        //     verification_result.err()
-        // );
-    }
-
     #[test]
     fn fib_e2e_mock() {
         fib_e2e::<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript>();
@@ -416,34 +376,6 @@ pub mod tests {
             PoseidonTranscript<ark_bn254::Fq>,
         >();
     }
-
-    // pub fn fib_e2e_hyperkzg_circom() -> (
-    //     JoltProof<
-    //         C,
-    //         M,
-    //         JoltR1CSInputs,
-    //         ark_ff::Fp<MontBackend<FrConfig, 4>, 4>,
-    //         HyperKZG<
-    //             Bn<ark_bn254::Config>,
-    //             PoseidonTranscript<ark_ff::Fp<MontBackend<FqConfig, 4>, 4>>,
-    //         >,
-    //         RV32I,
-    //         RV32ISubtables<ark_ff::Fp<MontBackend<FrConfig, 4>, 4>>,
-    //         PoseidonTranscript<ark_ff::Fp<MontBackend<FqConfig, 4>, 4>>,
-    //     >,
-    //     JoltStuff<HyperKZGCommitment<Bn<ark_bn254::Config>>>,
-    // ) {
-    //     fib_e2e_circom::<
-    //         Fr,
-    //         HyperKZG<Bn254, PoseidonTranscript<ark_bn254::Fq>>,
-    //         PoseidonTranscript<ark_bn254::Fq>,
-    //     >()
-    // }
-
-    // #[test]
-    // fn fib_e2e_hyperkzg() {
-    //     fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
-    // }
 
     // TODO(sragss): Finish Binius.
     // #[test]

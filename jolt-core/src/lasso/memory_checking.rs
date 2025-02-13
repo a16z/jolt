@@ -572,6 +572,7 @@ where
             transcript,
             Some(pcs_setup),
         );
+
         // For a batch size of k, the first log2(k) elements of `r_read_write`/`r_init_final`
         // form the point at which the output layer's MLE is evaluated. The remaining elements
         // then form the point at which the leaf layer's polynomials are evaluated.
