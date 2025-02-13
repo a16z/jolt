@@ -2,7 +2,11 @@ use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
 use ark_std::{test_rng, UniformRand};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use jolt_core::{field::JoltField, msm::VariableBaseMSM, poly::dense_mlpoly::DensePolynomial};
+use jolt_core::{
+    field::JoltField,
+    msm::{CurveGroupConfig, Icicle, VariableBaseMSM},
+    poly::dense_mlpoly::DensePolynomial,
+};
 use std::hint::black_box;
 
 fn msm_setup<G: CurveGroup>(num_points: usize) -> (Vec<G>, Vec<G::ScalarField>) {
@@ -34,7 +38,7 @@ fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F>) {
 
 #[library_benchmark]
 #[bench::long(msm_setup::<G1Projective>(4096))]
-fn bench_msm<G: CurveGroup>(input: (Vec<G>, Vec<G::ScalarField>)) -> G {
+fn bench_msm<G: CurveGroup + Icicle>(input: (Vec<G>, Vec<G::ScalarField>)) -> G {
     black_box(VariableBaseMSM::msm(&G::normalize_batch(&input.0), None, &input.1).unwrap())
 }
 

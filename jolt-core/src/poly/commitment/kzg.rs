@@ -3,7 +3,7 @@ use crate::msm::{GpuBaseType, Icicle, VariableBaseMSM};
 use crate::optimal_iter;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
-use ark_ec::scalar_mul::fixed_base::FixedBase;
+use ark_ec::scalar_mul::BatchMulPreprocessing;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
@@ -42,12 +42,16 @@ where
 
         let scalar_bits = P::ScalarField::MODULUS_BIT_SIZE as usize;
 
-        let g1_window_size = FixedBase::get_mul_window_size(num_g1_powers);
-        let g2_window_size = FixedBase::get_mul_window_size(num_g2_powers);
-        let g1_table = FixedBase::get_window_table(scalar_bits, g1_window_size, g1);
-        let g2_table = FixedBase::get_window_table(scalar_bits, g2_window_size, g2);
+        // let g1_window_size = FixedBase::get_mul_window_size(num_g1_powers);
+        // let g2_window_size = FixedBase::get_mul_window_size(num_g2_powers);
+        // let g1_table = FixedBase::get_window_table(scalar_bits, g1_window_size, g1);
+        // let g2_table = FixedBase::get_window_table(scalar_bits, g2_window_size, g2);
 
-        let (g1_powers_projective, g2_powers_projective) = rayon::join(
+        let g1_preprocessing =
+            BatchMulPreprocessing::with_num_scalars_and_scalar_size(g1, num_g1_powers, scalar_bits);
+        let g2_preprocessing =
+            BatchMulPreprocessing::with_num_scalars_and_scalar_size(g2, num_g2_powers, scalar_bits);
+        let (g1_powers, g2_powers) = rayon::join(
             || {
                 let beta_powers: Vec<P::ScalarField> = (0..=num_g1_powers)
                     .scan(beta, |acc, _| {
@@ -56,7 +60,7 @@ where
                         Some(val)
                     })
                     .collect();
-                FixedBase::msm(scalar_bits, g1_window_size, &g1_table, &beta_powers)
+                g1_preprocessing.batch_mul(&beta_powers)
             },
             || {
                 let beta_powers: Vec<P::ScalarField> = (0..=num_g2_powers)
@@ -66,13 +70,8 @@ where
                         Some(val)
                     })
                     .collect();
-                FixedBase::msm(scalar_bits, g2_window_size, &g2_table, &beta_powers)
+                g2_preprocessing.batch_mul(&beta_powers)
             },
-        );
-
-        let (g1_powers, g2_powers) = rayon::join(
-            || P::G1::normalize_batch(&g1_powers_projective),
-            || P::G2::normalize_batch(&g2_powers_projective),
         );
 
         // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS

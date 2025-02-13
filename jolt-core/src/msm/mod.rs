@@ -174,9 +174,9 @@ pub trait VariableBaseMSM: ScalarMul + Icicle {
                             .map(|s| s.into_bigint())
                             .collect::<Vec<_>>();
                         if Self::NEGATION_IS_CHEAP {
-                            msm_bigint_wnaf(bases, &scalars, max_num_bits)
+                            msm_bigint_wnaf(bases, &scalars[..], max_num_bits)
                         } else {
-                            msm_bigint(bases, &scalars, max_num_bits)
+                            msm_bigint(bases, &scalars[..], max_num_bits)
                         }
                     }
                 }

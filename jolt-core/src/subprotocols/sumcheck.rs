@@ -670,7 +670,10 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             }
 
             // check if G_k(0) + G_k(1) = e
-            assert_eq!(self.uni_polys[i].eval_at_zero() + self.uni_polys[i].eval_at_one(), e);
+            assert_eq!(
+                self.uni_polys[i].eval_at_zero() + self.uni_polys[i].eval_at_one(),
+                e
+            );
 
             // append the prover's message to the transcript
             self.uni_polys[i].append_to_transcript(transcript);

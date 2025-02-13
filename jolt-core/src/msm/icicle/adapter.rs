@@ -2,12 +2,14 @@ use crate::msm::{GpuBaseType, MsmType, VariableBaseMSM};
 use ark_bn254::G1Projective;
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::{BigInteger, Field, PrimeField};
+use ark_grumpkin::Projective as GrumpkinProjective;
 use icicle_bn254::curve::CurveCfg as IcicleBn254;
 use icicle_core::curve::{Affine, Curve, Projective};
 use icicle_core::{
     msm::{msm, MSMConfig, MSM},
     traits::FieldImpl,
 };
+use icicle_grumpkin::curve::CurveCfg as IcicleGrumpkin;
 use icicle_runtime::memory::HostOrDeviceSlice;
 use icicle_runtime::stream::IcicleStreamHandle;
 use icicle_runtime::{
@@ -19,6 +21,39 @@ use std::os::raw::c_void;
 
 impl Icicle for G1Projective {
     type C = IcicleBn254;
+
+    fn to_ark_projective(point: &Projective<Self::C>) -> Self {
+        let proj_x =
+            <Self as CurveGroup>::BaseField::from_random_bytes(&point.x.to_bytes_le()).unwrap();
+        let proj_y =
+            <Self as CurveGroup>::BaseField::from_random_bytes(&point.y.to_bytes_le()).unwrap();
+        let proj_z =
+            <Self as CurveGroup>::BaseField::from_random_bytes(&point.z.to_bytes_le()).unwrap();
+
+        let proj_x = proj_x * proj_z;
+        let proj_y = proj_y * proj_z * proj_z;
+        Self::new_unchecked(proj_x, proj_y, proj_z)
+    }
+
+    fn from_ark_affine(point: &Self::MulBase) -> Affine<Self::C> {
+        let x_bytes: Vec<u8> = point
+            .x
+            .to_base_prime_field_elements()
+            .flat_map(|x| x.into_bigint().to_bytes_le())
+            .collect();
+        let y_bytes: Vec<u8> = point
+            .y
+            .to_base_prime_field_elements()
+            .flat_map(|x| x.into_bigint().to_bytes_le())
+            .collect();
+        let x = <Self::C as Curve>::BaseField::from_bytes_le(&x_bytes);
+        let y = <Self::C as Curve>::BaseField::from_bytes_le(&y_bytes);
+        Affine::<Self::C> { x, y }
+    }
+}
+
+impl Icicle for GrumpkinProjective {
+    type C = IcicleGrumpkin;
 
     fn to_ark_projective(point: &Projective<Self::C>) -> Self {
         let proj_x =

@@ -540,12 +540,12 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle, ProofTranscript: Tra
 mod tests {
     use super::*;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
-    use ark_bn254::{Fr, G1Projective};
+    use ark_grumpkin::{Fr, Projective};
 
     #[test]
     fn check_polynomial_commit() {
-        check_polynomial_commit_helper::<Fr, G1Projective, 1>();
-        check_polynomial_commit_helper::<Fr, G1Projective, 4>();
+        check_polynomial_commit_helper::<Fr, Projective, 1>();
+        check_polynomial_commit_helper::<Fr, Projective, 4>();
     }
 
     fn check_polynomial_commit_helper<
