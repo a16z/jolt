@@ -37,10 +37,6 @@ impl<F: JoltField> R1CSInstance<F> {
         // check that number_inputs + 1 <= num_vars
         assert!(num_inputs < num_vars);
 
-        // no errors, so create polynomials
-        let num_poly_vars_x = num_cons.log_2();
-        let num_poly_vars_y = (2 * num_vars).log_2();
-
         Self {
             num_cons,
             num_vars,
@@ -178,9 +174,6 @@ impl<F: JoltField> R1CSInstance<F> {
             .C
             .multiply_vec(self.num_cons, self.num_vars + self.num_inputs + 1, &z);
 
-        // assert_eq!(Az.len(), self.num_cons);
-        // assert_eq!(Bz.len(), self.num_cons);
-        // assert_eq!(Cz.len(), self.num_cons);
         (0..z.len()).all(|i| Az[i] * Bz[i] == Cz[i])
     }
 

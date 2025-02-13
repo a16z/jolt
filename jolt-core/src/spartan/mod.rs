@@ -165,7 +165,6 @@ impl<F: JoltField> Instance<F> {
     }
 }
 
-mod errors;
 mod r1csinstance;
 mod sparse_mlpoly;
 mod spartan_memory_checking;

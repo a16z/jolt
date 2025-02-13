@@ -723,11 +723,7 @@ where
         // we currently require the number of |inputs| + 1 to be at most number of vars
         assert!(num_inputs < num_vars);
 
-        let append_zeroes = if num_inputs > num_vars {
-            num_inputs - num_vars - 1
-        } else {
-            num_vars - num_inputs - 1
-        };
+        let append_zeroes = num_vars - num_inputs - 1;
 
         // append input to variables to create a single vector z
         let z = {
@@ -740,6 +736,7 @@ where
         let var_poly = DensePolynomial::new(preprocessing.vars.clone());
 
         commitments.witness = PCS::commit(&var_poly, pcs_setup);
+
         // derive the verifier's challenge tau
         let (num_rounds_x, num_rounds_y) = (z.len().log_2(), z.len().log_2());
 
@@ -823,7 +820,6 @@ where
 
         transcript.append_scalars(&[Ar, Br, Cr, eval_vars_at_ry]);
 
-        // //TODO: Add inner sum check openings to accumulator
         let eq_inner_sumcheck = DensePolynomial::new(EqPolynomial::evals(&inner_sumcheck_r[1..]));
         opening_accumulator.append(
             &[&var_poly],
@@ -880,6 +876,7 @@ where
 
         //batching scalar for the spark sum check
         let batching_scalar = transcript.challenge_scalar_powers(3);
+
         //Flattened vec of polynomials required for spark.
         let mut spark_polys = polynomials
             .e_rx
@@ -973,10 +970,6 @@ where
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
 
-        // add the commitment to the verifier's transcript
-        // self.comm_vars
-        //     .append_to_transcript(b"poly_commitment", transcript);
-
         let (num_rounds_x, num_rounds_y) = ((2 * num_vars).log_2(), (2 * num_vars).log_2());
 
         // derive the verifier's challenge tau
@@ -1019,8 +1012,6 @@ where
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_y, 2, &mut transcript)
             .map_err(|e| e)?;
-
-        let num_spark_sumcheck_rounds = r_x.len();
 
         let poly_input_eval = {
             // constant term

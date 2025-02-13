@@ -138,7 +138,6 @@ impl<F: JoltField> SparseMatPolynomial<F> {
 
     pub fn multiply_vec(&self, num_rows: usize, num_cols: usize, z: &[F]) -> Vec<F> {
         // assert_eq!(z.len(), num_cols);
-
         self.M.iter().fold(
             vec![F::zero(); z.len()],
             |mut Mz, SparseMatEntry { row, col, val }| {
