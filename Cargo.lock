@@ -2135,6 +2135,7 @@ dependencies = [
  "indicatif",
  "itertools 0.10.5",
  "memory-stats",
+ "num-bigint",
  "num-integer",
  "once_cell",
  "postcard",

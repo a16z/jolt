@@ -27,8 +27,10 @@ use crate::{
     },
     utils::errors::ProofVerifyError,
 };
+use ark_ff::BigInt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{chain, interleave, Itertools};
+use num_bigint::BigUint;
 use rayon::prelude::*;
 use std::array;
 use std::cmp::max;
@@ -138,14 +140,20 @@ impl<F: JoltField> SpartanPreprocessing<F> {
     ) -> Self {
         match constraints_file {
             Some(constraints_file) => {
-                let file = File::open(witness_file.unwrap()).expect("File not found");
+                println!("Preprocess started");
+                let file = File::open(witness_file.expect("Path doesn't exist"))
+                    .expect("Witness file not found");
                 let reader = std::io::BufReader::new(file);
                 let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
                 let mut z = Vec::new();
                 for value in witness {
-                    let val = value.as_bytes();
-                    z.push(F::from_bytes(val));
+                    let val: BigUint = value.parse().unwrap();
+                    let mut bytes = val.to_bytes_le();
+                    bytes.resize(32, 0u8);
+                    let val = F::from_bytes(&bytes);
+                    z.push(val);
                 }
+                println!("Witness reading done");
 
                 let num_vars = z.len() - num_inputs - 1;
                 assert!(num_inputs < num_vars);
@@ -158,40 +166,40 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                     vec![F::zero(); num_vars.next_power_of_two() - num_vars],
                 ]
                 .concat();
+                println!("vars size is {:?}", vars.len());
+                let inputs = z[1..num_inputs + 1].to_vec();
 
-                let inputs = z[1..num_inputs].to_vec();
-
-                let file = File::open(constraints_file);
-                let reader = std::io::BufReader::new(file.unwrap());
+                let file = File::open(constraints_file).expect("Constraints file not found");
+                let reader = std::io::BufReader::new(file);
                 let config: CircuitConfig = serde_json::from_reader(reader).unwrap();
 
                 let mut sparse_entries = vec![Vec::new(); 3];
 
                 // Reading JSON file
-                let num_cons = config.constraints.len() - 1;
+                let num_cons = config.constraints.len().next_power_of_two();
                 for (row, constraint) in config.constraints.iter().enumerate() {
                     for (j, dict) in constraint.iter().enumerate() {
                         for (key, value) in dict {
                             let col = key.parse::<usize>().unwrap();
-                            let val = value.as_bytes();
-                            let col = if col > 1 + num_inputs {
+                            let val: BigUint = value.parse().unwrap();
+                            let mut bytes = val.to_bytes_le();
+                            bytes.resize(32, 0u8);
+                            let val = F::from_bytes(&bytes);
+
+                            let col = if col > num_inputs {
                                 col + append_zeroes
                             } else {
                                 col
                             };
-                            sparse_entries[j].push(SparseMatEntry::new(
-                                row,
-                                col as usize,
-                                F::from_bytes(val),
-                            ));
+                            sparse_entries[j].push(SparseMatEntry::new(row, col as usize, val));
                         }
                     }
                 }
+                println!("Matrix reading done");
 
-                let num_vars = size_z - num_inputs - 1;
-                let max = max(size_z, num_cons);
-                let num_poly_vars_x = max.next_power_of_two().log_2();
-                let num_poly_vars_y = num_poly_vars_x;
+                let num_vars = size_z - num_inputs - 1 - append_zeroes;
+                let num_poly_vars_x = num_cons.next_power_of_two().log_2();
+                let num_poly_vars_y = size_z.next_power_of_two().log_2();
 
                 let poly_A = SparseMatPolynomial::new(
                     num_poly_vars_x,
@@ -210,7 +218,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                 );
                 let inst =
                     R1CSInstance::new(num_cons, num_vars, num_inputs, poly_A, poly_B, poly_C);
-
+                assert!(inst.is_sat(&inputs, &vars));
                 SpartanPreprocessing {
                     inst: Instance { inst },
                     vars,
@@ -619,13 +627,15 @@ where
 {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub(crate) spark_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    // pub(crate) spark_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_claims: (F, F, F, F),
-    pub(crate) spark_sumcheck_claims: [F; 9],
-    pub(crate) memory_checking:
-        MemoryCheckingProof<F, PCS, SpartanOpenings<F>, NoExogenousOpenings, ProofTranscript>,
-    pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    // pub(crate) spark_sumcheck_claims: [F; 9],
+    // pub(crate) memory_checking:
+    //     MemoryCheckingProof<F, PCS, SpartanOpenings<F>, NoExogenousOpenings, ProofTranscript>,
+    // pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    pub(crate) witness_commit: PCS::Commitment,
+    pub(crate) pcs_proof: PCS::Proof,
 }
 
 impl<F, PCS, ProofTranscript> SpartanProof<F, PCS, ProofTranscript>
@@ -698,24 +708,24 @@ where
     #[tracing::instrument(skip_all, name = "SpartanProof::prove")]
     pub fn prove<'a>(
         pcs_setup: &PCS::Setup,
-        polynomials: &mut SpartanPolynomials<F>,
-        commitments: &mut SpartanCommitments<PCS, ProofTranscript>,
+        // polynomials: &mut SpartanPolynomials<F>,
+        // commitments: &mut SpartanCommitments<PCS, ProofTranscript>,
         preprocessing: &mut SpartanPreprocessing<F>,
     ) -> Self {
         let mut transcript = ProofTranscript::new(b"Spartan transcript");
 
-        for idx in 0..3 {
-            commitments.rows[idx].append_to_transcript(&mut transcript);
-            commitments.cols[idx].append_to_transcript(&mut transcript);
-            commitments.vals[idx].append_to_transcript(&mut transcript);
-            commitments.read_cts_rows[idx].append_to_transcript(&mut transcript);
-            commitments.read_cts_cols[idx].append_to_transcript(&mut transcript);
-            commitments.final_cts_rows[idx].append_to_transcript(&mut transcript);
-            commitments.final_cts_cols[idx].append_to_transcript(&mut transcript);
-        }
+        // for idx in 0..3 {
+        //     commitments.rows[idx].append_to_transcript(&mut transcript);
+        //     commitments.cols[idx].append_to_transcript(&mut transcript);
+        //     commitments.vals[idx].append_to_transcript(&mut transcript);
+        //     commitments.read_cts_rows[idx].append_to_transcript(&mut transcript);
+        //     commitments.read_cts_cols[idx].append_to_transcript(&mut transcript);
+        //     commitments.final_cts_rows[idx].append_to_transcript(&mut transcript);
+        //     commitments.final_cts_cols[idx].append_to_transcript(&mut transcript);
+        // }
 
-        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
-            ProverOpeningAccumulator::new();
+        // let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+        //     ProverOpeningAccumulator::new();
 
         let num_inputs = preprocessing.inputs.len();
         let num_vars = preprocessing.vars.len();
@@ -728,17 +738,23 @@ where
         // append input to variables to create a single vector z
         let z = {
             let mut z = vec![F::one()]; // add constant term in z
-            z.extend(preprocessing.inputs.clone());
+            z.extend(&preprocessing.inputs);
             z.extend(&vec![F::zero(); append_zeroes]); // we will pad with zeros
-            z.extend(&preprocessing.vars.clone());
+            z.extend(&preprocessing.vars);
             DensePolynomial::new(z)
         };
         let var_poly = DensePolynomial::new(preprocessing.vars.clone());
 
-        commitments.witness = PCS::commit(&var_poly, pcs_setup);
+        // commitments.witness = PCS::commit(&var_poly, pcs_setup);
+        let witness_commit = PCS::commit(&var_poly, pcs_setup);
+        witness_commit.append_to_transcript(&mut transcript);
 
         // derive the verifier's challenge tau
-        let (num_rounds_x, num_rounds_y) = (z.len().log_2(), z.len().log_2());
+        let (num_rounds_x, num_rounds_y) = (
+            (preprocessing.inst.inst.get_num_cons()).log_2(),
+            z.len().log_2(),
+        );
+        println!("num_rounds_x is {:?}", num_rounds_x);
 
         let tau = transcript.challenge_vector(num_rounds_x);
 
@@ -819,159 +835,173 @@ where
         let eval_vars_at_ry = var_poly.evaluate(&inner_sumcheck_r[1..]);
 
         transcript.append_scalars(&[Ar, Br, Cr, eval_vars_at_ry]);
-
-        let eq_inner_sumcheck = DensePolynomial::new(EqPolynomial::evals(&inner_sumcheck_r[1..]));
-        opening_accumulator.append(
-            &[&var_poly],
-            eq_inner_sumcheck,
-            inner_sumcheck_r[1..].to_vec(),
-            &[&eval_vars_at_ry],
-            &mut transcript,
-        );
-
-        let eq_rx = EqPolynomial::evals(&outer_sumcheck_r);
-        let eq_ry = EqPolynomial::evals(&inner_sumcheck_r);
-
-        preprocessing.rx_ry = Some([outer_sumcheck_r, inner_sumcheck_r].concat());
-
-        polynomials.e_rx = polynomials
-            .rows
-            .clone()
-            .into_par_iter()
-            .map(|row| {
-                DensePolynomial::new(
-                    row.Z
-                        .iter()
-                        .map(|entry| eq_rx[F::to_u64(entry).unwrap() as usize])
-                        .collect_vec(),
-                )
-            })
-            .collect();
-
-        polynomials.e_ry = polynomials
-            .cols
-            .clone()
-            .into_par_iter()
-            .map(|col| {
-                DensePolynomial::new(
-                    col.Z
-                        .iter()
-                        .map(|entry| eq_ry[F::to_u64(entry).unwrap() as usize])
-                        .collect_vec(),
-                )
-            })
-            .collect();
-
-        polynomials.eq_rx = Some(DensePolynomial::new(eq_rx));
-        polynomials.eq_ry = Some(DensePolynomial::new(eq_ry));
-
-        commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
-        commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
-
-        //Appending commitments to the transcript
-        for i in 0..3 {
-            commitments.e_rx[i].append_to_transcript(&mut transcript);
-            commitments.e_ry[i].append_to_transcript(&mut transcript);
-        }
-
-        //batching scalar for the spark sum check
-        let batching_scalar = transcript.challenge_scalar_powers(3);
-
-        //Flattened vec of polynomials required for spark.
-        let mut spark_polys = polynomials
-            .e_rx
-            .iter()
-            .chain(polynomials.e_ry.iter())
-            .chain(polynomials.vals.iter())
-            .cloned()
-            .collect_vec();
-
-        let spark_func = |polys: &[F]| -> F {
-            (0..3).fold(F::zero(), |acc, idx| {
-                acc + (polys[idx] * polys[idx + 3] * polys[idx + 6])
-                    .mul_01_optimized(batching_scalar[idx])
-            })
-        };
-
-        let (spark_sumcheck_proof, spark_sumcheck_r, spark_claims) =
-            SumcheckInstanceProof::prove_arbitrary(
-                &F::zero(), //passsing zero since it is not required.
-                polynomials.e_rx[0].len().log_2(),
-                &mut spark_polys,
-                spark_func,
-                3,
-                &mut transcript,
-            );
-
-        transcript.append_scalars(&spark_claims);
-
-        let spark_claim_refs: Vec<&F> = spark_claims.iter().map(|claim| claim).collect();
-        let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_sumcheck_r));
-
-        opening_accumulator.append(
-            &polynomials
-                .e_rx
-                .iter()
-                .chain(polynomials.e_ry.iter())
-                .chain(polynomials.vals.iter())
-                .collect_vec(),
-            spark_eq,
-            spark_sumcheck_r,
-            &spark_claim_refs,
-            &mut transcript,
-        );
-
-        let memory_checking = Self::prove_memory_checking(
+        let pcs_proof = PCS::prove(
             pcs_setup,
-            preprocessing,
-            &polynomials,
-            &JoltPolynomials::default(),
-            &mut opening_accumulator,
+            &var_poly,
+            &inner_sumcheck_r[1..],
             &mut transcript,
         );
+        // let eq_inner_sumcheck = DensePolynomial::new(EqPolynomial::evals(&inner_sumcheck_r[1..]));
+        // opening_accumulator.append(
+        //     &[&var_poly],
+        //     eq_inner_sumcheck,
+        //     inner_sumcheck_r[1..].to_vec(),
+        //     &[&eval_vars_at_ry],
+        //     &mut transcript,
+        // );
 
-        let opening_proof = opening_accumulator.reduce_and_prove::<PCS>(pcs_setup, &mut transcript);
+        // let eq_rx = EqPolynomial::evals(&outer_sumcheck_r);
+        // let eq_ry = EqPolynomial::evals(&inner_sumcheck_r);
+
+        // preprocessing.rx_ry = Some([outer_sumcheck_r, inner_sumcheck_r].concat());
+
+        // polynomials.e_rx = polynomials
+        //     .rows
+        //     .clone()
+        //     .into_par_iter()
+        //     .map(|row| {
+        //         DensePolynomial::new(
+        //             row.Z
+        //                 .iter()
+        //                 .map(|entry| eq_rx[F::to_u64(entry).unwrap() as usize])
+        //                 .collect_vec(),
+        //         )
+        //     })
+        //     .collect();
+
+        // polynomials.e_ry = polynomials
+        //     .cols
+        //     .clone()
+        //     .into_par_iter()
+        //     .map(|col| {
+        //         DensePolynomial::new(
+        //             col.Z
+        //                 .iter()
+        //                 .map(|entry| eq_ry[F::to_u64(entry).unwrap() as usize])
+        //                 .collect_vec(),
+        //         )
+        //     })
+        //     .collect();
+
+        // polynomials.eq_rx = Some(DensePolynomial::new(eq_rx));
+        // polynomials.eq_ry = Some(DensePolynomial::new(eq_ry));
+
+        // commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
+        // commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
+
+        // //Appending commitments to the transcript
+        // for i in 0..3 {
+        //     commitments.e_rx[i].append_to_transcript(&mut transcript);
+        //     commitments.e_ry[i].append_to_transcript(&mut transcript);
+        // }
+
+        // //batching scalar for the spark sum check
+        // let batching_scalar = transcript.challenge_scalar_powers(3);
+        // println!("polynomials
+        //     .e_rx len is {:?}", polynomials
+        //     .e_rx[0].len());
+        // //Flattened vec of polynomials required for spark.
+        // let mut spark_polys = polynomials
+        //     .e_rx
+        //     .iter()
+        //     .chain(polynomials.e_ry.iter())
+        //     .chain(polynomials.vals.iter())
+        //     .cloned()
+        //     .collect_vec();
+
+        // let spark_func = |polys: &[F]| -> F {
+        //     (0..3).fold(F::zero(), |acc, idx| {
+        //         acc + (polys[idx] * polys[idx + 3] * polys[idx + 6])
+        //             .mul_01_optimized(batching_scalar[idx])
+        //     })
+        // };
+
+        // let (spark_sumcheck_proof, spark_sumcheck_r, spark_claims) =
+        //     SumcheckInstanceProof::prove_arbitrary(
+        //         &F::zero(), //passsing zero since it is not required.
+        //         polynomials.e_rx[0].len().log_2(),
+        //         &mut spark_polys,
+        //         spark_func,
+        //         3,
+        //         &mut transcript,
+        //     );
+
+        // transcript.append_scalars(&spark_claims);
+
+        // let spark_claim_refs: Vec<&F> = spark_claims.iter().map(|claim| claim).collect();
+        // let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_sumcheck_r));
+
+        // opening_accumulator.append(
+        //     &polynomials
+        //         .e_rx
+        //         .iter()
+        //         .chain(polynomials.e_ry.iter())
+        //         .chain(polynomials.vals.iter())
+        //         .collect_vec(),
+        //     spark_eq,
+        //     spark_sumcheck_r,
+        //     &spark_claim_refs,
+        //     &mut transcript,
+        // );
+
+        // let memory_checking = Self::prove_memory_checking(
+        //     pcs_setup,
+        //     preprocessing,
+        //     &polynomials,
+        //     &JoltPolynomials::default(),
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // );
+
+        // let opening_proof = opening_accumulator.reduce_and_prove::<PCS>(pcs_setup, &mut transcript);
 
         SpartanProof {
             outer_sumcheck_proof,
             inner_sumcheck_proof,
-            spark_sumcheck_proof,
+            // spark_sumcheck_proof,
             outer_sumcheck_claims: (
                 outer_sumcheck_claims[1],
                 outer_sumcheck_claims[2],
                 outer_sumcheck_claims[3],
             ),
             inner_sumcheck_claims: (Ar, Br, Cr, eval_vars_at_ry),
-            spark_sumcheck_claims: array::from_fn(|i| spark_claims[i]),
-            memory_checking,
-            opening_proof,
+            // spark_sumcheck_claims: array::from_fn(|i| spark_claims[i]),
+            // memory_checking,
+            // opening_proof,
+            witness_commit,
+            pcs_proof,
         }
     }
 
     pub fn verify(
         pcs_setup: &PCS::Setup,
         preprocessing: &SpartanPreprocessing<F>,
-        commitments: &SpartanCommitments<PCS, ProofTranscript>,
+        // commitments: &SpartanCommitments<PCS, ProofTranscript>,
         proof: SpartanProof<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let num_vars = preprocessing.vars.len();
         let mut transcript = ProofTranscript::new(b"Spartan transcript");
 
-        for idx in 0..3 {
-            commitments.rows[idx].append_to_transcript(&mut transcript);
-            commitments.cols[idx].append_to_transcript(&mut transcript);
-            commitments.vals[idx].append_to_transcript(&mut transcript);
-            commitments.read_cts_rows[idx].append_to_transcript(&mut transcript);
-            commitments.read_cts_cols[idx].append_to_transcript(&mut transcript);
-            commitments.final_cts_rows[idx].append_to_transcript(&mut transcript);
-            commitments.final_cts_cols[idx].append_to_transcript(&mut transcript);
-        }
+        proof.witness_commit.append_to_transcript(&mut transcript);
+
+        // for idx in 0..3 {
+        //     commitments.rows[idx].append_to_transcript(&mut transcript);
+        //     commitments.cols[idx].append_to_transcript(&mut transcript);
+        //     commitments.vals[idx].append_to_transcript(&mut transcript);
+        //     commitments.read_cts_rows[idx].append_to_transcript(&mut transcript);
+        //     commitments.read_cts_cols[idx].append_to_transcript(&mut transcript);
+        //     commitments.final_cts_rows[idx].append_to_transcript(&mut transcript);
+        //     commitments.final_cts_cols[idx].append_to_transcript(&mut transcript);
+        // }
         // input.append_to_transcript(b"input", transcript);
-        let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
-            VerifierOpeningAccumulator::new();
+        // let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
+        //     VerifierOpeningAccumulator::new();
 
-        let (num_rounds_x, num_rounds_y) = ((2 * num_vars).log_2(), (2 * num_vars).log_2());
-
+        let (num_rounds_x, num_rounds_y) = (
+            (preprocessing.inst.inst.get_num_cons()).log_2(),
+            (2 * num_vars).log_2(),
+        );
+        println!("num_rounds_x is {:?}", num_rounds_x);
         // derive the verifier's challenge tau
         let tau = transcript.challenge_vector(num_rounds_x);
 
@@ -981,7 +1011,6 @@ where
             .outer_sumcheck_proof
             .verify(F::zero(), num_rounds_x, 3, &mut transcript)
             .map_err(|e| e)?;
-
         let (claim_Az, claim_Bz, claim_Cz) = proof.outer_sumcheck_claims;
 
         let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
@@ -1049,84 +1078,94 @@ where
             ]
             .as_slice(),
         );
-
-        opening_accumulator.append(
-            &[&commitments.witness],
-            inner_sumcheck_r[1..].to_vec(),
-            &[&claim_w],
-            &mut transcript,
-        );
-
-        assert_eq!(
-            preprocessing.rx_ry.clone().unwrap(),
-            [r_x, inner_sumcheck_r].concat(),
-        );
-
-        for i in 0..3 {
-            commitments.e_rx[i].append_to_transcript(&mut transcript);
-            commitments.e_ry[i].append_to_transcript(&mut transcript);
-        }
-
-        let batching_scalar = transcript.challenge_scalar_powers(3);
-
-        let spark_claim = claim_A + batching_scalar[1] * claim_B + batching_scalar[2] * claim_C;
-
-        let (claim_spark_final, spark_sumcheck_r) = proof
-            .spark_sumcheck_proof
-            .verify(
-                spark_claim,
-                preprocessing.inst.inst.get_num_cons().log_2(),
-                3,
-                &mut transcript,
-            )
-            .map_err(|e| e)?;
-
-        transcript.append_scalars(&proof.spark_sumcheck_claims);
-
-        let expected_spark_claim = (0..3).fold(F::zero(), |acc, idx| {
-            acc + (proof.spark_sumcheck_claims[idx]
-                * proof.spark_sumcheck_claims[idx + 3]
-                * proof.spark_sumcheck_claims[idx + 6])
-                .mul_01_optimized(batching_scalar[idx])
-        });
-
-        if claim_spark_final != expected_spark_claim {
-            return Err(ProofVerifyError::SpartanError(
-                "Invalid Spark Sumcheck Claim".to_string(),
-            ));
-        }
-
-        let spark_commitment_refs: Vec<&<PCS as CommitmentScheme<ProofTranscript>>::Commitment> =
-            chain![
-                commitments.e_rx.iter().map(|reference| reference),
-                commitments.e_ry.iter().map(|reference| reference),
-                commitments.vals.iter().map(|reference| reference),
-            ]
-            .collect();
-
-        let spark_claims_refs: Vec<&F> = proof
-            .spark_sumcheck_claims
-            .iter()
-            .map(|reference| reference)
-            .collect();
-        opening_accumulator.append(
-            &spark_commitment_refs,
-            spark_sumcheck_r,
-            &spark_claims_refs,
-            &mut transcript,
-        );
-        Self::verify_memory_checking(
-            preprocessing,
+        PCS::verify(
+            &proof.pcs_proof,
             pcs_setup,
-            proof.memory_checking,
-            &commitments,
-            &JoltCommitments::<PCS, ProofTranscript>::default(),
-            &mut opening_accumulator,
             &mut transcript,
+            &inner_sumcheck_r[1..],
+            &claim_w,
+            &proof.witness_commit,
         )?;
+        // opening_accumulator.append(
+        //     &[&commitments.witness],
+        //     inner_sumcheck_r[1..].to_vec(),
+        //     &[&claim_w],
+        //     &mut transcript,
+        // );
+
+        // assert_eq!(
+        //     preprocessing.rx_ry.clone().unwrap(),
+        //     [r_x, inner_sumcheck_r].concat(),
+        // );
+
+        // for i in 0..3 {
+        //     commitments.e_rx[i].append_to_transcript(&mut transcript);
+        //     commitments.e_ry[i].append_to_transcript(&mut transcript);
+        // }
+
+        // let batching_scalar = transcript.challenge_scalar_powers(3);
+        // let spark_sumcheck_rounds =   preprocessing.inst.inst.get_matrices().iter() .map(|sparse_poly| sparse_poly.get_num_nz_entries())
+        // .max()
+        // .unwrap().log_2();
+
+        // let spark_claim = claim_A + batching_scalar[1] * claim_B + batching_scalar[2] * claim_C;
+        // let (claim_spark_final, spark_sumcheck_r) = proof
+        //     .spark_sumcheck_proof
+        //     .verify(
+        //         spark_claim,
+        //         spark_sumcheck_rounds,
+        //         3,
+        //         &mut transcript,
+        //     )
+        //     .map_err(|e| e)?;
+
+        // transcript.append_scalars(&proof.spark_sumcheck_claims);
+
+        // let expected_spark_claim = (0..3).fold(F::zero(), |acc, idx| {
+        //     acc + (proof.spark_sumcheck_claims[idx]
+        //         * proof.spark_sumcheck_claims[idx + 3]
+        //         * proof.spark_sumcheck_claims[idx + 6])
+        //         .mul_01_optimized(batching_scalar[idx])
+        // });
+
+        // if claim_spark_final != expected_spark_claim {
+        //     return Err(ProofVerifyError::SpartanError(
+        //         "Invalid Spark Sumcheck Claim".to_string(),
+        //     ));
+        // }
+
+        // let spark_commitment_refs: Vec<&<PCS as CommitmentScheme<ProofTranscript>>::Commitment> =
+        //     chain![
+        //         commitments.e_rx.iter().map(|reference| reference),
+        //         commitments.e_ry.iter().map(|reference| reference),
+        //         commitments.vals.iter().map(|reference| reference),
+        //     ]
+        //     .collect();
+
+        // let spark_claims_refs: Vec<&F> = proof
+        //     .spark_sumcheck_claims
+        //     .iter()
+        //     .map(|reference| reference)
+        //     .collect();
+        // opening_accumulator.append(
+        //     &spark_commitment_refs,
+        //     spark_sumcheck_r,
+        //     &spark_claims_refs,
+        //     &mut transcript,
+        // );
+        // Self::verify_memory_checking(
+        //     preprocessing,
+        //     pcs_setup,
+        //     proof.memory_checking,
+        //     &commitments,
+        //     &JoltCommitments::<PCS, ProofTranscript>::default(),
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
 
         // Batch-verify all openings
-        opening_accumulator.reduce_and_verify(pcs_setup, &proof.opening_proof, &mut transcript)?;
+        // opening_accumulator.reduce_and_verify(pcs_setup, &proof.opening_proof, &mut transcript)?;
+        println!("Verifier done");
         Ok(())
     }
 
@@ -1152,24 +1191,29 @@ mod tests {
     pub type PCS = HyperKZG<Bn254, ProofTranscript>;
     #[test]
     fn spartan() {
-        let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 0);
+        let constraint_path =
+            Some("/Users/anujsharma/code/jolt/jolt-core/src/spartan/verifier_constraints.json");
+        let witness_path = Some("/Users/anujsharma/code/jolt/jolt-core/src/spartan/witness.json");
+
+        println!("----------------------------------------------------TESTING----------------------------------------------------");
+
+        let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
+        // let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 0);
         let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
-            preprocessing.inputs.len() + preprocessing.vars.len(),
+            2 * preprocessing.vars.len(),
         );
         let pcs_setup = PCS::setup(&commitment_shapes);
-        let (mut spartan_polynomials, mut spartan_commitments) =
-            SpartanProof::<Fr, PCS, ProofTranscript>::generate_witness(&preprocessing, &pcs_setup);
-
+        // let mut spartan_commitments = SpartanStuff::initialize(&preprocessing);
         let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(
             &pcs_setup,
-            &mut spartan_polynomials,
-            &mut spartan_commitments,
+            // &mut spartan_polynomials,
+            // &mut spartan_commitments,
             &mut preprocessing,
         );
         SpartanProof::<Fr, PCS, ProofTranscript>::verify(
             &pcs_setup,
             &preprocessing,
-            &spartan_commitments,
+            // &spartan_commitments,
             proof,
         )
         .unwrap();

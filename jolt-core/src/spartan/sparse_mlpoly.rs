@@ -137,9 +137,9 @@ impl<F: JoltField> SparseMatPolynomial<F> {
     }
 
     pub fn multiply_vec(&self, num_rows: usize, num_cols: usize, z: &[F]) -> Vec<F> {
-        // assert_eq!(z.len(), num_cols);
+        assert_eq!(z.len(), num_cols);
         self.M.iter().fold(
-            vec![F::zero(); z.len()],
+            vec![F::zero(); num_rows],
             |mut Mz, SparseMatEntry { row, col, val }| {
                 Mz[*row] += *val * z[*col];
                 Mz
@@ -148,7 +148,7 @@ impl<F: JoltField> SparseMatPolynomial<F> {
     }
 
     pub fn compute_eval_table_sparse(&self, rx: &[F], num_rows: usize, num_cols: usize) -> Vec<F> {
-        // assert_eq!(rx.len(), num_rows);
+        assert_eq!(rx.len(), num_rows);
 
         self.M.iter().fold(
             vec![F::zero(); num_cols],

@@ -779,7 +779,6 @@ where
 }
 
 pub mod bytecode;
-pub mod circom_testing;
 pub mod instruction_lookups;
 pub mod read_write_memory;
 pub mod rv32i_vm;

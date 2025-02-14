@@ -124,9 +124,8 @@ impl<F: JoltField> R1CSInstance<F> {
                 ));
             }
         }
-        let max = max(size_z, num_cons);
-        let num_poly_vars_x = max.next_power_of_two().log_2();
-        let num_poly_vars_y = num_poly_vars_x;
+        let num_poly_vars_x = num_cons.next_power_of_two().log_2();
+        let num_poly_vars_y = size_z.next_power_of_two().log_2();
         let poly_A = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, A);
         let poly_B = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, B);
         let poly_C = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, C);
@@ -164,17 +163,23 @@ impl<F: JoltField> R1CSInstance<F> {
         };
 
         // verify if Az * Bz - Cz = [0...]
-        let Az = self
-            .A
-            .multiply_vec(self.num_cons, self.num_vars + self.num_inputs + 1, &z);
-        let Bz = self
-            .B
-            .multiply_vec(self.num_cons, self.num_vars + self.num_inputs + 1, &z);
-        let Cz = self
-            .C
-            .multiply_vec(self.num_cons, self.num_vars + self.num_inputs + 1, &z);
+        let Az = self.A.multiply_vec(
+            self.num_cons,
+            self.num_vars + self.num_inputs + append_zeroes + 1,
+            &z,
+        );
+        let Bz = self.B.multiply_vec(
+            self.num_cons,
+            self.num_vars + self.num_inputs + append_zeroes + 1,
+            &z,
+        );
+        let Cz = self.C.multiply_vec(
+            self.num_cons,
+            self.num_vars + self.num_inputs + append_zeroes + 1,
+            &z,
+        );
 
-        (0..z.len()).all(|i| Az[i] * Bz[i] == Cz[i])
+        (0..self.num_cons).all(|i| Az[i] * Bz[i] == Cz[i])
     }
 
     pub fn multiply_vec(
