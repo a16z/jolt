@@ -6,7 +6,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::thread_rng;
 
 use super::{
-    vec_operations::{e, mul_gt},
+    vec_operations::{e, mul_gt, InnerProd},
     Error, G1Vec, G2Vec, Gt, PublicParams, Zr, G1, G2,
 };
 

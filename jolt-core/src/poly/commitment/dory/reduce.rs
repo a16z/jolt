@@ -8,8 +8,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::{Digest, Sha3_256};
 
 use super::{
-    params::ReducePublicParams, vec_operations::mul_gt, Commitment, Error, G1Vec, G2Vec, Gt,
-    PublicParams, ScalarProof, Witness, Zr, G1, G2,
+    params::ReducePublicParams,
+    vec_operations::{mul_gt, InnerProd},
+    Commitment, Error, G1Vec, G2Vec, Gt, PublicParams, ScalarProof, Witness, Zr, G1, G2,
 };
 
 /// Proof

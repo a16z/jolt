@@ -21,16 +21,18 @@ pub fn mul_gt<Curve: Pairing>(gts: &[Gt<Curve>]) -> Option<Gt<Curve>> {
     })
 }
 
-// G1
-#[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
-pub struct G1Vec<Curve: Pairing>(Vec<G1<Curve>>);
+pub trait InnerProd {
+    type G2;
+    type Gt;
+    fn inner_prod(&self, g2v: &Self::G2) -> Result<Self::Gt, Error>;
+}
 
-impl<Curve: Pairing> G1Vec<Curve> {
-    pub fn inner_prod(&self, g2v: &G2Vec<Curve>) -> Result<Gt<Curve>, Error>
-    where
-        G1<Curve>: From<G1<Curve>>,
-        G2<Curve>: From<G2<Curve>>,
-    {
+impl<Curve: Pairing> InnerProd for G1Vec<Curve> {
+    type G2 = G2Vec<Curve>;
+
+    type Gt = Gt<Curve>;
+
+    fn inner_prod(&self, g2v: &Self::G2) -> Result<Self::Gt, Error> {
         match (self.as_ref(), g2v.as_ref()) {
             ([], _) => Err(Error::EmptyVector(GType::G1)),
             (_, []) => Err(Error::EmptyVector(GType::G2)),
@@ -39,7 +41,13 @@ impl<Curve: Pairing> G1Vec<Curve> {
             (a, b) => Ok(Curve::multi_pairing(a, b)),
         }
     }
+}
 
+// G1
+#[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
+pub struct G1Vec<Curve: Pairing>(Vec<G1<Curve>>);
+
+impl<Curve: Pairing> G1Vec<Curve> {
     pub fn sum(&self) -> G1<Curve> {
         self.iter().sum()
     }
@@ -224,6 +232,8 @@ where
 mod tests {
     use ark_bn254::Bn254;
     use ark_ff::UniformRand;
+
+    use super::InnerProd;
 
     use super::{
         super::{G1Vec, G1, G2},

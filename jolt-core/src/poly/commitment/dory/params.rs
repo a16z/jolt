@@ -4,7 +4,7 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
 use sha3::{Digest, Sha3_256};
 
-use super::{Error, G1Vec, G2Vec, Gt, G1, G2};
+use super::{vec_operations::InnerProd, Error, G1Vec, G2Vec, Gt, G1, G2};
 
 #[derive(Clone)]
 pub struct PublicParams<P: Pairing> {
