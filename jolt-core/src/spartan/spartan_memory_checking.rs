@@ -166,7 +166,6 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                     vec![F::zero(); num_vars.next_power_of_two() - num_vars],
                 ]
                 .concat();
-                println!("vars size is {:?}", vars.len());
                 let inputs = z[1..num_inputs + 1].to_vec();
 
                 let file = File::open(constraints_file).expect("Constraints file not found");
@@ -754,7 +753,6 @@ where
             (preprocessing.inst.inst.get_num_cons()).log_2(),
             z.len().log_2(),
         );
-        println!("num_rounds_x is {:?}", num_rounds_x);
 
         let tau = transcript.challenge_vector(num_rounds_x);
 
@@ -1001,7 +999,6 @@ where
             (preprocessing.inst.inst.get_num_cons()).log_2(),
             (2 * num_vars).log_2(),
         );
-        println!("num_rounds_x is {:?}", num_rounds_x);
         // derive the verifier's challenge tau
         let tau = transcript.challenge_vector(num_rounds_x);
 
@@ -1165,7 +1162,6 @@ where
 
         // Batch-verify all openings
         // opening_accumulator.reduce_and_verify(pcs_setup, &proof.opening_proof, &mut transcript)?;
-        println!("Verifier done");
         Ok(())
     }
 
@@ -1192,8 +1188,8 @@ mod tests {
     #[test]
     fn spartan() {
         let constraint_path =
-            Some("/Users/anujsharma/code/jolt/jolt-core/src/spartan/verifier_constraints.json");
-        let witness_path = Some("/Users/anujsharma/code/jolt/jolt-core/src/spartan/witness.json");
+            Some("src/spartan/verifier_constraints.json");
+        let witness_path = Some("src/spartan/witness.json");
 
         println!("----------------------------------------------------TESTING----------------------------------------------------");
 
