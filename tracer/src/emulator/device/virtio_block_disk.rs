@@ -315,7 +315,7 @@ impl VirtioBlockDisk {
     ///
     /// # Arguments
     /// * `memory`
-    /// * `mem_addresss` Physical address. Must be eight-byte aligned.
+    /// * `mem_address` Physical address. Must be eight-byte aligned.
     /// * `disk_address` Must be eight-byte aligned.
     /// * `length` Must be eight-byte aligned.
     fn transfer_from_disk(
@@ -350,7 +350,7 @@ impl VirtioBlockDisk {
     ///
     /// # Arguments
     /// * `memory`
-    /// * `mem_addresss` Physical address. Must be eight-byte aligned.
+    /// * `mem_address` Physical address. Must be eight-byte aligned.
     /// * `disk_address` Must be eight-byte aligned.
     /// * `length` Must be eight-byte aligned.
     fn transfer_to_disk(
@@ -384,7 +384,7 @@ impl VirtioBlockDisk {
     /// Reads a byte from disk.
     ///
     /// # Arguments
-    /// * `addresss` Address in disk
+    /// * `address` Address in disk
     fn read_from_disk(&mut self, address: u64) -> u8 {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
@@ -394,7 +394,7 @@ impl VirtioBlockDisk {
     /// Writes a byte to disk.
     ///
     /// # Arguments
-    /// * `addresss` Address in disk
+    /// * `address` Address in disk
     /// * `value` Data written to disk
     fn write_to_disk(&mut self, address: u64, value: u8) {
         let index = (address >> 3) as usize;
