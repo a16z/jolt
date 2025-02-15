@@ -87,6 +87,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
 
         // Validation: Number of ops should be a multiple of 7
         match instruction_type {
+            // match on the opcode
             RV32InstructionFormat::R => [rs1_read(), rs2_read(), rd_write(), MemoryOp::noop_read()],
             RV32InstructionFormat::U => [
                 MemoryOp::noop_read(),
@@ -581,6 +582,8 @@ impl RV32IM {
             RV32IM::PRECOMPILE |
             RV32IM::VIRTUAL_PRECOMPILE |
             RV32IM::UNIMPL => unimplemented!(),
+
+            // 3 no-ops (for the three registers) and then write to RAM
         }
     }
 }
