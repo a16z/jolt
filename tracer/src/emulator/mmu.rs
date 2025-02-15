@@ -1150,6 +1150,19 @@ impl Mmu {
     pub fn get_mut_uart(&mut self) -> &mut Uart {
         &mut self.uart
     }
+
+    /// Gets the precompile input from the correct location in memory designated for precompile inputs.
+    pub fn get_precompile_input_word(&mut self, v_address: u64) -> Result<u32, Trap> {
+        // Load the world from virtual memory.
+        let input_word = self.load_word(v_address);
+        input_word
+    }
+
+    /// Sets the precompile output to the correct location in memory designated for precompile outputs.
+    pub fn set_precompile_output_word(&mut self, output_word: u32, p_address: u64) {
+        // Store the word in the correct precompile output memory location
+        self.store_word(p_address, output_word);
+    }
 }
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
