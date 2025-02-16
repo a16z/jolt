@@ -83,6 +83,21 @@ impl<F: JoltField> SplitEqPolynomial<F> {
             DensePolynomial::new(merged)
         }
     }
+
+    /// Drop the first variable from E1 or E2 table for Gruen's optimization
+    /// Before n/2: E1⁽ⁱ⁺¹⁾[x'] = eq(w[i+2:n/2], x')
+    /// After n/2:  E2⁽ⁱ⁺¹⁾[x'] = eq(w[i+2:n], x')
+    pub fn drop_next_variable(&mut self) {
+        if self.E1_len > 1 {
+            // Still in first phase (before n/2)
+            self.E1 = EqPolynomial::evals(&self.E1[1..self.E1_len]);
+            self.E1_len -= 1;
+        } else {
+            // In second phase (after n/2)
+            self.E2 = EqPolynomial::evals(&self.E2[1..self.E2_len]);
+            self.E2_len -= 1;
+        }
+    }
 }
 
 #[cfg(test)]
