@@ -1,5 +1,3 @@
-use std::ops::Mul;
-
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -15,7 +13,7 @@ use crate::{
 use super::{
     append_gt,
     params::SingleParam,
-    vec_operations::{e, mul_gt, InnerProd},
+    vec_operations::{e, InnerProd},
     Error, G1Vec, G2Vec, Gt, PublicParams, Zr, G1, G2,
 };
 
@@ -25,8 +23,8 @@ pub struct Witness<Curve>
 where
     Curve: Pairing,
 {
-    pub v1: G1Vec<Curve>,
-    pub v2: G2Vec<Curve>,
+    pub u1: G1Vec<Curve>,
+    pub u2: G2Vec<Curve>,
 }
 
 impl<P> Witness<P>
@@ -56,7 +54,7 @@ where
         let v1 = v1.into();
         let v2 = v2.into();
 
-        Self { v1, v2 }
+        Self { u1: v1, u2: v2 }
     }
 }
 
@@ -85,15 +83,15 @@ where
 }
 
 pub fn commit<Curve>(
-    Witness { v1, v2 }: Witness<Curve>,
+    Witness { u1, u2 }: Witness<Curve>,
     public_params: &PublicParams<Curve>,
 ) -> Result<Commitment<Curve>, Error>
 where
     Curve: Pairing,
 {
-    let d1 = v1.inner_prod(&public_params.g2v())?;
-    let d2 = public_params.g1v().inner_prod(&v2)?;
-    let c = v1.inner_prod(&v2)?;
+    let d1 = u1.inner_prod(&public_params.g2v())?;
+    let d2 = public_params.g1v().inner_prod(&u2)?;
+    let c = u1.inner_prod(&u2)?;
 
     let commitment = Commitment { d1, d2, c };
     Ok(commitment)
@@ -114,8 +112,8 @@ where
 {
     pub fn new(witness: Witness<Curve>) -> Self {
         Self {
-            e1: witness.v1[0],
-            e2: witness.v2[0],
+            e1: witness.u1[0],
+            e2: witness.u2[0],
         }
     }
 
@@ -128,12 +126,12 @@ where
         let d: Zr<Curve> = Zr::<Curve>::rand(&mut rng);
         let d_inv = d.inverse().ok_or(Error::CouldntInvertD)?;
 
-        let g1 = G1Vec::<Curve>::from(&[self.e1, pp.g1 * d]).sum();
+        let g1 = [self.e1, pp.g1 * d].iter().sum();
 
-        let g2 = G2Vec::<Curve>::from(&[self.e2, pp.g2 * d_inv]).sum();
+        let g2 = [self.e2, pp.g2 * d_inv].iter().sum();
         let left_eq = e(g1, g2);
 
-        let right_eq = mul_gt(&[pp.x, *c, *d2 * d, *d1 * d_inv]);
+        let right_eq = [pp.c, *c, *d2 * d, *d1 * d_inv].iter().sum();
 
         Ok(left_eq == right_eq)
     }

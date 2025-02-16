@@ -19,8 +19,8 @@ fn test_scalar_product_proof() {
     let g1v = vec![G1::<Bn254>::rand(&mut rng)];
     let g2v = vec![G2::<Bn254>::rand(&mut rng)];
     let witness = Witness {
-        v1: g1v.into(),
-        v2: g2v.into(),
+        u1: g1v.into(),
+        u2: g2v.into(),
     };
     let commitment = commit(witness.clone(), &public_params).unwrap();
 
@@ -38,14 +38,13 @@ fn test_dory_reduce() {
 
     let params = PublicParams::generate_public_params(&mut rng, n).unwrap();
 
-    let witness = Witness { v1: g1v, v2: g2v };
+    let witness = Witness { u1: g1v, u2: g2v };
     let commitment = commit(witness.clone(), &params[0]).unwrap();
     let mut transcript = KeccakTranscript::new(&[]);
 
     let proof = reduce::reduce(&mut transcript, &params, witness, commitment).unwrap();
 
-    assert_eq!(proof.from_prover_1.len(), 3);
-    assert_eq!(proof.from_prover_2.len(), 3);
+    assert_eq!(proof.from_prover.len(), 3);
 
     assert_eq!(params[0].g1v().len(), 8);
     assert_eq!(params[1].g1v().len(), 4);
@@ -54,11 +53,11 @@ fn test_dory_reduce() {
 
     let mut prev = n;
     for param in &params[..params.len() - 1] {
-        let PublicParams::Multi { gamma_1_prime, .. } = param else {
+        let PublicParams::Multi { gamma_1, .. } = param else {
             panic!()
         };
         prev /= 2;
-        assert_eq!(gamma_1_prime.len(), prev);
+        assert_eq!(gamma_1.len(), prev);
     }
     assert!(matches!(params[3], PublicParams::Single(_)));
 

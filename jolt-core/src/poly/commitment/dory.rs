@@ -2,6 +2,7 @@ use std::{marker::PhantomData, ops::Mul};
 
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::Zero;
 use error::Error;
 use params::PublicParams;
 use rayon::iter::IntoParallelIterator;
@@ -13,6 +14,8 @@ use scalar::{commit, Commitment, Witness};
 use vec_operations::{G1Vec, G2Vec};
 
 use crate::msm::VariableBaseMSM;
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     field::JoltField,
@@ -113,9 +116,13 @@ where
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
-        _opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
+        //let f: &DensePolynomial<P::ScalarField> = poly.try_into().unwrap();
+        //let h = compute_witness_polynomial::<P>(&f.evals(), opening_point);
+        //
+        //let a = poly.evaluate(_opening_point);
         let public_param = setup.first().unwrap();
 
         let witness = Witness::new(public_param, poly);
@@ -143,4 +150,22 @@ where
     fn protocol_name() -> &'static [u8] {
         b"dory"
     }
+}
+
+fn compute_witness_polynomial<P: Pairing>(
+    f: &[P::ScalarField],
+    u: P::ScalarField,
+) -> Vec<P::ScalarField>
+where
+    <P as Pairing>::ScalarField: JoltField,
+{
+    let d = f.len();
+
+    // Compute h(x) = f(x)/(x - u)
+    let mut h = vec![P::ScalarField::zero(); d];
+    for i in (1..d).rev() {
+        h[i - 1] = f[i] + h[i] * u;
+    }
+
+    h
 }

@@ -1,7 +1,4 @@
-use std::{
-    iter::Sum,
-    ops::{Add, Deref, Mul},
-};
+use std::ops::{Add, Deref, Mul};
 
 use ark_ec::{pairing::Pairing, Group};
 use ark_ff::UniformRand;
@@ -15,13 +12,6 @@ use super::{
 
 pub fn e<Curve: Pairing>(g1: G1<Curve>, g2: G2<Curve>) -> Gt<Curve> {
     Curve::pairing(g1, g2)
-}
-
-pub fn mul_gt<Curve: Pairing>(gts: &[Gt<Curve>]) -> Gt<Curve>
-where
-    Gt<Curve>: Sum,
-{
-    gts.iter().sum()
 }
 
 pub trait InnerProd<G2> {
@@ -64,10 +54,6 @@ impl<Curve: Pairing> InnerProd<G2Vec<Curve>> for G1Vec<Curve> {
 pub struct G1Vec<Curve: Pairing>(Vec<G1<Curve>>);
 
 impl<Curve: Pairing> G1Vec<Curve> {
-    pub fn sum(&self) -> G1<Curve> {
-        self.iter().sum()
-    }
-
     pub fn random(rng: &mut impl Rng, n: usize) -> Self {
         Self(
             (0..n)
@@ -243,12 +229,13 @@ mod tests {
     use ark_ff::UniformRand;
 
     use crate::poly::commitment::dory::vec_operations::G2Vec;
+    use crate::poly::commitment::dory::Gt;
 
     use super::InnerProd;
 
     use super::{
         super::{G1Vec, G1, G2},
-        e, mul_gt,
+        e,
     };
 
     #[test]
@@ -262,7 +249,7 @@ mod tests {
         let g2b = G2::<Bn254>::rand(&mut rng);
         let g2c = G2::<Bn254>::rand(&mut rng);
 
-        let expected = mul_gt(&[e(g1a, g2a), e(g1b, g2b), e(g1c, g2c)]);
+        let expected: Gt<Bn254> = [e(g1a, g2a), e(g1b, g2b), e(g1c, g2c)].iter().sum();
 
         let g1v = &[g1a, g1b, g1c];
         let g1v: G1Vec<Bn254> = g1v.into();

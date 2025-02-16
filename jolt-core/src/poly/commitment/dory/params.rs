@@ -8,9 +8,18 @@ pub struct SingleParam<P>
 where
     P: Pairing,
 {
+    /// random g1 generator
+    ///
+    /// only known by the **prover**
     pub g1: G1<P>,
+    /// random g2 generator
+    ///
+    /// only known by the **prover**
     pub g2: G2<P>,
-    pub x: Gt<P>,
+    /// commitment of <g1, g2> (inner product)
+    ///
+    /// known by the **verifier**
+    pub c: Gt<P>,
 }
 
 #[derive(Clone)]
@@ -21,17 +30,48 @@ where
     Single(SingleParam<P>),
 
     Multi {
+        /// random vec of generators of g1
+        ///
+        /// only known by the **prover**
         g1v: G1Vec<P>,
+        /// random vec of generators of g2
+        ///
+        /// only known by the **prover**
         g2v: G2Vec<P>,
-        x: Gt<P>,
 
-        gamma_1_prime: G1Vec<P>,
-        gamma_2_prime: G2Vec<P>,
+        /// random vec of generators of g1 that contains half of len(g1v) and it's used to
+        /// calculate deltas
+        ///
+        /// only known by the **prover**
+        gamma_1: G1Vec<P>,
+        /// random vec of generators of g2 that contains half of len(g2v) and it's used to
+        /// calculate deltas
+        ///
+        /// only known by the **prover**
+        gamma_2: G2Vec<P>,
 
-        delta_1r: Gt<P>,
+        /// commitment of <g1v, g2v> (inner product)
+        ///
+        /// known by the **verifier**
+        c: Gt<P>,
+
+        /// commitment of <g1v[..n/2], gamma_2> (inner product)
+        ///
+        /// known by the **verifier**
         delta_1l: Gt<P>,
-        delta_2r: Gt<P>,
+        /// commitment of <g1v[n/2..], gamma_2> (inner product)
+        ///
+        /// known by the **verifier**
+        delta_1r: Gt<P>,
+
+        /// commitment of <gamma_1, g2v[..n/2]> (inner product)
+        ///
+        /// known by the **verifier**
         delta_2l: Gt<P>,
+        /// commitment of <gamma_1, g2v[n/2..]> (inner product)
+        ///
+        /// known by the **verifier**
+        delta_2r: Gt<P>,
     },
 }
 
@@ -55,7 +95,7 @@ where
 
     pub fn x(&self) -> &Gt<Curve> {
         match self {
-            PublicParams::Single(SingleParam { x, .. }) | PublicParams::Multi { x, .. } => x,
+            PublicParams::Single(SingleParam { c: x, .. }) | PublicParams::Multi { c: x, .. } => x,
         }
     }
 
@@ -84,37 +124,38 @@ where
         g1v: G1Vec<Curve>,
         g2v: G2Vec<Curve>,
     ) -> Result<Self, Error> {
-        let x = g1v.inner_prod(&g2v)?;
+        let c = g1v.inner_prod(&g2v)?;
         match (&*g1v, &*g2v) {
             // if there's a single element, return a single param
             ([g1], [g2]) => Ok(Self::Single(SingleParam {
                 g1: *g1,
                 g2: *g2,
-                x,
+                c,
             })),
             // else, prepare gamma and delta public params
             (a, b) if !a.is_empty() & !b.is_empty() && a.len() == b.len() => {
                 let m = g1v.len() / 2;
-                let gamma_1l: G1Vec<Curve> = (&g1v[..m]).into();
-                let gamma_1r: G1Vec<Curve> = (&g1v[m..]).into();
 
-                let gamma_2l: G2Vec<Curve> = (&g2v[..m]).into();
-                let gamma_2r: G2Vec<Curve> = (&g2v[m..]).into();
+                let g1l: G1Vec<Curve> = (&g1v[..m]).into();
+                let g1r: G1Vec<Curve> = (&g1v[m..]).into();
 
-                let gamma_1_prime = G1Vec::random(rng, m);
-                let gamma_2_prime = G2Vec::random(rng, m);
+                let g2l: G2Vec<Curve> = (&g2v[..m]).into();
+                let g2r: G2Vec<Curve> = (&g2v[m..]).into();
 
-                let delta_1l = gamma_1l.inner_prod(&gamma_2_prime)?;
-                let delta_1r = gamma_1r.inner_prod(&gamma_2_prime)?;
-                let delta_2l = gamma_1_prime.inner_prod(&gamma_2l)?;
-                let delta_2r = gamma_1_prime.inner_prod(&gamma_2r)?;
+                let gamma_1 = G1Vec::random(rng, m);
+                let gamma_2 = G2Vec::random(rng, m);
+
+                let delta_1l = g1l.inner_prod(&gamma_2)?;
+                let delta_1r = g1r.inner_prod(&gamma_2)?;
+                let delta_2l = gamma_1.inner_prod(&g2l)?;
+                let delta_2r = gamma_1.inner_prod(&g2r)?;
 
                 Ok(Self::Multi {
                     g1v,
                     g2v,
-                    x,
-                    gamma_1_prime,
-                    gamma_2_prime,
+                    c,
+                    gamma_1,
+                    gamma_2,
                     delta_1r,
                     delta_1l,
                     delta_2r,
@@ -129,16 +170,14 @@ where
 
     fn new_derived(&self, rng: &mut impl Rng) -> Result<Self, Error> {
         let Self::Multi {
-            gamma_1_prime,
-            gamma_2_prime,
-            ..
+            gamma_1, gamma_2, ..
         } = self
         else {
             return Err(Error::DerivedFromSingle);
         };
 
-        let g1v = gamma_1_prime.clone();
-        let g2v = gamma_2_prime.clone();
+        let g1v = gamma_1.clone();
+        let g2v = gamma_2.clone();
         Self::params_with_provided_g(rng, g1v, g2v)
     }
 }
