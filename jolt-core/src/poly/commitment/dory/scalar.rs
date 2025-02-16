@@ -21,13 +21,17 @@ use super::{
 
 /// Witness over set Zr
 #[derive(Clone)]
-pub struct Witness<Curve: Pairing> {
+pub struct Witness<Curve>
+where
+    Curve: Pairing,
+{
     pub v1: G1Vec<Curve>,
     pub v2: G2Vec<Curve>,
 }
 
-impl<P: Pairing> Witness<P>
+impl<P> Witness<P>
 where
+    P: Pairing,
     P::G1: VariableBaseMSM,
     P::ScalarField: JoltField,
 {
@@ -57,24 +61,36 @@ where
 }
 
 #[derive(Clone, Copy, CanonicalSerialize, CanonicalDeserialize, Debug, Default, PartialEq, Eq)]
-pub struct Commitment<Curve: Pairing> {
+pub struct Commitment<Curve>
+where
+    Curve: Pairing,
+{
     pub c: Gt<Curve>,
     pub d1: Gt<Curve>,
     pub d2: Gt<Curve>,
 }
 
-impl<P: Pairing> AppendToTranscript for Commitment<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+impl<P> AppendToTranscript for Commitment<P>
+where
+    P: Pairing,
+{
+    fn append_to_transcript<ProofTranscript>(&self, transcript: &mut ProofTranscript)
+    where
+        ProofTranscript: Transcript,
+    {
         append_gt(transcript, self.c);
         append_gt(transcript, self.d1);
         append_gt(transcript, self.d2);
     }
 }
 
-pub fn commit<Curve: Pairing>(
+pub fn commit<Curve>(
     Witness { v1, v2 }: Witness<Curve>,
     public_params: &PublicParams<Curve>,
-) -> Result<Commitment<Curve>, Error> {
+) -> Result<Commitment<Curve>, Error>
+where
+    Curve: Pairing,
+{
     let d1 = v1.inner_prod(&public_params.g2v())?;
     let d2 = public_params.g1v().inner_prod(&v2)?;
     let c = v1.inner_prod(&v2)?;
@@ -84,12 +100,18 @@ pub fn commit<Curve: Pairing>(
 }
 
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
-pub struct ScalarProof<Curve: Pairing> {
+pub struct ScalarProof<Curve>
+where
+    Curve: Pairing,
+{
     e1: G1<Curve>,
     e2: G2<Curve>,
 }
 
-impl<Curve: Pairing> ScalarProof<Curve> {
+impl<Curve> ScalarProof<Curve>
+where
+    Curve: Pairing,
+{
     pub fn new(witness: Witness<Curve>) -> Self {
         Self {
             e1: witness.v1[0],
@@ -101,13 +123,7 @@ impl<Curve: Pairing> ScalarProof<Curve> {
         &self,
         pp: &SingleParam<Curve>,
         Commitment { c, d1, d2 }: &Commitment<Curve>,
-    ) -> Result<bool, Error>
-    where
-        for<'c> &'c G1Vec<Curve>: Mul<Zr<Curve>, Output = G1Vec<Curve>>,
-        G1<Curve>: Mul<Zr<Curve>, Output = G1<Curve>>,
-        G2<Curve>: Mul<Zr<Curve>, Output = G2<Curve>>,
-        Gt<Curve>: Mul<Zr<Curve>, Output = Gt<Curve>>,
-    {
+    ) -> Result<bool, Error> {
         let mut rng = thread_rng();
         let d: Zr<Curve> = Zr::<Curve>::rand(&mut rng);
         let d_inv = d.inverse().ok_or(Error::CouldntInvertD)?;

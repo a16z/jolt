@@ -18,24 +18,31 @@ use super::{
 
 /// Proof
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
-pub struct DoryProof<Curve: Pairing> {
+pub struct DoryProof<Curve>
+where
+    Curve: Pairing,
+{
     pub from_prover_1: Vec<ReduceProverStep1Elements<Curve>>,
     pub from_prover_2: Vec<ReduceProverStep2Elements<Curve>>,
     pub final_proof: ScalarProof<Curve>,
 }
 
-impl<Curve: Pairing> DoryProof<Curve>
+impl<Curve> DoryProof<Curve>
 where
+    Curve: Pairing,
     Curve::ScalarField: JoltField,
 {
-    fn verify_recursive<ProofTranscript: Transcript>(
+    fn verify_recursive<ProofTranscript>(
         transcript: &mut ProofTranscript,
         public_params: &[PublicParams<Curve>],
         commitment: Commitment<Curve>,
         from_prover_1: &[ReduceProverStep1Elements<Curve>],
         from_prover_2: &[ReduceProverStep2Elements<Curve>],
         final_proof: &ScalarProof<Curve>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error>
+    where
+        ProofTranscript: Transcript,
+    {
         match (public_params, from_prover_1, from_prover_2) {
             ([], _, _) => Err(Error::EmptyPublicParams),
             ([PublicParams::Single(param)], [], []) => final_proof.verify(param, &commitment),
@@ -125,16 +132,14 @@ where
         }
     }
 
-    pub fn verify<ProofTranscript: Transcript>(
+    pub fn verify<ProofTranscript>(
         &self,
         transcript: &mut ProofTranscript,
         public_params: &[PublicParams<Curve>],
         commitment: Commitment<Curve>,
     ) -> Result<bool, Error>
     where
-        Gt<Curve>: Mul<Zr<Curve>, Output = Gt<Curve>>,
-        G1<Curve>: Mul<Zr<Curve>, Output = G1<Curve>>,
-        G2<Curve>: Mul<Zr<Curve>, Output = G2<Curve>>,
+        ProofTranscript: Transcript,
     {
         Self::verify_recursive(
             transcript,
@@ -148,7 +153,10 @@ where
 }
 
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
-pub struct ReduceProverStep1Elements<Curve: Pairing> {
+pub struct ReduceProverStep1Elements<Curve>
+where
+    Curve: Pairing,
+{
     d1l: Gt<Curve>,
     d1r: Gt<Curve>,
     d2l: Gt<Curve>,
@@ -158,8 +166,14 @@ pub struct ReduceProverStep1Elements<Curve: Pairing> {
     d2: Gt<Curve>,
 }
 
-impl<P: Pairing> AppendToTranscript for ReduceProverStep1Elements<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+impl<P> AppendToTranscript for ReduceProverStep1Elements<P>
+where
+    P: Pairing,
+{
+    fn append_to_transcript<ProofTranscript>(&self, transcript: &mut ProofTranscript)
+    where
+        ProofTranscript: Transcript,
+    {
         append_gt(transcript, self.d1l);
         append_gt(transcript, self.d1r);
         append_gt(transcript, self.d2l);
@@ -176,23 +190,29 @@ pub struct ReduceProverStep2Elements<Curve: Pairing> {
     c_minus: Gt<Curve>,
 }
 
-impl<P: Pairing> AppendToTranscript for ReduceProverStep2Elements<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+impl<P> AppendToTranscript for ReduceProverStep2Elements<P>
+where
+    P: Pairing,
+{
+    fn append_to_transcript<ProofTranscript>(&self, transcript: &mut ProofTranscript)
+    where
+        ProofTranscript: Transcript,
+    {
         append_gt(transcript, self.c_plus);
         append_gt(transcript, self.c_minus);
     }
 }
 
-pub fn reduce<Curve: Pairing, ProofTranscript: Transcript>(
+pub fn reduce<Curve, ProofTranscript>(
     transcript: &mut ProofTranscript,
     params: &[PublicParams<Curve>],
     witness: Witness<Curve>,
     Commitment { c, d1, d2 }: Commitment<Curve>,
 ) -> Result<DoryProof<Curve>, Error>
 where
+    Curve: Pairing,
     Curve::ScalarField: JoltField,
-    G1Vec<Curve>: Add<G1Vec<Curve>, Output = G1Vec<Curve>>,
-    G2Vec<Curve>: Add<G2Vec<Curve>, Output = G2Vec<Curve>>,
+    ProofTranscript: Transcript,
 {
     match params {
         [PublicParams::Multi {

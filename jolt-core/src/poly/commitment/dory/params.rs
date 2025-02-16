@@ -1,18 +1,23 @@
 use ark_ec::pairing::Pairing;
-use ark_ff::UniformRand;
 use ark_std::rand::Rng;
 
 use super::{error::GType, vec_operations::InnerProd, Error, G1Vec, G2Vec, Gt, G1, G2};
 
 #[derive(Clone)]
-pub struct SingleParam<P: Pairing> {
+pub struct SingleParam<P>
+where
+    P: Pairing,
+{
     pub g1: G1<P>,
     pub g2: G2<P>,
     pub x: Gt<P>,
 }
 
 #[derive(Clone)]
-pub enum PublicParams<P: Pairing> {
+pub enum PublicParams<P>
+where
+    P: Pairing,
+{
     Single(SingleParam<P>),
 
     Multi {
@@ -30,7 +35,10 @@ pub enum PublicParams<P: Pairing> {
     },
 }
 
-impl<Curve: Pairing> PublicParams<Curve> {
+impl<Curve> PublicParams<Curve>
+where
+    Curve: Pairing,
+{
     pub fn g1v(&self) -> Vec<G1<Curve>> {
         match self {
             PublicParams::Single(SingleParam { g1, .. }) => vec![*g1],
@@ -65,11 +73,7 @@ impl<Curve: Pairing> PublicParams<Curve> {
         Ok(res)
     }
 
-    pub fn new(rng: &mut impl Rng, n: usize) -> Result<Self, Error>
-    where
-        G1<Curve>: UniformRand,
-        G2<Curve>: UniformRand,
-    {
+    pub fn new(rng: &mut impl Rng, n: usize) -> Result<Self, Error> {
         let g1v = G1Vec::random(rng, n);
         let g2v = G2Vec::random(rng, n);
         Self::params_with_provided_g(rng, g1v, g2v)

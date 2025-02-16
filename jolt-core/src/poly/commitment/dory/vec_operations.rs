@@ -68,10 +68,7 @@ impl<Curve: Pairing> G1Vec<Curve> {
         self.iter().sum()
     }
 
-    pub fn random(rng: &mut impl Rng, n: usize) -> Self
-    where
-        G1<Curve>: UniformRand,
-    {
+    pub fn random(rng: &mut impl Rng, n: usize) -> Self {
         Self(
             (0..n)
                 .map(|_| {
@@ -160,10 +157,7 @@ impl<Curve: Pairing> G2Vec<Curve> {
         self.iter().sum()
     }
 
-    pub fn random(rng: &mut impl Rng, n: usize) -> Self
-    where
-        G2<Curve>: UniformRand,
-    {
+    pub fn random(rng: &mut impl Rng, n: usize) -> Self {
         Self(
             (0..n)
                 .map(|_| {
