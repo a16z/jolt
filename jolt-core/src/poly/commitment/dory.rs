@@ -10,6 +10,7 @@ use scalar::ScalarProof;
 use scalar::{commit, Commitment, Witness};
 use vec_operations::{G1Vec, G2Vec};
 
+use crate::msm::VariableBaseMSM;
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     field::JoltField,
@@ -60,6 +61,7 @@ pub struct DoryBatchedProof;
 
 impl<P, ProofTranscript> CommitmentScheme<ProofTranscript> for DoryScheme<P, ProofTranscript>
 where
+    P::G1: VariableBaseMSM,
     P: Pairing + Default,
     ProofTranscript: Transcript,
     G1<P>: Mul<Zr<P>, Output = G1<P>>,
@@ -90,10 +92,7 @@ where
     }
 
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        let MultilinearPolynomial::LargeScalars(poly) = poly else {
-            panic!("Expected LargeScalars polynomial");
-        };
-        let witness = Witness::new(setup, poly.evals_ref());
+        let witness = Witness::new(setup, poly);
         commit(witness, setup).unwrap()
     }
 
@@ -114,10 +113,9 @@ where
         _opening_point: &[Self::Field], // point at which the polynomial is evaluated
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let MultilinearPolynomial::LargeScalars(poly) = poly else {
-            panic!("Expected LargeScalars polynomial");
-        };
-        let witness = Witness::new(setup, poly.evals_ref());
+        //let evalutation_y = poly.evaluate(opening_point);
+
+        let witness = Witness::new(setup, poly);
         ScalarProof::new(witness)
     }
 

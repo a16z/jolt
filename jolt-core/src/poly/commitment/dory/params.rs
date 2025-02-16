@@ -7,88 +7,45 @@ use sha3::{Digest, Sha3_256};
 use super::{vec_operations::InnerProd, Error, G1Vec, G2Vec, Gt, G1, G2};
 
 #[derive(Clone)]
-pub struct PublicParams<P: Pairing> {
-    pub g1v: G1Vec<P>,
-    pub g2v: G2Vec<P>,
+pub enum PublicParams<P: Pairing> {
+    Single {
+        g1v: G1Vec<P>,
+        g2v: G2Vec<P>,
+        x: Gt<P>,
+    },
 
-    pub x: Gt<P>,
+    Multi {
+        g1v: G1Vec<P>,
+        g2v: G2Vec<P>,
+        x: Gt<P>,
 
-    pub reduce_pp: Option<ReducePublicParams<P>>,
-}
+        gamma_1_prime: G1Vec<P>,
+        gamma_2_prime: G2Vec<P>,
 
-#[derive(Clone)]
-pub struct ReducePublicParams<P: Pairing> {
-    pub gamma_1_prime: G1Vec<P>,
-    pub gamma_2_prime: G2Vec<P>,
-
-    pub delta_1r: Gt<P>,
-    pub delta_1l: Gt<P>,
-    pub delta_2r: Gt<P>,
-    pub delta_2l: Gt<P>,
+        delta_1r: Gt<P>,
+        delta_1l: Gt<P>,
+        delta_2r: Gt<P>,
+        delta_2l: Gt<P>,
+    },
 }
 
 impl<Curve: Pairing> PublicParams<Curve> {
-    pub fn new(rng: &mut impl Rng, n: usize) -> Result<Self, Error>
-    where
-        G1<Curve>: UniformRand,
-        G2<Curve>: UniformRand,
-    {
-        let g1v = G1Vec::random(rng, n);
-        let g2v = G2Vec::random(rng, n);
-        let x = g1v.inner_prod(&g2v)?;
-        let reduce_pp = ReducePublicParams::new(rng, &g1v, &g2v)?;
-        let value = Self {
-            g1v,
-            g2v,
-            reduce_pp,
-            x,
-        };
-        Ok(value)
+    pub fn g1v(&self) -> &G1Vec<Curve> {
+        match self {
+            PublicParams::Single { g1v, .. } | PublicParams::Multi { g1v, .. } => g1v,
+        }
     }
 
-    pub fn new_derived(&self, rng: &mut impl Rng, n: usize) -> Result<Self, Error>
-    where
-        G1<Curve>: UniformRand,
-        G2<Curve>: UniformRand,
-    {
-        if self.g1v.len() != 2 * n || self.g2v.len() != 2 * n {
-            return Err(Error::LengthNotTwice);
+    pub fn g2v(&self) -> &G2Vec<Curve> {
+        match self {
+            PublicParams::Single { g2v, .. } | PublicParams::Multi { g2v, .. } => g2v,
         }
-        let Some(reduce_pp) = &self.reduce_pp else {
-            return Err(Error::ReduceParamsNotInitialized);
-        };
-        let g1v = reduce_pp.gamma_1_prime.clone();
-        let g2v = reduce_pp.gamma_2_prime.clone();
-
-        let reduce_pp = ReducePublicParams::new(rng, &g1v, &g2v)?;
-        let x = g1v.inner_prod(&g2v)?;
-
-        let value = Self {
-            g1v,
-            g2v,
-            reduce_pp,
-            x,
-        };
-        Ok(value)
     }
 
-    pub fn digest(&self, prev: Option<&[u8]>) -> Result<Vec<u8>, Error> {
-        let mut hasher = Sha3_256::new();
-        if let Some(prev) = prev {
-            hasher.update(prev);
+    pub fn x(&self) -> &Gt<Curve> {
+        match self {
+            PublicParams::Single { x, .. } | PublicParams::Multi { x, .. } => x,
         }
-
-        if let Some(reduce_pp) = &self.reduce_pp {
-            hasher.update(reduce_pp.digest()?);
-        }
-        self.x
-            .serialize_uncompressed(&mut hasher)
-            .expect("Serialization failed");
-
-        self.g1v.serialize_uncompressed(&mut hasher)?;
-        self.g2v.serialize_uncompressed(&mut hasher)?;
-
-        Ok(hasher.finalize().to_vec())
     }
 
     pub fn generate_public_params(rng: &mut impl Rng, mut n: usize) -> Result<Vec<Self>, Error>
@@ -104,59 +61,111 @@ impl<Curve: Pairing> PublicParams<Curve> {
                 break;
             }
             n /= 2;
-            params = res.last().expect("just pushed").new_derived(rng, n)?;
+            params = res.last().expect("just pushed").new_derived(rng)?;
         }
         Ok(res)
     }
-}
 
-impl<Curve: Pairing> ReducePublicParams<Curve> {
-    pub fn new(
-        rng: &mut impl Rng,
-        g1v: &[G1<Curve>],
-        g2v: &[G2<Curve>],
-    ) -> Result<Option<Self>, Error>
+    pub fn new(rng: &mut impl Rng, n: usize) -> Result<Self, Error>
     where
         G1<Curve>: UniformRand,
         G2<Curve>: UniformRand,
     {
-        assert_eq!(g1v.len(), g2v.len());
-        if g1v.len() == 1 {
-            return Ok(None);
+        let g1v = G1Vec::random(rng, n);
+        let g2v = G2Vec::random(rng, n);
+        Self::params_with_provided_g(rng, g1v, g2v)
+    }
+
+    fn params_with_provided_g(
+        rng: &mut impl Rng,
+        g1v: G1Vec<Curve>,
+        g2v: G2Vec<Curve>,
+    ) -> Result<Self, Error> {
+        let n = g1v.len();
+
+        let x = g1v.inner_prod(&g2v)?;
+        if n == 1 {
+            Ok(Self::Single { g1v, g2v, x })
+        } else {
+            let m = g1v.len() / 2;
+            let gamma_1l: G1Vec<Curve> = (&g1v[..m]).into();
+            let gamma_1r: G1Vec<Curve> = (&g1v[m..]).into();
+
+            let gamma_2l = (&g2v[..m]).into();
+            let gamma_2r = (&g2v[m..]).into();
+
+            let gamma_1_prime = G1Vec::random(rng, m);
+            let gamma_2_prime = G2Vec::random(rng, m);
+
+            let delta_1l = gamma_1l.inner_prod(&gamma_2_prime)?;
+            let delta_1r = gamma_1r.inner_prod(&gamma_2_prime)?;
+            let delta_2l = gamma_1_prime.inner_prod(&gamma_2l)?;
+            let delta_2r = gamma_1_prime.inner_prod(&gamma_2r)?;
+
+            Ok(Self::Multi {
+                g1v,
+                g2v,
+                x,
+                gamma_1_prime,
+                gamma_2_prime,
+                delta_1r,
+                delta_1l,
+                delta_2r,
+                delta_2l,
+            })
         }
-        let m = g1v.len() / 2;
-        let gamma_1l: G1Vec<Curve> = (&g1v[..m]).into();
-        let gamma_1r: G1Vec<Curve> = (&g1v[m..]).into();
+    }
 
-        let gamma_2l = (&g2v[..m]).into();
-        let gamma_2r = (&g2v[m..]).into();
+    fn new_derived(&self, rng: &mut impl Rng) -> Result<Self, Error>
+    where
+        G1<Curve>: UniformRand,
+        G2<Curve>: UniformRand,
+    {
+        let Self::Multi {
+            gamma_1_prime,
+            gamma_2_prime,
+            ..
+        } = self
+        else {
+            panic!()
+        };
 
-        let gamma_1_prime = G1Vec::random(rng, m);
-        let gamma_2_prime = G2Vec::random(rng, m);
+        let g1v = gamma_1_prime.clone();
+        let g2v = gamma_2_prime.clone();
+        Self::params_with_provided_g(rng, g1v, g2v)
+    }
 
-        let delta_1l = gamma_1l.inner_prod(&gamma_2_prime)?;
-        let delta_1r = gamma_1r.inner_prod(&gamma_2_prime)?;
-        let delta_2l = gamma_1_prime.inner_prod(&gamma_2l)?;
-        let delta_2r = gamma_1_prime.inner_prod(&gamma_2r)?;
-        Ok(Some(Self {
+    pub fn digest(&self, prev: Option<&[u8]>) -> Result<Vec<u8>, Error> {
+        let mut hasher = Sha3_256::new();
+        if let Some(prev) = prev {
+            hasher.update(prev);
+        }
+
+        if let Self::Multi {
             gamma_1_prime,
             gamma_2_prime,
             delta_1r,
             delta_1l,
             delta_2r,
             delta_2l,
-        }))
-    }
+            ..
+        } = &self
+        {
+            gamma_1_prime.serialize_uncompressed(&mut hasher)?;
+            gamma_2_prime.serialize_uncompressed(&mut hasher)?;
+            delta_1r.serialize_uncompressed(&mut hasher)?;
+            delta_1l.serialize_uncompressed(&mut hasher)?;
+            delta_2r.serialize_uncompressed(&mut hasher)?;
+            delta_2l.serialize_uncompressed(&mut hasher)?;
+        }
 
-    pub fn digest(&self) -> Result<Vec<u8>, Error> {
-        let mut hasher = Sha3_256::new();
-
-        self.gamma_1_prime.serialize_uncompressed(&mut hasher)?;
-        self.gamma_2_prime.serialize_uncompressed(&mut hasher)?;
-        self.delta_1r.serialize_uncompressed(&mut hasher)?;
-        self.delta_1l.serialize_uncompressed(&mut hasher)?;
-        self.delta_2r.serialize_uncompressed(&mut hasher)?;
-        self.delta_2l.serialize_uncompressed(&mut hasher)?;
+        match self {
+            PublicParams::Single { g1v, g2v, x } | PublicParams::Multi { g1v, g2v, x, .. } => {
+                x.serialize_uncompressed(&mut hasher)?;
+                g1v.serialize_uncompressed(&mut hasher)?;
+                g2v.serialize_uncompressed(&mut hasher)?;
+            }
+        }
 
         Ok(hasher.finalize().to_vec())
     }

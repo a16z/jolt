@@ -8,7 +8,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::{Digest, Sha3_256};
 
 use super::{
-    params::ReducePublicParams,
     vec_operations::{mul_gt, InnerProd},
     Commitment, Error, G1Vec, G2Vec, Gt, PublicParams, ScalarProof, Witness, Zr, G1, G2,
 };
@@ -35,14 +34,17 @@ impl<Curve: Pairing> DoryProof<Curve> {
             [param1, public_params_rest @ ..] => {
                 let digest = param1.digest(None)?.to_vec();
 
-                let PublicParams { x, reduce_pp, .. } = param1;
-                let ReducePublicParams {
+                let PublicParams::Multi {
                     delta_1r,
                     delta_1l,
                     delta_2r,
                     delta_2l,
+                    x,
                     ..
-                } = reduce_pp.as_ref().expect("gv1 is greater than 1");
+                } = param1
+                else {
+                    panic!()
+                };
 
                 match (from_prover_1, from_prover_2) {
                     (
@@ -198,22 +200,20 @@ where
         [param1, rest_param @ ..] => {
             let digest = param1.digest(None)?;
 
-            let PublicParams {
+            let PublicParams::Multi {
                 g1v,
                 g2v,
                 x,
-                reduce_pp,
-                ..
-            } = param1;
-
-            let ReducePublicParams {
+                gamma_1_prime,
+                gamma_2_prime,
                 delta_1r,
                 delta_1l,
                 delta_2r,
                 delta_2l,
-                gamma_1_prime,
-                gamma_2_prime,
-            } = reduce_pp.as_ref().unwrap();
+            } = param1
+            else {
+                panic!()
+            };
 
             let m = g1v.len() / 2;
 
