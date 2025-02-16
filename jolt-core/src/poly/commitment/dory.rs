@@ -83,13 +83,11 @@ where
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup {
         // Dory's setup procedure initializes
-        let mut max_len: usize = 0;
-        for shape in shapes {
-            let len = shape.input_length.log_2();
-            if len > max_len {
-                max_len = len;
-            }
-        }
+        let max_len = shapes
+            .iter()
+            .map(|shape| shape.input_length.log_2())
+            .max()
+            .unwrap();
         let mut rng = ark_std::rand::thread_rng();
         PublicParams::generate_public_params(&mut rng, max_len)
             .expect("Length must be greater than 0")
