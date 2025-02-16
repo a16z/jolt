@@ -55,7 +55,7 @@ where
                 [ReduceProverStep1Elements {
                     d1l, d1r, d2l, d2r, ..
                 }, from_prover_1_rest @ ..],
-                [ReduceProverStep2Elements {
+                [step_2_element @ ReduceProverStep2Elements {
                     c_plus, c_minus, ..
                 }, from_prover_2_rest @ ..],
             ) => {
@@ -75,11 +75,6 @@ where
                 step_1_element.append_to_transcript(transcript);
                 // Get from Transcript
                 let betha: Zr<Curve> = transcript.challenge_scalar();
-
-                let step_2_element = ReduceProverStep2Elements {
-                    c_plus: *c_plus,
-                    c_minus: *c_minus,
-                };
 
                 // update transcript with step_2_elements
                 step_2_element.append_to_transcript(transcript);
