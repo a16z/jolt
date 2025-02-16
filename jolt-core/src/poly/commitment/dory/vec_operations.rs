@@ -21,18 +21,31 @@ pub fn mul_gt<Curve: Pairing>(gts: &[Gt<Curve>]) -> Option<Gt<Curve>> {
     })
 }
 
-pub trait InnerProd {
-    type G2;
+pub trait InnerProd<G2> {
     type Gt;
-    fn inner_prod(&self, g2v: &Self::G2) -> Result<Self::Gt, Error>;
+    fn inner_prod(&self, g2v: &G2) -> Result<Self::Gt, Error>;
 }
 
-impl<Curve: Pairing> InnerProd for G1Vec<Curve> {
-    type G2 = G2Vec<Curve>;
-
+impl<Curve: Pairing> InnerProd<G2Vec<Curve>> for Vec<G1<Curve>> {
     type Gt = Gt<Curve>;
 
-    fn inner_prod(&self, g2v: &Self::G2) -> Result<Self::Gt, Error> {
+    fn inner_prod(&self, g2v: &G2Vec<Curve>) -> Result<Self::Gt, Error> {
+        Ok(Curve::multi_pairing(self, g2v.as_ref()))
+    }
+}
+
+impl<Curve: Pairing> InnerProd<Vec<G2<Curve>>> for G1Vec<Curve> {
+    type Gt = Gt<Curve>;
+
+    fn inner_prod(&self, g2v: &Vec<G2<Curve>>) -> Result<Self::Gt, Error> {
+        Ok(Curve::multi_pairing(self.as_ref(), g2v))
+    }
+}
+
+impl<Curve: Pairing> InnerProd<G2Vec<Curve>> for G1Vec<Curve> {
+    type Gt = Gt<Curve>;
+
+    fn inner_prod(&self, g2v: &G2Vec<Curve>) -> Result<Self::Gt, Error> {
         match (self.as_ref(), g2v.as_ref()) {
             ([], _) => Err(Error::EmptyVector(GType::G1)),
             (_, []) => Err(Error::EmptyVector(GType::G2)),
@@ -78,7 +91,6 @@ impl<Curve: Pairing> Deref for G1Vec<Curve> {
 impl<Curve> Add for G1Vec<Curve>
 where
     Curve: Pairing,
-    for<'b> &'b G1<Curve>: Add<&'b G1<Curve>, Output = G1<Curve>>,
 {
     type Output = G1Vec<Curve>;
 
@@ -87,7 +99,7 @@ where
             self.0
                 .iter()
                 .zip(rhs.0.iter())
-                .map(|(val1, val2)| val1 + val2)
+                .map(|(val1, val2)| *val1 + *val2)
                 .collect(),
         )
     }
@@ -233,6 +245,8 @@ mod tests {
     use ark_bn254::Bn254;
     use ark_ff::UniformRand;
 
+    use crate::poly::commitment::dory::vec_operations::G2Vec;
+
     use super::InnerProd;
 
     use super::{
@@ -256,7 +270,7 @@ mod tests {
         let g1v = &[g1a, g1b, g1c];
         let g1v: G1Vec<Bn254> = g1v.into();
         let g2v = &[g2a, g2b, g2c];
-        let g2v = g2v.into();
+        let g2v: G2Vec<Bn254> = g2v.into();
 
         let actual = g1v.inner_prod(&g2v).unwrap();
 

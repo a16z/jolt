@@ -3,9 +3,12 @@
 use std::ops::{Add, Mul};
 
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use sha3::{Digest, Sha3_256};
+
+use crate::{
+    field::JoltField,
+    utils::transcript::{AppendToTranscript, Transcript},
+};
 
 use super::{
     vec_operations::{mul_gt, InnerProd},
@@ -20,8 +23,12 @@ pub struct DoryProof<Curve: Pairing> {
     pub final_proof: ScalarProof<Curve>,
 }
 
-impl<Curve: Pairing> DoryProof<Curve> {
-    fn verify_recursive(
+impl<Curve: Pairing> DoryProof<Curve>
+where
+    Curve::ScalarField: JoltField,
+{
+    fn verify_recursive<ProofTranscript: Transcript>(
+        transcript: &mut ProofTranscript,
         public_params: &[PublicParams<Curve>],
         commitment: Commitment<Curve>,
         from_prover_1: &[ReduceProverStep1Elements<Curve>],
@@ -30,10 +37,8 @@ impl<Curve: Pairing> DoryProof<Curve> {
     ) -> Result<bool, Error> {
         match public_params {
             [] => Err(Error::EmptyPublicParams),
-            [params] => final_proof.verify(params, &commitment),
+            [PublicParams::Single(param)] => final_proof.verify(param, &commitment),
             [param1, public_params_rest @ ..] => {
-                let digest = param1.digest(None)?.to_vec();
-
                 let PublicParams::Multi {
                     delta_1r,
                     delta_1l,
@@ -58,7 +63,6 @@ impl<Curve: Pairing> DoryProof<Curve> {
                         let Commitment { c, d1, d2 } = commitment;
 
                         let step_1_element = ReduceProverStep1Elements {
-                            pp_digest: digest,
                             d1l: *d1l,
                             d1r: *d1r,
                             d2l: *d2l,
@@ -68,17 +72,22 @@ impl<Curve: Pairing> DoryProof<Curve> {
                             d2,
                         };
 
-                        let (betha, step_1_digest) = step_1_element.ro()?;
+                        // update transcript with step_1_elements
+                        step_1_element.append_to_transcript(transcript);
+                        // Get from Transcript
+                        let betha: Zr<Curve> = transcript.challenge_scalar();
 
                         let step_2_element = ReduceProverStep2Elements {
-                            step_1_digest,
                             c_plus: *c_plus,
                             c_minus: *c_minus,
                         };
 
-                        let alpha = step_2_element.ro()?;
-                        let inverse_alpha = alpha.inverse().ok_or(Error::ZrZero)?;
-                        let inverse_betha = betha.inverse().ok_or(Error::ZrZero)?;
+                        // update transcript with step_2_elements
+                        step_2_element.append_to_transcript(transcript);
+                        // Get from Transcript
+                        let alpha: Zr<Curve> = transcript.challenge_scalar();
+                        let inverse_alpha = JoltField::inverse(&alpha).ok_or(Error::ZrZero)?;
+                        let inverse_betha = JoltField::inverse(&betha).ok_or(Error::ZrZero)?;
 
                         let c_prime = mul_gt(&[
                             c,
@@ -113,6 +122,7 @@ impl<Curve: Pairing> DoryProof<Curve> {
                         };
 
                         Self::verify_recursive(
+                            transcript,
                             public_params_rest,
                             next_commitment,
                             from_prover_1_rest,
@@ -126,8 +136,9 @@ impl<Curve: Pairing> DoryProof<Curve> {
         }
     }
 
-    pub fn verify(
+    pub fn verify<ProofTranscript: Transcript>(
         &self,
+        transcript: &mut ProofTranscript,
         public_params: &[PublicParams<Curve>],
         commitment: Commitment<Curve>,
     ) -> Result<bool, Error>
@@ -137,6 +148,7 @@ impl<Curve: Pairing> DoryProof<Curve> {
         G2<Curve>: Mul<Zr<Curve>, Output = G2<Curve>>,
     {
         Self::verify_recursive(
+            transcript,
             public_params,
             commitment,
             &self.from_prover_1,
@@ -148,7 +160,6 @@ impl<Curve: Pairing> DoryProof<Curve> {
 
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct ReduceProverStep1Elements<Curve: Pairing> {
-    pp_digest: Vec<u8>,
     d1l: Gt<Curve>,
     d1r: Gt<Curve>,
     d2l: Gt<Curve>,
@@ -158,48 +169,55 @@ pub struct ReduceProverStep1Elements<Curve: Pairing> {
     d2: Gt<Curve>,
 }
 
-impl<Curve: Pairing> ReduceProverStep1Elements<Curve> {
-    pub fn ro(&self) -> Result<(Zr<Curve>, Vec<u8>), Error> {
-        let mut hasher = Sha3_256::new();
-        self.serialize_uncompressed(&mut hasher)?;
-        let digest = hasher.finalize();
-        Ok((
-            Zr::<Curve>::from_be_bytes_mod_order(&digest),
-            digest.to_vec(),
-        ))
+impl<P: Pairing> AppendToTranscript for ReduceProverStep1Elements<P> {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        append_gt(transcript, self.d1l);
+        append_gt(transcript, self.d1r);
+        append_gt(transcript, self.d2l);
+        append_gt(transcript, self.d2r);
+        append_gt(transcript, self.c);
+        append_gt(transcript, self.d1);
+        append_gt(transcript, self.d2);
     }
+}
+
+fn append_gt<P: Pairing, ProofTranscript: Transcript>(transcript: &mut ProofTranscript, gt: Gt<P>) {
+    let mut buf = vec![];
+    gt.serialize_uncompressed(&mut buf).unwrap();
+    // Serialize uncompressed gives the scalar in LE byte order which is not
+    // a natural representation in the EVM for scalar math so we reverse
+    // to get an EVM compatible version.
+    buf = buf.into_iter().rev().collect();
+    transcript.append_bytes(&buf);
 }
 
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct ReduceProverStep2Elements<Curve: Pairing> {
-    step_1_digest: Vec<u8>,
     c_plus: Gt<Curve>,
     c_minus: Gt<Curve>,
 }
 
-impl<Curve: Pairing> ReduceProverStep2Elements<Curve> {
-    pub fn ro(&self) -> Result<Zr<Curve>, Error> {
-        let mut hasher = Sha3_256::new();
-        self.serialize_uncompressed(&mut hasher)?;
-        let digest = hasher.finalize();
-        Ok(Zr::<Curve>::from_be_bytes_mod_order(&digest))
+impl<P: Pairing> AppendToTranscript for ReduceProverStep2Elements<P> {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        append_gt(transcript, self.c_plus);
+        append_gt(transcript, self.c_minus);
     }
 }
 
-pub fn reduce<Curve: Pairing>(
+pub fn reduce<Curve: Pairing, ProofTranscript: Transcript>(
+    transcript: &mut ProofTranscript,
     params: &[PublicParams<Curve>],
     witness: Witness<Curve>,
     Commitment { c, d1, d2 }: Commitment<Curve>,
 ) -> Result<DoryProof<Curve>, Error>
 where
+    Curve::ScalarField: JoltField,
     G1Vec<Curve>: Add<G1Vec<Curve>, Output = G1Vec<Curve>>,
     G2Vec<Curve>: Add<G2Vec<Curve>, Output = G2Vec<Curve>>,
 {
     match params {
         [] => unimplemented!(),
         [param1, rest_param @ ..] => {
-            let digest = param1.digest(None)?;
-
             let PublicParams::Multi {
                 g1v,
                 g2v,
@@ -220,8 +238,8 @@ where
             // P:
             let v1l: G1Vec<Curve> = (&witness.v1[..m]).into();
             let v1r: G1Vec<Curve> = (&witness.v1[m..]).into();
-            let v2l = (&witness.v2[..m]).into();
-            let v2r = (&witness.v2[m..]).into();
+            let v2l: G2Vec<Curve> = (&witness.v2[..m]).into();
+            let v2r: G2Vec<Curve> = (&witness.v2[m..]).into();
 
             // P --> V:
             let d1l = v1l.inner_prod(gamma_2_prime)?;
@@ -230,7 +248,6 @@ where
             let d2r = gamma_1_prime.inner_prod(&v2r)?;
 
             let step_1_element = ReduceProverStep1Elements {
-                pp_digest: digest,
                 d1l,
                 d1r,
                 d2l,
@@ -239,9 +256,12 @@ where
                 d1,
                 d2,
             };
+            // update transcript with step 1 element
+            step_1_element.append_to_transcript(transcript);
 
-            let (betha, step_1_digest) = step_1_element.ro()?;
-            let inverse_betha = betha.inverse().unwrap();
+            // Get from Transcript
+            let betha: Zr<Curve> = transcript.challenge_scalar();
+            let inverse_betha = JoltField::inverse(&betha).unwrap();
 
             // P:
             let v1 = witness.v1 + (g1v * betha);
@@ -249,20 +269,19 @@ where
 
             let v1l: G1Vec<Curve> = v1[..m].to_vec().into();
             let v1r: G1Vec<Curve> = v1[m..].to_vec().into();
-            let v2l = v2[..m].to_vec().into();
-            let v2r = v2[m..].to_vec().into();
+            let v2l: G2Vec<Curve> = v2[..m].to_vec().into();
+            let v2r: G2Vec<Curve> = v2[m..].to_vec().into();
 
             // P --> V:
             let c_plus = v1l.inner_prod(&v2r)?;
             let c_minus = v1r.inner_prod(&v2l)?;
 
-            let step_2_element = ReduceProverStep2Elements {
-                step_1_digest,
-                c_plus,
-                c_minus,
-            };
-            let alpha = step_2_element.ro()?;
-            let inverse_alpha = alpha.inverse().unwrap();
+            let step_2_element = ReduceProverStep2Elements { c_plus, c_minus };
+            // update transcript with step 2 elements
+            step_2_element.append_to_transcript(transcript);
+            // Get from Transcript
+            let alpha: Zr<Curve> = transcript.challenge_scalar();
+            let inverse_alpha = JoltField::inverse(&alpha).unwrap();
 
             let v1_prime = v1l * alpha + v1r;
             let v2_prime = v2l * inverse_alpha + v2r;
@@ -316,7 +335,7 @@ where
                 from_prover_1: step_1_elements,
                 from_prover_2: step_2_elements,
                 final_proof: scalar_product_proof,
-            } = reduce(rest_param, next_witness, next_commitment)?;
+            } = reduce(transcript, rest_param, next_witness, next_commitment)?;
 
             let mut from_prover_1 = vec![step_1_element];
             from_prover_1.extend(step_1_elements);

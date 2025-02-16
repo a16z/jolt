@@ -1,18 +1,19 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::UniformRand;
-use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
-use sha3::{Digest, Sha3_256};
 
 use super::{vec_operations::InnerProd, Error, G1Vec, G2Vec, Gt, G1, G2};
 
 #[derive(Clone)]
+pub struct SingleParam<P: Pairing> {
+    pub g1: G1<P>,
+    pub g2: G2<P>,
+    pub x: Gt<P>,
+}
+
+#[derive(Clone)]
 pub enum PublicParams<P: Pairing> {
-    Single {
-        g1v: G1Vec<P>,
-        g2v: G2Vec<P>,
-        x: Gt<P>,
-    },
+    Single(SingleParam<P>),
 
     Multi {
         g1v: G1Vec<P>,
@@ -30,21 +31,23 @@ pub enum PublicParams<P: Pairing> {
 }
 
 impl<Curve: Pairing> PublicParams<Curve> {
-    pub fn g1v(&self) -> &G1Vec<Curve> {
+    pub fn g1v(&self) -> Vec<G1<Curve>> {
         match self {
-            PublicParams::Single { g1v, .. } | PublicParams::Multi { g1v, .. } => g1v,
+            PublicParams::Single(SingleParam { g1, .. }) => vec![*g1],
+            PublicParams::Multi { g1v, .. } => g1v.to_vec(),
         }
     }
 
-    pub fn g2v(&self) -> &G2Vec<Curve> {
+    pub fn g2v(&self) -> Vec<G2<Curve>> {
         match self {
-            PublicParams::Single { g2v, .. } | PublicParams::Multi { g2v, .. } => g2v,
+            PublicParams::Single(SingleParam { g2, .. }) => vec![*g2],
+            PublicParams::Multi { g2v, .. } => g2v.to_vec(),
         }
     }
 
     pub fn x(&self) -> &Gt<Curve> {
         match self {
-            PublicParams::Single { x, .. } | PublicParams::Multi { x, .. } => x,
+            PublicParams::Single(SingleParam { x, .. }) | PublicParams::Multi { x, .. } => x,
         }
     }
 
@@ -81,18 +84,22 @@ impl<Curve: Pairing> PublicParams<Curve> {
         g1v: G1Vec<Curve>,
         g2v: G2Vec<Curve>,
     ) -> Result<Self, Error> {
-        let n = g1v.len();
-
         let x = g1v.inner_prod(&g2v)?;
-        if n == 1 {
-            Ok(Self::Single { g1v, g2v, x })
+        // if there's a single element, return a single param
+        if let ([g1], [g2]) = (&*g1v, &*g2v) {
+            Ok(Self::Single(SingleParam {
+                g1: *g1,
+                g2: *g2,
+                x,
+            }))
+        // else, prepare gamma and delta public params
         } else {
             let m = g1v.len() / 2;
             let gamma_1l: G1Vec<Curve> = (&g1v[..m]).into();
             let gamma_1r: G1Vec<Curve> = (&g1v[m..]).into();
 
-            let gamma_2l = (&g2v[..m]).into();
-            let gamma_2r = (&g2v[m..]).into();
+            let gamma_2l: G2Vec<Curve> = (&g2v[..m]).into();
+            let gamma_2r: G2Vec<Curve> = (&g2v[m..]).into();
 
             let gamma_1_prime = G1Vec::random(rng, m);
             let gamma_2_prime = G2Vec::random(rng, m);
@@ -133,40 +140,5 @@ impl<Curve: Pairing> PublicParams<Curve> {
         let g1v = gamma_1_prime.clone();
         let g2v = gamma_2_prime.clone();
         Self::params_with_provided_g(rng, g1v, g2v)
-    }
-
-    pub fn digest(&self, prev: Option<&[u8]>) -> Result<Vec<u8>, Error> {
-        let mut hasher = Sha3_256::new();
-        if let Some(prev) = prev {
-            hasher.update(prev);
-        }
-
-        if let Self::Multi {
-            gamma_1_prime,
-            gamma_2_prime,
-            delta_1r,
-            delta_1l,
-            delta_2r,
-            delta_2l,
-            ..
-        } = &self
-        {
-            gamma_1_prime.serialize_uncompressed(&mut hasher)?;
-            gamma_2_prime.serialize_uncompressed(&mut hasher)?;
-            delta_1r.serialize_uncompressed(&mut hasher)?;
-            delta_1l.serialize_uncompressed(&mut hasher)?;
-            delta_2r.serialize_uncompressed(&mut hasher)?;
-            delta_2l.serialize_uncompressed(&mut hasher)?;
-        }
-
-        match self {
-            PublicParams::Single { g1v, g2v, x } | PublicParams::Multi { g1v, g2v, x, .. } => {
-                x.serialize_uncompressed(&mut hasher)?;
-                g1v.serialize_uncompressed(&mut hasher)?;
-                g2v.serialize_uncompressed(&mut hasher)?;
-            }
-        }
-
-        Ok(hasher.finalize().to_vec())
     }
 }

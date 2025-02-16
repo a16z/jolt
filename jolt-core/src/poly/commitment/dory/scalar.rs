@@ -10,6 +10,7 @@ use crate::{
 };
 
 use super::{
+    params::SingleParam,
     vec_operations::{e, mul_gt, InnerProd},
     Error, G1Vec, G2Vec, Gt, PublicParams, Zr, G1, G2,
 };
@@ -33,16 +34,16 @@ where
         let poly = poly.evals_ref();
         let v1 = params
             .g1v()
-            .iter()
+            .into_iter()
             .zip(poly.iter())
-            .map(|(a, b)| *a * *b)
+            .map(|(a, b)| a * b)
             .collect::<Vec<G1<P>>>();
 
         let v2 = params
             .g2v()
-            .iter()
+            .into_iter()
             .zip(poly.iter())
-            .map(|(a, b)| *a * *b)
+            .map(|(a, b)| a * b)
             .collect::<Vec<G2<P>>>();
         let v1 = v1.into();
         let v2 = v2.into();
@@ -62,7 +63,7 @@ pub fn commit<Curve: Pairing>(
     Witness { v1, v2 }: Witness<Curve>,
     public_params: &PublicParams<Curve>,
 ) -> Result<Commitment<Curve>, Error> {
-    let d1 = v1.inner_prod(public_params.g2v())?;
+    let d1 = v1.inner_prod(&public_params.g2v())?;
     let d2 = public_params.g1v().inner_prod(&v2)?;
     let c = v1.inner_prod(&v2)?;
 
@@ -72,23 +73,21 @@ pub fn commit<Curve: Pairing>(
 
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct ScalarProof<Curve: Pairing> {
-    //pp: &'a PublicParams<Curve>,
-    e1: G1Vec<Curve>,
-    e2: G2Vec<Curve>,
+    e1: G1<Curve>,
+    e2: G2<Curve>,
 }
 
 impl<Curve: Pairing> ScalarProof<Curve> {
     pub fn new(witness: Witness<Curve>) -> Self {
         Self {
-            //pp: public_params,
-            e1: witness.v1,
-            e2: witness.v2,
+            e1: witness.v1[0],
+            e2: witness.v2[0],
         }
     }
 
     pub fn verify(
         &self,
-        pp: &PublicParams<Curve>,
+        pp: &SingleParam<Curve>,
         Commitment { c, d1, d2 }: &Commitment<Curve>,
     ) -> Result<bool, Error>
     where
@@ -101,13 +100,12 @@ impl<Curve: Pairing> ScalarProof<Curve> {
         let d: Zr<Curve> = Zr::<Curve>::rand(&mut rng);
         let d_inv = d.inverse().ok_or(Error::CouldntInvertD)?;
 
-        let g1 = G1Vec::<Curve>::from(&[self.e1[0], pp.g1v()[0] * d]).sum();
+        let g1 = G1Vec::<Curve>::from(&[self.e1, pp.g1 * d]).sum();
 
-        let g2 = G2Vec::<Curve>::from(&[self.e2[0], pp.g2v()[0] * d_inv]).sum();
+        let g2 = G2Vec::<Curve>::from(&[self.e2, pp.g2 * d_inv]).sum();
         let left_eq = e(g1, g2);
 
-        let right_eq =
-            mul_gt(&[*pp.x(), *c, *d2 * d, *d1 * d_inv]).expect("has more than one item");
+        let right_eq = mul_gt(&[pp.x, *c, *d2 * d, *d1 * d_inv]).expect("has more than one item");
 
         Ok(left_eq == right_eq)
     }

@@ -6,6 +6,8 @@ use error::Error;
 use params::PublicParams;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use reduce::reduce;
+use reduce::DoryProof;
 use scalar::ScalarProof;
 use scalar::{commit, Commitment, Witness};
 use vec_operations::{G1Vec, G2Vec};
@@ -70,11 +72,11 @@ where
 {
     type Field = Zr<P>;
 
-    type Setup = PublicParams<P>;
+    type Setup = Vec<PublicParams<P>>;
 
     type Commitment = Commitment<P>;
 
-    type Proof = ScalarProof<P>;
+    type Proof = DoryProof<P>;
 
     type BatchedProof = DoryBatchedProof;
 
@@ -88,12 +90,14 @@ where
             }
         }
         let mut rng = ark_std::rand::thread_rng();
-        PublicParams::new(&mut rng, max_len).expect("Length must be greater than 0")
+        PublicParams::generate_public_params(&mut rng, max_len)
+            .expect("Length must be greater than 0")
     }
 
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        let witness = Witness::new(setup, poly);
-        commit(witness, setup).unwrap()
+        let public_param = setup.first().unwrap();
+        let witness = Witness::new(public_param, poly);
+        commit(witness, public_param).unwrap()
     }
 
     fn batch_commit(
@@ -111,26 +115,29 @@ where
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         _opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        _transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        //let evalutation_y = poly.evaluate(opening_point);
+        let public_param = setup.first().unwrap();
 
-        let witness = Witness::new(setup, poly);
-        ScalarProof::new(witness)
+        let witness = Witness::new(public_param, poly);
+
+        let commitment = commit(witness.clone(), public_param).unwrap();
+
+        reduce(transcript, setup.as_slice(), witness, commitment).unwrap()
     }
 
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
-        _transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript,
         _opening_point: &[Self::Field], // point at which the polynomial is evaluated
         _opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        if proof.verify(setup, commitment).unwrap() {
+        if proof.verify(transcript, setup, *commitment).unwrap() {
             Ok(())
         } else {
-            Err(ProofVerifyError::VerificationFailed)
+            todo!()
         }
     }
 
