@@ -19,7 +19,7 @@ where
     /// commitment of <g1, g2> (inner product)
     ///
     /// known by the **verifier**
-    pub c: Gt<P>,
+    pub c_g: Gt<P>,
 }
 
 #[derive(Clone)]
@@ -53,7 +53,7 @@ where
         /// commitment of <g1v, g2v> (inner product)
         ///
         /// known by the **verifier**
-        c: Gt<P>,
+        c_g: Gt<P>,
 
         /// commitment of <g1v[..n/2], gamma_2> (inner product)
         ///
@@ -93,12 +93,6 @@ where
         }
     }
 
-    pub fn x(&self) -> &Gt<Curve> {
-        match self {
-            PublicParams::Single(SingleParam { c: x, .. }) | PublicParams::Multi { c: x, .. } => x,
-        }
-    }
-
     pub fn generate_public_params(rng: &mut impl Rng, mut n: usize) -> Result<Vec<Self>, Error> {
         let mut res = Vec::new();
         let mut params = Self::new(rng, n)?;
@@ -124,13 +118,13 @@ where
         g1v: G1Vec<Curve>,
         g2v: G2Vec<Curve>,
     ) -> Result<Self, Error> {
-        let c = g1v.inner_prod(&g2v)?;
+        let c_g = g1v.inner_prod(&g2v)?;
         match (&*g1v, &*g2v) {
             // if there's a single element, return a single param
             ([g1], [g2]) => Ok(Self::Single(SingleParam {
                 g1: *g1,
                 g2: *g2,
-                c,
+                c_g,
             })),
             // else, prepare gamma and delta public params
             (a, b) if !a.is_empty() & !b.is_empty() && a.len() == b.len() => {
@@ -153,7 +147,7 @@ where
                 Ok(Self::Multi {
                     g1v,
                     g2v,
-                    c,
+                    c_g,
                     gamma_1,
                     gamma_2,
                     delta_1r,

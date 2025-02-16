@@ -63,9 +63,9 @@ pub struct Commitment<Curve>
 where
     Curve: Pairing,
 {
-    pub c: Gt<Curve>,
-    pub d1: Gt<Curve>,
-    pub d2: Gt<Curve>,
+    pub c1: Gt<Curve>,
+    pub c2: Gt<Curve>,
+    pub c3: Gt<Curve>,
 }
 
 impl<P> AppendToTranscript for Commitment<P>
@@ -76,9 +76,9 @@ where
     where
         ProofTranscript: Transcript,
     {
-        append_gt(transcript, self.c);
-        append_gt(transcript, self.d1);
-        append_gt(transcript, self.d2);
+        append_gt(transcript, self.c1);
+        append_gt(transcript, self.c2);
+        append_gt(transcript, self.c3);
     }
 }
 
@@ -89,11 +89,11 @@ pub fn commit<Curve>(
 where
     Curve: Pairing,
 {
-    let d1 = u1.inner_prod(&public_params.g2v())?;
-    let d2 = public_params.g1v().inner_prod(&u2)?;
-    let c = u1.inner_prod(&u2)?;
+    let c1 = u1.inner_prod(&u2)?;
+    let c2 = u1.inner_prod(&public_params.g2v())?;
+    let c3 = public_params.g1v().inner_prod(&u2)?;
 
-    let commitment = Commitment { d1, d2, c };
+    let commitment = Commitment { c2, c3, c1 };
     Ok(commitment)
 }
 
@@ -120,7 +120,11 @@ where
     pub fn verify(
         &self,
         pp: &SingleParam<Curve>,
-        Commitment { c, d1, d2 }: &Commitment<Curve>,
+        Commitment {
+            c1: c,
+            c2: d1,
+            c3: d2,
+        }: &Commitment<Curve>,
     ) -> Result<bool, Error> {
         let mut rng = thread_rng();
         let d: Zr<Curve> = Zr::<Curve>::rand(&mut rng);
@@ -131,7 +135,7 @@ where
         let g2 = [self.e2, pp.g2 * d_inv].iter().sum();
         let left_eq = e(g1, g2);
 
-        let right_eq = [pp.c, *c, *d2 * d, *d1 * d_inv].iter().sum();
+        let right_eq = [pp.c_g, *c, *d2 * d, *d1 * d_inv].iter().sum();
 
         Ok(left_eq == right_eq)
     }

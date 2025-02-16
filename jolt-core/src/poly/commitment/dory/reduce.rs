@@ -33,7 +33,7 @@ where
     fn verify_recursive<ProofTranscript>(
         transcript: &mut ProofTranscript,
         public_params: &[PublicParams<Curve>],
-        commitment @ Commitment { c, d1, d2 }: Commitment<Curve>,
+        commitment @ Commitment { c1, c2, c3 }: Commitment<Curve>,
         from_prover: &[(
             ReduceProverRound1Elements<Curve>,
             ReduceProverRound2Elements<Curve>,
@@ -55,69 +55,61 @@ where
                     delta_1l,
                     delta_2r,
                     delta_2l,
-                    c: c_g,
+                    c_g,
                     ..
                 }, public_params_rest @ ..],
                 [(
-                    step_1_element @ ReduceProverRound1Elements {
-                        d1l: v1l,
-                        d1r: v1r,
-                        d2l: v2l,
-                        d2r: v2r,
-                    },
-                    step_2_element @ ReduceProverRound2Elements {
-                        vl: c_plus,
-                        vr: c_minus,
-                    },
+                    step_1_element @ ReduceProverRound1Elements { d1l, d1r, d2l, d2r },
+                    step_2_element @ ReduceProverRound2Elements { vl, vr },
                 ), from_prover_rest @ ..],
             ) => {
                 // update transcript with step_1_elements
                 commitment.append_to_transcript(transcript);
                 step_1_element.append_to_transcript(transcript);
                 // Get from Transcript
-                let alpha_1: Zr<Curve> = transcript.challenge_scalar();
+                let betha: Zr<Curve> = transcript.challenge_scalar();
 
                 // update transcript with step_2_elements
                 step_2_element.append_to_transcript(transcript);
                 // Get from Transcript
-                let alpha_2: Zr<Curve> = transcript.challenge_scalar();
+                let alpha: Zr<Curve> = transcript.challenge_scalar();
 
-                let inverse_alpha_1 = JoltField::inverse(&alpha_1).ok_or(Error::ZrZero)?;
-                let inverse_alpha_2 = JoltField::inverse(&alpha_2).ok_or(Error::ZrZero)?;
+                let inverse_betha = JoltField::inverse(&betha).ok_or(Error::ZrZero)?;
+                let inverse_alpha = JoltField::inverse(&alpha).ok_or(Error::ZrZero)?;
 
-                let c_prime = [
-                    c,
+                let c1_prime = [
+                    c1,
+                    c2 * inverse_betha,
+                    c3 * betha,
                     *c_g,
-                    d2 * alpha_1,
-                    d1 * inverse_alpha_1,
-                    *c_plus * alpha_2,
-                    *c_minus * inverse_alpha_2,
+                    *vl * alpha * alpha,
+                    *vr * inverse_alpha * inverse_alpha,
                 ]
                 .iter()
                 .sum();
 
-                let d1_prime = [
-                    *v1l * alpha_2,
-                    *v1r,
-                    *delta_1l * alpha_2 * alpha_1,
-                    *delta_1r * alpha_1,
+                let c2_prime = [
+                    *d1l * alpha,
+                    *d1r * inverse_alpha,
+                    *delta_1l * alpha * betha,
+                    *delta_1r * inverse_alpha * betha,
                 ]
                 .iter()
                 .sum();
 
-                let d2_prime = [
-                    *v2l * inverse_alpha_2,
-                    *v2r,
-                    *delta_2l * inverse_alpha_2 * inverse_alpha_1,
-                    *delta_2r * inverse_alpha_1,
+                let c3_prime = [
+                    *d2l * inverse_alpha,
+                    *d2r * alpha,
+                    *delta_2l * inverse_alpha * inverse_betha,
+                    *delta_2r * alpha * inverse_betha,
                 ]
                 .iter()
                 .sum();
 
                 let next_commitment = Commitment {
-                    c: c_prime,
-                    d1: d1_prime,
-                    d2: d2_prime,
+                    c1: c1_prime,
+                    c2: c2_prime,
+                    c3: c3_prime,
                 };
 
                 Self::verify_recursive(
@@ -199,7 +191,7 @@ pub fn reduce<P, ProofTranscript>(
     transcript: &mut ProofTranscript,
     params: &[PublicParams<P>],
     witness: Witness<P>,
-    commitment @ Commitment { c, d1, d2 }: Commitment<P>,
+    commitment @ Commitment { c1, c2, c3 }: Commitment<P>,
 ) -> Result<DoryProof<P>, Error>
 where
     P: Pairing,
@@ -210,7 +202,7 @@ where
         [PublicParams::Multi {
             g1v,
             g2v,
-            c: c_g,
+            c_g,
             gamma_1,
             gamma_2,
             delta_1r,
@@ -264,8 +256,8 @@ where
             let alpha: Zr<P> = transcript.challenge_scalar();
             let inverse_alpha = JoltField::inverse(&alpha).ok_or(Error::ZrZero)?;
 
-            let u1_prime = G1Vec::from(w1l) * alpha + G1Vec::from(w1r);
-            let u2_prime = G2Vec::from(w2l) * inverse_alpha + G2Vec::from(w2r);
+            let u1_prime = G1Vec::from(w1l) * alpha + G1Vec::from(w1r) * inverse_alpha;
+            let u2_prime = G2Vec::from(w2l) * inverse_alpha + G2Vec::from(w2r) * alpha;
 
             let next_witness = Witness {
                 u1: u1_prime,
@@ -279,44 +271,44 @@ where
                 });
             }
 
-            let c_prime = [
-                c,
+            let c1_prime = [
+                c1,
+                c2 * inverse_betha,
+                c3 * betha,
                 *c_g,
-                d2 * betha,
-                d1 * inverse_betha,
-                vl * alpha,
-                vr * inverse_alpha,
+                vl * alpha * alpha,
+                vr * inverse_alpha * inverse_alpha,
             ]
             .iter()
             .sum();
 
-            let d1_prime = [
+            let c2_prime = [
                 d1l * alpha,
-                d1r,
+                d1r * inverse_alpha,
                 *delta_1l * alpha * betha,
-                *delta_1r * betha,
+                *delta_1r * inverse_alpha * betha,
             ]
             .iter()
             .sum();
 
-            let d2_prime = [
+            let c3_prime = [
                 d2l * inverse_alpha,
-                d2r,
+                d2r * alpha,
                 *delta_2l * inverse_alpha * inverse_betha,
-                *delta_2r * inverse_betha,
+                *delta_2r * alpha * inverse_betha,
             ]
             .iter()
             .sum();
 
             let next_commitment = Commitment {
-                c: c_prime,
-                d1: d1_prime,
-                d2: d2_prime,
+                c1: c1_prime,
+                c2: c2_prime,
+                c3: c3_prime,
             };
 
             let DoryProof {
                 from_prover: step_elements,
-                final_proof: scalar_product_proof,
+                final_proof,
             } = reduce(transcript, rest_param, next_witness, next_commitment)?;
 
             let mut from_prover = vec![(step_1_element, step_2_element)];
@@ -324,11 +316,14 @@ where
 
             Ok(DoryProof {
                 from_prover,
-                final_proof: scalar_product_proof,
+                final_proof,
             })
         }
         // Send u, g and gamma
-        [PublicParams::Single(_), ..] => Err(Error::ReduceSinglePublicParam),
+        [PublicParams::Single(_), ..] => Ok(DoryProof {
+            from_prover: vec![],
+            final_proof: ScalarProof::new(witness),
+        }),
         [] => Err(Error::EmptyPublicParams),
     }
 }
