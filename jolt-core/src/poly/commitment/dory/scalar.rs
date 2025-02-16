@@ -6,10 +6,14 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::thread_rng;
 
 use crate::{
-    field::JoltField, msm::VariableBaseMSM, poly::multilinear_polynomial::MultilinearPolynomial,
+    field::JoltField,
+    msm::VariableBaseMSM,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::transcript::{AppendToTranscript, Transcript},
 };
 
 use super::{
+    append_gt,
     params::SingleParam,
     vec_operations::{e, mul_gt, InnerProd},
     Error, G1Vec, G2Vec, Gt, PublicParams, Zr, G1, G2,
@@ -59,6 +63,14 @@ pub struct Commitment<Curve: Pairing> {
     pub d2: Gt<Curve>,
 }
 
+impl<P: Pairing> AppendToTranscript for Commitment<P> {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        append_gt(transcript, self.c);
+        append_gt(transcript, self.d1);
+        append_gt(transcript, self.d2);
+    }
+}
+
 pub fn commit<Curve: Pairing>(
     Witness { v1, v2 }: Witness<Curve>,
     public_params: &PublicParams<Curve>,
@@ -105,7 +117,7 @@ impl<Curve: Pairing> ScalarProof<Curve> {
         let g2 = G2Vec::<Curve>::from(&[self.e2, pp.g2 * d_inv]).sum();
         let left_eq = e(g1, g2);
 
-        let right_eq = mul_gt(&[pp.x, *c, *d2 * d, *d1 * d_inv]).expect("has more than one item");
+        let right_eq = mul_gt(&[pp.x, *c, *d2 * d, *d1 * d_inv]);
 
         Ok(left_eq == right_eq)
     }

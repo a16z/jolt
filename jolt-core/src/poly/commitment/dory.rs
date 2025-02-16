@@ -17,10 +17,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::{math::Math, transcript::Transcript},
 };
 
 use super::commitment_scheme::{CommitShape, CommitmentScheme};
@@ -52,10 +49,14 @@ pub struct DoryScheme<P: Pairing, ProofTranscript: Transcript> {
     _data: PhantomData<(P, ProofTranscript)>,
 }
 
-impl<P: Pairing> AppendToTranscript for Commitment<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, _transcript: &mut ProofTranscript) {
-        todo!()
-    }
+fn append_gt<P: Pairing, ProofTranscript: Transcript>(transcript: &mut ProofTranscript, gt: Gt<P>) {
+    let mut buf = vec![];
+    gt.serialize_uncompressed(&mut buf).unwrap();
+    // Serialize uncompressed gives the scalar in LE byte order which is not
+    // a natural representation in the EVM for scalar math so we reverse
+    // to get an EVM compatible version.
+    buf = buf.into_iter().rev().collect();
+    transcript.append_bytes(&buf);
 }
 
 #[derive(CanonicalDeserialize, CanonicalSerialize)]
@@ -137,7 +138,7 @@ where
         if proof.verify(transcript, setup, *commitment).unwrap() {
             Ok(())
         } else {
-            todo!()
+            Err(ProofVerifyError::VerificationFailed)
         }
     }
 

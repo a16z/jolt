@@ -1,4 +1,7 @@
-use std::ops::{Add, Deref, Mul};
+use std::{
+    iter::Sum,
+    ops::{Add, Deref, Mul},
+};
 
 use ark_ec::{pairing::Pairing, Group};
 use ark_ff::UniformRand;
@@ -14,11 +17,11 @@ pub fn e<Curve: Pairing>(g1: G1<Curve>, g2: G2<Curve>) -> Gt<Curve> {
     Curve::pairing(g1, g2)
 }
 
-pub fn mul_gt<Curve: Pairing>(gts: &[Gt<Curve>]) -> Option<Gt<Curve>> {
-    gts.iter().fold(None, |prev, curr| match prev {
-        Some(prev) => Some(curr + prev),
-        None => Some(*curr),
-    })
+pub fn mul_gt<Curve: Pairing>(gts: &[Gt<Curve>]) -> Gt<Curve>
+where
+    Gt<Curve>: Sum,
+{
+    gts.iter().sum()
 }
 
 pub trait InnerProd<G2> {
@@ -265,7 +268,7 @@ mod tests {
         let g2b = G2::<Bn254>::rand(&mut rng);
         let g2c = G2::<Bn254>::rand(&mut rng);
 
-        let expected = mul_gt(&[e(g1a, g2a), e(g1b, g2b), e(g1c, g2c)]).unwrap();
+        let expected = mul_gt(&[e(g1a, g2a), e(g1b, g2b), e(g1c, g2c)]);
 
         let g1v = &[g1a, g1b, g1c];
         let g1v: G1Vec<Bn254> = g1v.into();

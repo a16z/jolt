@@ -11,6 +11,7 @@ use crate::{
 };
 
 use super::{
+    append_gt,
     vec_operations::{mul_gt, InnerProd},
     Commitment, Error, G1Vec, G2Vec, Gt, PublicParams, ScalarProof, Witness, Zr, G1, G2,
 };
@@ -35,103 +36,96 @@ where
         from_prover_2: &[ReduceProverStep2Elements<Curve>],
         final_proof: &ScalarProof<Curve>,
     ) -> Result<bool, Error> {
-        match public_params {
-            [] => Err(Error::EmptyPublicParams),
-            [PublicParams::Single(param)] => final_proof.verify(param, &commitment),
-            [param1, public_params_rest @ ..] => {
-                let PublicParams::Multi {
+        match (public_params, from_prover_1, from_prover_2) {
+            ([], _, _) => Err(Error::EmptyPublicParams),
+            ([PublicParams::Single(param)], [], []) => final_proof.verify(param, &commitment),
+            ([PublicParams::Single(_), ..], _, _) => Err(Error::SingleWithNonEmptySteps),
+            ([PublicParams::Multi { .. }, ..], [], _)
+            | ([PublicParams::Multi { .. }, ..], _, []) => Err(Error::MultiParamsWithEmptySteps),
+            // take the first element of public_params, prover_step_1, prover_step_2
+            (
+                [PublicParams::Multi {
                     delta_1r,
                     delta_1l,
                     delta_2r,
                     delta_2l,
                     x,
                     ..
-                } = param1
-                else {
-                    panic!()
+                }, public_params_rest @ ..],
+                [ReduceProverStep1Elements {
+                    d1l, d1r, d2l, d2r, ..
+                }, from_prover_1_rest @ ..],
+                [ReduceProverStep2Elements {
+                    c_plus, c_minus, ..
+                }, from_prover_2_rest @ ..],
+            ) => {
+                let Commitment { c, d1, d2 } = commitment;
+
+                let step_1_element = ReduceProverStep1Elements {
+                    d1l: *d1l,
+                    d1r: *d1r,
+                    d2l: *d2l,
+                    d2r: *d2r,
+                    c,
+                    d1,
+                    d2,
                 };
 
-                match (from_prover_1, from_prover_2) {
-                    (
-                        [ReduceProverStep1Elements {
-                            d1l, d1r, d2l, d2r, ..
-                        }, from_prover_1_rest @ ..],
-                        [ReduceProverStep2Elements {
-                            c_plus, c_minus, ..
-                        }, from_prover_2_rest @ ..],
-                    ) => {
-                        let Commitment { c, d1, d2 } = commitment;
+                // update transcript with step_1_elements
+                step_1_element.append_to_transcript(transcript);
+                // Get from Transcript
+                let betha: Zr<Curve> = transcript.challenge_scalar();
 
-                        let step_1_element = ReduceProverStep1Elements {
-                            d1l: *d1l,
-                            d1r: *d1r,
-                            d2l: *d2l,
-                            d2r: *d2r,
-                            c,
-                            d1,
-                            d2,
-                        };
+                let step_2_element = ReduceProverStep2Elements {
+                    c_plus: *c_plus,
+                    c_minus: *c_minus,
+                };
 
-                        // update transcript with step_1_elements
-                        step_1_element.append_to_transcript(transcript);
-                        // Get from Transcript
-                        let betha: Zr<Curve> = transcript.challenge_scalar();
+                // update transcript with step_2_elements
+                step_2_element.append_to_transcript(transcript);
+                // Get from Transcript
+                let alpha: Zr<Curve> = transcript.challenge_scalar();
 
-                        let step_2_element = ReduceProverStep2Elements {
-                            c_plus: *c_plus,
-                            c_minus: *c_minus,
-                        };
+                let inverse_alpha = JoltField::inverse(&alpha).ok_or(Error::ZrZero)?;
+                let inverse_betha = JoltField::inverse(&betha).ok_or(Error::ZrZero)?;
 
-                        // update transcript with step_2_elements
-                        step_2_element.append_to_transcript(transcript);
-                        // Get from Transcript
-                        let alpha: Zr<Curve> = transcript.challenge_scalar();
-                        let inverse_alpha = JoltField::inverse(&alpha).ok_or(Error::ZrZero)?;
-                        let inverse_betha = JoltField::inverse(&betha).ok_or(Error::ZrZero)?;
+                let c_prime = mul_gt(&[
+                    c,
+                    *x,
+                    d2 * betha,
+                    d1 * inverse_betha,
+                    *c_plus * alpha,
+                    *c_minus * inverse_alpha,
+                ]);
 
-                        let c_prime = mul_gt(&[
-                            c,
-                            *x,
-                            d2 * betha,
-                            d1 * inverse_betha,
-                            *c_plus * alpha,
-                            *c_minus * inverse_alpha,
-                        ])
-                        .expect("slice is not empty");
+                let d1_prime = mul_gt(&[
+                    *d1l * alpha,
+                    *d1r,
+                    *delta_1l * alpha * betha,
+                    *delta_1r * betha,
+                ]);
 
-                        let d1_prime = mul_gt(&[
-                            *d1l * alpha,
-                            *d1r,
-                            *delta_1l * alpha * betha,
-                            *delta_1r * betha,
-                        ])
-                        .expect("slice is not empty");
+                let d2_prime = mul_gt(&[
+                    *d2l * inverse_alpha,
+                    *d2r,
+                    *delta_2l * inverse_alpha * inverse_betha,
+                    *delta_2r * inverse_betha,
+                ]);
 
-                        let d2_prime = mul_gt(&[
-                            *d2l * inverse_alpha,
-                            *d2r,
-                            *delta_2l * inverse_alpha * inverse_betha,
-                            *delta_2r * inverse_betha,
-                        ])
-                        .expect("slice is not empty");
+                let next_commitment = Commitment {
+                    c: c_prime,
+                    d1: d1_prime,
+                    d2: d2_prime,
+                };
 
-                        let next_commitment = Commitment {
-                            c: c_prime,
-                            d1: d1_prime,
-                            d2: d2_prime,
-                        };
-
-                        Self::verify_recursive(
-                            transcript,
-                            public_params_rest,
-                            next_commitment,
-                            from_prover_1_rest,
-                            from_prover_2_rest,
-                            final_proof,
-                        )
-                    }
-                    _ => todo!(),
-                }
+                Self::verify_recursive(
+                    transcript,
+                    public_params_rest,
+                    next_commitment,
+                    from_prover_1_rest,
+                    from_prover_2_rest,
+                    final_proof,
+                )
             }
         }
     }
@@ -181,16 +175,6 @@ impl<P: Pairing> AppendToTranscript for ReduceProverStep1Elements<P> {
     }
 }
 
-fn append_gt<P: Pairing, ProofTranscript: Transcript>(transcript: &mut ProofTranscript, gt: Gt<P>) {
-    let mut buf = vec![];
-    gt.serialize_uncompressed(&mut buf).unwrap();
-    // Serialize uncompressed gives the scalar in LE byte order which is not
-    // a natural representation in the EVM for scalar math so we reverse
-    // to get an EVM compatible version.
-    buf = buf.into_iter().rev().collect();
-    transcript.append_bytes(&buf);
-}
-
 #[derive(Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct ReduceProverStep2Elements<Curve: Pairing> {
     c_plus: Gt<Curve>,
@@ -216,23 +200,17 @@ where
     G2Vec<Curve>: Add<G2Vec<Curve>, Output = G2Vec<Curve>>,
 {
     match params {
-        [] => unimplemented!(),
-        [param1, rest_param @ ..] => {
-            let PublicParams::Multi {
-                g1v,
-                g2v,
-                x,
-                gamma_1_prime,
-                gamma_2_prime,
-                delta_1r,
-                delta_1l,
-                delta_2r,
-                delta_2l,
-            } = param1
-            else {
-                panic!()
-            };
-
+        [PublicParams::Multi {
+            g1v,
+            g2v,
+            x,
+            gamma_1_prime,
+            gamma_2_prime,
+            delta_1r,
+            delta_1l,
+            delta_2r,
+            delta_2l,
+        }, rest_param @ ..] => {
             let m = g1v.len() / 2;
 
             // P:
@@ -261,7 +239,7 @@ where
 
             // Get from Transcript
             let betha: Zr<Curve> = transcript.challenge_scalar();
-            let inverse_betha = JoltField::inverse(&betha).unwrap();
+            let inverse_betha = JoltField::inverse(&betha).ok_or(Error::ZrZero)?;
 
             // P:
             let v1 = witness.v1 + (g1v * betha);
@@ -281,7 +259,7 @@ where
             step_2_element.append_to_transcript(transcript);
             // Get from Transcript
             let alpha: Zr<Curve> = transcript.challenge_scalar();
-            let inverse_alpha = JoltField::inverse(&alpha).unwrap();
+            let inverse_alpha = JoltField::inverse(&alpha).ok_or(Error::ZrZero)?;
 
             let v1_prime = v1l * alpha + v1r;
             let v2_prime = v2l * inverse_alpha + v2r;
@@ -291,6 +269,7 @@ where
                 v2: v2_prime,
             };
 
+            // we return earlier if == 1 since we don't need to calculate the next_commitment
             if m == 1 {
                 return Ok(DoryProof {
                     from_prover_1: vec![step_1_element],
@@ -306,24 +285,21 @@ where
                 d1 * inverse_betha,
                 c_plus * alpha,
                 c_minus * inverse_alpha,
-            ])
-            .unwrap();
+            ]);
 
             let d1_prime = mul_gt(&[
                 d1l * alpha,
                 d1r,
                 *delta_1l * alpha * betha,
                 *delta_1r * betha,
-            ])
-            .unwrap();
+            ]);
 
             let d2_prime = mul_gt(&[
                 d2l * inverse_alpha,
                 d2r,
                 *delta_2l * inverse_alpha * inverse_betha,
                 *delta_2r * inverse_betha,
-            ])
-            .unwrap();
+            ]);
 
             let next_commitment = Commitment {
                 c: c_prime,
@@ -348,5 +324,7 @@ where
                 final_proof: scalar_product_proof,
             })
         }
+        [PublicParams::Single(_), ..] => Err(Error::ReduceSinglePublicParam),
+        [] => Err(Error::EmptyPublicParams),
     }
 }
