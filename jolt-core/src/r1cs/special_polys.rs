@@ -425,6 +425,48 @@ pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
         .sum()
 }
 
+pub fn eq_plus_one_evals<F: JoltField>(r: &[F]) -> Vec<F> {
+    let ell = r.len(); 
+    let mut eq_evals: Vec<F> = vec![F::one(); ell.pow2()];
+    let mut eq_plus_one_evals: Vec<F> = vec![F::zero(); ell.pow2()];
+
+    let eq_evals_helper = |eq_evals: &mut Vec<F>, r: &[F], i: usize| {
+        if i == 0 {
+            return;
+        }
+        let ell = r.len();
+        let size = 1 << (i - 1); // existing number of entries (0 at start)
+        let step = 1 << (ell - i); // step = (full / size)/2
+
+        let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
+
+        selected.par_chunks_mut(2).enumerate().for_each(|(j, chunk)| {
+            let (x, y) = chunk.split_at_mut(1);
+            let x = &mut x[0];
+            let y = &mut y[0];
+            **y = **x * r[i - 1];
+            **x = **x * (F::one() - r[i - 1]);
+        });
+    };
+
+    for i in 0..ell { // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
+        eq_evals_helper(&mut eq_evals, r, i);
+
+        let step = 1 << (ell - i); 
+        let half_step = step / 2;
+
+        let r_lower_product = (F::one()-r[i]) * 
+            r.iter().skip(i + 1).map(|&x| x).product::<F>();
+
+        eq_plus_one_evals.par_iter_mut().enumerate().skip(half_step).step_by(step).for_each(|(index, v)| {
+            *v = eq_evals[index-half_step] * r_lower_product;
+        });
+
+    }
+
+    eq_plus_one_evals
+}
+
 #[cfg(test)]
 mod tests {
     use crate::poly::dense_mlpoly::DensePolynomial;

@@ -25,7 +25,7 @@ use thiserror::Error;
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
-    r1cs::special_polys::eq_plus_one,
+    r1cs::special_polys::{eq_plus_one, eq_plus_one_evals},
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -179,10 +179,11 @@ where
         let span = span!(Level::INFO, "eq_plus_one_rx_step");
         {
         let _enter = span.enter();
-        eq_plus_one_rx_step = (0..num_steps_padded)
-            .into_par_iter()
-            .map(|t| eq_plus_one(r_x_step, &crate::utils::index_to_field_bitvector(t, num_steps_bits), num_steps_bits))
-            .collect();
+        // eq_plus_one_rx_step = (0..num_steps_padded)
+        //     .into_par_iter()
+        //     .map(|t| eq_plus_one(r_x_step, &crate::utils::index_to_field_bitvector(t, num_steps_bits), num_steps_bits))
+        //     .collect();
+            eq_plus_one_rx_step = eq_plus_one_evals(r_x_step);
         }
 
         let span = span!(Level::INFO, "evals and evals_shifted");
@@ -249,7 +250,7 @@ where
                 num_rounds, 
                 &mut polys, 
                 comb_func, 
-                2, 
+                2,
                 transcript);
         
         drop_in_background_thread(polys);
