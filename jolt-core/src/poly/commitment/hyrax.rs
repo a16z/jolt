@@ -262,11 +262,11 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> HyraxCommitment<G> {
 
 impl<G: CurveGroup + Icicle> AppendToTranscript for HyraxCommitment<G> {
     fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"poly_commitment_begin");
+        // transcript.append_message(b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
             transcript.append_point(&self.row_commitments[i]);
         }
-        transcript.append_message(b"poly_commitment_end");
+        // transcript.append_message(b"poly_commitment_end");
     }
 }
 
@@ -295,7 +295,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> HyraxOpeningProof<G, ProofTranscript> {
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
@@ -324,7 +324,7 @@ where
         ratio: usize,
     ) -> Result<(), ProofVerifyError> {
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         // compute L and R
         let (L_size, R_size) = matrix_dimensions(opening_point.len(), ratio);
@@ -399,7 +399,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle, ProofTranscript: Tra
         transcript: &mut ProofTranscript,
     ) -> Self {
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         // append the claimed evaluations to transcript
         transcript.append_scalars(openings);
@@ -488,7 +488,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle, ProofTranscript: Tra
         });
 
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         // append the claimed evaluations to transcript
         transcript.append_scalars(openings);

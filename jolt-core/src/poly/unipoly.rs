@@ -261,11 +261,11 @@ impl<F: JoltField> CompressedUniPoly<F> {
 
 impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
     fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"UniPoly_begin");
+        // transcript.append_message(b"UniPoly_begin");
         for i in 0..self.coeffs_except_linear_term.len() {
             transcript.append_scalar(&self.coeffs_except_linear_term[i]);
         }
-        transcript.append_message(b"UniPoly_end");
+        // transcript.append_message(b"UniPoly_end");
     }
 }
 

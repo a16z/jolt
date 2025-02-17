@@ -227,7 +227,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-pub type ProofTranscript = PoseidonTranscript<ark_bn254::Fr>;
+pub type ProofTranscript = PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fr>;
 // pub type ProofTranscript = KeccakTranscript;
 pub type PCS = HyperKZG<Bn254, ProofTranscript>;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -250,19 +250,15 @@ pub mod tests {
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
-    use crate::jolt::vm::{JoltProof, JoltStuff};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::hyrax::HyraxScheme;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
-    use crate::r1cs::inputs::JoltR1CSInputs;
     use crate::utils::poseidon_transcript::PoseidonTranscript;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use std::sync::{LazyLock, Mutex};
     use strum::{EnumCount, IntoEnumIterator};
-
-    use super::{RV32ISubtables, RV32I};
 
     // If multiple tests try to read the same trace artifacts simultaneously, they will fail
     static FIB_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -362,8 +358,8 @@ pub mod tests {
     fn fib_e2e_zeromorph() {
         fib_e2e::<
             Fr,
-            Zeromorph<Bn254, PoseidonTranscript<ark_bn254::Fq>>,
-            PoseidonTranscript<ark_bn254::Fq>,
+            Zeromorph<Bn254, PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fr>>,
+            PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fr>,
         >();
     }
 
@@ -372,8 +368,8 @@ pub mod tests {
         println!("Running Fib");
         fib_e2e::<
             Fr,
-            HyperKZG<Bn254, PoseidonTranscript<ark_bn254::Fq>>,
-            PoseidonTranscript<ark_bn254::Fq>,
+            HyperKZG<Bn254, PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fq>>,
+            PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fq>,
         >();
     }
 

@@ -635,6 +635,7 @@ where
     // pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     pub(crate) witness_commit: PCS::Commitment,
     pub(crate) pcs_proof: PCS::Proof,
+    pub(crate) pi_eval: F, //This is required for the check in circom.
 }
 
 impl<F, PCS, ProofTranscript> SpartanProof<F, PCS, ProofTranscript>
@@ -839,6 +840,19 @@ where
             &inner_sumcheck_r[1..],
             &mut transcript,
         );
+        let pi_eval = {
+            // constant term
+            let mut input_as_sparse_poly_entries = vec![(F::one(), 0)];
+            //remaining inputs
+            input_as_sparse_poly_entries.extend(
+                (0..preprocessing.inputs.len())
+                    .map(|i| (preprocessing.inputs[i], i + 1))
+                    .collect::<Vec<(F, usize)>>(),
+            );
+            SparsePolynomial::new(num_vars.log_2(), input_as_sparse_poly_entries)
+                .evaluate(&inner_sumcheck_r[1..])
+        };
+
         // let eq_inner_sumcheck = DensePolynomial::new(EqPolynomial::evals(&inner_sumcheck_r[1..]));
         // opening_accumulator.append(
         //     &[&var_poly],
@@ -968,6 +982,7 @@ where
             // opening_proof,
             witness_commit,
             pcs_proof,
+            pi_eval,
         }
     }
 
@@ -1178,20 +1193,18 @@ where
 }
 #[cfg(test)]
 mod tests {
-    use crate::{poly::commitment::hyperkzg::HyperKZG, utils::transcript::KeccakTranscript};
-
     use super::*;
-    use ark_bn254::{Bn254, Fr};
+    use crate::{
+        poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript,
+    };
+    use ark_grumpkin::{Fq, Fr, Projective};
 
-    pub type ProofTranscript = KeccakTranscript;
-    pub type PCS = HyperKZG<Bn254, ProofTranscript>;
+    pub type ProofTranscript = PoseidonTranscript<Fq, Fr>;
+    pub type PCS = HyraxScheme<Projective, ProofTranscript>;
     #[test]
     fn spartan() {
-        let constraint_path =
-            Some("src/spartan/verifier_constraints.json");
+        let constraint_path = Some("src/spartan/verifier_constraints.json");
         let witness_path = Some("src/spartan/witness.json");
-
-        println!("----------------------------------------------------TESTING----------------------------------------------------");
 
         let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
         // let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 0);

@@ -688,7 +688,7 @@ where
         let tau: F = transcript.challenge_scalar();
 
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         let (leaves, _) = TimestampValidityProof::<F, PCS, ProofTranscript>::compute_leaves(
             &NoPreprocessing,
@@ -743,7 +743,7 @@ where
         let tau: F = transcript.challenge_scalar();
 
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         // Multiset equality checks
         TimestampValidityProof::<F, PCS, ProofTranscript>::check_multiset_equality(

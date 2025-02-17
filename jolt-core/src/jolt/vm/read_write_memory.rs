@@ -4,7 +4,9 @@ use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::utils::poseidon_transcript::PoseidonTranscript;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use ark_crypto_primitives::sponge::CryptographicSponge;
 use rayon::prelude::*;
 #[cfg(test)]
 use std::collections::HashSet;
@@ -41,6 +43,7 @@ pub struct ReadWriteMemoryPreprocessing {
     // to compute the v_init and v_final openings, with no impact
     // on existing function signatures.
     pub program_io: Option<JoltDevice>,
+    pub hash: ark_bn254::Fr,
 }
 
 impl ReadWriteMemoryPreprocessing {
@@ -73,11 +76,14 @@ impl ReadWriteMemoryPreprocessing {
             let remapped_index = (chunk[0].0 / 4 - min_bytecode_address / 4) as usize;
             bytecode_words[remapped_index] = word;
         }
-
+        let mut poseidon_transcript = PoseidonTranscript::<ark_bn254::Fr, ark_bn254::Fr>::new();
+        poseidon_transcript.absorb(&bytecode_words);
+        let hash: ark_bn254::Fr = poseidon_transcript.squeeze_field_elements(1)[0];
         Self {
             min_bytecode_address,
             bytecode_words,
             program_io: None,
+            hash,
         }
     }
 }

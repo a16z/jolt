@@ -693,7 +693,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript> {
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         let trace_length = polynomials.instruction_lookups.dim[0].len();
         let r_eq = transcript.challenge_vector(trace_length.log_2());
@@ -778,7 +778,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let protocol_name = Self::protocol_name();
-        transcript.append_message(protocol_name);
+        // transcript.append_message(protocol_name);
 
         let r_eq = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);
 

@@ -1,4 +1,5 @@
-use ark_ff::Zero;
+use ark_crypto_primitives::sponge::CryptographicSponge;
+use ark_ff::{PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -15,6 +16,7 @@ use crate::lasso::memory_checking::{
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
+use crate::utils::poseidon_transcript::PoseidonTranscript;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
 
@@ -231,6 +233,7 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
     virtual_address_map: BTreeMap<(usize, usize), usize>,
+    pub v_init_final_hash: ark_bn254::Fr,
 }
 
 impl<F: JoltField> BytecodePreprocessing<F> {
@@ -289,11 +292,28 @@ impl<F: JoltField> BytecodePreprocessing<F> {
             DensePolynomial::new(rs2),
             DensePolynomial::new(imm),
         ];
+        let mut poseidon_transcript = PoseidonTranscript::<ark_bn254::Fr, ark_bn254::Fr>::new();
+
+        v_init_final.iter().for_each(|poly| {
+            let wrapped_poly: Vec<_> = poly
+                .Z
+                .iter()
+                .map(|elem| {
+                    let mut buf = vec![];
+                    elem.serialize_uncompressed(&mut buf).unwrap();
+                    ark_bn254::Fr::from_le_bytes_mod_order(&buf)
+                })
+                .collect();
+            poseidon_transcript.absorb(&wrapped_poly)
+        });
+
+        let v_init_final_hash: ark_bn254::Fr = poseidon_transcript.squeeze_field_elements(1)[0];
 
         Self {
             v_init_final,
             code_size,
             virtual_address_map,
+            v_init_final_hash,
         }
     }
 }
