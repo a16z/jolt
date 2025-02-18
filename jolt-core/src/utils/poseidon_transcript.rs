@@ -264,7 +264,7 @@ impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
             y.serialize_compressed(&mut y_bytes).unwrap();
 
             let x_limbs = three_limb_repr(&x_bytes);
-            let y_limbs = three_limb_repr(&x_bytes);
+            let y_limbs = three_limb_repr(&y_bytes);
             let mut to_absorb = vec![<ark_bn254::Fr>::from_bigint(self.n_rounds.into()).unwrap()];
             let limbs: Vec<_> = x_limbs.iter().chain(y_limbs.iter()).collect();
             to_absorb.extend(limbs);
