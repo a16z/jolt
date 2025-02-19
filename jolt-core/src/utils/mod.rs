@@ -187,7 +187,6 @@ pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn split() {
         assert_eq!(split_bits(0b00_01, 2), (0, 1));

@@ -40,7 +40,7 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
     pub(crate) dim: Vec<T>,
     /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
     /// the read access counts for each memory.
-    read_cts: Vec<T>,
+   pub (crate) read_cts: Vec<T>,
     /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
     /// the final access counts for each memory.
     pub(crate) final_cts: Vec<T>,
@@ -146,16 +146,16 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
-struct PrimarySumcheckOpenings<F>
+pub struct PrimarySumcheckOpenings<F>
 where
     F: JoltField,
 {
     /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
-    E_poly_openings: Vec<F>,
+    pub(crate)   E_poly_openings: Vec<F>,
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
-    flag_openings: Vec<F>,
+    pub(crate)   flag_openings: Vec<F>,
     /// Evaluation of the lookup_outputs polynomial at the opening point.
-    lookup_outputs_opening: F,
+    pub(crate)  lookup_outputs_opening: F,
 }
 
 impl<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables, ProofTranscript>
@@ -572,8 +572,8 @@ pub struct InstructionLookupsProof<
 {
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
-    primary_sumcheck: PrimarySumcheck<F, ProofTranscript>,
-    memory_checking: MemoryCheckingProof<
+    pub(crate)  primary_sumcheck: PrimarySumcheck<F, ProofTranscript>,
+    pub(crate) memory_checking: MemoryCheckingProof<
         F,
         PCS,
         InstructionLookupOpenings<F>,
@@ -584,9 +584,9 @@ pub struct InstructionLookupsProof<
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    num_rounds: usize,
-    openings: PrimarySumcheckOpenings<F>,
+    pub(crate)  sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub(crate)  num_rounds: usize,
+    pub(crate)  openings: PrimarySumcheckOpenings<F>,
     // opening_proof: PCS::BatchedProof,
     _marker: PhantomData<ProofTranscript>,
 }

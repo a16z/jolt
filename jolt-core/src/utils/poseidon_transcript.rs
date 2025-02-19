@@ -16,7 +16,7 @@ use num_bigint::BigUint;
 pub struct PoseidonTranscript<J: PrimeField, K: PrimeField> {
     pub state: PoseidonSponge<K>,
     /// We append an ordinal to each invocation of the hash
-    n_rounds: u32,
+    pub(crate) n_rounds: u32,
     #[cfg(test)]
     /// A complete history of the transcript's `state`; used for testing.
     state_history: Vec<K>,
@@ -36,6 +36,7 @@ impl<J: PrimeField, K: PrimeField> PoseidonTranscript<J, K> {
         let parameters =
             get_poseidon_parameters::<K>(4, PoseidonDefaultConfigEntry::new(4, 5, 8, 56, 0))
                 .unwrap();
+
         let state = vec![K::zero(); parameters.rate + parameters.capacity];
         let mode = DuplexSpongeMode::Absorbing {
             next_absorb_index: 0,
@@ -407,3 +408,6 @@ fn three_limb_repr(bytes: &Vec<u8>) -> Vec<ark_bn254::Fr> {
 
     limbs.to_vec()
 }
+
+
+

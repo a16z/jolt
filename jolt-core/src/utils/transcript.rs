@@ -174,11 +174,11 @@ impl Transcript for KeccakTranscript {
     }
 
     fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        self.append_message(b"begin_append_vector");
+        // self.append_message(b"begin_append_vector");
         for item in points.iter() {
             self.append_point(item);
         }
-        self.append_message(b"end_append_vector");
+        // self.append_message(b"end_append_vector");
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {

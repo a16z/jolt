@@ -481,7 +481,7 @@ where
 
         let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
 
-        transcript.append_scalar(&spartan_key.vk_digest);
+        // transcript.append_scalar(&spartan_key.vk_digest);
 
         jolt_commitments
             .read_write_values()
@@ -603,7 +603,7 @@ where
             &r1cs_builder,
             padded_trace_length,
         );
-        transcript.append_scalar(&spartan_key.vk_digest);
+        // transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {
             key: spartan_key,
@@ -772,8 +772,8 @@ where
         transcript.append_u64(Self::Subtables::COUNT as u64);
         transcript.append_u64(memory_layout.max_input_size);
         transcript.append_u64(memory_layout.max_output_size);
-        transcript.append_bytes(&program_io.inputs);
-        transcript.append_bytes(&program_io.outputs);
+        // transcript.append_bytes(&program_io.inputs);
+        // transcript.append_bytes(&program_io.outputs);
         transcript.append_u64(program_io.panic as u64);
     }
 }
