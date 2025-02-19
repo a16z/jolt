@@ -76,7 +76,8 @@ impl ReadWriteMemoryPreprocessing {
             let remapped_index = (chunk[0].0 / 4 - min_bytecode_address / 4) as usize;
             bytecode_words[remapped_index] = word;
         }
-        let mut poseidon_transcript = PoseidonTranscript::<ark_bn254::Fr, ark_bn254::Fr>::new();
+        let mut poseidon_transcript =
+            PoseidonTranscript::<ark_bn254::Fr, ark_bn254::Fr>::new().state;
         poseidon_transcript.absorb(&bytecode_words);
         let hash: ark_bn254::Fr = poseidon_transcript.squeeze_field_elements(1)[0];
         Self {

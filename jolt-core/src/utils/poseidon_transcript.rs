@@ -32,7 +32,7 @@ pub struct PoseidonTranscript<J: PrimeField, K: PrimeField> {
 impl<J: PrimeField, K: PrimeField> PoseidonTranscript<J, K> {
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
-    pub fn new() -> PoseidonSponge<K> {
+    pub fn new() -> Self {
         let parameters =
             get_poseidon_parameters::<K>(4, PoseidonDefaultConfigEntry::new(4, 5, 8, 56, 0))
                 .unwrap();
@@ -41,10 +41,18 @@ impl<J: PrimeField, K: PrimeField> PoseidonTranscript<J, K> {
             next_absorb_index: 0,
         };
 
-        PoseidonSponge {
-            parameters: parameters.clone(),
-            state,
-            mode,
+        Self {
+            state: PoseidonSponge {
+                parameters: parameters.clone(),
+                state,
+                mode,
+            },
+            n_rounds: 0,
+            #[cfg(test)]
+            state_history: vec![],
+            #[cfg(test)]
+            expected_state_history: None,
+            _marker_j: PhantomData,
         }
     }
 
@@ -131,16 +139,30 @@ impl<J: PrimeField, K: PrimeField> PoseidonTranscript<J, K> {
 //TODO:- Convert label into scalar element
 impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
     fn new(label: &'static [u8]) -> Self {
+        assert!(label.len() < 31);
         let mut hasher = Self::new();
-        hasher.absorb(&label);
-        let new_state = hasher.squeeze_native_field_elements(1)[0];
-        hasher.state = vec![K::zero(); hasher.parameters.rate + hasher.parameters.capacity];
-        hasher.state[hasher.parameters.capacity] = new_state;
-        hasher.mode = DuplexSpongeMode::Absorbing {
+
+        if J::MODULUS.to_string() == K::MODULUS.to_string() {
+            let scalar = ark_bn254::Fr::from_le_bytes_mod_order(label);
+            hasher.absorb(&scalar);
+        } else if J::MODULUS.to_string() < K::MODULUS.to_string() {
+            let scalar = ark_bn254::Fq::from_le_bytes_mod_order(label);
+            hasher.absorb(&scalar);
+        } else {
+            let scalar = ark_grumpkin::Fr::from_le_bytes_mod_order(label);
+            hasher.absorb(&scalar);
+        };
+
+        let new_state = hasher.squeeze_field_element();
+        hasher.state.state =
+            vec![K::zero(); hasher.state.parameters.rate + hasher.state.parameters.capacity];
+        hasher.state.state[hasher.state.parameters.capacity] = new_state;
+        hasher.state.mode = DuplexSpongeMode::Absorbing {
             next_absorb_index: 1,
         };
+
         Self {
-            state: hasher.clone(),
+            state: hasher.state.clone(),
             n_rounds: 0,
             #[cfg(test)]
             state_history: vec![new_state],
