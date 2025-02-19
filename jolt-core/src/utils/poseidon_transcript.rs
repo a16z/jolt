@@ -408,6 +408,3 @@ fn three_limb_repr(bytes: &Vec<u8>) -> Vec<ark_bn254::Fr> {
 
     limbs.to_vec()
 }
-
-
-

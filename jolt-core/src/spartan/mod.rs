@@ -165,6 +165,8 @@ impl<F: JoltField> Instance<F> {
     }
 }
 
+mod circom_hyperkzg;
+mod circom_hyrax;
 mod r1csinstance;
 mod sparse_mlpoly;
 mod spartan_memory_checking;

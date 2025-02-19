@@ -827,11 +827,11 @@ where
     ProofTranscript: Transcript,
 {
     _pcs: PhantomData<(PCS, ProofTranscript)>,
-    pub(crate)   num_rounds: usize,
+    pub(crate) num_rounds: usize,
     /// Sumcheck proof that v_final is equal to the program outputs at the relevant indices.
-    pub(crate)  sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub(crate) sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     /// Opening of v_final at the random point chosen over the course of sumcheck
-    pub(crate)  opening: F,
+    pub(crate) opening: F,
 }
 
 impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>

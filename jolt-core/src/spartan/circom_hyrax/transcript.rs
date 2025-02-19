@@ -1,13 +1,11 @@
+use ark_grumpkin::{Fq as Fp, Fr as Scalar, Projective};
 use core::fmt;
 
-use ark_bn254::Fr as Scalar;
-
 use crate::utils::poseidon_transcript::PoseidonTranscript;
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TestTranscript {
-    pub state: Scalar,
-    pub nrounds: Scalar,
+    pub state: Fp,
+    pub nrounds: Fp,
 }
 
 impl fmt::Debug for TestTranscript {
@@ -23,12 +21,9 @@ impl fmt::Debug for TestTranscript {
     }
 }
 
-use ark_ff::PrimeField;
-pub fn convert_transcript_to_circom(
-    transcript: PoseidonTranscript<Scalar, Scalar>,
-) -> TestTranscript {
+pub fn convert_transcript_to_circom(transcript: PoseidonTranscript<Scalar, Fp>) -> TestTranscript {
     TestTranscript {
-        state: Scalar::from(transcript.state.state[1].into_bigint()),
-        nrounds: Scalar::from(transcript.n_rounds),
+        state: Fp::from(transcript.state.state[1]),
+        nrounds: Fp::from(transcript.n_rounds),
     }
 }

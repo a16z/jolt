@@ -31,10 +31,10 @@ use std::collections::HashSet;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampRangeCheckStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
-   pub(crate)  read_cts_read_timestamp: [T; MEMORY_OPS_PER_INSTRUCTION],
-   pub(crate) read_cts_global_minus_read: [T; MEMORY_OPS_PER_INSTRUCTION],
-   pub(crate) final_cts_read_timestamp: [T; MEMORY_OPS_PER_INSTRUCTION],
-   pub(crate) final_cts_global_minus_read: [T; MEMORY_OPS_PER_INSTRUCTION],
+    pub(crate) read_cts_read_timestamp: [T; MEMORY_OPS_PER_INSTRUCTION],
+    pub(crate) read_cts_global_minus_read: [T; MEMORY_OPS_PER_INSTRUCTION],
+    pub(crate) final_cts_read_timestamp: [T; MEMORY_OPS_PER_INSTRUCTION],
+    pub(crate) final_cts_global_minus_read: [T; MEMORY_OPS_PER_INSTRUCTION],
 
     identity: VerifierComputedOpening<T>,
 }
@@ -594,10 +594,10 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    pub(crate)  multiset_hashes: MultisetHashes<F>,
-    pub(crate)  openings: TimestampRangeCheckOpenings<F>,
-    pub(crate)  exogenous_openings: ReadTimestampOpenings<F>,
-    pub(crate)  batched_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
+    pub(crate) multiset_hashes: MultisetHashes<F>,
+    pub(crate) openings: TimestampRangeCheckOpenings<F>,
+    pub(crate) exogenous_openings: ReadTimestampOpenings<F>,
+    pub(crate) batched_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
 }
 
 impl<F, PCS, ProofTranscript> TimestampValidityProof<F, PCS, ProofTranscript>

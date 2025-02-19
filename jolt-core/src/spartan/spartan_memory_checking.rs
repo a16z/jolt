@@ -39,19 +39,19 @@ use std::fs::File;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
-    witness: T,
-    read_cts_rows: Vec<T>,
-    read_cts_cols: Vec<T>,
-    final_cts_rows: Vec<T>,
-    final_cts_cols: Vec<T>,
-    rows: Vec<T>,
-    cols: Vec<T>,
-    vals: Vec<T>,
-    e_rx: Vec<T>,
-    e_ry: Vec<T>,
-    eq_rx: VerifierComputedOpening<T>,
-    eq_ry: VerifierComputedOpening<T>,
-    identity: VerifierComputedOpening<T>,
+    pub(crate) witness: T,
+    pub(crate) read_cts_rows: Vec<T>,
+    pub(crate) read_cts_cols: Vec<T>,
+    pub(crate) final_cts_rows: Vec<T>,
+    pub(crate) final_cts_cols: Vec<T>,
+    pub(crate) rows: Vec<T>,
+    pub(crate) cols: Vec<T>,
+    pub(crate) vals: Vec<T>,
+    pub(crate) e_rx: Vec<T>,
+    pub(crate) e_ry: Vec<T>,
+    pub(crate) eq_rx: VerifierComputedOpening<T>,
+    pub(crate) eq_ry: VerifierComputedOpening<T>,
+    pub(crate) identity: VerifierComputedOpening<T>,
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
@@ -125,10 +125,10 @@ impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
 
 #[derive(Clone)]
 pub struct SpartanPreprocessing<F: JoltField> {
-    inst: Instance<F>,
-    vars: Vec<F>,
-    inputs: Vec<F>,
-    rx_ry: Option<Vec<F>>,
+    pub(crate) inst: Instance<F>,
+    pub(crate) vars: Vec<F>,
+    pub(crate) inputs: Vec<F>,
+    pub(crate) rx_ry: Option<Vec<F>>,
 }
 
 impl<F: JoltField> SpartanPreprocessing<F> {
