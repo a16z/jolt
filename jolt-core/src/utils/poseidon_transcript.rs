@@ -149,7 +149,7 @@ impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
             let scalar = ark_bn254::Fq::from_le_bytes_mod_order(label);
             hasher.absorb(&scalar);
         } else {
-            let scalar = ark_grumpkin::Fr::from_le_bytes_mod_order(label);
+            let scalar = ark_grumpkin::Fq::from_le_bytes_mod_order(label);
             hasher.absorb(&scalar);
         };
 

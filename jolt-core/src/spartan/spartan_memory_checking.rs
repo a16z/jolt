@@ -1199,7 +1199,7 @@ mod tests {
     };
     use ark_grumpkin::{Fq, Fr, Projective};
 
-    pub type ProofTranscript = PoseidonTranscript<Fq, Fr>;
+    pub type ProofTranscript = PoseidonTranscript<Fr, Fq>;
     pub type PCS = HyraxScheme<Projective, ProofTranscript>;
     #[test]
     fn spartan() {
