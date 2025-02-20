@@ -149,7 +149,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 MemoryOp::noop_read(),
             ],
 
-            RV32IM::SW | RV32IM::SH | RV32IM::SW => [
+            RV32IM::SB | RV32IM::SH | RV32IM::SW => [
                 rs1_read(),
                 rs2_read(),
                 MemoryOp::noop_write(),
