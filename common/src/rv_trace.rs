@@ -45,8 +45,6 @@ fn sum_u64_i32(a: u64, b: i32) -> u64 {
 
 impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
     fn from(val: &RVTraceRow) -> Self {
-        let instruction_type = val.instruction.opcode.instruction_type();
-
         let rs1_read = || MemoryOp::Read(val.instruction.rs1.unwrap());
         let rs2_read = || MemoryOp::Read(val.instruction.rs2.unwrap());
         let rd_write = || {
@@ -85,7 +83,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
         // 6: byte_3
         // If any are empty a no_op is inserted.
 
-        // Note:  LB, LH, LBU, LHU are not implemented here.
         match val.instruction.opcode {
             RV32IM::ADD
             | RV32IM::SUB
