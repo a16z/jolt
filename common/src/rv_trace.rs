@@ -87,59 +87,52 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
 
         // Note:  LB, LH, LBU, LHU are not implemented here.
         match val.instruction.opcode {
-            RV32IM::ADD    |
-            RV32IM::SUB    |
-            RV32IM::XOR    |
-            RV32IM::OR     |
-            RV32IM::AND    |
-            RV32IM::SLL    |
-            RV32IM::SRL    |
-            RV32IM::SRA    |
-            RV32IM::SLT    |
-            RV32IM::SLTU   |
-            RV32IM::MUL    |
-            RV32IM::MULH   |
-            RV32IM::MULHU  |
-            RV32IM::MULHSU |
-            RV32IM::MULU   |
-            RV32IM::DIV    |
-            RV32IM::DIVU   |
-            RV32IM::REM    |
-            RV32IM::REMU => [
-                rs1_read(), 
-                rs2_read(), 
-                rd_write(), 
-                MemoryOp::noop_read()
-            ],
+            RV32IM::ADD
+            | RV32IM::SUB
+            | RV32IM::XOR
+            | RV32IM::OR
+            | RV32IM::AND
+            | RV32IM::SLL
+            | RV32IM::SRL
+            | RV32IM::SRA
+            | RV32IM::SLT
+            | RV32IM::SLTU
+            | RV32IM::MUL
+            | RV32IM::MULH
+            | RV32IM::MULHU
+            | RV32IM::MULHSU
+            | RV32IM::MULU
+            | RV32IM::DIV
+            | RV32IM::DIVU
+            | RV32IM::REM
+            | RV32IM::REMU => [rs1_read(), rs2_read(), rd_write(), MemoryOp::noop_read()],
 
-            RV32IM::LUI              |
-            RV32IM::AUIPC            |
-            RV32IM::VIRTUAL_ADVICE => [
+            RV32IM::LUI | RV32IM::AUIPC | RV32IM::VIRTUAL_ADVICE => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
                 MemoryOp::noop_read(),
             ],
-            
+
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::noop_read(),
-                ],
-            
-            RV32IM::ADDI              |
-            RV32IM::SLLI              |
-            RV32IM::SRLI              |
-            RV32IM::SRAI              |
-            RV32IM::ANDI              |
-            RV32IM::ORI               | 
-            RV32IM::XORI              |
-            RV32IM::SLTI              |
-            RV32IM::SLTIU             |
-            RV32IM::JALR              |
-            RV32IM::VIRTUAL_MOVE      |
-            RV32IM::VIRTUAL_MOVSIGN => [
+                rs1_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_write(),
+                MemoryOp::noop_read(),
+            ],
+
+            RV32IM::ADDI
+            | RV32IM::SLLI
+            | RV32IM::SRLI
+            | RV32IM::SRAI
+            | RV32IM::ANDI
+            | RV32IM::ORI
+            | RV32IM::XORI
+            | RV32IM::SLTI
+            | RV32IM::SLTIU
+            | RV32IM::JALR
+            | RV32IM::VIRTUAL_MOVE
+            | RV32IM::VIRTUAL_MOVSIGN => [
                 rs1_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
@@ -158,38 +151,33 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 MemoryOp::noop_write(),
                 MemoryOp::noop_read(),
             ],
-            
-            RV32IM::SW   |
-            RV32IM::SH   |
-            RV32IM::SW => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_write_value()),
-                ],
-            
 
-        
+            RV32IM::SW | RV32IM::SH | RV32IM::SW => [
+                rs1_read(),
+                rs2_read(),
+                MemoryOp::noop_write(),
+                MemoryOp::Write(rs1_offset(), ram_write_value()),
+            ],
+
             // RV32IM::LB | RV32IM::LH | RV32IM::LBU | RV32IM::LHU => [
-
             RV32IM::JAL => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),
                 MemoryOp::noop_read(),
             ],
-            
-            RV32IM::BEQ                                       |
-            RV32IM::BNE                                       |
-            RV32IM::BLT                                       |  
-            RV32IM::BGE                                       |
-            RV32IM::BLTU                                      |
-            RV32IM::BGEU                                      |
-            RV32IM::VIRTUAL_ASSERT_EQ                         |
-            RV32IM::VIRTUAL_ASSERT_LTE                        |
-            RV32IM::VIRTUAL_ASSERT_VALID_DIV0                 |
-            RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER     |
-            RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => [
+
+            RV32IM::BEQ
+            | RV32IM::BNE
+            | RV32IM::BLT
+            | RV32IM::BGE
+            | RV32IM::BLTU
+            | RV32IM::BGEU
+            | RV32IM::VIRTUAL_ASSERT_EQ
+            | RV32IM::VIRTUAL_ASSERT_LTE
+            | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
+            | RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER
+            | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => [
                 rs1_read(),
                 rs2_read(),
                 MemoryOp::noop_write(),
