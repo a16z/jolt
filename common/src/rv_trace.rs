@@ -196,13 +196,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 MemoryOp::noop_read(),
             ],
 
-            RV32IM::JAL => [
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                rd_write(),
-                MemoryOp::noop_read(),
-            ],
-
             RV32IM::ECALL => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
