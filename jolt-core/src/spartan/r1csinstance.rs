@@ -1,5 +1,3 @@
-use std::cmp::max;
-
 use super::sparse_mlpoly::SparseMatPolynomial;
 use crate::{
     field::JoltField, poly::dense_mlpoly::DensePolynomial, spartan::sparse_mlpoly::SparseMatEntry,

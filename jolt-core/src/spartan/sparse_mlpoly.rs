@@ -1,15 +1,14 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
-use std::{collections::HashMap, fs::File};
+use std::collections::HashMap;
 
 use crate::{
     field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Result;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatEntry<F: JoltField> {

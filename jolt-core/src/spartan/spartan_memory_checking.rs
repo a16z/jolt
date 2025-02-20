@@ -1,14 +1,11 @@
 use super::sparse_mlpoly::SparseMatPolynomial;
 use super::Instance;
-use crate::field::{JoltField, OptimizedMul};
-use crate::jolt::vm::{JoltCommitments, JoltPolynomials};
+use crate::field::JoltField;
+use crate::jolt::vm::JoltPolynomials;
 use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
-};
 use crate::r1cs::special_polys::SparsePolynomial;
 use crate::spartan::r1csinstance::R1CSInstance;
 use crate::spartan::sparse_mlpoly::CircuitConfig;
@@ -19,22 +16,14 @@ use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::{
-    lasso::memory_checking::{
-        MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
-    },
-    poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
-    },
+    lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::errors::ProofVerifyError,
 };
-use ark_ff::BigInt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{chain, interleave, Itertools};
+use itertools::interleave;
 use num_bigint::BigUint;
 use rayon::prelude::*;
-use std::array;
-use std::cmp::max;
-use std::fmt::Debug;
 use std::fs::File;
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -128,7 +117,7 @@ pub struct SpartanPreprocessing<F: JoltField> {
     pub(crate) inst: Instance<F>,
     pub(crate) vars: Vec<F>,
     pub(crate) inputs: Vec<F>,
-    pub(crate) rx_ry: Option<Vec<F>>,
+    // pub(crate) rx_ry: Option<Vec<F>>,
 }
 
 impl<F: JoltField> SpartanPreprocessing<F> {
@@ -222,7 +211,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                     inst: Instance { inst },
                     vars,
                     inputs,
-                    rx_ry: None,
+                    // rx_ry: None,
                 }
             }
             None => {
@@ -236,7 +225,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                     inst,
                     vars,
                     inputs,
-                    rx_ry: None,
+                    // rx_ry: None,
                 }
             }
         }
@@ -497,16 +486,17 @@ where
         _: &[F],
         r_init_final: &[F],
     ) {
-        let binding = preprocessing.rx_ry.clone().unwrap();
-        let (rx, ry) = binding.split_at(binding.len() / 2);
+        unimplemented!("")
+        // let binding = preprocessing.rx_ry.clone().unwrap();
+        // let (rx, ry) = binding.split_at(binding.len() / 2);
 
-        let eq_rx = EqPolynomial::new(rx.to_vec());
-        let eq_ry = EqPolynomial::new(ry.to_vec());
+        // let eq_rx = EqPolynomial::new(rx.to_vec());
+        // let eq_ry = EqPolynomial::new(ry.to_vec());
 
-        openings.eq_rx = Some(eq_rx.evaluate(r_init_final));
-        openings.eq_ry = Some(eq_ry.evaluate(r_init_final));
-        openings.identity =
-            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
+        // openings.eq_rx = Some(eq_rx.evaluate(r_init_final));
+        // openings.eq_ry = Some(eq_ry.evaluate(r_init_final));
+        // openings.identity =
+        //     Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
     }
 
     fn read_tuples(
@@ -990,7 +980,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &SpartanPreprocessing<F>,
         // commitments: &SpartanCommitments<PCS, ProofTranscript>,
-        proof: SpartanProof<F, PCS, ProofTranscript>,
+        proof: &SpartanProof<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let num_vars = preprocessing.vars.len();
         let mut transcript = ProofTranscript::new(b"Spartan transcript");
@@ -1193,14 +1183,218 @@ where
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript,
-    };
-    use ark_grumpkin::{Fq, Fr, Projective};
+    use std::io::Write;
 
+    use super::*;
+    use crate::poly::commitment::hyperkzg::{HyperKZGCommitment, HyperKZGProof};
+    use crate::poly::commitment::hyrax::{HyraxCommitment, HyraxGenerators, HyraxOpeningProof};
+    use crate::poly::commitment::kzg::KZGVerifierKey;
+    use crate::poly::commitment::pedersen::PedersenGenerators;
+    use crate::poly::unipoly::UniPoly;
+    use crate::{
+        poly::commitment::{
+            hyperkzg::{HyperKZG, HyperKZGVerifierKey},
+            hyrax::HyraxScheme,
+        },
+        utils::poseidon_transcript::PoseidonTranscript,
+    };
+    use ark_ec::{AffineRepr, CurveGroup};
+    use ark_ff::{AdditiveGroup, PrimeField};
+    use serde_json::json;
+    // type Fr = ark_bn254::Fr;
+    // type Fq = ark_bn254::Fq;
+    // pub type PCS = HyperKZG< ark_bn254::Bn254, ProofTranscript>;
+
+    type Fr = ark_grumpkin::Fr;
+    type Fq = ark_grumpkin::Fq;
     pub type ProofTranscript = PoseidonTranscript<Fr, Fq>;
-    pub type PCS = HyraxScheme<Projective, ProofTranscript>;
+    pub type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
+
+    trait Circomfmt {
+        fn format(&self) -> serde_json::Value;
+        fn format_setup(&self, _size: usize) -> serde_json::Value {
+            unimplemented!("added for setup")
+        }
+    }
+
+    pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
+        let mut limbs = [Fq::ZERO; 3];
+
+        let mask = BigUint::from((1u128 << 125) - 1);
+        limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
+
+        limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
+
+        limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
+
+        limbs
+    }
+
+    impl Circomfmt for Fr {
+        fn format(&self) -> serde_json::Value {
+            let limbs = convert_to_3_limbs(*self);
+            json!({
+                "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
+            })
+        }
+    }
+
+    impl Circomfmt for HyperKZGVerifierKey<ark_bn254::Bn254> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "kzg_vk": self.kzg_vk.format()
+            })
+        }
+    }
+    impl Circomfmt for KZGVerifierKey<ark_bn254::Bn254> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "g1": self.g1.format(),
+                "g2":{ "x": {"x": self.g2.x.c0.to_string(),
+                            "y": self.g2.x.c1.to_string()
+                        },
+
+                        "y": {"x": self.g2.y.c0.to_string(),
+                             "y": self.g2.y.c1.to_string()
+                        },
+                    },
+                "beta_g2": {"x": {"x": self.beta_g2.x.c0.to_string(),
+                                  "y": self.beta_g2.x.c1.to_string()},
+
+                            "y": {"x": self.beta_g2.y.c0.to_string(),
+                                  "y": self.beta_g2.y.c1.to_string()}
+                            }
+            })
+        }
+    }
+    impl Circomfmt for ark_bn254::G1Affine {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "x": self.x.to_string(),
+                "y": self.y.to_string()
+            })
+        }
+    }
+
+    impl Circomfmt for SpartanProof<Fr, PCS, ProofTranscript> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
+                "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
+                "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format(),self.outer_sumcheck_claims.1.format(),self.outer_sumcheck_claims.2.format()],
+                "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format(),self.inner_sumcheck_claims.1.format(),self.inner_sumcheck_claims.2.format(),self.inner_sumcheck_claims.3.format()],
+                "pi_eval": self.pi_eval.format(),
+                "joint_opening_proof": self.pcs_proof.format()
+            })
+        }
+    }
+    // impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
+    //     fn format(&self) -> serde_json::Value {
+    //         let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format()).collect();
+    //         let w: Vec<serde_json::Value> = self.w.iter().map(|c| c.format()).collect();
+    //         let v: Vec<Vec<serde_json::Value>> = self
+    //             .v
+    //             .iter()
+    //             .map(|v_inner| v_inner.iter().map(|elem| elem.format()).collect())
+    //             .collect();
+    //         json!({
+    //             "com": com,
+    //             "w": w,
+    //             "v": v,
+    //         })
+    //     }
+    // }
+    impl Circomfmt for SumcheckInstanceProof<Fr, ProofTranscript> {
+        fn format(&self) -> serde_json::Value {
+            let uni_polys: Vec<serde_json::Value> =
+                self.uni_polys.iter().map(|poly| poly.format()).collect();
+            json!({
+                "uni_polys": uni_polys,
+            })
+        }
+    }
+    impl Circomfmt for UniPoly<Fr> {
+        fn format(&self) -> serde_json::Value {
+            let coeffs: Vec<serde_json::Value> =
+                self.coeffs.iter().map(|coeff| coeff.format()).collect();
+            json!({
+                "coeffs": coeffs,
+            })
+        }
+    }
+    impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "commitment": self.0.format(),
+            })
+        }
+    }
+    impl Circomfmt for HyraxCommitment<ark_grumpkin::Projective> {
+        fn format(&self) -> serde_json::Value {
+            let commitments: Vec<serde_json::Value> = self
+                .row_commitments
+                .iter()
+                .map(|commit| commit.into_affine().into_group().format())
+                .collect();
+            json!({
+                "row_commitments": commitments,
+            })
+        }
+    }
+    impl Circomfmt for HyraxOpeningProof<ark_grumpkin::Projective, ProofTranscript> {
+        fn format(&self) -> serde_json::Value {
+            let vector_matrix_product: Vec<serde_json::Value> = self
+                .vector_matrix_product
+                .iter()
+                .map(|elem| elem.format())
+                .collect();
+            json!({
+                "tau": vector_matrix_product,
+            })
+        }
+    }
+    impl Circomfmt for ark_grumpkin::Projective {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "x": self.x.to_string(),
+                "y": self.y.to_string(),
+                "z": self.z.to_string()
+            })
+        }
+    }
+    impl Circomfmt for PoseidonTranscript<Fr, Fq> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "state": self.state.state[1].to_string(),
+                "nRounds": self.n_rounds.to_string(),
+            })
+        }
+    }
+    impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
+        fn format(&self) -> serde_json::Value {
+            unimplemented!("Use format_setup")
+        }
+        fn format_setup(&self, size: usize) -> serde_json::Value {
+            let generators: Vec<serde_json::Value> = self
+                .generators
+                .iter()
+                .take(size)
+                .map(|gen| gen.into_group().format())
+                .collect();
+            json!({
+                "gens": generators
+            })
+        }
+    }
+    // impl Circomfmt for HyraxGenerators<ark_grumpkin::Projective> {
+    //     fn format(&self) -> serde_json::Value {
+    //         json!({
+    //             "gens": self.gens.format()
+
+    //         })
+    //     }
+    // }
+
     #[test]
     fn spartan() {
         let constraint_path = Some("src/spartan/verifier_constraints.json");
@@ -1209,7 +1403,7 @@ mod tests {
         let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
         // let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 0);
         let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
-            2 * preprocessing.vars.len(),
+            preprocessing.inputs.len() + preprocessing.vars.len(),
         );
         let pcs_setup = PCS::setup(&commitment_shapes);
         // let mut spartan_commitments = SpartanStuff::initialize(&preprocessing);
@@ -1223,8 +1417,37 @@ mod tests {
             &pcs_setup,
             &preprocessing,
             // &spartan_commitments,
-            proof,
+            &proof,
         )
         .unwrap();
+
+        let pi = preprocessing.inputs;
+        let formatted_pub_inp: Vec<serde_json::Value> =
+            pi.iter().map(|elem| elem.format()).collect();
+        let transcipt_init = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"Spartan transcript");
+
+        // let input_json = json!({
+        //     "pub_inp": formatted_pub_inp,
+        //     "vk": pcs_setup.1.format(),
+        //     "proof": proof.format(),
+        //     "w_commitment": proof.witness_commit.format(),
+        //     "transcript" : transcipt_init.format()
+        // });
+        let input_json = json!({
+            "pub_inp": formatted_pub_inp,
+            "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
+            "proof": proof.format(),
+            "w_commitment": proof.witness_commit.format(),
+            "transcript" : transcipt_init.format()
+        });
+        // Convert the JSON to a pretty-printed string
+        let pretty_json =
+            serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
+
+        let input_file_path = "input.json";
+        let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+        input_file
+            .write_all(pretty_json.as_bytes())
+            .expect("Failed to write to input.json");
     }
 }
