@@ -9,7 +9,7 @@ use crate::jolt::instruction::{
     JoltInstruction,
 };
 
-/// Perform unsigned divison and return remainder
+/// Perform unsigned division and return remainder
 pub struct REMUInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD_SIZE> {
