@@ -9,30 +9,6 @@ use crate::{
     utils::{errors::ProofVerifyError, transcript::AppendToTranscript},
 };
 
-#[derive(Clone, Debug)]
-pub struct CommitShape {
-    pub input_length: usize,
-    pub batch_type: BatchType,
-}
-
-impl CommitShape {
-    pub fn new(input_length: usize, batch_type: BatchType) -> Self {
-        Self {
-            input_length,
-            batch_type,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum BatchType {
-    Big,
-    Small,
-    SurgeInitFinal,
-    SurgeReadWrite,
-    GrandProduct,
-}
-
 pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type Setup: Clone + Sync + Send;
@@ -47,13 +23,9 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 
-    fn setup(shapes: &[CommitShape]) -> Self::Setup;
+    fn setup(max_len: usize) -> Self::Setup;
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
-    fn batch_commit<U>(
-        polys: &[U],
-        gens: &Self::Setup,
-        batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
