@@ -1,3 +1,11 @@
+//! This file implements the Hyrax polynomial commitment scheme.
+//! Note that we choose not to implement the `CommitmentScheme` trait, as
+//! Hyrax is not intended to be used as the core PCS for Jolt itself (in fact,
+//! there are some incompatibilities with the batched opening proof protocol
+//! used in Jolt).
+//!
+//! Instead, Hyrax will be used as the PCS in Spartan to prove the verification
+//! of a Jolt proof (i.e. SNARK composition).
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
