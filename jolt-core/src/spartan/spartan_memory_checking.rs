@@ -1529,8 +1529,12 @@ mod tests {
             let x_nn = break_in_3(self.x);
             let y_nn = break_in_3(self.y);
             json!({
-                "x": [x_nn[0].to_string(), x_nn[1].to_string(), x_nn[2].to_string()],
-                "y": [y_nn[0].to_string(), y_nn[1].to_string(), y_nn[2].to_string()]
+                "x": {
+                    "limbs": [x_nn[0].to_string(), x_nn[1].to_string(), x_nn[2].to_string()]
+                },
+                "y": {
+                    "limbs": [y_nn[0].to_string(), y_nn[1].to_string(), y_nn[2].to_string()]
+                }
             })
         }
     }
