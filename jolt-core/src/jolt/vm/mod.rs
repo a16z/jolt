@@ -29,7 +29,7 @@ use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
 use crate::msm::icicle;
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
@@ -248,8 +248,7 @@ impl<F: JoltField> JoltPolynomials<F> {
         drop(span);
 
         let trace_polys = self.read_write_values();
-        let trace_commitments =
-            PCS::batch_commit(&trace_polys, &preprocessing.generators, BatchType::Big);
+        let trace_commitments = PCS::batch_commit(&trace_polys, &preprocessing.generators);
 
         commitments
             .read_write_values_mut()
@@ -276,7 +275,6 @@ impl<F: JoltField> JoltPolynomials<F> {
         commitments.instruction_lookups.final_cts = PCS::batch_commit(
             &self.instruction_lookups.final_cts,
             &preprocessing.generators,
-            BatchType::Big,
         );
         drop(_guard);
         drop(span);

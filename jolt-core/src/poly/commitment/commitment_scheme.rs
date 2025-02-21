@@ -12,25 +12,12 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct CommitShape {
     pub input_length: usize,
-    pub batch_type: BatchType,
 }
 
 impl CommitShape {
-    pub fn new(input_length: usize, batch_type: BatchType) -> Self {
-        Self {
-            input_length,
-            batch_type,
-        }
+    pub fn new(input_length: usize) -> Self {
+        Self { input_length }
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum BatchType {
-    Big,
-    Small,
-    SurgeInitFinal,
-    SurgeReadWrite,
-    GrandProduct,
 }
 
 pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
@@ -49,11 +36,7 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup;
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment;
-    fn batch_commit<U>(
-        polys: &[U],
-        gens: &Self::Setup,
-        batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 

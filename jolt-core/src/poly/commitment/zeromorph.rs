@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::{iter, marker::PhantomData};
 
 use super::{
-    commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+    commitment_scheme::{CommitShape, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 use crate::field::JoltField;
@@ -452,11 +452,7 @@ where
         ZeromorphCommitment(UnivariateKZG::commit_as_univariate(&setup.0.commit_pp, poly).unwrap())
     }
 
-    fn batch_commit<U>(
-        polys: &[U],
-        gens: &Self::Setup,
-        _batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {

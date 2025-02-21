@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use super::commitment_scheme::{CommitShape, CommitmentScheme};
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
@@ -50,11 +50,7 @@ where
     fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment { poly: poly.clone() }
     }
-    fn batch_commit<P>(
-        polys: &[P],
-        setup: &Self::Setup,
-        _batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<P>(polys: &[P], setup: &Self::Setup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {

@@ -3,7 +3,7 @@ use crate::field::JoltField;
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{CommitShape, CommitmentScheme};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -918,7 +918,7 @@ where
     pub fn commitment_shapes(max_trace_length: usize) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        vec![CommitShape::new(max_trace_length, BatchType::Big)]
+        vec![CommitShape::new(max_trace_length)]
     }
 
     fn protocol_name() -> &'static [u8] {

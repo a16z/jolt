@@ -13,7 +13,7 @@ use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{CommitShape, CommitmentScheme};
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
@@ -477,8 +477,8 @@ where
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
-        let init_final_shape = CommitShape::new(max_bytecode_size, BatchType::Small);
+        let read_write_shape = CommitShape::new(max_trace_length);
+        let init_final_shape = CommitShape::new(max_bytecode_size);
 
         vec![read_write_shape, init_final_shape]
     }

@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{CommitShape, CommitmentScheme};
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
@@ -501,8 +501,8 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
-        let init_final_shape = CommitShape::new(max_memory_address, BatchType::Small);
+        let read_write_shape = CommitShape::new(max_trace_length);
+        let init_final_shape = CommitShape::new(max_memory_address);
 
         vec![read_write_shape, init_final_shape]
     }

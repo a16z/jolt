@@ -20,7 +20,7 @@ use crate::lasso::memory_checking::{
     Initializable, MultisetHashes, NoExogenousOpenings, StructuredPolynomialData,
     VerifierComputedOpening,
 };
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::{CommitShape, CommitmentScheme};
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -1256,8 +1256,8 @@ where
     pub fn commitment_shapes(max_trace_length: usize) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        let read_write_shape = CommitShape::new(max_trace_length, BatchType::Big);
-        let init_final_shape = CommitShape::new(M, BatchType::Small);
+        let read_write_shape = CommitShape::new(max_trace_length);
+        let init_final_shape = CommitShape::new(M);
 
         vec![read_write_shape, init_final_shape]
     }

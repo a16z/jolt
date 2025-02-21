@@ -8,7 +8,7 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::{BatchType, CommitmentScheme},
+    commitment_scheme::CommitmentScheme,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
@@ -442,11 +442,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
-    fn batch_commit<U>(
-        polys: &[U],
-        gens: &Self::Setup,
-        _batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
