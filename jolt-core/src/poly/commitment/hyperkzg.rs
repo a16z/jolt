@@ -12,7 +12,6 @@ use super::{
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
 use crate::{
@@ -419,15 +418,13 @@ where
     type Proof = HyperKZGProof<P>;
     type BatchedProof = HyperKZGProof<P>;
 
-    fn setup(shapes: &[CommitShape]) -> Self::Setup {
-        let max_len = shapes.iter().map(|shape| shape.input_length).max().unwrap();
-
+    fn setup(max_poly_len: usize) -> Self::Setup {
         HyperKZGSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"HyperKZG_POLY_COMMITMENT_SCHEMEE"),
-            max_len,
+            max_poly_len,
             2,
         )))
-        .trim(max_len)
+        .trim(max_poly_len)
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::commit")]

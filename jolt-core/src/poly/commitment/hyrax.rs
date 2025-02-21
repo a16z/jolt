@@ -15,6 +15,9 @@ use tracing::trace_span;
 
 use crate::msm::{Icicle, VariableBaseMSM};
 
+/// Hyrax commits to a multilinear polynomial by interpreting its coefficients as a
+/// matrix. Given the number of variables in the polynomial, and the desired "aspect
+/// ratio", returns the column and row size of that matrix.
 pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize, usize) {
     let mut row_size = (num_vars / 2).pow2();
     row_size = (row_size * matrix_aspect_ratio.sqrt()).next_power_of_two();
@@ -68,6 +71,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         Self { row_commitments }
     }
 
+    /// Same result as commiting to each polynomial in the batch individually,
+    /// but tends to have better parallelism.
     #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit")]
     pub fn batch_commit(
         batch: &[&[G::ScalarField]],
@@ -104,6 +109,7 @@ impl<const RATIO: usize, G: CurveGroup> AppendToTranscript for HyraxCommitment<R
     }
 }
 
+/// A Hyrax opening proof for a single polynomial opened at a single point.
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
     pub vector_matrix_product: Vec<G::ScalarField>,
@@ -199,6 +205,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
     }
 }
 
+/// A Hyrax opening proof for multiple polynomials opened at the same point.
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
     pub joint_proof: HyraxOpeningProof<RATIO, G>,

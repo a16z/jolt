@@ -306,27 +306,6 @@ where
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
         icicle::icicle_init();
 
-        let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
-            max_bytecode_size,
-            max_trace_length,
-        );
-        let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F>::commitment_shapes(
-            max_memory_address,
-            max_trace_length,
-        );
-        let timestamp_range_check_commitment_shapes =
-            TimestampValidityProof::<F, PCS, ProofTranscript>::commitment_shapes(max_trace_length);
-
-        let instruction_lookups_commitment_shapes = InstructionLookupsProof::<
-            C,
-            M,
-            F,
-            PCS,
-            Self::InstructionSet,
-            Self::Subtables,
-            ProofTranscript,
-        >::commitment_shapes(max_trace_length);
-
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             M,
             Self::InstructionSet,
@@ -356,14 +335,16 @@ where
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
-        let commitment_shapes = [
-            bytecode_commitment_shapes,
-            ram_commitment_shapes,
-            timestamp_range_check_commitment_shapes,
-            instruction_lookups_commitment_shapes,
+        let max_poly_len: usize = [
+            (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
+            max_trace_length.next_power_of_two(),
+            max_memory_address.next_power_of_two(),
+            M,
         ]
-        .concat();
-        let generators = PCS::setup(&commitment_shapes);
+        .into_iter()
+        .max()
+        .unwrap();
+        let generators = PCS::setup(max_poly_len);
 
         JoltPreprocessing {
             generators,

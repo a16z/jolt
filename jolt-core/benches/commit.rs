@@ -1,9 +1,8 @@
 use ark_bn254::{Bn254, Fr};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
-use jolt_core::poly::commitment::commitment_scheme::{CommitShape, CommitmentScheme};
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
-use jolt_core::poly::commitment::kzg::CommitMode;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
@@ -58,7 +57,7 @@ where
     // Compute known products (one per layer)
     let known_products: Vec<F> = leaves.iter().map(|layer| layer.iter().product()).collect();
 
-    let setup = PCS::setup(&[CommitShape::new(SRS_SIZE)]);
+    let setup = PCS::setup(SRS_SIZE);
 
     (leaves, setup, known_products)
 }

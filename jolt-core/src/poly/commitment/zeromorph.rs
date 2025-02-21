@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::{iter, marker::PhantomData};
 
 use super::{
-    commitment_scheme::{CommitShape, CommitmentScheme},
+    commitment_scheme::CommitmentScheme,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 use crate::field::JoltField;
@@ -427,19 +427,17 @@ where
     type Proof = ZeromorphProof<P>;
     type BatchedProof = ZeromorphProof<P>;
 
-    fn setup(shapes: &[CommitShape]) -> Self::Setup
+    fn setup(max_poly_len: usize) -> Self::Setup
     where
         P::ScalarField: JoltField,
         P::G1: Icicle,
     {
-        let max_len = shapes.iter().map(|shape| shape.input_length).max().unwrap();
-
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
-            max_len,
-            max_len,
+            max_poly_len,
+            max_poly_len,
         )))
-        .trim(max_len)
+        .trim(max_poly_len)
     }
 
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {

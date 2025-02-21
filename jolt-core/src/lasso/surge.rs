@@ -673,10 +673,7 @@ mod tests {
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
-        poly::commitment::{
-            commitment_scheme::{CommitShape, CommitmentScheme},
-            hyperkzg::HyperKZG,
-        },
+        poly::commitment::{commitment_scheme::CommitmentScheme, hyperkzg::HyperKZG},
     };
     use ark_bn254::{Bn254, Fr};
     use ark_std::test_rng;
@@ -697,7 +694,7 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::<_, KeccakTranscript>::setup(&[CommitShape::new(M)]);
+        let generators = HyperKZG::<_, KeccakTranscript>::setup(M);
         let (proof, debug_info) = SurgeProof::<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
@@ -726,7 +723,7 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::<_, KeccakTranscript>::setup(&[CommitShape::new(M)]);
+        let generators = HyperKZG::<_, KeccakTranscript>::setup(M);
         let (proof, debug_info) = SurgeProof::<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,

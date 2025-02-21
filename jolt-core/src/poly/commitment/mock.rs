@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::commitment_scheme::{CommitShape, CommitmentScheme};
+use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {
@@ -46,7 +46,7 @@ where
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
 
-    fn setup(_shapes: &[CommitShape]) -> Self::Setup {}
+    fn setup(_max_poly_len: usize) -> Self::Setup {}
     fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment { poly: poly.clone() }
     }
