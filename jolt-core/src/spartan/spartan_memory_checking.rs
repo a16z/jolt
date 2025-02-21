@@ -1182,7 +1182,7 @@ where
     }
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::io::Write;
 
     use super::*;
@@ -1210,7 +1210,7 @@ mod tests {
     pub type ProofTranscript = PoseidonTranscript<Fr, Fq>;
     pub type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
-    trait Circomfmt {
+    pub trait Circomfmt {
         fn format(&self) -> serde_json::Value;
         fn format_setup(&self, _size: usize) -> serde_json::Value {
             unimplemented!("added for setup")

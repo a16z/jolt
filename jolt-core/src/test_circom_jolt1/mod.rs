@@ -11,6 +11,7 @@ pub mod preprocess;
 pub mod struct_fq;
 pub mod sum_check_gkr;
 pub mod transcript;
+mod parse;
 use std::{
     fs::{File, OpenOptions},
     io::Write,
