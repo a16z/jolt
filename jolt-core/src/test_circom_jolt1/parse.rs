@@ -1,3 +1,5 @@
+use std::{fs::File, io::Write};
+
 use ark_bn254::Bn254;
 use ark_ec::AffineRepr;
 use ark_ff::{AdditiveGroup, PrimeField};
@@ -7,14 +9,16 @@ use serde_json::json;
 use tracer::JoltDevice;
 
 use crate::{
-    field::JoltField,
     jolt::vm::{
         bytecode::{BytecodeProof, BytecodeStuff},
-        instruction_lookups::InstructionLookupStuff,
-        read_write_memory::ReadWriteMemoryStuff,
+        instruction_lookups::{
+            InstructionLookupStuff, InstructionLookupsProof, PrimarySumcheck,
+            PrimarySumcheckOpenings,
+        },
+        read_write_memory::{OutputSumcheckProof, ReadWriteMemoryProof, ReadWriteMemoryStuff},
         rv32i_vm::{RV32ISubtables, C, M, RV32I},
-        timestamp_range_check::TimestampRangeCheckStuff,
-        JoltCommitments, JoltProof, JoltStuff,
+        timestamp_range_check::{TimestampRangeCheckStuff, TimestampValidityProof},
+        JoltCommitments, JoltPreprocessing, JoltProof, JoltStuff,
     },
     lasso::memory_checking::{MultisetHashes, StructuredPolynomialData},
     poly::{
@@ -24,17 +28,20 @@ use crate::{
             kzg::KZGVerifierKey,
             pedersen::PedersenGenerators,
         },
+        opening_proof::ReducedOpeningProof,
         unipoly::UniPoly,
     },
-    r1cs::inputs::{JoltR1CSInputs, R1CSStuff},
+    r1cs::{
+        inputs::{JoltR1CSInputs, R1CSStuff},
+        spartan::UniformSpartanProof,
+    },
     spartan::spartan_memory_checking::SpartanProof,
     subprotocols::{
-        grand_product::{
-            BatchedGrandProduct, BatchedGrandProductLayerProof, BatchedGrandProductProof,
-        },
+        grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
         sumcheck::SumcheckInstanceProof,
     },
-    utils::poseidon_transcript::PoseidonTranscript,
+    test_circom_jolt1::fib_e2e,
+    utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript},
 };
 type Fr = ark_bn254::Fr;
 type Fq = ark_bn254::Fq;
@@ -45,12 +52,17 @@ pub type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
 pub type ProofTranscript = PoseidonTranscript<Fr, Fr>;
 // pub type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
-pub trait Circomfmt {
-    fn format(&self) -> serde_json::Value;
-    fn format_setup(&self, _size: usize) -> serde_json::Value {
-        unimplemented!("added for setup")
-    }
-}
+// pub trait Circomfmt {
+//     fn format(&self) -> serde_json::Value {
+//         unimplemented!("")
+//     }
+//     fn format_non_native(&self) -> serde_json::Value {
+//         unimplemented!("")
+//     }
+//     fn format_setup(&self, _size: usize) -> serde_json::Value {
+//         unimplemented!("added for setup")
+//     }
+// }
 
 pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
     let mut limbs = [Fq::ZERO; 3];
@@ -65,8 +77,33 @@ pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
     limbs
 }
 
-impl Circomfmt for Fr {
+pub fn convert_fq_to_limbs(r: Fq) -> [Fr; 3] {
+    let mut limbs = [Fr::ZERO; 3];
+
+    let mask = BigUint::from((1u128 << 125) - 1);
+    limbs[0] = Fr::from(BigUint::from(r.into_bigint()) & mask.clone());
+
+    limbs[1] = Fr::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
+
+    limbs[2] = Fr::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
+
+    limbs
+}
+
+trait ParseJolt {
     fn format(&self) -> serde_json::Value {
+        unimplemented!("")
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        unimplemented!("")
+    }
+    fn format_setup(&self, _size: usize) -> serde_json::Value {
+        unimplemented!("added for setup")
+    }
+}
+
+impl ParseJolt for Fr {
+    fn format_non_native(&self) -> serde_json::Value {
         let limbs = convert_to_3_limbs(*self);
         json!({
             "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
@@ -74,14 +111,15 @@ impl Circomfmt for Fr {
     }
 }
 
-impl Circomfmt for HyperKZGVerifierKey<ark_bn254::Bn254> {
+impl ParseJolt for HyperKZGVerifierKey<ark_bn254::Bn254> {
     fn format(&self) -> serde_json::Value {
         json!({
             "kzg_vk": self.kzg_vk.format()
         })
     }
 }
-impl Circomfmt for KZGVerifierKey<ark_bn254::Bn254> {
+
+impl ParseJolt for KZGVerifierKey<ark_bn254::Bn254> {
     fn format(&self) -> serde_json::Value {
         json!({
             "g1": self.g1.format(),
@@ -102,35 +140,50 @@ impl Circomfmt for KZGVerifierKey<ark_bn254::Bn254> {
         })
     }
 }
-impl Circomfmt for ark_bn254::G1Affine {
+
+impl ParseJolt for ark_bn254::G1Affine {
     fn format(&self) -> serde_json::Value {
         json!({
             "x": self.x.to_string(),
             "y": self.y.to_string()
         })
     }
-}
 
-impl Circomfmt for SpartanProof<Fr, PCS, ProofTranscript> {
-    fn format(&self) -> serde_json::Value {
+    fn format_non_native(&self) -> serde_json::Value {
+        let x_limbs = convert_fq_to_limbs(self.x);
+        let y_limbs = convert_fq_to_limbs(self.y);
         json!({
-            "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
-            "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
-            "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format(),self.outer_sumcheck_claims.1.format(),self.outer_sumcheck_claims.2.format()],
-            "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format(),self.inner_sumcheck_claims.1.format(),self.inner_sumcheck_claims.2.format(),self.inner_sumcheck_claims.3.format()],
-            "pi_eval": self.pi_eval.format(),
-            "joint_opening_proof": self.pcs_proof.format()
+            "x":{"limbs": [x_limbs[0].to_string(),x_limbs[1].to_string(),x_limbs[2].to_string()]},
+            "y":{"limbs": [y_limbs[0].to_string(),y_limbs[1].to_string(),y_limbs[2].to_string()]}
         })
     }
 }
-impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
+
+impl ParseJolt for SpartanProof<Fr, PCS, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "outer_sumcheck_proof": self.outer_sumcheck_proof.format_non_native(),
+            "inner_sumcheck_proof": self.inner_sumcheck_proof.format_non_native(),
+            "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format_non_native(),self.outer_sumcheck_claims.1.format_non_native(),self.outer_sumcheck_claims.2.format_non_native()],
+            "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format_non_native(),self.inner_sumcheck_claims.1.format_non_native(),self.inner_sumcheck_claims.2.format_non_native(),self.inner_sumcheck_claims.3.format_non_native()],
+            "pi_eval": self.pi_eval.format_non_native(),
+            "joint_opening_proof": self.pcs_proof.format_non_native()
+        })
+    }
+}
+impl ParseJolt for HyperKZGProof<ark_bn254::Bn254> {
     fn format(&self) -> serde_json::Value {
         let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format()).collect();
         let w: Vec<serde_json::Value> = self.w.iter().map(|c| c.format()).collect();
         let v: Vec<Vec<serde_json::Value>> = self
             .v
             .iter()
-            .map(|v_inner| v_inner.iter().map(|elem| elem.format()).collect())
+            .map(|v_inner| {
+                v_inner
+                    .iter()
+                    .map(|elem| elem.format_non_native())
+                    .collect()
+            })
             .collect();
         json!({
             "com": com,
@@ -139,7 +192,7 @@ impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
         })
     }
 }
-// impl Circomfmt for SumcheckInstanceProof<Fr, ProofTranscript> {
+// impl ParseJolt for SumcheckInstanceProof<Fr, ProofTranscript> {
 //     fn format(&self) -> serde_json::Value {
 //         let uni_polys: Vec<serde_json::Value> =
 //             self.uni_polys.iter().map(|poly| poly.format()).collect();
@@ -148,7 +201,7 @@ impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
 //         })
 //     }
 // }
-// impl Circomfmt for UniPoly<Fr> {
+// impl ParseJolt for UniPoly<Fr> {
 //     fn format(&self) -> serde_json::Value {
 //         let coeffs: Vec<serde_json::Value> =
 //             self.coeffs.iter().map(|coeff| coeff.format()).collect();
@@ -157,14 +210,19 @@ impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
 //         })
 //     }
 // }
-impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
+impl ParseJolt for HyperKZGCommitment<ark_bn254::Bn254> {
     fn format(&self) -> serde_json::Value {
         json!({
             "commitment": self.0.format(),
         })
     }
+    fn format_non_native(&self) -> serde_json::Value {
+        json!({
+            "commitment": self.0.format_non_native(),
+        })
+    }
 }
-// impl Circomfmt for HyraxCommitment<ark_grumpkin::Projective> {
+// impl ParseJolt for HyraxCommitment<ark_grumpkin::Projective> {
 //     fn format(&self) -> serde_json::Value {
 //         let commitments: Vec<serde_json::Value> = self
 //             .row_commitments
@@ -177,7 +235,7 @@ impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
 //     }
 // }
 
-// impl Circomfmt for HyraxOpeningProof<ark_grumpkin::Projective, ProofTranscript> {
+// impl ParseJolt for HyraxOpeningProof<ark_grumpkin::Projective, ProofTranscript> {
 //     fn format(&self) -> serde_json::Value {
 //         let vector_matrix_product: Vec<serde_json::Value> = self
 //             .vector_matrix_product
@@ -190,7 +248,7 @@ impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
 //     }
 // }
 
-impl Circomfmt for ark_grumpkin::Projective {
+impl ParseJolt for ark_grumpkin::Projective {
     fn format(&self) -> serde_json::Value {
         json!({
             "x": self.x.to_string(),
@@ -199,7 +257,7 @@ impl Circomfmt for ark_grumpkin::Projective {
         })
     }
 }
-impl Circomfmt for PoseidonTranscript<Fr, Fq> {
+impl ParseJolt for PoseidonTranscript<Fr, Fr> {
     fn format(&self) -> serde_json::Value {
         json!({
             "state": self.state.state[1].to_string(),
@@ -207,7 +265,8 @@ impl Circomfmt for PoseidonTranscript<Fr, Fq> {
         })
     }
 }
-impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
+
+impl ParseJolt for PedersenGenerators<ark_grumpkin::Projective> {
     fn format(&self) -> serde_json::Value {
         unimplemented!("Use format_setup")
     }
@@ -223,7 +282,7 @@ impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
         })
     }
 }
-// impl Circomfmt for HyraxGenerators<ark_grumpkin::Projective> {
+// impl ParseJolt for HyraxGenerators<ark_grumpkin::Projective> {
 //     fn format(&self) -> serde_json::Value {
 //         json!({
 //             "gens": self.gens.format()
@@ -232,32 +291,18 @@ impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
 //     }
 // }
 
-trait ParseJolt {
-    fn format(&self) -> serde_json::Value;
-}
 impl ParseJolt
-    for JoltProof<
-        { C },
-        { M },
-        JoltR1CSInputs,
-        Fr,
-        HyperKZG<Bn254, PoseidonTranscript<Fr, Fr>>,
-        RV32I,
-        RV32ISubtables<Fr>,
-        PoseidonTranscript<Fr, Fr>,
-    >
+    for JoltProof<{ C }, { M }, JoltR1CSInputs, Fr, PCS, RV32I, RV32ISubtables<Fr>, ProofTranscript>
 {
     fn format(&self) -> serde_json::Value {
         json!({
             "trace_length": self.trace_length.to_string(),
             "program_io": self.program_io.format(),
             "bytecode": self.bytecode.format(),
-            // "read_write_memory": {:?},
-            // "instruction_lookups": {:?},
-            // "r1cs": {:?},
-            // "opening_proof": {:?},
-            // "pi_proof": {:?}
-
+            "read_write_memory": self.read_write_memory.format(),
+            "instruction_lookups": self.instruction_lookups.format(),
+            "r1cs": self.r1cs.format(),
+            "opening_proof":self.opening_proof.format()
         })
     }
 }
@@ -275,7 +320,7 @@ impl ParseJolt for JoltDevice {
             .map(|output| (*output as usize).to_string())
             .collect();
         json!({
-               "inputs": inputs,
+                "inputs": inputs,
                 "outputs": outputs,
                 "panic": self.panic.to_string()
         })
@@ -302,23 +347,162 @@ impl ParseJolt
         })
     }
 }
+impl ParseJolt for ReadWriteMemoryProof<Fr, PCS, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        let mut openings = Vec::new();
+        openings.push(self.memory_checking_proof.openings.a_ram.to_string());
+        openings.push(self.memory_checking_proof.openings.v_read_rd.to_string());
+        openings.push(self.memory_checking_proof.openings.v_read_rs1.to_string());
+        openings.push(self.memory_checking_proof.openings.v_read_rs2.to_string());
+        openings.push(self.memory_checking_proof.openings.v_read_ram.to_string());
+        openings.push(self.memory_checking_proof.openings.v_write_rd.to_string());
+        openings.push(self.memory_checking_proof.openings.v_write_ram.to_string());
+        openings.push(self.memory_checking_proof.openings.v_final.to_string());
+        openings.push(self.memory_checking_proof.openings.t_read_rd.to_string());
+        openings.push(self.memory_checking_proof.openings.t_read_rs1.to_string());
+        openings.push(self.memory_checking_proof.openings.t_read_rs2.to_string());
+        openings.push(self.memory_checking_proof.openings.t_read_ram.to_string());
+        openings.push(self.memory_checking_proof.openings.t_final.to_string());
 
+        let mut exogenous_openings = Vec::new();
+        exogenous_openings.push(
+            self.memory_checking_proof
+                .exogenous_openings
+                .a_rd
+                .to_string(),
+        );
+        exogenous_openings.push(
+            self.memory_checking_proof
+                .exogenous_openings
+                .a_rs1
+                .to_string(),
+        );
+        exogenous_openings.push(
+            self.memory_checking_proof
+                .exogenous_openings
+                .a_rs2
+                .to_string(),
+        );
+
+        json!({
+            "memory_checking_proof": { "multiset_hashes": self.memory_checking_proof.multiset_hashes.format(),
+                                       "read_write_grand_product" : self.memory_checking_proof.read_write_grand_product.format(),
+                                       "init_final_grand_product" : self.memory_checking_proof.init_final_grand_product.format(),
+                                       "openings": openings,
+                                       "exogenous_openings": exogenous_openings
+                            },
+            "timestamp_validity_proof": self.timestamp_validity_proof.format(),
+            "output_proof": self.output_proof.format()
+        })
+    }
+}
+impl ParseJolt
+    for InstructionLookupsProof<{ C }, { M }, Fr, PCS, RV32I, RV32ISubtables<Fr>, ProofTranscript>
+{
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "primary_sumcheck": self.primary_sumcheck.format(),
+            "memory_checking_proof": { "multiset_hashes": self.memory_checking.multiset_hashes.format(),
+                                       "read_write_grand_product" : self.memory_checking.read_write_grand_product.format(),
+                                       "init_final_grand_product" : self.memory_checking.init_final_grand_product.format(),
+                                       "openings": self.memory_checking.openings.format(),
+                            },
+        })
+    }
+}
+impl ParseJolt for UniformSpartanProof<{ C }, JoltR1CSInputs, Fr, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
+            "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
+            "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.to_string(), self.outer_sumcheck_claims.1.to_string(), self.outer_sumcheck_claims.2.to_string()],
+            "claimed_witness_evals": self.claimed_witness_evals.iter().map(|eval|eval.to_string()).collect::<Vec<String>>()
+        })
+    }
+}
+impl ParseJolt for ReducedOpeningProof<Fr, PCS, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "sumcheck_proof":self.sumcheck_proof.format(),
+            "sumcheck_claims": self.sumcheck_claims.iter().map(|claim|claim.to_string()).collect::<Vec<String>>(),
+            "joint_opening_proof": self.joint_opening_proof.format()
+        })
+    }
+}
+impl ParseJolt for PrimarySumcheck<Fr, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "sumcheck_proof": self.sumcheck_proof.format(),
+            "openings":self.openings.format(),
+        })
+    }
+}
+impl ParseJolt for PrimarySumcheckOpenings<Fr> {
+    fn format(&self) -> serde_json::Value {
+        let E_poly_openings: Vec<String> = self
+            .E_poly_openings
+            .iter()
+            .map(|opening| opening.to_string())
+            .collect();
+        let flag_openings: Vec<String> = self
+            .flag_openings
+            .iter()
+            .map(|opening| opening.to_string())
+            .collect();
+        json!({
+            "E_poly_openings": E_poly_openings,
+            "flag_openings": flag_openings,
+            "lookup_outputs_opening.to_string()": self.lookup_outputs_opening.to_string(),
+        })
+    }
+}
 impl ParseJolt for MultisetHashes<Fr> {
     fn format(&self) -> serde_json::Value {
-        let read_hashes: Vec<serde_json::Value> =
-            self.read_hashes.iter().map(|hash| hash.format()).collect();
-        let write_hashes: Vec<serde_json::Value> =
-            self.write_hashes.iter().map(|hash| hash.format()).collect();
-        let init_hashes: Vec<serde_json::Value> =
-            self.init_hashes.iter().map(|hash| hash.format()).collect();
-        let final_hashes: Vec<serde_json::Value> =
-            self.final_hashes.iter().map(|hash| hash.format()).collect();
+        let read_hashes: Vec<String> = self
+            .read_hashes
+            .iter()
+            .map(|hash| hash.to_string())
+            .collect();
+        let write_hashes: Vec<String> = self
+            .write_hashes
+            .iter()
+            .map(|hash| hash.to_string())
+            .collect();
+        let init_hashes: Vec<String> = self
+            .init_hashes
+            .iter()
+            .map(|hash| hash.to_string())
+            .collect();
+        let final_hashes: Vec<String> = self
+            .final_hashes
+            .iter()
+            .map(|hash| hash.to_string())
+            .collect();
 
         json!({
             "read_hashes": read_hashes,
             "write_hashes": write_hashes,
             "init_hashes": init_hashes,
             "final_hashes": final_hashes
+        })
+    }
+}
+impl ParseJolt for TimestampValidityProof<Fr, PCS, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "multiset_hashes": self.multiset_hashes.format(),
+            "openings": self.openings.format(),
+            "exogenous_openings": self.exogenous_openings.iter().map(|opening|opening.to_string()).collect::<Vec<String>>(),
+            "batched_grand_product": self.batched_grand_product.format()
+        })
+    }
+}
+
+impl ParseJolt for OutputSumcheckProof<Fr, PCS, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "sumcheck_proof": self.sumcheck_proof.format(),
+            "opening": self.opening.to_string()
         })
     }
 }
@@ -331,6 +515,15 @@ impl ParseJolt for JoltStuff<HyperKZGCommitment<Bn254>> {
             "instruction_lookups": self.instruction_lookups.format(),
             "timestamp_range_check": self.timestamp_range_check.format(),
             "r1cs": self.r1cs.format()
+        })
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        json!({
+            "bytecode": self.bytecode.format_non_native(),
+            "read_write_memory": self.read_write_memory.format_non_native(),
+            "instruction_lookups": self.instruction_lookups.format_non_native(),
+            "timestamp_range_check": self.timestamp_range_check.format_non_native(),
+            "r1cs": self.r1cs.format_non_native()
         })
     }
 }
@@ -370,12 +563,20 @@ impl ParseJolt for BatchedGrandProductProof<PCS, ProofTranscript> {
         })
     }
 }
+
 impl ParseJolt for BatchedGrandProductLayerProof<Fr, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         json!({
             "proof": self.proof.format(),
             "left_claim": self.left_claim.to_string(),
             "right_claim": self.left_claim.to_string(),
+        })
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        json!({
+            "proof": self.proof.format_non_native(),
+            "left_claim": self.left_claim.format(),
+            "right_claim": self.left_claim.format(),
         })
     }
 }
@@ -387,10 +588,27 @@ impl ParseJolt for SumcheckInstanceProof<Fr, ProofTranscript> {
             "uni_polys": uni_polys,
         })
     }
+    fn format_non_native(&self) -> serde_json::Value {
+        let uni_polys: Vec<serde_json::Value> =
+            self.uni_polys.iter().map(|poly| poly.format()).collect();
+        json!({
+            "uni_polys": uni_polys,
+        })
+    }
 }
 impl ParseJolt for UniPoly<Fr> {
     fn format(&self) -> serde_json::Value {
         let coeffs: Vec<String> = self.coeffs.iter().map(|coeff| coeff.to_string()).collect();
+        json!({
+            "coeffs": coeffs,
+        })
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        let coeffs: Vec<serde_json::Value> = self
+            .coeffs
+            .iter()
+            .map(|coeff| coeff.format_non_native())
+            .collect();
         json!({
             "coeffs": coeffs,
         })
@@ -451,6 +669,59 @@ impl ParseJolt for InstructionLookupStuff<HyperKZGCommitment<Bn254>> {
         })
     }
 }
+
+impl ParseJolt for InstructionLookupStuff<Fr> {
+    fn format(&self) -> serde_json::Value {
+        let dim: Vec<String> = self.dim.iter().map(|com| com.to_string()).collect();
+        let read_cts: Vec<String> = self.read_cts.iter().map(|com| com.to_string()).collect();
+        let final_cts: Vec<String> = self.final_cts.iter().map(|com| com.to_string()).collect();
+        let E_polys: Vec<String> = self.E_polys.iter().map(|com| com.to_string()).collect();
+        let instruction_flags: Vec<String> = self
+            .instruction_flags
+            .iter()
+            .map(|com| com.to_string())
+            .collect();
+        json!({
+            "dim": dim,
+            "read_cts": read_cts,
+            "final_cts": final_cts,
+            "E_polys": E_polys,
+            "instruction_flags": instruction_flags,
+            "lookup_outputs": self.lookup_outputs.to_string()
+        })
+    }
+}
+impl ParseJolt for TimestampRangeCheckStuff<Fr> {
+    fn format(&self) -> serde_json::Value {
+        let read_cts_read_timestamp: Vec<String> = self
+            .read_cts_read_timestamp
+            .iter()
+            .map(|com| com.to_string())
+            .collect();
+        let read_cts_global_minus_read: Vec<String> = self
+            .read_cts_global_minus_read
+            .iter()
+            .map(|com| com.to_string())
+            .collect();
+        let final_cts_read_timestamp: Vec<String> = self
+            .final_cts_read_timestamp
+            .iter()
+            .map(|com| com.to_string())
+            .collect();
+        let final_cts_global_minus_read: Vec<String> = self
+            .final_cts_global_minus_read
+            .iter()
+            .map(|com| com.to_string())
+            .collect();
+        json!({
+             "read_cts_read_timestamp": read_cts_read_timestamp,
+                "read_cts_global_minus_read":read_cts_global_minus_read,
+                "final_cts_read_timestamp": final_cts_read_timestamp,
+                "final_cts_global_minus_read": final_cts_global_minus_read
+        })
+    }
+}
+
 impl ParseJolt for TimestampRangeCheckStuff<HyperKZGCommitment<Bn254>> {
     fn format(&self) -> serde_json::Value {
         let read_cts_read_timestamp: Vec<serde_json::Value> = self
@@ -496,7 +767,49 @@ impl ParseJolt for R1CSStuff<HyperKZGCommitment<Bn254>> {
         })
     }
 }
-// struct JoltPreprocessHash<F: JoltField> {
-//     pub v_init_final_hash: F,
-//     pub bytecode_words_hash: F,
-// }
+impl ParseJolt for JoltPreprocessing<{ C }, Fr, PCS, ProofTranscript> {
+    fn format(&self) -> serde_json::Value {
+        let v_init_final: Vec<Vec<String>> = self
+            .bytecode
+            .v_init_final
+            .iter()
+            .map(|poly| poly.Z.iter().map(|elem| elem.to_string()).collect())
+            .collect();
+        json!({
+           "bytecode" : {
+                        "v_init_final": v_init_final
+                        },
+           "read_write_memory": {"bytecode_words": self.read_write_memory.bytecode_words.iter().map(|elem|elem.to_string()).collect::<Vec<String>>() }
+        })
+    }
+}
+#[test]
+
+fn fib_e2e_hyperkzg() {
+    println!("Running Fib");
+
+    let (preprocessing, proof, commitments) = fib_e2e::<Fr, PCS, ProofTranscript>();
+
+    let transcipt_init = <PoseidonTranscript<Fr, Fr> as Transcript>::new(b"Jolt transcript");
+
+    let input_json = json!(
+    {
+        "transcript_init": transcipt_init.format(),
+        "preprocessing": {
+            "v_init_final_hash": preprocessing.bytecode.v_init_final_hash.to_string(),
+            "bytecode_words_hash": preprocessing.read_write_memory.hash.to_string()
+        },
+        "proof": proof.format(),
+        "commitments":commitments.format(),
+        "pi_proof":preprocessing.format()
+    });
+
+    // Convert the JSON to a pretty-printed string
+    let pretty_json = serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
+
+    let input_file_path = "input.json";
+    let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+    input_file
+        .write_all(pretty_json.as_bytes())
+        .expect("Failed to write to input.json");
+}

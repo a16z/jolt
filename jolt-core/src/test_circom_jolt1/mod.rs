@@ -6,12 +6,12 @@ pub mod joltproof_inst_proof;
 pub mod joltproof_red_opening;
 pub mod joltproof_rw_mem_proof;
 pub mod joltproof_uniform_spartan;
+mod parse;
 pub mod pi_proof;
 pub mod preprocess;
 pub mod struct_fq;
 pub mod sum_check_gkr;
 pub mod transcript;
-mod parse;
 use std::{
     fs::{File, OpenOptions},
     io::Write,
@@ -43,6 +43,7 @@ use helper_commitms::{convert_from_jolt_stuff_to_circom, JoltStuffCircom};
 use joltproof::{convert_jolt_proof_to_circom, JoltproofCircom};
 use num_bigint::BigUint;
 use preprocess::{convert_joltpreprocessing_to_circom, JoltPreprocessingCircom};
+use serde_json::json;
 use transcript::convert_transcript_to_circom;
 
 #[test]

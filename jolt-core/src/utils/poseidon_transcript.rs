@@ -4,7 +4,7 @@ use super::transcript::Transcript;
 use crate::field::JoltField;
 use ark_crypto_primitives::sponge::{
     poseidon::{get_poseidon_parameters, PoseidonDefaultConfigEntry, PoseidonSponge},
-    Absorb, CryptographicSponge, DuplexSpongeMode, FieldBasedCryptographicSponge,
+    Absorb, DuplexSpongeMode, FieldBasedCryptographicSponge,
 };
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField};

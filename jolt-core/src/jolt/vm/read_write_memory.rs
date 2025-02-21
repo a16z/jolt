@@ -80,6 +80,7 @@ impl ReadWriteMemoryPreprocessing {
             PoseidonTranscript::<ark_bn254::Fr, ark_bn254::Fr>::new().state;
         poseidon_transcript.absorb(&bytecode_words);
         let hash: ark_bn254::Fr = poseidon_transcript.squeeze_field_elements(1)[0];
+
         Self {
             min_bytecode_address,
             bytecode_words,
