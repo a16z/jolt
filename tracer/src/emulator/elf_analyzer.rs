@@ -658,9 +658,9 @@ impl ElfAnalyzer {
         string_table_section_headers: &Vec<&SectionHeader>,
     ) -> Option<u64> {
         let tohost_values = [0x2e, 0x74, 0x6f, 0x68, 0x6f, 0x73, 0x74, 0x00]; // ".tohost\null"
-        for progrma_data_header in program_data_section_headers {
-            let sh_addr = progrma_data_header.sh_addr;
-            let sh_name = progrma_data_header.sh_name as u64;
+        for program_data_header in program_data_section_headers {
+            let sh_addr = program_data_header.sh_addr;
+            let sh_name = program_data_header.sh_name as u64;
             // Find all string sections so far.
             // @TODO: Is there a way to know which string table section
             //        sh_name of program data section points to?
