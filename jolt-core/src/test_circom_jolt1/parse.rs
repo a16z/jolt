@@ -1,4 +1,7 @@
-use std::{fs::File, io::Write};
+use std::{
+    fs::File,
+    io::{Read, Write},
+};
 
 use ark_bn254::Bn254;
 use ark_ec::AffineRepr;
@@ -9,6 +12,7 @@ use serde_json::json;
 use tracer::JoltDevice;
 
 use crate::{
+    field::JoltField,
     jolt::vm::{
         bytecode::{BytecodeProof, BytecodeStuff},
         instruction_lookups::{
@@ -1125,8 +1129,45 @@ fn fib_e2e_hyperkzg() {
     // Convert the JSON to a pretty-printed string
     let pretty_json = serde_json::to_string_pretty(&jolt1_input).expect("Failed to serialize JSON");
 
-    let input_file_path = "input.json";
+    let input_file_path = "jolt1_input.json";
     let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+    input_file
+        .write_all(pretty_json.as_bytes())
+        .expect("Failed to write to input.json");
+
+    //TODO(Ashish):- Add code to generate witness
+    //Note:- How to test
+    //1.Comment the below part --> generate jolt1_input --> CP to CircomJolt
+    //2.Generate witness.json from circom --> CP witness.json here
+    //3.Uncomment the below part --> generate jolt2_input --> CP to CircomJolt
+    //4.Test Jolt2
+    //5. After 1st iteration repeate 3 to 4.
+
+    // Read the witness.json file
+    let witness_file_path = "witness.json";
+    let witness_file = File::open(witness_file_path).expect("Failed to open witness.json");
+    let witness: Vec<String> = serde_json::from_reader(witness_file).unwrap();
+
+    let mut z = Vec::new();
+    for value in witness {
+        let val: BigUint = value.parse().unwrap();
+        let mut bytes = val.to_bytes_le();
+        bytes.resize(32, 0u8);
+        let val = Fr::from_bytes(&bytes);
+        z.push(val);
+    }
+    let linking_stuff = LinkingStuff1::new(commitments, z);
+
+    let jolt2_input = json!(
+    {
+        "linkingstuff": linking_stuff.format(),
+        "vk": preprocessing.generators.1.format(),
+        "pi": proof.opening_proof.joint_opening_proof.format()
+    });
+
+    let input_file_path = "jolt2_input.json";
+    let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+    let pretty_json = serde_json::to_string_pretty(&jolt2_input).expect("Failed to serialize JSON");
     input_file
         .write_all(pretty_json.as_bytes())
         .expect("Failed to write to input.json");
