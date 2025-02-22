@@ -1496,6 +1496,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for KZGVerifierKey<ark_bn254::Bn254> {
         fn format(&self) -> serde_json::Value {
             json!({
@@ -1517,6 +1518,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for ark_bn254::G1Affine {
         fn format(&self) -> serde_json::Value {
             json!({
@@ -1543,14 +1545,15 @@ mod tests {
         fn format(&self) -> serde_json::Value {
             json!({
                 "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
-                "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
                 "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format(),self.outer_sumcheck_claims.1.format(),self.outer_sumcheck_claims.2.format()],
+                "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
                 "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format(),self.inner_sumcheck_claims.1.format(),self.inner_sumcheck_claims.2.format(),self.inner_sumcheck_claims.3.format()],
-                "pi_eval": self.pi_eval.format(),
+                "pub_io_eval": self.pi_eval.format(),
                 "joint_opening_proof": self.pcs_proof.format()
             })
         }
     }
+
     impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
         fn format(&self) -> serde_json::Value {
             let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format()).collect();
@@ -1577,6 +1580,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for UniPoly<Fr> {
         fn format(&self) -> serde_json::Value {
             let coeffs: Vec<serde_json::Value> =
@@ -1586,6 +1590,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
         fn format(&self) -> serde_json::Value {
             json!({
@@ -1728,6 +1733,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for TimestampRangeCheckStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
         fn format(&self) -> serde_json::Value {
             unimplemented!("Use format_embeded.");
@@ -1842,6 +1848,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for PoseidonTranscript<Fr, Fq> {
         fn format(&self) -> serde_json::Value {
             json!({
@@ -1850,6 +1857,7 @@ mod tests {
             })
         }
     }
+
     impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
         fn format(&self) -> serde_json::Value {
             unimplemented!("Use format_setup")
@@ -1866,6 +1874,7 @@ mod tests {
             })
         }
     }
+
     // impl Circomfmt for HyraxGenerators<ark_grumpkin::Projective> {
     //     fn format(&self) -> serde_json::Value {
     //         json!({
@@ -1943,6 +1952,905 @@ mod tests {
             "jolt_pi": jolt_pi.format(),
             "linking_stuff": linking_stuff.format(),
             "vk": pcs_setup.1.format(),
+            "proof": proof.format(),
+            "w_commitment": proof.witness_commit.format(),
+            "transcript" : transcipt_init.format()
+        });
+
+        // Convert the JSON to a pretty-printed string
+        let pretty_json =
+            serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
+
+        let input_file_path = "input.json";
+        let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+        input_file
+            .write_all(pretty_json.as_bytes())
+            .expect("Failed to write to input.json");
+    }
+}
+
+#[cfg(test)]
+mod tests_spartan_2 {
+    use std::io::Write;
+
+    use super::*;
+    use crate::field::ark;
+    use crate::poly::commitment::hyperkzg::{self, HyperKZGCommitment, HyperKZGProof};
+    use crate::poly::commitment::hyrax::{HyraxCommitment, HyraxGenerators, HyraxOpeningProof};
+    use crate::poly::commitment::kzg::KZGVerifierKey;
+    use crate::poly::commitment::pedersen::PedersenGenerators;
+    use crate::poly::unipoly::UniPoly;
+    use crate::{
+        jolt::vm::{
+            bytecode::BytecodeStuff,
+            instruction_lookups::InstructionLookupStuff,
+            read_write_memory::ReadWriteMemoryStuff,
+            rv32i_vm::{RV32ISubtables, C, M, RV32I},
+            timestamp_range_check::TimestampRangeCheckStuff,
+            JoltPreprocessing, JoltProof, JoltStuff,
+        },
+        r1cs::inputs::R1CSStuff,
+    };
+    use crate::{
+        poly::commitment::{
+            hyperkzg::{HyperKZG, HyperKZGVerifierKey},
+            hyrax::HyraxScheme,
+        },
+        utils::poseidon_transcript::PoseidonTranscript,
+    };
+    use ark_ec::{AffineRepr, CurveGroup};
+    use ark_ff::{AdditiveGroup, BigInt, PrimeField};
+    use serde::Serialize;
+    use serde_json::json;
+    // type Fr = ark_bn254::Fr;
+    // type Fq = ark_bn254::Fq;
+    // pub type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
+
+    type Fr = ark_grumpkin::Fr;
+    type Fq = ark_grumpkin::Fq;
+    pub type ProofTranscript = PoseidonTranscript<Fr, Fq>;
+    pub type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
+
+    trait Circomfmt {
+        fn format(&self) -> serde_json::Value;
+
+        fn format_nn(&self) -> serde_json::Value {
+            self.format()
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            self.format()
+        }
+
+        fn format_setup(&self, _size: usize) -> serde_json::Value {
+            unimplemented!("added for setup")
+        }
+    }
+
+    // TODO: Jolt has these constants too. Import from appropraite places.
+    const NUM_MEMORIES: usize = 54;
+    const NUM_INSTRUCTIONS: usize = 26;
+    const MEMORY_OPS_PER_INSTRUCTION: usize = 4;
+    static chunks_x_size: usize = 4;
+    static chunks_y_size: usize = 4;
+    const NUM_CIRCUIT_FLAGS: usize = 11;
+    static relevant_y_chunks_len: usize = 4;
+    // TODO: This is inner_sumcheck_rounds - 1. Fix this dynamically?
+    static postponed_point_len: usize = 10;
+
+    pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
+        let mut limbs = [Fq::ZERO; 3];
+
+        let mask = BigUint::from((1u128 << 125) - 1);
+        limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
+
+        limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
+
+        limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
+
+        limbs
+    }
+
+    pub fn break_in_3(r: Fq) -> [Fq; 3] {
+        let mut limbs = [Fq::ZERO; 3];
+
+        let mask = BigUint::from((1u128 << 125) - 1);
+        limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
+
+        limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
+
+        limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
+
+        limbs
+    }
+
+    pub fn combine_limbs(limbs: Vec<Fr>) -> Fq {
+        assert_eq!(limbs.len(), 3);
+        let mut limbs_big_int: [BigInt<4>; 3] = [BigInt::<4>::default(); 3];
+        limbs_big_int[0] = limbs[0].into_bigint();
+        limbs_big_int[1] = limbs[1].into_bigint();
+        limbs_big_int[2] = limbs[2].into_bigint();
+
+        Fq::from(limbs_big_int[0])
+            + Fq::from(limbs_big_int[1]) * Fq::from((1 as u128) << 125)
+            + Fq::from(limbs_big_int[2]) * Fq::from((1 as u128) << 250)
+    }
+
+    impl Circomfmt for Fq {
+        fn format(&self) -> serde_json::Value {
+            let limbs = break_in_3(*self);
+            json!({
+                "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
+            })
+        }
+    }
+
+    impl Circomfmt for Fr {
+        fn format(&self) -> serde_json::Value {
+            let limbs = convert_to_3_limbs(*self);
+            json!({
+                "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
+            })
+        }
+    }
+
+    // TODO: Import this from where ever it is defined in Jolt.
+    pub struct JoltPreprocessingNew {
+        pub v_init_final_hash: Fq,
+        pub bytecode_words_hash: Fq,
+    }
+
+    impl JoltPreprocessingNew {
+        fn new(witness: Vec<Fr>) -> JoltPreprocessingNew {
+            let bytecode_stuff_size = 6 * 9;
+            let read_write_memory_stuff_size = 6 * 13;
+            let instruction_lookups_stuff_size = 6 * (C + 3 * NUM_MEMORIES + NUM_INSTRUCTIONS + 1);
+            let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
+            let aux_variable_stuff_size = 6 * (8 + relevant_y_chunks_len);
+            let r1cs_stuff_size =
+                6 * (chunks_x_size + chunks_y_size + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size;
+            let jolt_stuff_size = bytecode_stuff_size
+                + read_write_memory_stuff_size
+                + instruction_lookups_stuff_size
+                + timestamp_range_check_stuff_size
+                + r1cs_stuff_size;
+
+            // TODO: Update this. Add postponed eval len.
+            let pub_in_start = 1 + 3 * (postponed_point_len + 1) + jolt_stuff_size + 15 * 3;
+
+            JoltPreprocessingNew {
+                v_init_final_hash: combine_limbs(witness[pub_in_start..pub_in_start + 3].to_vec()),
+                bytecode_words_hash: combine_limbs(
+                    witness[pub_in_start + 3..pub_in_start + 6].to_vec(),
+                ),
+            }
+        }
+    }
+
+    pub struct BytecodeCombiners {
+        pub rho: [Fq; 2],
+    }
+
+    pub struct InstructionLookupCombiners {
+        pub rho: [Fq; 3],
+    }
+
+    pub struct ReadWriteOutputTimestampCombiners {
+        pub rho: [Fq; 4],
+    }
+
+    pub struct R1CSCombiners {
+        pub rho: Fq,
+    }
+
+    pub struct OpeningCombiners {
+        pub bytecode_combiners: BytecodeCombiners,
+        pub instruction_lookup_combiners: InstructionLookupCombiners,
+        pub read_write_output_timestamp_combiners: ReadWriteOutputTimestampCombiners,
+        pub r1cs_combiners: R1CSCombiners,
+        pub coefficient: Fq,
+    }
+
+    pub struct HyperKzgVerifierAdvice {
+        pub r: Fq,
+        pub d_0: Fq,
+        pub v: Fq,
+        pub q_power: Fq,
+    }
+
+    pub struct LinkingStuff1<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
+        pub commitments: JoltStuff<T>,
+        pub opening_combiners: OpeningCombiners,
+        pub hyper_kzg_verifier_advice: HyperKzgVerifierAdvice,
+    }
+
+    // TODO: Just use LinkingStuff1 created for V_{Spartan, 1} with changes to format() fn.
+    impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> LinkingStuff1<T> {
+        fn new(commitments: JoltStuff<T>, witness: Vec<Fr>) -> LinkingStuff1<T> {
+            let bytecode_stuff_size = 6 * 9;
+            let read_write_memory_stuff_size = 6 * 13;
+            let instruction_lookups_stuff_size = 6 * (C + 3 * NUM_MEMORIES + NUM_INSTRUCTIONS + 1);
+            let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
+            let aux_variable_stuff_size = 6 * (8 + relevant_y_chunks_len);
+            let r1cs_stuff_size =
+                6 * (chunks_x_size + chunks_y_size + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size;
+            let jolt_stuff_size = bytecode_stuff_size
+                + read_write_memory_stuff_size
+                + instruction_lookups_stuff_size
+                + timestamp_range_check_stuff_size
+                + r1cs_stuff_size;
+
+            let mut idx = 1 + 3 * (postponed_point_len + 1) + jolt_stuff_size;
+            let bytecode_combiners = BytecodeCombiners {
+                rho: [
+                    combine_limbs(witness[idx..idx + 3].to_vec()),
+                    combine_limbs(witness[idx + 3..idx + 6].to_vec()),
+                ],
+            };
+
+            idx += 6;
+            let instruction_lookup_combiners = InstructionLookupCombiners {
+                rho: [
+                    combine_limbs(witness[idx..idx + 3].to_vec()),
+                    combine_limbs(witness[idx + 3..idx + 6].to_vec()),
+                    combine_limbs(witness[idx + 6..idx + 9].to_vec()),
+                ],
+            };
+
+            idx += 9;
+            let read_write_output_timestamp_combiners = ReadWriteOutputTimestampCombiners {
+                rho: [
+                    combine_limbs(witness[idx..idx + 3].to_vec()),
+                    combine_limbs(witness[idx + 3..idx + 6].to_vec()),
+                    combine_limbs(witness[idx + 6..idx + 9].to_vec()),
+                    combine_limbs(witness[idx + 9..idx + 12].to_vec()),
+                ],
+            };
+
+            idx += 12;
+            let r1cs_combiners = R1CSCombiners {
+                rho: combine_limbs(witness[idx..idx + 3].to_vec()),
+            };
+
+            idx += 3;
+
+            let opening_combiners = OpeningCombiners {
+                bytecode_combiners,
+                instruction_lookup_combiners,
+                read_write_output_timestamp_combiners,
+                r1cs_combiners,
+                coefficient: combine_limbs(witness[idx..idx + 3].to_vec()),
+            };
+
+            idx += 3;
+            let hyper_kzg_verifier_advice = HyperKzgVerifierAdvice {
+                r: combine_limbs(witness[idx..idx + 3].to_vec()),
+                d_0: combine_limbs(witness[idx + 3..idx + 6].to_vec()),
+                v: combine_limbs(witness[idx + 6..idx + 9].to_vec()),
+                q_power: combine_limbs(witness[idx + 9..idx + 12].to_vec()),
+            };
+
+            LinkingStuff1 {
+                commitments,
+                opening_combiners,
+                hyper_kzg_verifier_advice,
+            }
+        }
+    }
+
+    pub struct Spartan1PI {
+        pub jolt_pi: JoltPreprocessingNew,
+        pub linking_stuff: LinkingStuff1<HyperKZGCommitment<ark_bn254::Bn254>>,
+        pub hyperkzg_vk: HyperKZGVerifierKey<ark_bn254::Bn254>,
+    }
+
+    // TODO: Get hyperkzg_vk from Jolt.
+    impl Spartan1PI {
+        fn new(
+            commitments: JoltStuff<HyperKZGCommitment<ark_bn254::Bn254>>,
+            witness: Vec<Fr>,
+            hyperkzg_vk: HyperKZGVerifierKey<ark_bn254::Bn254>,
+        ) -> Self {
+            // TODO: Remove this clone.
+            let jolt_pi = JoltPreprocessingNew::new(witness.clone());
+            let linking_stuff = LinkingStuff1::new(commitments, witness);
+
+            Self {
+                jolt_pi,
+                linking_stuff,
+                hyperkzg_vk,
+            }
+        }
+    }
+    pub struct PostponedEval {
+        pub point: Vec<Fq>,
+        pub eval: Fq,
+    }
+
+    impl PostponedEval {
+        pub fn new(witness: Vec<Fr>) -> Self {
+            let point = (0..postponed_point_len)
+                .into_iter()
+                .map(|i| combine_limbs(witness[1 + 3 * i..1 + 3 * i + 3].to_vec()))
+                .collect();
+            let eval = combine_limbs(
+                witness[1 + 3 * postponed_point_len..1 + 3 * postponed_point_len + 3].to_vec(),
+            );
+
+            Self { point, eval }
+        }
+    }
+
+    // TODO: Change bytecode_hash to bytecode_words_hash in circom.
+    impl Circomfmt for JoltPreprocessingNew {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "v_init_final_hash": self.v_init_final_hash.format(),
+                "bytecode_hash": self.bytecode_words_hash.format(),
+
+            })
+        }
+    }
+
+    impl Circomfmt for BytecodeCombiners {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "rho": [self.rho[0].format(), self.rho[1].format()]
+            })
+        }
+    }
+
+    impl Circomfmt for InstructionLookupCombiners {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "rho": [self.rho[0].format(), self.rho[1].format(), self.rho[2].format()]
+            })
+        }
+    }
+
+    impl Circomfmt for ReadWriteOutputTimestampCombiners {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "rho": [self.rho[0].format(), self.rho[1].format(), self.rho[2].format(), self.rho[3].format()]
+            })
+        }
+    }
+
+    impl Circomfmt for R1CSCombiners {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "rho": self.rho.format()
+            })
+        }
+    }
+
+    impl Circomfmt for OpeningCombiners {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "bytecodecombiners": self.bytecode_combiners.format(),
+                "instructionlookupcombiners": self.instruction_lookup_combiners.format(),
+                "readwriteoutputtimestampcombiners": self.read_write_output_timestamp_combiners.format(),
+                "spartancombiners": self.r1cs_combiners.format(),
+                "coefficient": self.coefficient.format()
+            })
+        }
+    }
+
+    impl Circomfmt for HyperKzgVerifierAdvice {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "r": self.r.format(),
+                "d_0": self.d_0.format(),
+                "v": self.v.format(),
+                "q_power": self.q_power.format()
+            })
+        }
+    }
+
+    impl Circomfmt for LinkingStuff1<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "commitments": self.commitments.format_embeded(),
+                "openingcombiners": self.opening_combiners.format(),
+                "hyperkzgverifieradvice": self.hyper_kzg_verifier_advice.format()
+            })
+        }
+    }
+
+    impl Circomfmt for HyperKZGVerifierKey<ark_bn254::Bn254> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "kzg_vk": self.kzg_vk.format()
+            })
+        }
+    }
+
+    impl Circomfmt for KZGVerifierKey<ark_bn254::Bn254> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "g1": self.g1.format_embeded(),
+                "g2":{ "x": {"x": Fr::from_bigint(self.g2.x.c0.0).unwrap().format(),
+                            "y": Fr::from_bigint(self.g2.x.c1.0).unwrap().format()
+                        },
+
+                        "y": {"x": Fr::from_bigint(self.g2.y.c0.0).unwrap().format(),
+                             "y": Fr::from_bigint(self.g2.y.c1.0).unwrap().format()
+                        },
+                    },
+                "beta_g2": {"x": {"x": Fr::from_bigint(self.beta_g2.x.c0.0).unwrap().format(),
+                                  "y": Fr::from_bigint(self.beta_g2.x.c1.0).unwrap().format()
+                            },
+
+                            "y": {"x": Fr::from_bigint(self.beta_g2.y.c0.0).unwrap().format(),
+                                  "y": Fr::from_bigint(self.beta_g2.y.c1.0).unwrap().format()
+                            }
+                        }
+            })
+        }
+    }
+
+    impl Circomfmt for ark_bn254::G1Affine {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "x": self.x.to_string(),
+                "y": self.y.to_string()
+            })
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            let x_nn = convert_to_3_limbs(self.x);
+            let y_nn = convert_to_3_limbs(self.y);
+            json!({
+                "x": {
+                    "limbs": [x_nn[0].to_string(), x_nn[1].to_string(), x_nn[2].to_string()]
+                },
+                "y": {
+                    "limbs": [y_nn[0].to_string(), y_nn[1].to_string(), y_nn[2].to_string()]
+                }
+            })
+        }
+    }
+
+    impl Circomfmt for Spartan1PI {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "jolt_pi": self.jolt_pi.format(),
+                "linking_stuff": self.linking_stuff.format(),
+                "vk": self.hyperkzg_vk.format()
+            })
+        }
+    }
+
+    impl Circomfmt for PostponedEval {
+        fn format(&self) -> serde_json::Value {
+            let point: Vec<serde_json::Value> =
+                self.point.iter().map(|elem| elem.format()).collect();
+            json!({
+                "point": point,
+                "y": self.eval.format()
+            })
+        }
+    }
+
+    impl Circomfmt for SpartanProof<Fr, PCS, ProofTranscript> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
+                "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
+                "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format(),self.outer_sumcheck_claims.1.format(),self.outer_sumcheck_claims.2.format()],
+                "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format(),self.inner_sumcheck_claims.1.format(),self.inner_sumcheck_claims.2.format(),self.inner_sumcheck_claims.3.format()],
+                "pub_io_eval": self.pi_eval.format(),
+                "joint_opening_proof": self.pcs_proof.format()
+            })
+        }
+    }
+
+    // impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
+    //     fn format(&self) -> serde_json::Value {
+    //         let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format()).collect();
+    //         let w: Vec<serde_json::Value> = self.w.iter().map(|c| c.format()).collect();
+    //         let v: Vec<Vec<serde_json::Value>> = self
+    //             .v
+    //             .iter()
+    //             .map(|v_inner| v_inner.iter().map(|elem| elem.format()).collect())
+    //             .collect();
+    //         json!({
+    //             "com": com,
+    //             "w": w,
+    //             "v": v,
+    //         })
+    //     }
+    // }
+
+    impl Circomfmt for SumcheckInstanceProof<Fr, ProofTranscript> {
+        fn format(&self) -> serde_json::Value {
+            let uni_polys: Vec<serde_json::Value> =
+                self.uni_polys.iter().map(|poly| poly.format()).collect();
+            json!({
+                "uni_polys": uni_polys,
+            })
+        }
+    }
+
+    impl Circomfmt for UniPoly<Fr> {
+        fn format(&self) -> serde_json::Value {
+            let coeffs: Vec<serde_json::Value> =
+                self.coeffs.iter().map(|coeff| coeff.format()).collect();
+            json!({
+                "coeffs": coeffs,
+            })
+        }
+    }
+
+    impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "commitment": self.0.format(),
+            })
+        }
+
+        fn format_nn(&self) -> serde_json::Value {
+            json!({
+                "commitment": self.0.format_nn(),
+            })
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            json!({
+                "commitment": self.0.format_embeded(),
+            })
+        }
+    }
+
+    impl Circomfmt for BytecodeStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            let v_read_write: Vec<serde_json::Value> =
+                self.v_read_write.iter().map(|v| v.format()).collect();
+            json!({
+                "a_read_write": self.a_read_write.format(),
+                "v_read_write": v_read_write,
+                "t_read": self.t_read.format(),
+                "t_final": self.t_final.format()
+            })
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            let v_read_write: Vec<serde_json::Value> = self
+                .v_read_write
+                .iter()
+                .map(|v| v.format_embeded())
+                .collect();
+            json!({
+                "a_read_write": self.a_read_write.format_embeded(),
+                "v_read_write": v_read_write,
+                "t_read": self.t_read.format_embeded(),
+                "t_final": self.t_final.format_embeded()
+            })
+        }
+    }
+
+    impl Circomfmt for ReadWriteMemoryStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "a_ram": self.a_ram.format(),
+                    "v_read_rd": self.v_read_rd.format(),
+                    "v_read_rs1": self.v_read_rs1.format(),
+                    "v_read_rs2": self.v_read_rs2.format(),
+                    "v_read_ram": self.v_read_ram.format(),
+                    "v_write_rd": self.v_write_rd.format(),
+                    "v_write_ram": self.v_write_ram.format(),
+                    "v_final": self.v_final.format(),
+                    "t_read_rd": self.t_read_rd.format(),
+                    "t_read_rs1": self.t_read_rs1.format(),
+                    "t_read_rs2": self.t_read_rs2.format(),
+                    "t_read_ram": self.t_read_ram.format(),
+                    "t_final": self.t_final.format()
+            })
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            json!({
+                "a_ram": self.a_ram.format_embeded(),
+                    "v_read_rd": self.v_read_rd.format_embeded(),
+                    "v_read_rs1": self.v_read_rs1.format_embeded(),
+                    "v_read_rs2": self.v_read_rs2.format_embeded(),
+                    "v_read_ram": self.v_read_ram.format_embeded(),
+                    "v_write_rd": self.v_write_rd.format_embeded(),
+                    "v_write_ram": self.v_write_ram.format_embeded(),
+                    "v_final": self.v_final.format_embeded(),
+                    "t_read_rd": self.t_read_rd.format_embeded(),
+                    "t_read_rs1": self.t_read_rs1.format_embeded(),
+                    "t_read_rs2": self.t_read_rs2.format_embeded(),
+                    "t_read_ram": self.t_read_ram.format_embeded(),
+                    "t_final": self.t_final.format_embeded()
+            })
+        }
+    }
+
+    impl Circomfmt for InstructionLookupStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            let dim: Vec<serde_json::Value> = self.dim.iter().map(|com| com.format()).collect();
+            let read_cts: Vec<serde_json::Value> =
+                self.read_cts.iter().map(|com| com.format()).collect();
+            let final_cts: Vec<serde_json::Value> =
+                self.final_cts.iter().map(|com| com.format()).collect();
+            let E_polys: Vec<serde_json::Value> =
+                self.E_polys.iter().map(|com| com.format()).collect();
+            let instruction_flags: Vec<serde_json::Value> = self
+                .instruction_flags
+                .iter()
+                .map(|com| com.format())
+                .collect();
+            json!({
+                "dim": dim,
+                "read_cts": read_cts,
+                "final_cts": final_cts,
+                "E_polys": E_polys,
+                "instruction_flags": instruction_flags,
+                "lookup_outputs": self.lookup_outputs.format()
+            })
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            let dim: Vec<serde_json::Value> =
+                self.dim.iter().map(|com| com.format_embeded()).collect();
+            let read_cts: Vec<serde_json::Value> = self
+                .read_cts
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let final_cts: Vec<serde_json::Value> = self
+                .final_cts
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let E_polys: Vec<serde_json::Value> = self
+                .E_polys
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let instruction_flags: Vec<serde_json::Value> = self
+                .instruction_flags
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            json!({
+                "dim": dim,
+                "read_cts": read_cts,
+                "final_cts": final_cts,
+                "E_polys": E_polys,
+                "instruction_flags": instruction_flags,
+                "lookup_outputs": self.lookup_outputs.format_embeded()
+            })
+        }
+    }
+
+    impl Circomfmt for TimestampRangeCheckStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            unimplemented!("Use format_embeded.");
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            let read_cts_read_timestamp: Vec<serde_json::Value> = self
+                .read_cts_read_timestamp
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let read_cts_global_minus_read: Vec<serde_json::Value> = self
+                .read_cts_global_minus_read
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let final_cts_read_timestamp: Vec<serde_json::Value> = self
+                .final_cts_read_timestamp
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let final_cts_global_minus_read: Vec<serde_json::Value> = self
+                .final_cts_global_minus_read
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            json!({
+                 "read_cts_read_timestamp": read_cts_read_timestamp,
+                    "read_cts_global_minus_read":read_cts_global_minus_read,
+                    "final_cts_read_timestamp": final_cts_read_timestamp,
+                    "final_cts_global_minus_read": final_cts_global_minus_read
+            })
+        }
+    }
+
+    impl Circomfmt for R1CSStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            unimplemented!("Use format_embeded.");
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            let chunks_x: Vec<serde_json::Value> = self
+                .chunks_x
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let chunks_y: Vec<serde_json::Value> = self
+                .chunks_y
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            let circuit_flags: Vec<serde_json::Value> = self
+                .circuit_flags
+                .iter()
+                .map(|com| com.format_embeded())
+                .collect();
+            json!({
+                "chunks_x": chunks_x,
+                "chunks_y": chunks_y,
+                "circuit_flags": circuit_flags
+            })
+        }
+    }
+
+    impl Circomfmt for JoltStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
+        fn format(&self) -> serde_json::Value {
+            unimplemented!("Use format_embeded.");
+        }
+
+        fn format_embeded(&self) -> serde_json::Value {
+            json!({
+                "bytecode": self.bytecode.format_embeded(),
+                "read_write_memory": self.read_write_memory.format_embeded(),
+                "instruction_lookups": self.instruction_lookups.format_embeded(),
+                "timestamp_range_check": self.timestamp_range_check.format_embeded(),
+                "r1cs": self.r1cs.format_embeded()
+            })
+        }
+    }
+
+    impl Circomfmt for HyraxCommitment<ark_grumpkin::Projective> {
+        fn format(&self) -> serde_json::Value {
+            let commitments: Vec<serde_json::Value> = self
+                .row_commitments
+                .iter()
+                .map(|commit| commit.into_affine().into_group().format())
+                .collect();
+            json!({
+                "row_commitments": commitments,
+            })
+        }
+    }
+
+    impl Circomfmt for HyraxOpeningProof<ark_grumpkin::Projective, ProofTranscript> {
+        fn format(&self) -> serde_json::Value {
+            let vector_matrix_product: Vec<serde_json::Value> = self
+                .vector_matrix_product
+                .iter()
+                .map(|elem| elem.format())
+                .collect();
+            json!({
+                "tau": vector_matrix_product,
+            })
+        }
+    }
+
+    impl Circomfmt for ark_grumpkin::Projective {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "x": self.x.to_string(),
+                "y": self.y.to_string(),
+                "z": self.z.to_string()
+            })
+        }
+    }
+
+    impl Circomfmt for PoseidonTranscript<Fr, Fq> {
+        fn format(&self) -> serde_json::Value {
+            json!({
+                "state": self.state.state[1].to_string(),
+                "nRounds": self.n_rounds.to_string(),
+            })
+        }
+    }
+
+    impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
+        fn format(&self) -> serde_json::Value {
+            unimplemented!("Use format_setup")
+        }
+
+        fn format_setup(&self, size: usize) -> serde_json::Value {
+            let generators: Vec<serde_json::Value> = self
+                .generators
+                .iter()
+                .take(size)
+                .map(|gen| gen.into_group().format())
+                .collect();
+            json!({
+                "gens": generators
+            })
+        }
+    }
+
+    // impl Circomfmt for HyraxGenerators<ark_grumpkin::Projective> {
+    //     fn format(&self) -> serde_json::Value {
+    //         json!({
+    //             "gens": self.gens.format()
+
+    //         })
+    //     }
+    // }
+
+    #[test]
+    fn spartan() {
+        let constraint_path = Some("src/spartan/verifier_constraints.json");
+        let witness_path = Some("src/spartan/witness.json");
+
+        let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
+        let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
+            preprocessing.inputs.len() + preprocessing.vars.len(),
+        );
+        let pcs_setup = PCS::setup(&commitment_shapes);
+        // let mut spartan_commitments = SpartanStuff::initialize(&preprocessing);
+        let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(
+            &pcs_setup,
+            // &mut spartan_polynomials,
+            // &mut spartan_commitments,
+            &mut preprocessing,
+        );
+        SpartanProof::<Fr, PCS, ProofTranscript>::verify(
+            &pcs_setup,
+            &preprocessing,
+            // &spartan_commitments,
+            &proof,
+        )
+        .unwrap();
+
+        let pi = preprocessing.inputs;
+        let formatted_pub_inp: Vec<serde_json::Value> =
+            pi.iter().map(|elem| elem.format()).collect();
+        let transcipt_init = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"Spartan transcript");
+
+        // let input_json = json!({
+        //     "pub_inp": formatted_pub_inp,
+        //     "vk": pcs_setup.1.format(),
+        //     "proof": proof.format(),
+        //     "w_commitment": proof.witness_commit.format(),
+        //     "transcript" : transcipt_init.format()
+        // });
+        // let input_json = json!({
+        //     "pub_inp": formatted_pub_inp,
+        //     "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
+        //     "proof": proof.format(),
+        //     "w_commitment": proof.witness_commit.format(),
+        //     "transcript" : transcipt_init.format()
+        // });
+
+        // TODO: Read witness.json file and put the first half into witness.
+
+        let file =
+            File::open(witness_path.expect("Path doesn't exist")).expect("Witness file not found");
+        let reader = std::io::BufReader::new(file);
+        let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
+        let mut z = Vec::new();
+        for value in witness {
+            let val: BigUint = value.parse().unwrap();
+            let mut bytes = val.to_bytes_le();
+            bytes.resize(32, 0u8);
+            let val = Fr::from_bytes(&bytes);
+            z.push(val);
+        }
+
+        // TODO: Get jolt_stuff. Get hyperkzg_vk.
+        let pub_io = Spartan1PI::new(jolt_stuff, z, hyperkzg_vk);
+
+        let to_eval = PostponedEval::new(z);
+
+        // let jolt_pi = JoltPreprocessingNew::new(z);
+
+        // TODO: Get jolt_stuff.
+        // let linking_stuff = LinkingStuff1::new(jolt_stuff, z);
+
+        let input_json = json!({
+            "public_io": pub_io.format(),
+            "to_eval": to_eval.format(),
+            "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
             "proof": proof.format(),
             "w_commitment": proof.witness_commit.format(),
             "transcript" : transcipt_init.format()
