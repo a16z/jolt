@@ -1881,7 +1881,6 @@ pub mod tests {
         let pi = preprocessing.inputs;
         let formatted_pub_inp: Vec<serde_json::Value> =
             pi.iter().map(|elem| elem.format()).collect();
-        let transcipt_init = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"Spartan transcript");
 
         // let input_json = json!({
         //     "pub_inp": formatted_pub_inp,

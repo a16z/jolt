@@ -27,6 +27,7 @@ use crate::{
     lasso::memory_checking::{MultisetHashes, StructuredPolynomialData},
     poly::{
         commitment::{
+            commitment_scheme::CommitmentScheme,
             hyperkzg::{HyperKZG, HyperKZGCommitment, HyperKZGProof, HyperKZGVerifierKey},
             hyrax::{HyraxCommitment, HyraxOpeningProof, HyraxScheme},
             kzg::KZGVerifierKey,
@@ -39,7 +40,7 @@ use crate::{
         inputs::{AuxVariableStuff, JoltR1CSInputs, R1CSStuff},
         spartan::UniformSpartanProof,
     },
-    spartan::spartan_memory_checking::SpartanProof,
+    spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof},
     subprotocols::{
         grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
         sumcheck::SumcheckInstanceProof,
@@ -103,9 +104,6 @@ trait ParseJolt {
     }
     fn format_setup(&self, _size: usize) -> serde_json::Value {
         unimplemented!("added for setup")
-    }
-    fn format_embeded(&self) -> serde_json::Value {
-        unimplemented!("")
     }
 }
 
@@ -198,7 +196,12 @@ impl ParseJolt for HyperKZGProof<ark_bn254::Bn254> {
         let v: Vec<Vec<serde_json::Value>> = self
             .v
             .iter()
-            .map(|v_inner| v_inner.iter().map(|elem| elem.format()).collect())
+            .map(|v_inner| {
+                v_inner
+                    .iter()
+                    .map(|elem| elem.format_non_native())
+                    .collect()
+            })
             .collect();
         json!({
             "com": com,
@@ -281,7 +284,7 @@ impl ParseJolt for SpartanProof<Fr, PCS, ProofTranscript> {
             "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format_non_native(),self.outer_sumcheck_claims.1.format_non_native(),self.outer_sumcheck_claims.2.format_non_native()],
             "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format_non_native(),self.inner_sumcheck_claims.1.format_non_native(),self.inner_sumcheck_claims.2.format_non_native(),self.inner_sumcheck_claims.3.format_non_native()],
             "pi_eval": self.pi_eval.format_non_native(),
-            "joint_opening_proof": self.pcs_proof.format_non_native()
+            "joint_opening_proof": self.pcs_proof.format()
         })
     }
 }
@@ -777,8 +780,11 @@ impl ParseJolt for SumcheckInstanceProof<Fr, ProofTranscript> {
         })
     }
     fn format_non_native(&self) -> serde_json::Value {
-        let uni_polys: Vec<serde_json::Value> =
-            self.uni_polys.iter().map(|poly| poly.format()).collect();
+        let uni_polys: Vec<serde_json::Value> = self
+            .uni_polys
+            .iter()
+            .map(|poly| poly.format_non_native())
+            .collect();
         json!({
             "uni_polys": uni_polys,
         })
@@ -1113,17 +1119,17 @@ impl ParseJolt for JoltPreprocessing<{ C }, Fr, PCS, ProofTranscript> {
 fn fib_e2e_hyperkzg() {
     println!("Running Fib");
 
-    let (preprocessing, proof, commitments) = fib_e2e::<Fr, PCS, ProofTranscript>();
+    let (jolt_preprocessing, jolt_proof, jolt_commitments) = fib_e2e::<Fr, PCS, ProofTranscript>();
 
     let jolt1_input = json!(
     {
         "preprocessing": {
-            "v_init_final_hash": preprocessing.bytecode.v_init_final_hash.to_string(),
-            "bytecode_words_hash": preprocessing.read_write_memory.hash.to_string()
+            "v_init_final_hash": jolt_preprocessing.bytecode.v_init_final_hash.to_string(),
+            "bytecode_words_hash": jolt_preprocessing.read_write_memory.hash.to_string()
         },
-        "proof": proof.format(),
-        "commitments":commitments.format_non_native(),
-        "pi_proof":preprocessing.format()
+        "proof": jolt_proof.format(),
+        "commitments":jolt_commitments.format_non_native(),
+        "pi_proof":jolt_preprocessing.format()
     });
 
     // Convert the JSON to a pretty-printed string
@@ -1136,6 +1142,7 @@ fn fib_e2e_hyperkzg() {
         .expect("Failed to write to input.json");
 
     //TODO(Ashish):- Add code to generate witness
+
     //Note:- How to test
     //1.Comment the below part --> generate jolt1_input --> CP to CircomJolt
     //2.Generate witness.json from circom --> CP witness.json here
@@ -1144,7 +1151,7 @@ fn fib_e2e_hyperkzg() {
     //5. After 1st iteration repeate 3 to 4.
 
     // Read the witness.json file
-    let witness_file_path = "witness.json";
+    let witness_file_path = "src/spartan/witness.json";
     let witness_file = File::open(witness_file_path).expect("Failed to open witness.json");
     let witness: Vec<String> = serde_json::from_reader(witness_file).unwrap();
 
@@ -1156,13 +1163,13 @@ fn fib_e2e_hyperkzg() {
         let val = Fr::from_bytes(&bytes);
         z.push(val);
     }
-    let linking_stuff = LinkingStuff1::new(commitments, z);
+    let linking_stuff = LinkingStuff1::new(jolt_commitments, z);
 
     let jolt2_input = json!(
     {
         "linkingstuff": linking_stuff.format(),
-        "vk": preprocessing.generators.1.format(),
-        "pi": proof.opening_proof.joint_opening_proof.format()
+        "vk": jolt_preprocessing.generators.1.format(),
+        "pi": jolt_proof.opening_proof.joint_opening_proof.format()
     });
 
     let input_file_path = "jolt2_input.json";
@@ -1171,4 +1178,37 @@ fn fib_e2e_hyperkzg() {
     input_file
         .write_all(pretty_json.as_bytes())
         .expect("Failed to write to input.json");
+
+    //TODO(Ashish):- Add code to generate jolt1_constraints
+
+    // let constraint_path = Some("src/spartan/jolt1_constraints.json");
+    // let witness_path = Some("src/spartan/witness.json");
+
+    // let mut preprocessing =
+    //     SpartanPreprocessing::<Fr>::preprocess(constraint_path, witness_path, 9);
+    // let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
+    //     preprocessing.inputs.len() + preprocessing.vars.len(),
+    // );
+    // let pcs_setup = PCS::setup(&commitment_shapes);
+    // let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &mut preprocessing);
+    // SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
+
+    // let spartan1_input = json!({
+    //     "jolt_pi": {
+    //         "v_init_final_hash": jolt_preprocessing.bytecode.v_init_final_hash.format_non_native(),
+    //         "bytecode_words_hash": jolt_preprocessing.read_write_memory.hash.format_non_native()
+    //     },
+    //     "linking_stuff": linking_stuff.format_non_native(),
+    //     "vk": pcs_setup.1.format(),
+    //     "proof": proof.format(),
+    //     "w_commitment": proof.witness_commit.format(),
+    // });
+
+    // let input_file_path = "spartan1_input.json";
+    // let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+    // let pretty_json =
+    //     serde_json::to_string_pretty(&spartan1_input).expect("Failed to serialize JSON");
+    // input_file
+    //     .write_all(pretty_json.as_bytes())
+    //     .expect("Failed to write to input.json");
 }
