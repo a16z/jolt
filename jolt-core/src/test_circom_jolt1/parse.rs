@@ -753,14 +753,14 @@ impl ParseJolt for BatchedGrandProductLayerProof<Fr, ProofTranscript> {
         json!({
             "proof": self.proof.format(),
             "left_claim": self.left_claim.to_string(),
-            "right_claim": self.left_claim.to_string(),
+            "right_claim": self.right_claim.to_string(),
         })
     }
     fn format_non_native(&self) -> serde_json::Value {
         json!({
             "proof": self.proof.format_non_native(),
             "left_claim": self.left_claim.format(),
-            "right_claim": self.left_claim.format(),
+            "right_claim": self.right_claim.format(),
         })
     }
 }
@@ -1110,8 +1110,6 @@ fn fib_e2e_hyperkzg() {
     println!("Running Fib");
 
     let (preprocessing, proof, commitments) = fib_e2e::<Fr, PCS, ProofTranscript>();
-
-    let transcipt_init = <PoseidonTranscript<Fr, Fr> as Transcript>::new(b"Jolt transcript");
 
     let jolt1_input = json!(
     {
