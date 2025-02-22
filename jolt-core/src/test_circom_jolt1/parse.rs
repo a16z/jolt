@@ -189,6 +189,20 @@ impl ParseJolt for HyperKZGCommitment<ark_bn254::Bn254> {
 
 impl ParseJolt for HyperKZGProof<ark_bn254::Bn254> {
     fn format(&self) -> serde_json::Value {
+        let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format()).collect();
+        let w: Vec<serde_json::Value> = self.w.iter().map(|c| c.format()).collect();
+        let v: Vec<Vec<serde_json::Value>> = self
+            .v
+            .iter()
+            .map(|v_inner| v_inner.iter().map(|elem| elem.format()).collect())
+            .collect();
+        json!({
+            "com": com,
+            "w": w,
+            "v": v,
+        })
+    }
+    fn format_non_native(&self) -> serde_json::Value {
         let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format_non_native()).collect();
         let w: Vec<serde_json::Value> = self.w.iter().map(|c| c.format_non_native()).collect();
         let v: Vec<Vec<String>> = self
@@ -487,8 +501,6 @@ impl ParseJolt
             .read_write_values()
             .iter()
             .chain(self.openings.init_final_values().iter())
-            .collect_vec()
-            .iter()
             .map(|opening| opening.to_string())
             .collect();
         json!({
@@ -552,12 +564,25 @@ impl ParseJolt
     for InstructionLookupsProof<{ C }, { M }, Fr, PCS, RV32I, RV32ISubtables<Fr>, ProofTranscript>
 {
     fn format(&self) -> serde_json::Value {
+        let openings: Vec<String> = self
+            .memory_checking
+            .openings
+            .dim
+            .iter()
+            .chain(self.memory_checking.openings.read_cts.iter())
+            .chain(self.memory_checking.openings.final_cts.iter())
+            .chain(self.memory_checking.openings.E_polys.iter())
+            .chain(self.memory_checking.openings.instruction_flags.iter())
+            .chain([self.memory_checking.openings.lookup_outputs].iter())
+            .map(|com| com.to_string())
+            .collect();
+
         json!({
             "primary_sumcheck": self.primary_sumcheck.format(),
             "memory_checking_proof": { "multiset_hashes": self.memory_checking.multiset_hashes.format(),
                                        "read_write_grand_product" : self.memory_checking.read_write_grand_product.format(),
                                        "init_final_grand_product" : self.memory_checking.init_final_grand_product.format(),
-                                       "openings": self.memory_checking.openings.format(),
+                                       "openings": openings,
                             },
         })
     }
@@ -577,7 +602,7 @@ impl ParseJolt for ReducedOpeningProof<Fr, PCS, ProofTranscript> {
         json!({
             "sumcheck_proof":self.sumcheck_proof.format(),
             "sumcheck_claims": self.sumcheck_claims.iter().map(|claim|claim.to_string()).collect::<Vec<String>>(),
-            "joint_opening_proof": self.joint_opening_proof.format()
+            "joint_opening_proof": self.joint_opening_proof.format_non_native()
         })
     }
 }
@@ -604,7 +629,7 @@ impl ParseJolt for PrimarySumcheckOpenings<Fr> {
         json!({
             "E_poly_openings": E_poly_openings,
             "flag_openings": flag_openings,
-            "lookup_outputs_opening.to_string()": self.lookup_outputs_opening.to_string(),
+            "lookup_outputs_opening": self.lookup_outputs_opening.to_string(),
         })
     }
 }
@@ -885,27 +910,27 @@ impl ParseJolt for InstructionLookupStuff<HyperKZGCommitment<Bn254>> {
     }
 }
 
-impl ParseJolt for InstructionLookupStuff<Fr> {
-    fn format(&self) -> serde_json::Value {
-        let dim: Vec<String> = self.dim.iter().map(|com| com.to_string()).collect();
-        let read_cts: Vec<String> = self.read_cts.iter().map(|com| com.to_string()).collect();
-        let final_cts: Vec<String> = self.final_cts.iter().map(|com| com.to_string()).collect();
-        let E_polys: Vec<String> = self.E_polys.iter().map(|com| com.to_string()).collect();
-        let instruction_flags: Vec<String> = self
-            .instruction_flags
-            .iter()
-            .map(|com| com.to_string())
-            .collect();
-        json!({
-            "dim": dim,
-            "read_cts": read_cts,
-            "final_cts": final_cts,
-            "E_polys": E_polys,
-            "instruction_flags": instruction_flags,
-            "lookup_outputs": self.lookup_outputs.to_string()
-        })
-    }
-}
+// impl ParseJolt for InstructionLookupStuff<Fr> {
+//     fn format(&self) -> serde_json::Value {
+//         let dim: Vec<String> = self.dim.iter().map(|com| com.to_string()).collect();
+//         let read_cts: Vec<String> = self.read_cts.iter().map(|com| com.to_string()).collect();
+//         let final_cts: Vec<String> = self.final_cts.iter().map(|com| com.to_string()).collect();
+//         let E_polys: Vec<String> = self.E_polys.iter().map(|com| com.to_string()).collect();
+//         let instruction_flags: Vec<String> = self
+//             .instruction_flags
+//             .iter()
+//             .map(|com| com.to_string())
+//             .collect();
+//         json!({
+//             "dim": dim,
+//             "read_cts": read_cts,
+//             "final_cts": final_cts,
+//             "E_polys": E_polys,
+//             "instruction_flags": instruction_flags,
+//             "lookup_outputs": self.lookup_outputs.to_string()
+//         })
+//     }
+// }
 impl ParseJolt for TimestampRangeCheckStuff<Fr> {
     fn format(&self) -> serde_json::Value {
         let read_cts_read_timestamp: Vec<String> = self
@@ -1048,8 +1073,9 @@ impl ParseJolt for JoltPreprocessing<{ C }, Fr, PCS, ProofTranscript> {
         })
     }
 }
-#[test]
+//Parse for Jolt2
 
+#[test]
 fn fib_e2e_hyperkzg() {
     println!("Running Fib");
 
