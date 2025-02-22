@@ -1558,7 +1558,7 @@ dependencies = [
 [[package]]
 name = "icicle-bn254"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=94fe8ca#94fe8cad314a716c6a76c526cab7683da798bc8d"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "cmake",
  "icicle-core",
@@ -1569,7 +1569,7 @@ dependencies = [
 [[package]]
 name = "icicle-core"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=94fe8ca#94fe8cad314a716c6a76c526cab7683da798bc8d"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "hex",
  "icicle-runtime",
@@ -1581,7 +1581,7 @@ dependencies = [
 [[package]]
 name = "icicle-hash"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=94fe8ca#94fe8cad314a716c6a76c526cab7683da798bc8d"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "cmake",
  "icicle-core",
@@ -1592,7 +1592,7 @@ dependencies = [
 [[package]]
 name = "icicle-runtime"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=94fe8ca#94fe8cad314a716c6a76c526cab7683da798bc8d"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "cmake",
  "once_cell",

@@ -783,7 +783,7 @@ mod test {
                 &mut prover_transcript,
             )
             .unwrap();
-            let p_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
+            let p_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
@@ -797,10 +797,10 @@ mod test {
                 &mut verifier_transcript,
             )
             .unwrap();
-            let v_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
+            let v_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 verifier_transcript.challenge_scalar();
 
-            assert_eq!(p_transcipt_squeeze, v_transcipt_squeeze);
+            assert_eq!(p_transcript_squeeze, v_transcript_squeeze);
 
             // evaluate bad proof for soundness
             let altered_verifier_point = point
