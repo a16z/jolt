@@ -32,7 +32,7 @@ use crate::{
         unipoly::UniPoly,
     },
     r1cs::{
-        inputs::{JoltR1CSInputs, R1CSStuff},
+        inputs::{AuxVariableStuff, JoltR1CSInputs, R1CSStuff},
         spartan::UniformSpartanProof,
     },
     spartan::spartan_memory_checking::SpartanProof,
@@ -438,6 +438,13 @@ impl LinkingStuff1 {
     }
 }
 impl ParseJolt for LinkingStuff1 {
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "commitments": self.commitments.format(),
+            "openingcombiners": self.opening_combiners.format_non_native(),
+            "hyperkzgverifieradvice": self.hyper_kzg_verifier_advice.format_non_native()
+        })
+    }
     fn format_non_native(&self) -> serde_json::Value {
         json!({
             "commitments": self.commitments.format_non_native(),
@@ -487,7 +494,7 @@ impl ParseJolt for JoltDevice {
         json!({
                 "inputs": inputs,
                 "outputs": outputs,
-                "panic": self.panic.to_string()
+                "panic": (self.panic as u8).to_string()
         })
     }
 }
@@ -685,15 +692,15 @@ impl ParseJolt for OutputSumcheckProof<Fr, PCS, ProofTranscript> {
 }
 
 impl ParseJolt for JoltStuff<HyperKZGCommitment<Bn254>> {
-    // fn format(&self) -> serde_json::Value {
-    //     json!({
-    //         "bytecode": self.bytecode.format(),
-    //         "read_write_memory": self.read_write_memory.format(),
-    //         "instruction_lookups": self.instruction_lookups.format(),
-    //         "timestamp_range_check": self.timestamp_range_check.format(),
-    //         "r1cs": self.r1cs.format()
-    //     })
-    // }
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "bytecode": self.bytecode.format(),
+            "read_write_memory": self.read_write_memory.format(),
+            "instruction_lookups": self.instruction_lookups.format(),
+            "timestamp_range_check": self.timestamp_range_check.format(),
+            "r1cs": self.r1cs.format()
+        })
+    }
     fn format_non_native(&self) -> serde_json::Value {
         json!({
             "bytecode": self.bytecode.format_non_native(),
@@ -792,16 +799,17 @@ impl ParseJolt for UniPoly<Fr> {
     }
 }
 impl ParseJolt for BytecodeStuff<HyperKZGCommitment<Bn254>> {
-    // fn format(&self) -> serde_json::Value {
-    //     let v_read_write: Vec<serde_json::Value> =
-    //         self.v_read_write.iter().map(|v| v.format()).collect();
-    //     json!({
-    //         "a_read_write": self.a_read_write.format(),
-    //         "v_read_write": v_read_write,
-    //         "t_read": self.t_read.format(),
-    //         "t_final": self.t_final.format()
-    //     })
-    // }
+    fn format(&self) -> serde_json::Value {
+        let v_read_write: Vec<serde_json::Value> =
+            self.v_read_write.iter().map(|v| v.format()).collect();
+        json!({
+            "a_read_write": self.a_read_write.format(),
+            "v_read_write": v_read_write,
+            "t_read": self.t_read.format(),
+            "t_final": self.t_final.format()
+        })
+    }
+
     fn format_non_native(&self) -> serde_json::Value {
         let v_read_write: Vec<serde_json::Value> = self
             .v_read_write
@@ -818,23 +826,23 @@ impl ParseJolt for BytecodeStuff<HyperKZGCommitment<Bn254>> {
 }
 
 impl ParseJolt for ReadWriteMemoryStuff<HyperKZGCommitment<Bn254>> {
-    // fn format(&self) -> serde_json::Value {
-    //     json!({
-    //         "a_ram": self.a_ram.format(),
-    //             "v_read_rd": self.v_read_rd.format(),
-    //             "v_read_rs1": self.v_read_rs1.format(),
-    //             "v_read_rs2": self.v_read_rs2.format(),
-    //             "v_read_ram": self.v_read_ram.format(),
-    //             "v_write_rd": self.v_write_rd.format(),
-    //             "v_write_ram": self.v_write_ram.format(),
-    //             "v_final": self.v_final.format(),
-    //             "t_read_rd": self.t_read_rd.format(),
-    //             "t_read_rs1": self.t_read_rs1.format(),
-    //             "t_read_rs2": self.t_read_rs2.format(),
-    //             "t_read_ram": self.t_read_ram.format(),
-    //             "t_final": self.t_final.format()
-    //     })
-    // }
+    fn format(&self) -> serde_json::Value {
+        json!({
+            "a_ram": self.a_ram.format(),
+                "v_read_rd": self.v_read_rd.format(),
+                "v_read_rs1": self.v_read_rs1.format(),
+                "v_read_rs2": self.v_read_rs2.format(),
+                "v_read_ram": self.v_read_ram.format(),
+                "v_write_rd": self.v_write_rd.format(),
+                "v_write_ram": self.v_write_ram.format(),
+                "v_final": self.v_final.format(),
+                "t_read_rd": self.t_read_rd.format(),
+                "t_read_rs1": self.t_read_rs1.format(),
+                "t_read_rs2": self.t_read_rs2.format(),
+                "t_read_ram": self.t_read_ram.format(),
+                "t_final": self.t_final.format()
+        })
+    }
     fn format_non_native(&self) -> serde_json::Value {
         json!({
             "a_ram": self.a_ram.format_non_native(),
@@ -854,27 +862,27 @@ impl ParseJolt for ReadWriteMemoryStuff<HyperKZGCommitment<Bn254>> {
     }
 }
 impl ParseJolt for InstructionLookupStuff<HyperKZGCommitment<Bn254>> {
-    // fn format(&self) -> serde_json::Value {
-    //     let dim: Vec<serde_json::Value> = self.dim.iter().map(|com| com.format()).collect();
-    //     let read_cts: Vec<serde_json::Value> =
-    //         self.read_cts.iter().map(|com| com.format()).collect();
-    //     let final_cts: Vec<serde_json::Value> =
-    //         self.final_cts.iter().map(|com| com.format()).collect();
-    //     let E_polys: Vec<serde_json::Value> = self.E_polys.iter().map(|com| com.format()).collect();
-    //     let instruction_flags: Vec<serde_json::Value> = self
-    //         .instruction_flags
-    //         .iter()
-    //         .map(|com| com.format())
-    //         .collect();
-    //     json!({
-    //         "dim": dim,
-    //         "read_cts": read_cts,
-    //         "final_cts": final_cts,
-    //         "E_polys": E_polys,
-    //         "instruction_flags": instruction_flags,
-    //         "lookup_outputs": self.lookup_outputs.format()
-    //     })
-    // }
+    fn format(&self) -> serde_json::Value {
+        let dim: Vec<serde_json::Value> = self.dim.iter().map(|com| com.format()).collect();
+        let read_cts: Vec<serde_json::Value> =
+            self.read_cts.iter().map(|com| com.format()).collect();
+        let final_cts: Vec<serde_json::Value> =
+            self.final_cts.iter().map(|com| com.format()).collect();
+        let E_polys: Vec<serde_json::Value> = self.E_polys.iter().map(|com| com.format()).collect();
+        let instruction_flags: Vec<serde_json::Value> = self
+            .instruction_flags
+            .iter()
+            .map(|com| com.format())
+            .collect();
+        json!({
+            "dim": dim,
+            "read_cts": read_cts,
+            "final_cts": final_cts,
+            "E_polys": E_polys,
+            "instruction_flags": instruction_flags,
+            "lookup_outputs": self.lookup_outputs.format()
+        })
+    }
 
     fn format_non_native(&self) -> serde_json::Value {
         let dim: Vec<serde_json::Value> =
@@ -963,34 +971,34 @@ impl ParseJolt for TimestampRangeCheckStuff<Fr> {
 }
 
 impl ParseJolt for TimestampRangeCheckStuff<HyperKZGCommitment<Bn254>> {
-    // fn format(&self) -> serde_json::Value {
-    //     let read_cts_read_timestamp: Vec<serde_json::Value> = self
-    //         .read_cts_read_timestamp
-    //         .iter()
-    //         .map(|com| com.format())
-    //         .collect();
-    //     let read_cts_global_minus_read: Vec<serde_json::Value> = self
-    //         .read_cts_global_minus_read
-    //         .iter()
-    //         .map(|com| com.format())
-    //         .collect();
-    //     let final_cts_read_timestamp: Vec<serde_json::Value> = self
-    //         .final_cts_read_timestamp
-    //         .iter()
-    //         .map(|com| com.format())
-    //         .collect();
-    //     let final_cts_global_minus_read: Vec<serde_json::Value> = self
-    //         .final_cts_global_minus_read
-    //         .iter()
-    //         .map(|com| com.format())
-    //         .collect();
-    //     json!({
-    //          "read_cts_read_timestamp": read_cts_read_timestamp,
-    //             "read_cts_global_minus_read":read_cts_global_minus_read,
-    //             "final_cts_read_timestamp": final_cts_read_timestamp,
-    //             "final_cts_global_minus_read": final_cts_global_minus_read
-    //     })
-    // }
+    fn format(&self) -> serde_json::Value {
+        let read_cts_read_timestamp: Vec<serde_json::Value> = self
+            .read_cts_read_timestamp
+            .iter()
+            .map(|com| com.format())
+            .collect();
+        let read_cts_global_minus_read: Vec<serde_json::Value> = self
+            .read_cts_global_minus_read
+            .iter()
+            .map(|com| com.format())
+            .collect();
+        let final_cts_read_timestamp: Vec<serde_json::Value> = self
+            .final_cts_read_timestamp
+            .iter()
+            .map(|com| com.format())
+            .collect();
+        let final_cts_global_minus_read: Vec<serde_json::Value> = self
+            .final_cts_global_minus_read
+            .iter()
+            .map(|com| com.format())
+            .collect();
+        json!({
+             "read_cts_read_timestamp": read_cts_read_timestamp,
+                "read_cts_global_minus_read":read_cts_global_minus_read,
+                "final_cts_read_timestamp": final_cts_read_timestamp,
+                "final_cts_global_minus_read": final_cts_global_minus_read
+        })
+    }
     fn format_non_native(&self) -> serde_json::Value {
         let read_cts_read_timestamp: Vec<serde_json::Value> = self
             .read_cts_read_timestamp
@@ -1021,19 +1029,19 @@ impl ParseJolt for TimestampRangeCheckStuff<HyperKZGCommitment<Bn254>> {
     }
 }
 impl ParseJolt for R1CSStuff<HyperKZGCommitment<Bn254>> {
-    // fn format(&self) -> serde_json::Value {
-    //     let chunks_x: Vec<serde_json::Value> =
-    //         self.chunks_x.iter().map(|com| com.format()).collect();
-    //     let chunks_y: Vec<serde_json::Value> =
-    //         self.chunks_y.iter().map(|com| com.format()).collect();
-    //     let circuit_flags: Vec<serde_json::Value> =
-    //         self.circuit_flags.iter().map(|com| com.format()).collect();
-    //     json!({
-    //         "chunks_x": chunks_x,
-    //         "chunks_y": chunks_y,
-    //         "circuit_flags": circuit_flags
-    //     })
-    // }
+    fn format(&self) -> serde_json::Value {
+        let chunks_x: Vec<serde_json::Value> =
+            self.chunks_x.iter().map(|com| com.format()).collect();
+        let chunks_y: Vec<serde_json::Value> =
+            self.chunks_y.iter().map(|com| com.format()).collect();
+        let circuit_flags: Vec<serde_json::Value> =
+            self.circuit_flags.iter().map(|com| com.format()).collect();
+        json!({
+            "chunks_x": chunks_x,
+            "chunks_y": chunks_y,
+            "circuit_flags": circuit_flags
+        })
+    }
     fn format_non_native(&self) -> serde_json::Value {
         let chunks_x: Vec<serde_json::Value> = self
             .chunks_x
@@ -1053,10 +1061,32 @@ impl ParseJolt for R1CSStuff<HyperKZGCommitment<Bn254>> {
         json!({
             "chunks_x": chunks_x,
             "chunks_y": chunks_y,
-            "circuit_flags": circuit_flags
+            "circuit_flags": circuit_flags,
+            "aux": self.aux.format_non_native()
         })
     }
 }
+impl ParseJolt for AuxVariableStuff<HyperKZGCommitment<Bn254>> {
+    fn format_non_native(&self) -> serde_json::Value {
+        let relevant_y_chunks: Vec<serde_json::Value> = self
+            .relevant_y_chunks
+            .iter()
+            .map(|com| com.format_non_native())
+            .collect();
+        json!({
+                "left_lookup_operand": self.left_lookup_operand.format_non_native(),
+                "right_lookup_operand":  self.right_lookup_operand.format_non_native(),
+                "product": self.product.format_non_native(),
+                "relevant_y_chunks": relevant_y_chunks,
+                "write_lookup_output_to_rd": self.write_lookup_output_to_rd.format_non_native(),
+                "write_pc_to_rd":  self.write_pc_to_rd.format_non_native(),
+                "next_pc_jump":  self.next_pc_jump.format_non_native(),
+                "should_branch":  self.should_branch.format_non_native(),
+                "next_pc": self.next_pc.format_non_native(),
+        })
+    }
+}
+
 impl ParseJolt for JoltPreprocessing<{ C }, Fr, PCS, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         let v_init_final: Vec<Vec<String>> = self
@@ -1083,9 +1113,8 @@ fn fib_e2e_hyperkzg() {
 
     let transcipt_init = <PoseidonTranscript<Fr, Fr> as Transcript>::new(b"Jolt transcript");
 
-    let input_json = json!(
+    let jolt1_input = json!(
     {
-        "transcript_init": transcipt_init.format(),
         "preprocessing": {
             "v_init_final_hash": preprocessing.bytecode.v_init_final_hash.to_string(),
             "bytecode_words_hash": preprocessing.read_write_memory.hash.to_string()
@@ -1096,7 +1125,7 @@ fn fib_e2e_hyperkzg() {
     });
 
     // Convert the JSON to a pretty-printed string
-    let pretty_json = serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
+    let pretty_json = serde_json::to_string_pretty(&jolt1_input).expect("Failed to serialize JSON");
 
     let input_file_path = "input.json";
     let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
