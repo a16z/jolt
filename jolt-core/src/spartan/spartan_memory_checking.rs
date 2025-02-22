@@ -1225,11 +1225,7 @@ pub mod tests {
     pub trait Circomfmt {
         fn format(&self) -> serde_json::Value;
 
-        fn format_nn(&self) -> serde_json::Value {
-            self.format()
-        }
-
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             self.format()
         }
 
@@ -1260,7 +1256,7 @@ pub mod tests {
         limbs
     }
 
-    pub fn break_in_3(r: Fq) -> [Fq; 3] {
+    pub fn convert_fq_to_limbs(r: Fq) -> [Fq; 3] {
         let mut limbs = [Fq::ZERO; 3];
 
         let mask = BigUint::from((1u128 << 125) - 1);
@@ -1482,7 +1478,7 @@ pub mod tests {
     impl Circomfmt for LinkingStuff1<HyperKZGCommitment<ark_bn254::Bn254>> {
         fn format(&self) -> serde_json::Value {
             json!({
-                "commitments": self.commitments.format_embeded(),
+                "commitments": self.commitments.format_non_native(),
                 "openingcombiners": self.opening_combiners.format(),
                 "hyperkzgverifieradvice": self.hyper_kzg_verifier_advice.format()
             })
@@ -1525,9 +1521,9 @@ pub mod tests {
             })
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
-            let x_nn = break_in_3(self.x);
-            let y_nn = break_in_3(self.y);
+        fn format_non_native(&self) -> serde_json::Value {
+            let x_nn = convert_fq_to_limbs(self.x);
+            let y_nn = convert_fq_to_limbs(self.y);
             json!({
                 "x": {
                     "limbs": [x_nn[0].to_string(), x_nn[1].to_string(), x_nn[2].to_string()]
@@ -1592,16 +1588,9 @@ pub mod tests {
                 "commitment": self.0.format(),
             })
         }
-
-        fn format_nn(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             json!({
-                "commitment": self.0.format_nn(),
-            })
-        }
-
-        fn format_embeded(&self) -> serde_json::Value {
-            json!({
-                "commitment": self.0.format_embeded(),
+                "commitment": self.0.format_non_native(),
             })
         }
     }
@@ -1618,17 +1607,17 @@ pub mod tests {
             })
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             let v_read_write: Vec<serde_json::Value> = self
                 .v_read_write
                 .iter()
-                .map(|v| v.format_embeded())
+                .map(|v| v.format_non_native())
                 .collect();
             json!({
-                "a_read_write": self.a_read_write.format_embeded(),
+                "a_read_write": self.a_read_write.format_non_native(),
                 "v_read_write": v_read_write,
-                "t_read": self.t_read.format_embeded(),
-                "t_final": self.t_final.format_embeded()
+                "t_read": self.t_read.format_non_native(),
+                "t_final": self.t_final.format_non_native()
             })
         }
     }
@@ -1652,21 +1641,21 @@ pub mod tests {
             })
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             json!({
-                "a_ram": self.a_ram.format_embeded(),
-                    "v_read_rd": self.v_read_rd.format_embeded(),
-                    "v_read_rs1": self.v_read_rs1.format_embeded(),
-                    "v_read_rs2": self.v_read_rs2.format_embeded(),
-                    "v_read_ram": self.v_read_ram.format_embeded(),
-                    "v_write_rd": self.v_write_rd.format_embeded(),
-                    "v_write_ram": self.v_write_ram.format_embeded(),
-                    "v_final": self.v_final.format_embeded(),
-                    "t_read_rd": self.t_read_rd.format_embeded(),
-                    "t_read_rs1": self.t_read_rs1.format_embeded(),
-                    "t_read_rs2": self.t_read_rs2.format_embeded(),
-                    "t_read_ram": self.t_read_ram.format_embeded(),
-                    "t_final": self.t_final.format_embeded()
+                "a_ram": self.a_ram.format_non_native(),
+                    "v_read_rd": self.v_read_rd.format_non_native(),
+                    "v_read_rs1": self.v_read_rs1.format_non_native(),
+                    "v_read_rs2": self.v_read_rs2.format_non_native(),
+                    "v_read_ram": self.v_read_ram.format_non_native(),
+                    "v_write_rd": self.v_write_rd.format_non_native(),
+                    "v_write_ram": self.v_write_ram.format_non_native(),
+                    "v_final": self.v_final.format_non_native(),
+                    "t_read_rd": self.t_read_rd.format_non_native(),
+                    "t_read_rs1": self.t_read_rs1.format_non_native(),
+                    "t_read_rs2": self.t_read_rs2.format_non_native(),
+                    "t_read_ram": self.t_read_ram.format_non_native(),
+                    "t_final": self.t_final.format_non_native()
             })
         }
     }
@@ -1695,28 +1684,28 @@ pub mod tests {
             })
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             let dim: Vec<serde_json::Value> =
-                self.dim.iter().map(|com| com.format_embeded()).collect();
+                self.dim.iter().map(|com| com.format_non_native()).collect();
             let read_cts: Vec<serde_json::Value> = self
                 .read_cts
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let final_cts: Vec<serde_json::Value> = self
                 .final_cts
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let E_polys: Vec<serde_json::Value> = self
                 .E_polys
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let instruction_flags: Vec<serde_json::Value> = self
                 .instruction_flags
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             json!({
                 "dim": dim,
@@ -1724,7 +1713,7 @@ pub mod tests {
                 "final_cts": final_cts,
                 "E_polys": E_polys,
                 "instruction_flags": instruction_flags,
-                "lookup_outputs": self.lookup_outputs.format_embeded()
+                "lookup_outputs": self.lookup_outputs.format_non_native()
             })
         }
     }
@@ -1733,26 +1722,26 @@ pub mod tests {
             unimplemented!("Use format_embeded.");
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             let read_cts_read_timestamp: Vec<serde_json::Value> = self
                 .read_cts_read_timestamp
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let read_cts_global_minus_read: Vec<serde_json::Value> = self
                 .read_cts_global_minus_read
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let final_cts_read_timestamp: Vec<serde_json::Value> = self
                 .final_cts_read_timestamp
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let final_cts_global_minus_read: Vec<serde_json::Value> = self
                 .final_cts_global_minus_read
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             json!({
                  "read_cts_read_timestamp": read_cts_read_timestamp,
@@ -1768,21 +1757,21 @@ pub mod tests {
             unimplemented!("Use format_embeded.");
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             let chunks_x: Vec<serde_json::Value> = self
                 .chunks_x
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let chunks_y: Vec<serde_json::Value> = self
                 .chunks_y
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             let circuit_flags: Vec<serde_json::Value> = self
                 .circuit_flags
                 .iter()
-                .map(|com| com.format_embeded())
+                .map(|com| com.format_non_native())
                 .collect();
             json!({
                 "chunks_x": chunks_x,
@@ -1797,13 +1786,13 @@ pub mod tests {
             unimplemented!("Use format_embeded.");
         }
 
-        fn format_embeded(&self) -> serde_json::Value {
+        fn format_non_native(&self) -> serde_json::Value {
             json!({
-                "bytecode": self.bytecode.format_embeded(),
-                "read_write_memory": self.read_write_memory.format_embeded(),
-                "instruction_lookups": self.instruction_lookups.format_embeded(),
-                "timestamp_range_check": self.timestamp_range_check.format_embeded(),
-                "r1cs": self.r1cs.format_embeded()
+                "bytecode": self.bytecode.format_non_native(),
+                "read_write_memory": self.read_write_memory.format_non_native(),
+                "instruction_lookups": self.instruction_lookups.format_non_native(),
+                "timestamp_range_check": self.timestamp_range_check.format_non_native(),
+                "r1cs": self.r1cs.format_non_native()
             })
         }
     }
@@ -1885,20 +1874,9 @@ pub mod tests {
             preprocessing.inputs.len() + preprocessing.vars.len(),
         );
         let pcs_setup = PCS::setup(&commitment_shapes);
-        // let mut spartan_commitments = SpartanStuff::initialize(&preprocessing);
-        let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(
-            &pcs_setup,
-            // &mut spartan_polynomials,
-            // &mut spartan_commitments,
-            &mut preprocessing,
-        );
-        SpartanProof::<Fr, PCS, ProofTranscript>::verify(
-            &pcs_setup,
-            &preprocessing,
-            // &spartan_commitments,
-            &proof,
-        )
-        .unwrap();
+        let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &mut preprocessing);
+        SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof)
+            .unwrap();
 
         let pi = preprocessing.inputs;
         let formatted_pub_inp: Vec<serde_json::Value> =
@@ -1937,25 +1915,25 @@ pub mod tests {
         let jolt_pi = JoltPreprocessingNew::new(z);
 
         // TODO: Get jolt_stuff.
-        let linking_stuff = LinkingStuff1::new(jolt_stuff, z);
+        // let linking_stuff = LinkingStuff1::new(jolt_stuff, z);
 
-        let input_json = json!({
-            "jolt_pi": jolt_pi.format(),
-            "linking_stuff": linking_stuff.format(),
-            "vk": pcs_setup.1.format(),
-            "proof": proof.format(),
-            "w_commitment": proof.witness_commit.format(),
-            "transcript" : transcipt_init.format()
-        });
+        // let input_json = json!({
+        //     "jolt_pi": jolt_pi.format(),
+        //     "linking_stuff": linking_stuff.format(),
+        //     "vk": pcs_setup.1.format(),
+        //     "proof": proof.format(),
+        //     "w_commitment": proof.witness_commit.format(),
+        //     "transcript" : transcipt_init.format()
+        // });
 
-        // Convert the JSON to a pretty-printed string
-        let pretty_json =
-            serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
+        // // Convert the JSON to a pretty-printed string
+        // let pretty_json =
+        //     serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
 
-        let input_file_path = "input.json";
-        let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
-        input_file
-            .write_all(pretty_json.as_bytes())
-            .expect("Failed to write to input.json");
+        // let input_file_path = "input.json";
+        // let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
+        // input_file
+        //     .write_all(pretty_json.as_bytes())
+        //     .expect("Failed to write to input.json");
     }
 }
