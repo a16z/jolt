@@ -23,9 +23,8 @@ use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
-    r1cs::special_polys::{eq_plus_one, eq_plus_one_evals},
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -178,12 +177,8 @@ where
 
         let span = span!(Level::INFO, "eq_plus_one_rx_step");
         {
-        let _enter = span.enter();
-        // eq_plus_one_rx_step = (0..num_steps_padded)
-        //     .into_par_iter()
-        //     .map(|t| eq_plus_one(r_x_step, &crate::utils::index_to_field_bitvector(t, num_steps_bits), num_steps_bits))
-        //     .collect();
-            eq_plus_one_rx_step = eq_plus_one_evals(r_x_step);
+            let _enter = span.enter();
+            eq_plus_one_rx_step = EqPlusOnePolynomial::evals(r_x_step);
         }
 
         let span = span!(Level::INFO, "evals and evals_shifted");
@@ -451,7 +446,7 @@ where
 
         let y_prime_shift_sumcheck = [r_y_var, shift_sumcheck_r.to_owned()].concat(); 
         let eval_z_shift_sumcheck = key.evaluate_z_mle(&self.claimed_witness_evals_shift_sumcheck, &y_prime_shift_sumcheck, false);
-        let eq_plus_one_shift_sumcheck = eq_plus_one(&outer_sumcheck_r_step, &shift_sumcheck_r, num_steps_bits);
+        let eq_plus_one_shift_sumcheck = EqPlusOnePolynomial::new(outer_sumcheck_r_step.to_vec()).evaluate(&shift_sumcheck_r);
         let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck; 
         assert_eq!(claim_shift_final, claim_shift_sumcheck_expected);
         if claim_shift_final != claim_shift_sumcheck_expected {
