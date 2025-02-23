@@ -1,18 +1,4 @@
-use std::{
-    fs::File,
-    io::{Read, Write},
-};
-
-use ark_bn254::Bn254;
-use ark_ec::AffineRepr;
-use ark_ff::{AdditiveGroup, BigInt, PrimeField};
-use itertools::Itertools;
-use num_bigint::{BigUint, ToBigInt};
-use serde_json::json;
-use tracer::JoltDevice;
-
 use crate::{
-    field::JoltField,
     jolt::vm::{
         bytecode::{BytecodeProof, BytecodeStuff},
         instruction_lookups::{
@@ -22,17 +8,11 @@ use crate::{
         read_write_memory::{OutputSumcheckProof, ReadWriteMemoryProof, ReadWriteMemoryStuff},
         rv32i_vm::{RV32ISubtables, C, M, RV32I},
         timestamp_range_check::{TimestampRangeCheckStuff, TimestampValidityProof},
-        JoltCommitments, JoltPreprocessing, JoltProof, JoltStuff,
+        JoltPreprocessing, JoltProof, JoltStuff,
     },
     lasso::memory_checking::{MultisetHashes, StructuredPolynomialData},
     poly::{
-        commitment::{
-            commitment_scheme::CommitmentScheme,
-            hyperkzg::{HyperKZG, HyperKZGCommitment, HyperKZGProof, HyperKZGVerifierKey},
-            hyrax::{HyraxCommitment, HyraxOpeningProof, HyraxScheme},
-            kzg::KZGVerifierKey,
-            pedersen::PedersenGenerators,
-        },
+        commitment::hyperkzg::{HyperKZG, HyperKZGCommitment},
         opening_proof::ReducedOpeningProof,
         unipoly::UniPoly,
     },
@@ -40,50 +20,59 @@ use crate::{
         inputs::{AuxVariableStuff, JoltR1CSInputs, R1CSStuff},
         spartan::UniformSpartanProof,
     },
-    spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof},
     subprotocols::{
         grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
         sumcheck::SumcheckInstanceProof,
     },
-    utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript},
+    utils::poseidon_transcript::PoseidonTranscript,
 };
 
 use super::Parse;
+use ark_bn254::Bn254;
+use ark_ff::{BigInt, BigInteger, PrimeField};
+use serde_json::json;
+use tracer::JoltDevice;
 
 pub(crate) type Fr = ark_bn254::Fr;
 pub(crate) type Fq = ark_bn254::Fq;
 pub(crate) type ProofTranscript = PoseidonTranscript<Fr, Fr>;
 pub(crate) type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
 
-pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
-    let mut limbs = [Fq::ZERO; 3];
-
-    let mask = BigUint::from((1u128 << 125) - 1);
-    limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
-
-    limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
-
-    limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
-
-    limbs
-}
-
-pub fn convert_fq_to_limbs(r: Fq) -> [Fr; 3] {
-    let mut limbs = [Fr::ZERO; 3];
-
-    let mask = BigUint::from((1u128 << 125) - 1);
-    limbs[0] = Fr::from(BigUint::from(r.into_bigint()) & mask.clone());
-
-    limbs[1] = Fr::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
-
-    limbs[2] = Fr::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
-
+pub fn convert_to_3_limbs<F: PrimeField, K: PrimeField>(r: F) -> [K; 3] {
+    let mut limbs = [K::ZERO; 3];
+    let r_bits = r.into_bigint().to_bits_le();
+    limbs[0] = K::from_le_bytes_mod_order(
+        &BigInt::<4>::from_bits_le(&r_bits.iter().take(125).cloned().collect::<Vec<bool>>())
+            .to_bytes_le(),
+    );
+    limbs[1] = K::from_le_bytes_mod_order(
+        &BigInt::<4>::from_bits_le(
+            &r_bits
+                .iter()
+                .skip(125)
+                .take(125)
+                .cloned()
+                .collect::<Vec<bool>>(),
+        )
+        .to_bytes_le(),
+    );
+    limbs[2] = K::from_le_bytes_mod_order(
+        &BigInt::<4>::from_bits_le(
+            &r_bits
+                .iter()
+                .skip(250)
+                .take(4)
+                .cloned()
+                .collect::<Vec<bool>>(),
+        )
+        .to_bytes_le(),
+    );
     limbs
 }
 
 impl Parse for Fr {
     fn format_non_native(&self) -> serde_json::Value {
-        let limbs = convert_to_3_limbs(*self);
+        let limbs = convert_to_3_limbs::<Fr, Fq>(*self);
         json!({
             "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
         })

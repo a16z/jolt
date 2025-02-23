@@ -1,56 +1,46 @@
-use std::fs::File;
-use std::io::Write;
-
 use super::*;
 use crate::field::JoltField;
+use crate::parse::jolt::convert_to_3_limbs;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
-use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField};
+use ark_ff::{BigInt, BigInteger, PrimeField};
+use itertools::Itertools;
 use num_bigint::BigUint;
 use serde_json::json;
+use std::fs::File;
+use std::io::Write;
 
 type Fr = ark_grumpkin::Fr;
 type Fq = ark_grumpkin::Fq;
 type ProofTranscript = PoseidonTranscript<Fr, ark_grumpkin::Fq>;
 type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
-pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
-    let mut limbs = [Fq::ZERO; 3];
-
-    let mask = BigUint::from((1u128 << 125) - 1);
-    limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
-
-    limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
-
-    limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
-
-    limbs
-}
-
-//TODO:- Fix
 pub fn combine_limbs(limbs: Vec<Fr>) -> Fq {
     assert_eq!(limbs.len(), 3);
-    let mut limbs_big_int: [BigInt<4>; 3] = [BigInt::<4>::default(); 3];
-    limbs_big_int[0] = limbs[0].into_bigint();
-    limbs_big_int[1] = limbs[1].into_bigint();
-    limbs_big_int[2] = limbs[2].into_bigint();
-    Fq::ONE
-    // Fq::from(limbs_big_int[0])
-    //     + Fq::from(limbs_big_int[1]) * Fq::from((1 as u128) << 125)
-    //     + Fq::from(limbs_big_int[2]) * Fq::from((1 as u128) << 250)
+    let bits = limbs[0]
+        .into_bigint()
+        .to_bits_le()
+        .iter()
+        .take(125)
+        .chain(limbs[1].into_bigint().to_bits_le().iter().take(125))
+        .chain(limbs[2].into_bigint().to_bits_le().iter().take(4))
+        .cloned()
+        .collect_vec();
+    Fq::from(BigInt::from_bits_le(&bits))
 }
 
 impl Parse for Fr {
     fn format(&self) -> serde_json::Value {
-        let limbs = convert_to_3_limbs(*self);
+        let limbs = convert_to_3_limbs::<Fr, Fq>(*self);
         json!({
             "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
         })
     }
 }
+
 struct PostponedEval {
     pub point: Vec<Fq>,
     pub eval: Fq,
