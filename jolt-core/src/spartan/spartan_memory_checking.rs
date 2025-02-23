@@ -1,123 +1,114 @@
 use super::sparse_mlpoly::SparseMatPolynomial;
 use super::Instance;
 use crate::field::JoltField;
-use crate::jolt::vm::JoltPolynomials;
-use crate::lasso::memory_checking::{
-    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
-};
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::r1cs::special_polys::SparsePolynomial;
 use crate::spartan::r1csinstance::R1CSInstance;
 use crate::spartan::sparse_mlpoly::CircuitConfig;
 use crate::spartan::sparse_mlpoly::SparseMatEntry;
-use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;
-use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::{
-    lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes},
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::errors::ProofVerifyError,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::interleave;
 use num_bigint::BigUint;
 use rayon::prelude::*;
 use std::fs::File;
 
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
-    pub(crate) witness: T,
-    pub(crate) read_cts_rows: Vec<T>,
-    pub(crate) read_cts_cols: Vec<T>,
-    pub(crate) final_cts_rows: Vec<T>,
-    pub(crate) final_cts_cols: Vec<T>,
-    pub(crate) rows: Vec<T>,
-    pub(crate) cols: Vec<T>,
-    pub(crate) vals: Vec<T>,
-    pub(crate) e_rx: Vec<T>,
-    pub(crate) e_ry: Vec<T>,
-    pub(crate) eq_rx: VerifierComputedOpening<T>,
-    pub(crate) eq_ry: VerifierComputedOpening<T>,
-    pub(crate) identity: VerifierComputedOpening<T>,
-}
+// #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+// pub struct SpartanStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
+//     pub(crate) witness: T,
+//     pub(crate) read_cts_rows: Vec<T>,
+//     pub(crate) read_cts_cols: Vec<T>,
+//     pub(crate) final_cts_rows: Vec<T>,
+//     pub(crate) final_cts_cols: Vec<T>,
+//     pub(crate) rows: Vec<T>,
+//     pub(crate) cols: Vec<T>,
+//     pub(crate) vals: Vec<T>,
+//     pub(crate) e_rx: Vec<T>,
+//     pub(crate) e_ry: Vec<T>,
+//     pub(crate) eq_rx: VerifierComputedOpening<T>,
+//     pub(crate) eq_ry: VerifierComputedOpening<T>,
+//     pub(crate) identity: VerifierComputedOpening<T>,
+// }
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
-    for SpartanStuff<T>
-{
-    fn read_write_values(&self) -> Vec<&T> {
-        self.read_cts_rows
-            .iter()
-            .chain(self.read_cts_cols.iter())
-            .chain(self.rows.iter())
-            .chain(self.cols.iter())
-            .chain(self.e_rx.iter())
-            .chain(self.e_ry.iter())
-            .collect()
-    }
+// impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
+//     for SpartanStuff<T>
+// {
+//     fn read_write_values(&self) -> Vec<&T> {
+//         self.read_cts_rows
+//             .iter()
+//             .chain(self.read_cts_cols.iter())
+//             .chain(self.rows.iter())
+//             .chain(self.cols.iter())
+//             .chain(self.e_rx.iter())
+//             .chain(self.e_ry.iter())
+//             .collect()
+//     }
 
-    fn init_final_values(&self) -> Vec<&T> {
-        self.final_cts_rows
-            .iter()
-            .chain(self.final_cts_cols.iter())
-            .collect()
-    }
+//     fn init_final_values(&self) -> Vec<&T> {
+//         self.final_cts_rows
+//             .iter()
+//             .chain(self.final_cts_cols.iter())
+//             .collect()
+//     }
 
-    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
-        self.final_cts_rows
-            .iter_mut()
-            .chain(self.final_cts_cols.iter_mut())
-            .collect()
-    }
+//     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+//         self.final_cts_rows
+//             .iter_mut()
+//             .chain(self.final_cts_cols.iter_mut())
+//             .collect()
+//     }
 
-    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        self.read_cts_rows
-            .iter_mut()
-            .chain(self.read_cts_cols.iter_mut())
-            .chain(self.rows.iter_mut())
-            .chain(self.cols.iter_mut())
-            .chain(self.e_rx.iter_mut())
-            .chain(self.e_ry.iter_mut())
-            .collect()
-    }
-}
+//     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+//         self.read_cts_rows
+//             .iter_mut()
+//             .chain(self.read_cts_cols.iter_mut())
+//             .chain(self.rows.iter_mut())
+//             .chain(self.cols.iter_mut())
+//             .chain(self.e_rx.iter_mut())
+//             .chain(self.e_ry.iter_mut())
+//             .collect()
+//     }
+// }
 
-pub type SpartanPolynomials<F: JoltField> = SpartanStuff<DensePolynomial<F>>;
+// pub type SpartanPolynomials<F: JoltField> = SpartanStuff<DensePolynomial<F>>;
 
-pub type SpartanOpenings<F: JoltField> = SpartanStuff<F>;
+// pub type SpartanOpenings<F: JoltField> = SpartanStuff<F>;
 
-pub type SpartanCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
-    SpartanStuff<PCS::Commitment>;
+// pub type SpartanCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+//     SpartanStuff<PCS::Commitment>;
 
-impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
-    Initializable<T, SpartanPreprocessing<F>> for SpartanStuff<T>
-{
-    fn initialize(_: &SpartanPreprocessing<F>) -> Self {
-        Self {
-            witness: T::default(),
-            read_cts_rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            read_cts_cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            final_cts_rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            final_cts_cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            vals: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            e_rx: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            e_ry: std::iter::repeat_with(|| T::default()).take(3).collect(),
-            eq_rx: None,
-            eq_ry: None,
-            identity: None,
-        }
-    }
-}
+// impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+//     Initializable<T, SpartanPreprocessing<F>> for SpartanStuff<T>
+// {
+//     fn initialize(_: &SpartanPreprocessing<F>) -> Self {
+//         Self {
+//             witness: T::default(),
+//             read_cts_rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             read_cts_cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             final_cts_rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             final_cts_cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             rows: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             cols: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             vals: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             e_rx: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             e_ry: std::iter::repeat_with(|| T::default()).take(3).collect(),
+//             eq_rx: None,
+//             eq_ry: None,
+//             identity: None,
+//         }
+//     }
+// }
 
 #[derive(Clone)]
 pub struct SpartanPreprocessing<F: JoltField> {
     pub(crate) inst: Instance<F>,
     pub(crate) vars: Vec<F>,
     pub(crate) inputs: Vec<F>,
-    // pub(crate) rx_ry: Option<Vec<F>>,
 }
 
 impl<F: JoltField> SpartanPreprocessing<F> {
@@ -232,380 +223,380 @@ impl<F: JoltField> SpartanPreprocessing<F> {
     }
 }
 
-impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
-    for SpartanProof<F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    type Polynomials = SpartanPolynomials<F>;
-    type Openings = SpartanOpenings<F>;
+// impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
+//     for SpartanProof<F, PCS, ProofTranscript>
+// where
+//     F: JoltField,
+//     PCS: CommitmentScheme<ProofTranscript, Field = F>,
+//     ProofTranscript: Transcript,
+// {
+//     type Polynomials = SpartanPolynomials<F>;
+//     type Openings = SpartanOpenings<F>;
 
-    type Preprocessing = SpartanPreprocessing<F>;
+//     type Preprocessing = SpartanPreprocessing<F>;
 
-    type Commitments = SpartanCommitments<PCS, ProofTranscript>;
-    type MemoryTuple = (F, F, F);
+//     type Commitments = SpartanCommitments<PCS, ProofTranscript>;
+//     type MemoryTuple = (F, F, F);
 
-    fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
-        let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - *tau
-    }
+//     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
+//         let (a, v, t) = *inputs;
+//         t * gamma.square() + v * *gamma + a - *tau
+//     }
 
-    #[tracing::instrument(skip_all, name = "SpartanPolynomials::compute_leaves")]
-    fn compute_leaves(
-        _: &SpartanPreprocessing<F>,
-        polynomials: &Self::Polynomials,
-        _: &JoltPolynomials<F>,
-        gamma: &F,
-        tau: &F,
-    ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
-    ) {
-        //Assuming the sparsity of all the matrices are the same, their read_ts count will be the same for rows and columns.
-        let n_reads = polynomials.rows[0].len();
-        let read_cts_rows = &polynomials.read_cts_rows;
-        let read_cts_cols = &polynomials.read_cts_cols;
-        let final_cts_rows = &polynomials.final_cts_rows;
-        let final_cts_cols = &polynomials.final_cts_cols;
-        let rows = &polynomials.rows;
-        let cols = &polynomials.cols;
-        let e_rx = &polynomials.e_rx;
-        let e_ry = &polynomials.e_ry;
-        let eq_rx = match &polynomials.eq_rx {
-            Some(eq) => eq,
-            None => panic!(),
-        };
-        let eq_ry = match &polynomials.eq_ry {
-            Some(eq) => eq,
-            None => panic!(),
-        };
+//     #[tracing::instrument(skip_all, name = "SpartanPolynomials::compute_leaves")]
+//     fn compute_leaves(
+//         _: &SpartanPreprocessing<F>,
+//         polynomials: &Self::Polynomials,
+//         _: &JoltPolynomials<F>,
+//         gamma: &F,
+//         tau: &F,
+//     ) -> (
+//         <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
+//         <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
+//     ) {
+//         //Assuming the sparsity of all the matrices are the same, their read_ts count will be the same for rows and columns.
+//         let n_reads = polynomials.rows[0].len();
+//         let read_cts_rows = &polynomials.read_cts_rows;
+//         let read_cts_cols = &polynomials.read_cts_cols;
+//         let final_cts_rows = &polynomials.final_cts_rows;
+//         let final_cts_cols = &polynomials.final_cts_cols;
+//         let rows = &polynomials.rows;
+//         let cols = &polynomials.cols;
+//         let e_rx = &polynomials.e_rx;
+//         let e_ry = &polynomials.e_ry;
+//         let eq_rx = match &polynomials.eq_rx {
+//             Some(eq) => eq,
+//             None => panic!(),
+//         };
+//         let eq_ry = match &polynomials.eq_ry {
+//             Some(eq) => eq,
+//             None => panic!(),
+//         };
 
-        (0..read_cts_rows.len()).for_each(|idx| {
-            assert_eq!(read_cts_rows[idx].len(), n_reads);
-            assert_eq!(read_cts_cols[idx].len(), n_reads);
-            assert_eq!(rows[idx].len(), n_reads);
-            assert_eq!(cols[idx].len(), n_reads);
-            assert_eq!(e_rx[idx].len(), n_reads);
-            assert_eq!(e_ry[idx].len(), n_reads);
-        });
+//         (0..read_cts_rows.len()).for_each(|idx| {
+//             assert_eq!(read_cts_rows[idx].len(), n_reads);
+//             assert_eq!(read_cts_cols[idx].len(), n_reads);
+//             assert_eq!(rows[idx].len(), n_reads);
+//             assert_eq!(cols[idx].len(), n_reads);
+//             assert_eq!(e_rx[idx].len(), n_reads);
+//             assert_eq!(e_ry[idx].len(), n_reads);
+//         });
 
-        let gamma_squared = gamma.square();
+//         let gamma_squared = gamma.square();
 
-        //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
-        let read_write_row: Vec<F> = (0..3)
-            .into_par_iter()
-            .flat_map(|i| {
-                let read_fingerprints: Vec<F> = (0..n_reads)
-                    .map(|j| {
-                        let a = &rows[i][j];
-                        let v = &e_rx[i][j];
-                        let t = &read_cts_rows[i][j];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
-                            - *tau
-                    })
-                    .collect();
-                let write_fingerprints = read_fingerprints
-                    .iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
-                    .collect();
-                [read_fingerprints, write_fingerprints].concat()
-            })
-            .collect();
+//         //Interleaved A_row_reads B_row_reads C_row_reads A_col_reads B_col_reads C_col_reads
+//         let read_write_row: Vec<F> = (0..3)
+//             .into_par_iter()
+//             .flat_map(|i| {
+//                 let read_fingerprints: Vec<F> = (0..n_reads)
+//                     .map(|j| {
+//                         let a = &rows[i][j];
+//                         let v = &e_rx[i][j];
+//                         let t = &read_cts_rows[i][j];
+//                         mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+//                             - *tau
+//                     })
+//                     .collect();
+//                 let write_fingerprints = read_fingerprints
+//                     .iter()
+//                     .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+//                     .collect();
+//                 [read_fingerprints, write_fingerprints].concat()
+//             })
+//             .collect();
 
-        let read_write_col: Vec<F> = (0..3)
-            .into_par_iter()
-            .flat_map(|i| {
-                let read_fingerprints: Vec<F> = (0..n_reads)
-                    .into_par_iter()
-                    .map(|j| {
-                        let a = &cols[i][j];
-                        let v = &e_ry[i][j];
-                        let t = &read_cts_cols[i][j];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
-                            - *tau
-                    })
-                    .collect();
-                let write_fingerprints = read_fingerprints
-                    .iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
-                    .collect();
-                [read_fingerprints, write_fingerprints].concat()
-            })
-            .collect();
+//         let read_write_col: Vec<F> = (0..3)
+//             .into_par_iter()
+//             .flat_map(|i| {
+//                 let read_fingerprints: Vec<F> = (0..n_reads)
+//                     .into_par_iter()
+//                     .map(|j| {
+//                         let a = &cols[i][j];
+//                         let v = &e_ry[i][j];
+//                         let t = &read_cts_cols[i][j];
+//                         mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+//                             - *tau
+//                     })
+//                     .collect();
+//                 let write_fingerprints = read_fingerprints
+//                     .iter()
+//                     .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+//                     .collect();
+//                 [read_fingerprints, write_fingerprints].concat()
+//             })
+//             .collect();
 
-        let init_final_row: Vec<F> = {
-            let init_fingerprints: Vec<F> = (0..eq_rx.len())
-                .into_par_iter()
-                .map(|i| {
-                    let a = &F::from_u64(i as u64).unwrap();
-                    let v = &eq_rx[i];
-                    mul_0_1_optimized(v, gamma) + *a - *tau
-                })
-                .collect();
-            let final_fingerprits: Vec<F> = (0..3)
-                .into_par_iter()
-                .flat_map(|i| {
-                    init_fingerprints
-                        .iter()
-                        .enumerate()
-                        .map(|(j, init_fingerprint)| {
-                            let t = &final_cts_rows[i][j];
-                            *init_fingerprint + mul_0_1_optimized(t, &gamma_squared)
-                        })
-                        .collect::<Vec<F>>()
-                })
-                .collect();
-            [init_fingerprints, final_fingerprits].concat()
-        };
+//         let init_final_row: Vec<F> = {
+//             let init_fingerprints: Vec<F> = (0..eq_rx.len())
+//                 .into_par_iter()
+//                 .map(|i| {
+//                     let a = &F::from_u64(i as u64).unwrap();
+//                     let v = &eq_rx[i];
+//                     mul_0_1_optimized(v, gamma) + *a - *tau
+//                 })
+//                 .collect();
+//             let final_fingerprits: Vec<F> = (0..3)
+//                 .into_par_iter()
+//                 .flat_map(|i| {
+//                     init_fingerprints
+//                         .iter()
+//                         .enumerate()
+//                         .map(|(j, init_fingerprint)| {
+//                             let t = &final_cts_rows[i][j];
+//                             *init_fingerprint + mul_0_1_optimized(t, &gamma_squared)
+//                         })
+//                         .collect::<Vec<F>>()
+//                 })
+//                 .collect();
+//             [init_fingerprints, final_fingerprits].concat()
+//         };
 
-        let init_final_col: Vec<F> = {
-            let init_fingerprints: Vec<F> = (0..eq_ry.len())
-                .into_par_iter()
-                .map(|i| {
-                    let a = &F::from_u64(i as u64).unwrap();
-                    let v = &eq_ry[i];
-                    mul_0_1_optimized(v, gamma) + *a - *tau
-                })
-                .collect();
-            let final_fingerprits: Vec<F> = (0..3)
-                .into_par_iter()
-                .flat_map(|i| {
-                    init_fingerprints
-                        .iter()
-                        .enumerate()
-                        .map(|(j, init_fingerprint)| {
-                            let t = &final_cts_cols[i][j];
-                            *init_fingerprint + mul_0_1_optimized(t, &gamma_squared)
-                        })
-                        .collect::<Vec<F>>()
-                })
-                .collect();
-            [init_fingerprints, final_fingerprits].concat()
-        };
+//         let init_final_col: Vec<F> = {
+//             let init_fingerprints: Vec<F> = (0..eq_ry.len())
+//                 .into_par_iter()
+//                 .map(|i| {
+//                     let a = &F::from_u64(i as u64).unwrap();
+//                     let v = &eq_ry[i];
+//                     mul_0_1_optimized(v, gamma) + *a - *tau
+//                 })
+//                 .collect();
+//             let final_fingerprits: Vec<F> = (0..3)
+//                 .into_par_iter()
+//                 .flat_map(|i| {
+//                     init_fingerprints
+//                         .iter()
+//                         .enumerate()
+//                         .map(|(j, init_fingerprint)| {
+//                             let t = &final_cts_cols[i][j];
+//                             *init_fingerprint + mul_0_1_optimized(t, &gamma_squared)
+//                         })
+//                         .collect::<Vec<F>>()
+//                 })
+//                 .collect();
+//             [init_fingerprints, final_fingerprits].concat()
+//         };
 
-        let read_write_leaves = vec![read_write_row, read_write_col].concat();
-        let init_final_leaves = vec![init_final_row, init_final_col].concat();
+//         let read_write_leaves = vec![read_write_row, read_write_col].concat();
+//         let init_final_leaves = vec![init_final_row, init_final_col].concat();
 
-        ((read_write_leaves, 12), (init_final_leaves, 8))
-    }
+//         ((read_write_leaves, 12), (init_final_leaves, 8))
+//     }
 
-    fn interleave<T: Copy + Clone>(
-        _: &SpartanPreprocessing<F>,
-        read_values: &Vec<T>,
-        write_values: &Vec<T>,
-        init_values: &Vec<T>,
-        final_values: &Vec<T>,
-    ) -> (Vec<T>, Vec<T>) {
-        let read_write_values = interleave(read_values, write_values).cloned().collect();
+//     fn interleave<T: Copy + Clone>(
+//         _: &SpartanPreprocessing<F>,
+//         read_values: &Vec<T>,
+//         write_values: &Vec<T>,
+//         init_values: &Vec<T>,
+//         final_values: &Vec<T>,
+//     ) -> (Vec<T>, Vec<T>) {
+//         let read_write_values = interleave(read_values, write_values).cloned().collect();
 
-        let init_final_values: Vec<T> = init_values
-            .iter()
-            .zip(final_values.chunks(3))
-            .flat_map(|(init, final_vals)| [*init, final_vals[0], final_vals[1], final_vals[2]])
-            .collect();
+//         let init_final_values: Vec<T> = init_values
+//             .iter()
+//             .zip(final_values.chunks(3))
+//             .flat_map(|(init, final_vals)| [*init, final_vals[0], final_vals[1], final_vals[2]])
+//             .collect();
 
-        (read_write_values, init_final_values)
-    }
+//         (read_write_values, init_final_values)
+//     }
 
-    fn uninterleave_hashes(
-        _: &SpartanPreprocessing<F>,
-        read_write_hashes: Vec<F>,
-        init_final_hashes: Vec<F>,
-    ) -> MultisetHashes<F> {
-        let mut read_hashes = Vec::with_capacity(6);
-        let mut write_hashes = Vec::with_capacity(6);
+//     fn uninterleave_hashes(
+//         _: &SpartanPreprocessing<F>,
+//         read_write_hashes: Vec<F>,
+//         init_final_hashes: Vec<F>,
+//     ) -> MultisetHashes<F> {
+//         let mut read_hashes = Vec::with_capacity(6);
+//         let mut write_hashes = Vec::with_capacity(6);
 
-        for i in 0..6 {
-            read_hashes.push(read_write_hashes[2 * i]);
-            write_hashes.push(read_write_hashes[2 * i + 1]);
-        }
+//         for i in 0..6 {
+//             read_hashes.push(read_write_hashes[2 * i]);
+//             write_hashes.push(read_write_hashes[2 * i + 1]);
+//         }
 
-        let mut init_hashes = Vec::with_capacity(2);
-        let mut final_hashes = Vec::with_capacity(6);
-        for i in 0..2 {
-            init_hashes.push(init_final_hashes[4 * i]);
-            final_hashes.push(init_final_hashes[4 * i + 1]);
-            final_hashes.push(init_final_hashes[4 * i + 2]);
-            final_hashes.push(init_final_hashes[4 * i + 3]);
-        }
+//         let mut init_hashes = Vec::with_capacity(2);
+//         let mut final_hashes = Vec::with_capacity(6);
+//         for i in 0..2 {
+//             init_hashes.push(init_final_hashes[4 * i]);
+//             final_hashes.push(init_final_hashes[4 * i + 1]);
+//             final_hashes.push(init_final_hashes[4 * i + 2]);
+//             final_hashes.push(init_final_hashes[4 * i + 3]);
+//         }
 
-        MultisetHashes {
-            read_hashes,
-            write_hashes,
-            init_hashes,
-            final_hashes,
-        }
-    }
+//         MultisetHashes {
+//             read_hashes,
+//             write_hashes,
+//             init_hashes,
+//             final_hashes,
+//         }
+//     }
 
-    fn check_multiset_equality(_: &SpartanPreprocessing<F>, multiset_hashes: &MultisetHashes<F>) {
-        assert_eq!(multiset_hashes.final_hashes.len(), 6);
-        assert_eq!(multiset_hashes.write_hashes.len(), 6);
-        assert_eq!(multiset_hashes.init_hashes.len(), 2);
+//     fn check_multiset_equality(_: &SpartanPreprocessing<F>, multiset_hashes: &MultisetHashes<F>) {
+//         assert_eq!(multiset_hashes.final_hashes.len(), 6);
+//         assert_eq!(multiset_hashes.write_hashes.len(), 6);
+//         assert_eq!(multiset_hashes.init_hashes.len(), 2);
 
-        (0..3).into_iter().for_each(|i| {
-            let read_hash = multiset_hashes.read_hashes[i];
-            let write_hash = multiset_hashes.write_hashes[i];
-            let init_hash = multiset_hashes.init_hashes[0]; //row_init hash
-            let final_hash = multiset_hashes.final_hashes[i];
-            assert_eq!(
-                init_hash * write_hash,
-                final_hash * read_hash,
-                "Multiset hashes don't match"
-            );
-        });
-        (0..3).into_iter().for_each(|i| {
-            let read_hash = multiset_hashes.read_hashes[3 + i];
-            let write_hash = multiset_hashes.write_hashes[3 + i];
-            let init_hash = multiset_hashes.init_hashes[1]; //col_init hash
-            let final_hash = multiset_hashes.final_hashes[3 + i];
-            assert_eq!(
-                init_hash * write_hash,
-                final_hash * read_hash,
-                "Multiset hashes don't match"
-            );
-        });
-    }
+//         (0..3).into_iter().for_each(|i| {
+//             let read_hash = multiset_hashes.read_hashes[i];
+//             let write_hash = multiset_hashes.write_hashes[i];
+//             let init_hash = multiset_hashes.init_hashes[0]; //row_init hash
+//             let final_hash = multiset_hashes.final_hashes[i];
+//             assert_eq!(
+//                 init_hash * write_hash,
+//                 final_hash * read_hash,
+//                 "Multiset hashes don't match"
+//             );
+//         });
+//         (0..3).into_iter().for_each(|i| {
+//             let read_hash = multiset_hashes.read_hashes[3 + i];
+//             let write_hash = multiset_hashes.write_hashes[3 + i];
+//             let init_hash = multiset_hashes.init_hashes[1]; //col_init hash
+//             let final_hash = multiset_hashes.final_hashes[3 + i];
+//             assert_eq!(
+//                 init_hash * write_hash,
+//                 final_hash * read_hash,
+//                 "Multiset hashes don't match"
+//             );
+//         });
+//     }
 
-    fn protocol_name() -> &'static [u8] {
-        b"Spartan Validity Proof"
-    }
-}
+//     fn protocol_name() -> &'static [u8] {
+//         b"Spartan Validity Proof"
+//     }
+// }
 
-impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
-    for SpartanProof<F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    fn compute_verifier_openings(
-        openings: &mut Self::Openings,
-        preprocessing: &SpartanPreprocessing<F>,
-        _: &[F],
-        r_init_final: &[F],
-    ) {
-        unimplemented!("")
-        // let binding = preprocessing.rx_ry.clone().unwrap();
-        // let (rx, ry) = binding.split_at(binding.len() / 2);
+// impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
+//     for SpartanProof<F, PCS, ProofTranscript>
+// where
+//     F: JoltField,
+//     PCS: CommitmentScheme<ProofTranscript, Field = F>,
+//     ProofTranscript: Transcript,
+// {
+//     fn compute_verifier_openings(
+//         openings: &mut Self::Openings,
+//         preprocessing: &SpartanPreprocessing<F>,
+//         _: &[F],
+//         r_init_final: &[F],
+//     ) {
+//         unimplemented!("")
+//         // let binding = preprocessing.rx_ry.clone().unwrap();
+//         // let (rx, ry) = binding.split_at(binding.len() / 2);
 
-        // let eq_rx = EqPolynomial::new(rx.to_vec());
-        // let eq_ry = EqPolynomial::new(ry.to_vec());
+//         // let eq_rx = EqPolynomial::new(rx.to_vec());
+//         // let eq_ry = EqPolynomial::new(ry.to_vec());
 
-        // openings.eq_rx = Some(eq_rx.evaluate(r_init_final));
-        // openings.eq_ry = Some(eq_ry.evaluate(r_init_final));
-        // openings.identity =
-        //     Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
-    }
+//         // openings.eq_rx = Some(eq_rx.evaluate(r_init_final));
+//         // openings.eq_ry = Some(eq_ry.evaluate(r_init_final));
+//         // openings.identity =
+//         //     Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
+//     }
 
-    fn read_tuples(
-        _: &SpartanPreprocessing<F>,
-        openings: &Self::Openings,
-        _: &NoExogenousOpenings,
-    ) -> Vec<Self::MemoryTuple> {
-        let read_cts_rows_opening = &openings.read_cts_rows;
-        let read_cts_cols_opening = &openings.read_cts_cols;
-        let rows_opening = &openings.rows;
-        let cols_opening = &openings.cols;
-        let e_rx_opening = &openings.e_rx;
-        let e_ry_opening = &openings.e_ry;
+//     fn read_tuples(
+//         _: &SpartanPreprocessing<F>,
+//         openings: &Self::Openings,
+//         _: &NoExogenousOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         let read_cts_rows_opening = &openings.read_cts_rows;
+//         let read_cts_cols_opening = &openings.read_cts_cols;
+//         let rows_opening = &openings.rows;
+//         let cols_opening = &openings.cols;
+//         let e_rx_opening = &openings.e_rx;
+//         let e_ry_opening = &openings.e_ry;
 
-        let mut read_tuples = Vec::new();
+//         let mut read_tuples = Vec::new();
 
-        for i in 0..3 {
-            read_tuples.push((rows_opening[i], e_rx_opening[i], read_cts_rows_opening[i]))
-        }
-        for i in 0..3 {
-            read_tuples.push((cols_opening[i], e_ry_opening[i], read_cts_cols_opening[i]))
-        }
+//         for i in 0..3 {
+//             read_tuples.push((rows_opening[i], e_rx_opening[i], read_cts_rows_opening[i]))
+//         }
+//         for i in 0..3 {
+//             read_tuples.push((cols_opening[i], e_ry_opening[i], read_cts_cols_opening[i]))
+//         }
 
-        read_tuples
-    }
+//         read_tuples
+//     }
 
-    fn write_tuples(
-        _: &SpartanPreprocessing<F>,
-        openings: &Self::Openings,
-        _: &NoExogenousOpenings,
-    ) -> Vec<Self::MemoryTuple> {
-        let read_cts_rows_opening = &openings.read_cts_rows;
-        let read_cts_cols_opening = &openings.read_cts_cols;
-        let rows_opening = &openings.rows;
-        let cols_opening = &openings.cols;
-        let e_rx_opening = &openings.e_rx;
-        let e_ry_opening = &openings.e_ry;
+//     fn write_tuples(
+//         _: &SpartanPreprocessing<F>,
+//         openings: &Self::Openings,
+//         _: &NoExogenousOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         let read_cts_rows_opening = &openings.read_cts_rows;
+//         let read_cts_cols_opening = &openings.read_cts_cols;
+//         let rows_opening = &openings.rows;
+//         let cols_opening = &openings.cols;
+//         let e_rx_opening = &openings.e_rx;
+//         let e_ry_opening = &openings.e_ry;
 
-        let mut write_tuples = Vec::new();
+//         let mut write_tuples = Vec::new();
 
-        for i in 0..3 {
-            write_tuples.push((
-                rows_opening[i],
-                e_rx_opening[i],
-                read_cts_rows_opening[i] + F::one(),
-            ))
-        }
-        for i in 0..3 {
-            write_tuples.push((
-                cols_opening[i],
-                e_ry_opening[i],
-                read_cts_cols_opening[i] + F::one(),
-            ))
-        }
+//         for i in 0..3 {
+//             write_tuples.push((
+//                 rows_opening[i],
+//                 e_rx_opening[i],
+//                 read_cts_rows_opening[i] + F::one(),
+//             ))
+//         }
+//         for i in 0..3 {
+//             write_tuples.push((
+//                 cols_opening[i],
+//                 e_ry_opening[i],
+//                 read_cts_cols_opening[i] + F::one(),
+//             ))
+//         }
 
-        write_tuples
-    }
+//         write_tuples
+//     }
 
-    fn init_tuples(
-        _: &SpartanPreprocessing<F>,
-        openings: &Self::Openings,
-        _: &NoExogenousOpenings,
-    ) -> Vec<Self::MemoryTuple> {
-        vec![
-            (
-                openings
-                    .identity
-                    .expect("Expected identity polynomial evaluation"),
-                openings.eq_rx.expect("Expected eq polynomial evaluation"),
-                F::zero(),
-            ),
-            (
-                openings
-                    .identity
-                    .expect("Expected identity polynomial evaluation"),
-                openings.eq_ry.expect("Expected eq polynomial evaluation"),
-                F::zero(),
-            ),
-        ]
-    }
+//     fn init_tuples(
+//         _: &SpartanPreprocessing<F>,
+//         openings: &Self::Openings,
+//         _: &NoExogenousOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         vec![
+//             (
+//                 openings
+//                     .identity
+//                     .expect("Expected identity polynomial evaluation"),
+//                 openings.eq_rx.expect("Expected eq polynomial evaluation"),
+//                 F::zero(),
+//             ),
+//             (
+//                 openings
+//                     .identity
+//                     .expect("Expected identity polynomial evaluation"),
+//                 openings.eq_ry.expect("Expected eq polynomial evaluation"),
+//                 F::zero(),
+//             ),
+//         ]
+//     }
 
-    fn final_tuples(
-        _: &SpartanPreprocessing<F>,
-        openings: &Self::Openings,
-        _: &NoExogenousOpenings,
-    ) -> Vec<Self::MemoryTuple> {
-        let mut final_tuples = Vec::new();
+//     fn final_tuples(
+//         _: &SpartanPreprocessing<F>,
+//         openings: &Self::Openings,
+//         _: &NoExogenousOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         let mut final_tuples = Vec::new();
 
-        for i in 0..3 {
-            final_tuples.push((
-                openings
-                    .identity
-                    .expect("Expected identity polynomial evaluation"),
-                openings.eq_rx.expect("Expected eq polynomial evaluation"),
-                openings.final_cts_rows[i],
-            ))
-        }
-        for i in 0..3 {
-            final_tuples.push((
-                openings
-                    .identity
-                    .expect("Expected identity polynomial evaluation"),
-                openings.eq_ry.expect("Expected eq polynomial evaluation"),
-                openings.final_cts_cols[i],
-            ))
-        }
-        final_tuples
-    }
-}
+//         for i in 0..3 {
+//             final_tuples.push((
+//                 openings
+//                     .identity
+//                     .expect("Expected identity polynomial evaluation"),
+//                 openings.eq_rx.expect("Expected eq polynomial evaluation"),
+//                 openings.final_cts_rows[i],
+//             ))
+//         }
+//         for i in 0..3 {
+//             final_tuples.push((
+//                 openings
+//                     .identity
+//                     .expect("Expected identity polynomial evaluation"),
+//                 openings.eq_ry.expect("Expected eq polynomial evaluation"),
+//                 openings.final_cts_cols[i],
+//             ))
+//         }
+//         final_tuples
+//     }
+// }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SpartanProof<F, PCS, ProofTranscript>
@@ -616,16 +607,11 @@ where
 {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    // pub(crate) spark_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_claims: (F, F, F, F),
-    // pub(crate) spark_sumcheck_claims: [F; 9],
-    // pub(crate) memory_checking:
-    //     MemoryCheckingProof<F, PCS, SpartanOpenings<F>, NoExogenousOpenings, ProofTranscript>,
-    // pub(crate) opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     pub(crate) witness_commit: PCS::Commitment,
     pub(crate) pcs_proof: PCS::Proof,
-    pub(crate) pi_eval: F, //This is required for the check in circom.
+    pub(crate) pi_eval: F,
 }
 
 impl<F, PCS, ProofTranscript> SpartanProof<F, PCS, ProofTranscript>
@@ -634,88 +620,71 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    #[tracing::instrument(skip_all, name = "SpartanProof::generate_witness")]
-    pub fn generate_witness(
-        preprocessing: &SpartanPreprocessing<F>,
-        pcs_setup: &PCS::Setup,
-    ) -> (
-        SpartanPolynomials<F>,
-        SpartanCommitments<PCS, ProofTranscript>,
-    ) {
-        let r1cs_instance = &preprocessing.inst.inst;
-        let matrices = r1cs_instance.get_matrices();
-        let (read_cts_rows, read_cts_cols, final_cts_rows, final_cts_cols, rows, cols, vals) =
-            SparseMatPolynomial::multi_sparse_to_dense_rep(&matrices);
-        let polys = SpartanPolynomials {
-            witness: DensePolynomial::default(),
-            read_cts_rows,
-            read_cts_cols,
-            final_cts_rows,
-            final_cts_cols,
-            vals,
-            rows,
-            cols,
-            e_rx: std::iter::repeat_with(|| DensePolynomial::default())
-                .take(3)
-                .collect(),
-            e_ry: std::iter::repeat_with(|| DensePolynomial::default())
-                .take(3)
-                .collect(),
-            eq_rx: None,
-            eq_ry: None,
-            identity: None,
-        };
-        let commits = SpartanCommitments::<PCS, ProofTranscript> {
-            witness: PCS::Commitment::default(),
-            read_cts_rows: PCS::batch_commit_polys(&polys.read_cts_rows, pcs_setup, BatchType::Big),
-            read_cts_cols: PCS::batch_commit_polys(&polys.read_cts_cols, pcs_setup, BatchType::Big),
-            final_cts_rows: PCS::batch_commit_polys(
-                &polys.final_cts_rows,
-                pcs_setup,
-                BatchType::Big,
-            ),
-            final_cts_cols: PCS::batch_commit_polys(
-                &polys.final_cts_cols,
-                pcs_setup,
-                BatchType::Big,
-            ),
-            vals: PCS::batch_commit_polys(&polys.vals, pcs_setup, BatchType::Big),
-            rows: PCS::batch_commit_polys(&polys.rows, pcs_setup, BatchType::Big),
-            cols: PCS::batch_commit_polys(&polys.cols, pcs_setup, BatchType::Big),
-            e_rx: std::iter::repeat_with(|| PCS::Commitment::default())
-                .take(3)
-                .collect(),
-            e_ry: std::iter::repeat_with(|| PCS::Commitment::default())
-                .take(3)
-                .collect(),
-            eq_rx: None,
-            eq_ry: None,
-            identity: None,
-        };
-        (polys, commits)
-    }
+    // #[tracing::instrument(skip_all, name = "SpartanProof::generate_witness")]
+    // pub fn generate_witness(
+    //     preprocessing: &SpartanPreprocessing<F>,
+    //     pcs_setup: &PCS::Setup,
+    // ) -> (
+    //     SpartanPolynomials<F>,
+    //     SpartanCommitments<PCS, ProofTranscript>,
+    // ) {
+    //     let r1cs_instance = &preprocessing.inst.inst;
+    //     let matrices = r1cs_instance.get_matrices();
+    //     let (read_cts_rows, read_cts_cols, final_cts_rows, final_cts_cols, rows, cols, vals) =
+    //         SparseMatPolynomial::multi_sparse_to_dense_rep(&matrices);
+    //     let polys = SpartanPolynomials {
+    //         witness: DensePolynomial::default(),
+    //         read_cts_rows,
+    //         read_cts_cols,
+    //         final_cts_rows,
+    //         final_cts_cols,
+    //         vals,
+    //         rows,
+    //         cols,
+    //         e_rx: std::iter::repeat_with(|| DensePolynomial::default())
+    //             .take(3)
+    //             .collect(),
+    //         e_ry: std::iter::repeat_with(|| DensePolynomial::default())
+    //             .take(3)
+    //             .collect(),
+    //         eq_rx: None,
+    //         eq_ry: None,
+    //         identity: None,
+    //     };
+    //     let commits = SpartanCommitments::<PCS, ProofTranscript> {
+    //         witness: PCS::Commitment::default(),
+    //         read_cts_rows: PCS::batch_commit_polys(&polys.read_cts_rows, pcs_setup, BatchType::Big),
+    //         read_cts_cols: PCS::batch_commit_polys(&polys.read_cts_cols, pcs_setup, BatchType::Big),
+    //         final_cts_rows: PCS::batch_commit_polys(
+    //             &polys.final_cts_rows,
+    //             pcs_setup,
+    //             BatchType::Big,
+    //         ),
+    //         final_cts_cols: PCS::batch_commit_polys(
+    //             &polys.final_cts_cols,
+    //             pcs_setup,
+    //             BatchType::Big,
+    //         ),
+    //         vals: PCS::batch_commit_polys(&polys.vals, pcs_setup, BatchType::Big),
+    //         rows: PCS::batch_commit_polys(&polys.rows, pcs_setup, BatchType::Big),
+    //         cols: PCS::batch_commit_polys(&polys.cols, pcs_setup, BatchType::Big),
+    //         e_rx: std::iter::repeat_with(|| PCS::Commitment::default())
+    //             .take(3)
+    //             .collect(),
+    //         e_ry: std::iter::repeat_with(|| PCS::Commitment::default())
+    //             .take(3)
+    //             .collect(),
+    //         eq_rx: None,
+    //         eq_ry: None,
+    //         identity: None,
+    //     };
+    //     (polys, commits)
+    // }
 
     #[tracing::instrument(skip_all, name = "SpartanProof::prove")]
-    pub fn prove<'a>(
-        pcs_setup: &PCS::Setup,
-        // polynomials: &mut SpartanPolynomials<F>,
-        // commitments: &mut SpartanCommitments<PCS, ProofTranscript>,
-        preprocessing: &mut SpartanPreprocessing<F>,
-    ) -> Self {
-        let mut transcript = ProofTranscript::new(b"Spartan transcript");
-
-        // for idx in 0..3 {
-        //     commitments.rows[idx].append_to_transcript(&mut transcript);
-        //     commitments.cols[idx].append_to_transcript(&mut transcript);
-        //     commitments.vals[idx].append_to_transcript(&mut transcript);
-        //     commitments.read_cts_rows[idx].append_to_transcript(&mut transcript);
-        //     commitments.read_cts_cols[idx].append_to_transcript(&mut transcript);
-        //     commitments.final_cts_rows[idx].append_to_transcript(&mut transcript);
-        //     commitments.final_cts_cols[idx].append_to_transcript(&mut transcript);
-        // }
-
-        // let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
-        //     ProverOpeningAccumulator::new();
+    pub fn prove<'a>(pcs_setup: &PCS::Setup, preprocessing: &SpartanPreprocessing<F>) -> Self {
+        let protocol_name = Self::protocol_name();
+        let mut transcript = ProofTranscript::new(protocol_name);
 
         let num_inputs = preprocessing.inputs.len();
         let num_vars = preprocessing.vars.len();
@@ -735,7 +704,6 @@ where
         };
         let var_poly = DensePolynomial::new(preprocessing.vars.clone());
 
-        // commitments.witness = PCS::commit(&var_poly, pcs_setup);
         let witness_commit = PCS::commit(&var_poly, pcs_setup);
         witness_commit.append_to_transcript(&mut transcript);
 
@@ -843,133 +811,15 @@ where
                 .evaluate(&inner_sumcheck_r[1..])
         };
 
-        // let eq_inner_sumcheck = DensePolynomial::new(EqPolynomial::evals(&inner_sumcheck_r[1..]));
-        // opening_accumulator.append(
-        //     &[&var_poly],
-        //     eq_inner_sumcheck,
-        //     inner_sumcheck_r[1..].to_vec(),
-        //     &[&eval_vars_at_ry],
-        //     &mut transcript,
-        // );
-
-        // let eq_rx = EqPolynomial::evals(&outer_sumcheck_r);
-        // let eq_ry = EqPolynomial::evals(&inner_sumcheck_r);
-
-        // preprocessing.rx_ry = Some([outer_sumcheck_r, inner_sumcheck_r].concat());
-
-        // polynomials.e_rx = polynomials
-        //     .rows
-        //     .clone()
-        //     .into_par_iter()
-        //     .map(|row| {
-        //         DensePolynomial::new(
-        //             row.Z
-        //                 .iter()
-        //                 .map(|entry| eq_rx[F::to_u64(entry).unwrap() as usize])
-        //                 .collect_vec(),
-        //         )
-        //     })
-        //     .collect();
-
-        // polynomials.e_ry = polynomials
-        //     .cols
-        //     .clone()
-        //     .into_par_iter()
-        //     .map(|col| {
-        //         DensePolynomial::new(
-        //             col.Z
-        //                 .iter()
-        //                 .map(|entry| eq_ry[F::to_u64(entry).unwrap() as usize])
-        //                 .collect_vec(),
-        //         )
-        //     })
-        //     .collect();
-
-        // polynomials.eq_rx = Some(DensePolynomial::new(eq_rx));
-        // polynomials.eq_ry = Some(DensePolynomial::new(eq_ry));
-
-        // commitments.e_rx = PCS::batch_commit_polys(&polynomials.e_rx, pcs_setup, BatchType::Big);
-        // commitments.e_ry = PCS::batch_commit_polys(&polynomials.e_ry, pcs_setup, BatchType::Big);
-
-        // //Appending commitments to the transcript
-        // for i in 0..3 {
-        //     commitments.e_rx[i].append_to_transcript(&mut transcript);
-        //     commitments.e_ry[i].append_to_transcript(&mut transcript);
-        // }
-
-        // //batching scalar for the spark sum check
-        // let batching_scalar = transcript.challenge_scalar_powers(3);
-        // println!("polynomials
-        //     .e_rx len is {:?}", polynomials
-        //     .e_rx[0].len());
-        // //Flattened vec of polynomials required for spark.
-        // let mut spark_polys = polynomials
-        //     .e_rx
-        //     .iter()
-        //     .chain(polynomials.e_ry.iter())
-        //     .chain(polynomials.vals.iter())
-        //     .cloned()
-        //     .collect_vec();
-
-        // let spark_func = |polys: &[F]| -> F {
-        //     (0..3).fold(F::zero(), |acc, idx| {
-        //         acc + (polys[idx] * polys[idx + 3] * polys[idx + 6])
-        //             .mul_01_optimized(batching_scalar[idx])
-        //     })
-        // };
-
-        // let (spark_sumcheck_proof, spark_sumcheck_r, spark_claims) =
-        //     SumcheckInstanceProof::prove_arbitrary(
-        //         &F::zero(), //passsing zero since it is not required.
-        //         polynomials.e_rx[0].len().log_2(),
-        //         &mut spark_polys,
-        //         spark_func,
-        //         3,
-        //         &mut transcript,
-        //     );
-
-        // transcript.append_scalars(&spark_claims);
-
-        // let spark_claim_refs: Vec<&F> = spark_claims.iter().map(|claim| claim).collect();
-        // let spark_eq = DensePolynomial::new(EqPolynomial::evals(&spark_sumcheck_r));
-
-        // opening_accumulator.append(
-        //     &polynomials
-        //         .e_rx
-        //         .iter()
-        //         .chain(polynomials.e_ry.iter())
-        //         .chain(polynomials.vals.iter())
-        //         .collect_vec(),
-        //     spark_eq,
-        //     spark_sumcheck_r,
-        //     &spark_claim_refs,
-        //     &mut transcript,
-        // );
-
-        // let memory_checking = Self::prove_memory_checking(
-        //     pcs_setup,
-        //     preprocessing,
-        //     &polynomials,
-        //     &JoltPolynomials::default(),
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // );
-
-        // let opening_proof = opening_accumulator.reduce_and_prove::<PCS>(pcs_setup, &mut transcript);
-
         SpartanProof {
             outer_sumcheck_proof,
             inner_sumcheck_proof,
-            // spark_sumcheck_proof,
             outer_sumcheck_claims: (
                 outer_sumcheck_claims[1],
                 outer_sumcheck_claims[2],
                 outer_sumcheck_claims[3],
             ),
             inner_sumcheck_claims: (Ar, Br, Cr, eval_vars_at_ry),
-            // spark_sumcheck_claims: array::from_fn(|i| spark_claims[i]),
-            // memory_checking,
-            // opening_proof,
             witness_commit,
             pcs_proof,
             pi_eval,
@@ -979,26 +829,13 @@ where
     pub fn verify(
         pcs_setup: &PCS::Setup,
         preprocessing: &SpartanPreprocessing<F>,
-        // commitments: &SpartanCommitments<PCS, ProofTranscript>,
         proof: &SpartanProof<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let num_vars = preprocessing.vars.len();
-        let mut transcript = ProofTranscript::new(b"Spartan transcript");
+        let protocol_name = Self::protocol_name();
+        let mut transcript = ProofTranscript::new(protocol_name);
 
         proof.witness_commit.append_to_transcript(&mut transcript);
-
-        // for idx in 0..3 {
-        //     commitments.rows[idx].append_to_transcript(&mut transcript);
-        //     commitments.cols[idx].append_to_transcript(&mut transcript);
-        //     commitments.vals[idx].append_to_transcript(&mut transcript);
-        //     commitments.read_cts_rows[idx].append_to_transcript(&mut transcript);
-        //     commitments.read_cts_cols[idx].append_to_transcript(&mut transcript);
-        //     commitments.final_cts_rows[idx].append_to_transcript(&mut transcript);
-        //     commitments.final_cts_cols[idx].append_to_transcript(&mut transcript);
-        // }
-        // input.append_to_transcript(b"input", transcript);
-        // let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
-        //     VerifierOpeningAccumulator::new();
 
         let (num_rounds_x, num_rounds_y) = (
             (preprocessing.inst.inst.get_num_cons()).log_2(),
@@ -1008,7 +845,6 @@ where
         let tau = transcript.challenge_vector(num_rounds_x);
 
         // verify the first sum-check instance
-
         let (claim_outer_final, r_x) = proof
             .outer_sumcheck_proof
             .verify(F::zero(), num_rounds_x, 3, &mut transcript)
@@ -1088,85 +924,6 @@ where
             &claim_w,
             &proof.witness_commit,
         )?;
-        // opening_accumulator.append(
-        //     &[&commitments.witness],
-        //     inner_sumcheck_r[1..].to_vec(),
-        //     &[&claim_w],
-        //     &mut transcript,
-        // );
-
-        // assert_eq!(
-        //     preprocessing.rx_ry.clone().unwrap(),
-        //     [r_x, inner_sumcheck_r].concat(),
-        // );
-
-        // for i in 0..3 {
-        //     commitments.e_rx[i].append_to_transcript(&mut transcript);
-        //     commitments.e_ry[i].append_to_transcript(&mut transcript);
-        // }
-
-        // let batching_scalar = transcript.challenge_scalar_powers(3);
-        // let spark_sumcheck_rounds =   preprocessing.inst.inst.get_matrices().iter() .map(|sparse_poly| sparse_poly.get_num_nz_entries())
-        // .max()
-        // .unwrap().log_2();
-
-        // let spark_claim = claim_A + batching_scalar[1] * claim_B + batching_scalar[2] * claim_C;
-        // let (claim_spark_final, spark_sumcheck_r) = proof
-        //     .spark_sumcheck_proof
-        //     .verify(
-        //         spark_claim,
-        //         spark_sumcheck_rounds,
-        //         3,
-        //         &mut transcript,
-        //     )
-        //     .map_err(|e| e)?;
-
-        // transcript.append_scalars(&proof.spark_sumcheck_claims);
-
-        // let expected_spark_claim = (0..3).fold(F::zero(), |acc, idx| {
-        //     acc + (proof.spark_sumcheck_claims[idx]
-        //         * proof.spark_sumcheck_claims[idx + 3]
-        //         * proof.spark_sumcheck_claims[idx + 6])
-        //         .mul_01_optimized(batching_scalar[idx])
-        // });
-
-        // if claim_spark_final != expected_spark_claim {
-        //     return Err(ProofVerifyError::SpartanError(
-        //         "Invalid Spark Sumcheck Claim".to_string(),
-        //     ));
-        // }
-
-        // let spark_commitment_refs: Vec<&<PCS as CommitmentScheme<ProofTranscript>>::Commitment> =
-        //     chain![
-        //         commitments.e_rx.iter().map(|reference| reference),
-        //         commitments.e_ry.iter().map(|reference| reference),
-        //         commitments.vals.iter().map(|reference| reference),
-        //     ]
-        //     .collect();
-
-        // let spark_claims_refs: Vec<&F> = proof
-        //     .spark_sumcheck_claims
-        //     .iter()
-        //     .map(|reference| reference)
-        //     .collect();
-        // opening_accumulator.append(
-        //     &spark_commitment_refs,
-        //     spark_sumcheck_r,
-        //     &spark_claims_refs,
-        //     &mut transcript,
-        // );
-        // Self::verify_memory_checking(
-        //     preprocessing,
-        //     pcs_setup,
-        //     proof.memory_checking,
-        //     &commitments,
-        //     &JoltCommitments::<PCS, ProofTranscript>::default(),
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
-
-        // Batch-verify all openings
-        // opening_accumulator.reduce_and_verify(pcs_setup, &proof.opening_proof, &mut transcript)?;
         Ok(())
     }
 
@@ -1183,756 +940,25 @@ where
 }
 #[cfg(test)]
 pub mod tests {
-    use std::io::Write;
-
     use super::*;
-    use crate::poly::commitment::hyperkzg::{HyperKZGCommitment, HyperKZGProof};
-    use crate::poly::commitment::hyrax::{HyraxCommitment, HyraxGenerators, HyraxOpeningProof};
-    use crate::poly::commitment::kzg::KZGVerifierKey;
-    use crate::poly::commitment::pedersen::PedersenGenerators;
-    use crate::poly::unipoly::UniPoly;
     use crate::{
-        jolt::vm::{
-            bytecode::BytecodeStuff,
-            instruction_lookups::InstructionLookupStuff,
-            read_write_memory::ReadWriteMemoryStuff,
-            rv32i_vm::{RV32ISubtables, C, M, RV32I},
-            timestamp_range_check::TimestampRangeCheckStuff,
-            JoltPreprocessing, JoltProof, JoltStuff,
-        },
-        r1cs::inputs::R1CSStuff,
+        poly::commitment::hyperkzg::HyperKZG, utils::poseidon_transcript::PoseidonTranscript,
     };
-    use crate::{
-        poly::commitment::{
-            hyperkzg::{HyperKZG, HyperKZGVerifierKey},
-            hyrax::HyraxScheme,
-        },
-        utils::poseidon_transcript::PoseidonTranscript,
-    };
-    use ark_ec::{AffineRepr, CurveGroup};
-    use ark_ff::{AdditiveGroup, PrimeField};
-    use serde::Serialize;
-    use serde_json::json;
     type Fr = ark_bn254::Fr;
     type Fq = ark_bn254::Fq;
     pub type ProofTranscript = PoseidonTranscript<Fr, Fq>;
     pub type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
 
-    // type Fr = ark_grumpkin::Fr;
-    // type Fq = ark_grumpkin::Fq;
-    // pub type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
-
-    pub trait Circomfmt {
-        fn format(&self) -> serde_json::Value;
-
-        fn format_non_native(&self) -> serde_json::Value {
-            self.format()
-        }
-
-        fn format_setup(&self, _size: usize) -> serde_json::Value {
-            unimplemented!("added for setup")
-        }
-    }
-
-    // TODO: Jolt has these constants too. Import from appropraite places.
-    const NUM_MEMORIES: usize = 54;
-    const NUM_INSTRUCTIONS: usize = 26;
-    const MEMORY_OPS_PER_INSTRUCTION: usize = 4;
-    static chunks_x_size: usize = 4;
-    static chunks_y_size: usize = 4;
-    const NUM_CIRCUIT_FLAGS: usize = 11;
-    static relevant_y_chunks_len: usize = 4;
-
-    pub fn convert_to_3_limbs(r: Fr) -> [Fq; 3] {
-        let mut limbs = [Fq::ZERO; 3];
-
-        let mask = BigUint::from((1u128 << 125) - 1);
-        limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
-
-        limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
-
-        limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
-
-        limbs
-    }
-
-    pub fn convert_fq_to_limbs(r: Fq) -> [Fq; 3] {
-        let mut limbs = [Fq::ZERO; 3];
-
-        let mask = BigUint::from((1u128 << 125) - 1);
-        limbs[0] = Fq::from(BigUint::from(r.into_bigint()) & mask.clone());
-
-        limbs[1] = Fq::from((BigUint::from(r.into_bigint()) >> 125) & mask.clone());
-
-        limbs[2] = Fq::from((BigUint::from(r.into_bigint()) >> 250) & mask.clone());
-
-        limbs
-    }
-
-    impl Circomfmt for Fr {
-        fn format(&self) -> serde_json::Value {
-            let limbs = convert_to_3_limbs(*self);
-            json!({
-                "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
-            })
-        }
-    }
-
-    // TODO: Import this from where ever it is defined in Jolt.
-    pub struct JoltPreprocessingNew {
-        pub v_init_final_hash: Fr,
-        pub bytecode_words_hash: Fr,
-    }
-
-    impl JoltPreprocessingNew {
-        fn new(witness: Vec<Fr>) -> JoltPreprocessingNew {
-            let bytecode_stuff_size = 6 * 9;
-            let read_write_memory_stuff_size = 6 * 13;
-            let instruction_lookups_stuff_size = 6 * (C + 3 * NUM_MEMORIES + NUM_INSTRUCTIONS + 1);
-            let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
-            let aux_variable_stuff_size = 6 * (8 + relevant_y_chunks_len);
-            let r1cs_stuff_size =
-                6 * (chunks_x_size + chunks_y_size + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size;
-            let jolt_stuff_size = bytecode_stuff_size
-                + read_write_memory_stuff_size
-                + instruction_lookups_stuff_size
-                + timestamp_range_check_stuff_size
-                + r1cs_stuff_size;
-
-            let pub_in_start = 1 + jolt_stuff_size + 15;
-
-            JoltPreprocessingNew {
-                v_init_final_hash: witness[pub_in_start],
-                bytecode_words_hash: witness[pub_in_start + 1],
-            }
-        }
-    }
-
-    pub struct BytecodeCombiners {
-        pub rho: [Fr; 2],
-    }
-
-    pub struct InstructionLookupCombiners {
-        pub rho: [Fr; 3],
-    }
-
-    pub struct ReadWriteOutputTimestampCombiners {
-        pub rho: [Fr; 4],
-    }
-
-    pub struct R1CSCombiners {
-        pub rho: Fr,
-    }
-
-    pub struct OpeningCombiners {
-        pub bytecode_combiners: BytecodeCombiners,
-        pub instruction_lookup_combiners: InstructionLookupCombiners,
-        pub read_write_output_timestamp_combiners: ReadWriteOutputTimestampCombiners,
-        pub r1cs_combiners: R1CSCombiners,
-        pub coefficient: Fr,
-    }
-
-    pub struct HyperKzgVerifierAdvice {
-        pub r: Fr,
-        pub d_0: Fr,
-        pub v: Fr,
-        pub q_power: Fr,
-    }
-
-    pub struct LinkingStuff1<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
-        pub commitments: JoltStuff<T>,
-        pub opening_combiners: OpeningCombiners,
-        pub hyper_kzg_verifier_advice: HyperKzgVerifierAdvice,
-    }
-
-    impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> LinkingStuff1<T> {
-        fn new(commitments: JoltStuff<T>, witness: Vec<Fr>) -> LinkingStuff1<T> {
-            let bytecode_stuff_size = 6 * 9;
-            let read_write_memory_stuff_size = 6 * 13;
-            let instruction_lookups_stuff_size = 6 * (C + 3 * NUM_MEMORIES + NUM_INSTRUCTIONS + 1);
-            let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
-            let aux_variable_stuff_size = 6 * (8 + relevant_y_chunks_len);
-            let r1cs_stuff_size =
-                6 * (chunks_x_size + chunks_y_size + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size;
-            let jolt_stuff_size = bytecode_stuff_size
-                + read_write_memory_stuff_size
-                + instruction_lookups_stuff_size
-                + timestamp_range_check_stuff_size
-                + r1cs_stuff_size;
-
-            let mut idx = 1 + jolt_stuff_size;
-            let bytecode_combiners = BytecodeCombiners {
-                rho: [witness[idx], witness[idx + 1]],
-            };
-
-            idx += 2;
-            let instruction_lookup_combiners = InstructionLookupCombiners {
-                rho: [witness[idx], witness[idx + 1], witness[idx + 2]],
-            };
-
-            idx += 3;
-            let read_write_output_timestamp_combiners = ReadWriteOutputTimestampCombiners {
-                rho: [
-                    witness[idx],
-                    witness[idx + 1],
-                    witness[idx + 2],
-                    witness[idx + 3],
-                ],
-            };
-
-            idx += 4;
-            let r1cs_combiners = R1CSCombiners { rho: witness[idx] };
-
-            idx += 1;
-
-            let opening_combiners = OpeningCombiners {
-                bytecode_combiners,
-                instruction_lookup_combiners,
-                read_write_output_timestamp_combiners,
-                r1cs_combiners,
-                coefficient: witness[idx],
-            };
-
-            idx += 1;
-            let hyper_kzg_verifier_advice = HyperKzgVerifierAdvice {
-                r: witness[idx],
-                d_0: witness[idx + 1],
-                v: witness[idx + 2],
-                q_power: witness[idx + 3],
-            };
-
-            LinkingStuff1 {
-                commitments,
-                opening_combiners,
-                hyper_kzg_verifier_advice,
-            }
-        }
-    }
-
-    // TODO: Change bytecode_hash to bytecode_words_hash in circom.
-    impl Circomfmt for JoltPreprocessingNew {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "v_init_final_hash": self.v_init_final_hash.format(),
-                "bytecode_hash": self.bytecode_words_hash.format(),
-
-            })
-        }
-    }
-
-    impl Circomfmt for BytecodeCombiners {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "rho": [self.rho[0].format(), self.rho[1].format()]
-            })
-        }
-    }
-
-    impl Circomfmt for InstructionLookupCombiners {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "rho": [self.rho[0].format(), self.rho[1].format(), self.rho[2].format()]
-            })
-        }
-    }
-
-    impl Circomfmt for ReadWriteOutputTimestampCombiners {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "rho": [self.rho[0].format(), self.rho[1].format(), self.rho[2].format(), self.rho[3].format()]
-            })
-        }
-    }
-
-    impl Circomfmt for R1CSCombiners {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "rho": self.rho.format()
-            })
-        }
-    }
-
-    impl Circomfmt for OpeningCombiners {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "bytecodecombiners": self.bytecode_combiners.format(),
-                "instructionlookupcombiners": self.instruction_lookup_combiners.format(),
-                "readwriteoutputtimestampcombiners": self.read_write_output_timestamp_combiners.format(),
-                "spartancombiners": self.r1cs_combiners.format(),
-                "coefficient": self.coefficient.format()
-            })
-        }
-    }
-
-    impl Circomfmt for HyperKzgVerifierAdvice {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "r": self.r.format(),
-                "d_0": self.d_0.format(),
-                "v": self.v.format(),
-                "q_power": self.q_power.format()
-            })
-        }
-    }
-
-    impl Circomfmt for LinkingStuff1<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "commitments": self.commitments.format_non_native(),
-                "openingcombiners": self.opening_combiners.format(),
-                "hyperkzgverifieradvice": self.hyper_kzg_verifier_advice.format()
-            })
-        }
-    }
-
-    impl Circomfmt for HyperKZGVerifierKey<ark_bn254::Bn254> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "kzg_vk": self.kzg_vk.format()
-            })
-        }
-    }
-    impl Circomfmt for KZGVerifierKey<ark_bn254::Bn254> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "g1": self.g1.format(),
-                "g2":{ "x": {"x": self.g2.x.c0.to_string(),
-                            "y": self.g2.x.c1.to_string()
-                        },
-
-                        "y": {"x": self.g2.y.c0.to_string(),
-                             "y": self.g2.y.c1.to_string()
-                        },
-                    },
-                "beta_g2": {"x": {"x": self.beta_g2.x.c0.to_string(),
-                                  "y": self.beta_g2.x.c1.to_string()},
-
-                            "y": {"x": self.beta_g2.y.c0.to_string(),
-                                  "y": self.beta_g2.y.c1.to_string()}
-                            }
-            })
-        }
-    }
-    impl Circomfmt for ark_bn254::G1Affine {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "x": self.x.to_string(),
-                "y": self.y.to_string()
-            })
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            let x_nn = convert_fq_to_limbs(self.x);
-            let y_nn = convert_fq_to_limbs(self.y);
-            json!({
-                "x": {
-                    "limbs": [x_nn[0].to_string(), x_nn[1].to_string(), x_nn[2].to_string()]
-                },
-                "y": {
-                    "limbs": [y_nn[0].to_string(), y_nn[1].to_string(), y_nn[2].to_string()]
-                }
-            })
-        }
-    }
-
-    impl Circomfmt for SpartanProof<Fr, PCS, ProofTranscript> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
-                "inner_sumcheck_proof": self.inner_sumcheck_proof.format(),
-                "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format(),self.outer_sumcheck_claims.1.format(),self.outer_sumcheck_claims.2.format()],
-                "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format(),self.inner_sumcheck_claims.1.format(),self.inner_sumcheck_claims.2.format(),self.inner_sumcheck_claims.3.format()],
-                "pi_eval": self.pi_eval.format(),
-                "joint_opening_proof": self.pcs_proof.format()
-            })
-        }
-    }
-    impl Circomfmt for HyperKZGProof<ark_bn254::Bn254> {
-        fn format(&self) -> serde_json::Value {
-            let com: Vec<serde_json::Value> = self.com.iter().map(|c| c.format()).collect();
-            let w: Vec<serde_json::Value> = self.w.iter().map(|c| c.format()).collect();
-            let v: Vec<Vec<serde_json::Value>> = self
-                .v
-                .iter()
-                .map(|v_inner| v_inner.iter().map(|elem| elem.format()).collect())
-                .collect();
-            json!({
-                "com": com,
-                "w": w,
-                "v": v,
-            })
-        }
-    }
-
-    impl Circomfmt for SumcheckInstanceProof<Fr, ProofTranscript> {
-        fn format(&self) -> serde_json::Value {
-            let uni_polys: Vec<serde_json::Value> =
-                self.uni_polys.iter().map(|poly| poly.format()).collect();
-            json!({
-                "uni_polys": uni_polys,
-            })
-        }
-    }
-    impl Circomfmt for UniPoly<Fr> {
-        fn format(&self) -> serde_json::Value {
-            let coeffs: Vec<serde_json::Value> =
-                self.coeffs.iter().map(|coeff| coeff.format()).collect();
-            json!({
-                "coeffs": coeffs,
-            })
-        }
-    }
-    impl Circomfmt for HyperKZGCommitment<ark_bn254::Bn254> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "commitment": self.0.format(),
-            })
-        }
-        fn format_non_native(&self) -> serde_json::Value {
-            json!({
-                "commitment": self.0.format_non_native(),
-            })
-        }
-    }
-
-    impl Circomfmt for BytecodeStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            let v_read_write: Vec<serde_json::Value> =
-                self.v_read_write.iter().map(|v| v.format()).collect();
-            json!({
-                "a_read_write": self.a_read_write.format(),
-                "v_read_write": v_read_write,
-                "t_read": self.t_read.format(),
-                "t_final": self.t_final.format()
-            })
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            let v_read_write: Vec<serde_json::Value> = self
-                .v_read_write
-                .iter()
-                .map(|v| v.format_non_native())
-                .collect();
-            json!({
-                "a_read_write": self.a_read_write.format_non_native(),
-                "v_read_write": v_read_write,
-                "t_read": self.t_read.format_non_native(),
-                "t_final": self.t_final.format_non_native()
-            })
-        }
-    }
-
-    impl Circomfmt for ReadWriteMemoryStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "a_ram": self.a_ram.format(),
-                    "v_read_rd": self.v_read_rd.format(),
-                    "v_read_rs1": self.v_read_rs1.format(),
-                    "v_read_rs2": self.v_read_rs2.format(),
-                    "v_read_ram": self.v_read_ram.format(),
-                    "v_write_rd": self.v_write_rd.format(),
-                    "v_write_ram": self.v_write_ram.format(),
-                    "v_final": self.v_final.format(),
-                    "t_read_rd": self.t_read_rd.format(),
-                    "t_read_rs1": self.t_read_rs1.format(),
-                    "t_read_rs2": self.t_read_rs2.format(),
-                    "t_read_ram": self.t_read_ram.format(),
-                    "t_final": self.t_final.format()
-            })
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            json!({
-                "a_ram": self.a_ram.format_non_native(),
-                    "v_read_rd": self.v_read_rd.format_non_native(),
-                    "v_read_rs1": self.v_read_rs1.format_non_native(),
-                    "v_read_rs2": self.v_read_rs2.format_non_native(),
-                    "v_read_ram": self.v_read_ram.format_non_native(),
-                    "v_write_rd": self.v_write_rd.format_non_native(),
-                    "v_write_ram": self.v_write_ram.format_non_native(),
-                    "v_final": self.v_final.format_non_native(),
-                    "t_read_rd": self.t_read_rd.format_non_native(),
-                    "t_read_rs1": self.t_read_rs1.format_non_native(),
-                    "t_read_rs2": self.t_read_rs2.format_non_native(),
-                    "t_read_ram": self.t_read_ram.format_non_native(),
-                    "t_final": self.t_final.format_non_native()
-            })
-        }
-    }
-
-    impl Circomfmt for InstructionLookupStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            let dim: Vec<serde_json::Value> = self.dim.iter().map(|com| com.format()).collect();
-            let read_cts: Vec<serde_json::Value> =
-                self.read_cts.iter().map(|com| com.format()).collect();
-            let final_cts: Vec<serde_json::Value> =
-                self.final_cts.iter().map(|com| com.format()).collect();
-            let E_polys: Vec<serde_json::Value> =
-                self.E_polys.iter().map(|com| com.format()).collect();
-            let instruction_flags: Vec<serde_json::Value> = self
-                .instruction_flags
-                .iter()
-                .map(|com| com.format())
-                .collect();
-            json!({
-                "dim": dim,
-                "read_cts": read_cts,
-                "final_cts": final_cts,
-                "E_polys": E_polys,
-                "instruction_flags": instruction_flags,
-                "lookup_outputs": self.lookup_outputs.format()
-            })
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            let dim: Vec<serde_json::Value> =
-                self.dim.iter().map(|com| com.format_non_native()).collect();
-            let read_cts: Vec<serde_json::Value> = self
-                .read_cts
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let final_cts: Vec<serde_json::Value> = self
-                .final_cts
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let E_polys: Vec<serde_json::Value> = self
-                .E_polys
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let instruction_flags: Vec<serde_json::Value> = self
-                .instruction_flags
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            json!({
-                "dim": dim,
-                "read_cts": read_cts,
-                "final_cts": final_cts,
-                "E_polys": E_polys,
-                "instruction_flags": instruction_flags,
-                "lookup_outputs": self.lookup_outputs.format_non_native()
-            })
-        }
-    }
-    impl Circomfmt for TimestampRangeCheckStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            unimplemented!("Use format_embeded.");
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            let read_cts_read_timestamp: Vec<serde_json::Value> = self
-                .read_cts_read_timestamp
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let read_cts_global_minus_read: Vec<serde_json::Value> = self
-                .read_cts_global_minus_read
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let final_cts_read_timestamp: Vec<serde_json::Value> = self
-                .final_cts_read_timestamp
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let final_cts_global_minus_read: Vec<serde_json::Value> = self
-                .final_cts_global_minus_read
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            json!({
-                 "read_cts_read_timestamp": read_cts_read_timestamp,
-                    "read_cts_global_minus_read":read_cts_global_minus_read,
-                    "final_cts_read_timestamp": final_cts_read_timestamp,
-                    "final_cts_global_minus_read": final_cts_global_minus_read
-            })
-        }
-    }
-
-    impl Circomfmt for R1CSStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            unimplemented!("Use format_embeded.");
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            let chunks_x: Vec<serde_json::Value> = self
-                .chunks_x
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let chunks_y: Vec<serde_json::Value> = self
-                .chunks_y
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            let circuit_flags: Vec<serde_json::Value> = self
-                .circuit_flags
-                .iter()
-                .map(|com| com.format_non_native())
-                .collect();
-            json!({
-                "chunks_x": chunks_x,
-                "chunks_y": chunks_y,
-                "circuit_flags": circuit_flags
-            })
-        }
-    }
-
-    impl Circomfmt for JoltStuff<HyperKZGCommitment<ark_bn254::Bn254>> {
-        fn format(&self) -> serde_json::Value {
-            unimplemented!("Use format_embeded.");
-        }
-
-        fn format_non_native(&self) -> serde_json::Value {
-            json!({
-                "bytecode": self.bytecode.format_non_native(),
-                "read_write_memory": self.read_write_memory.format_non_native(),
-                "instruction_lookups": self.instruction_lookups.format_non_native(),
-                "timestamp_range_check": self.timestamp_range_check.format_non_native(),
-                "r1cs": self.r1cs.format_non_native()
-            })
-        }
-    }
-
-    // impl Circomfmt for HyraxCommitment<ark_grumpkin::Projective> {
-    //     fn format(&self) -> serde_json::Value {
-    //         let commitments: Vec<serde_json::Value> = self
-    //             .row_commitments
-    //             .iter()
-    //             .map(|commit| commit.into_affine().into_group().format())
-    //             .collect();
-    //         json!({
-    //             "row_commitments": commitments,
-    //         })
-    //     }
-    // }
-    // impl Circomfmt for HyraxOpeningProof<ark_grumpkin::Projective, ProofTranscript> {
-    //     fn format(&self) -> serde_json::Value {
-    //         let vector_matrix_product: Vec<serde_json::Value> = self
-    //             .vector_matrix_product
-    //             .iter()
-    //             .map(|elem| elem.format())
-    //             .collect();
-    //         json!({
-    //             "tau": vector_matrix_product,
-    //         })
-    //     }
-    // }
-
-    impl Circomfmt for ark_grumpkin::Projective {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "x": self.x.to_string(),
-                "y": self.y.to_string(),
-                "z": self.z.to_string()
-            })
-        }
-    }
-    impl Circomfmt for PoseidonTranscript<Fr, Fq> {
-        fn format(&self) -> serde_json::Value {
-            json!({
-                "state": self.state.state[1].to_string(),
-                "nRounds": self.n_rounds.to_string(),
-            })
-        }
-    }
-    impl Circomfmt for PedersenGenerators<ark_grumpkin::Projective> {
-        fn format(&self) -> serde_json::Value {
-            unimplemented!("Use format_setup")
-        }
-        fn format_setup(&self, size: usize) -> serde_json::Value {
-            let generators: Vec<serde_json::Value> = self
-                .generators
-                .iter()
-                .take(size)
-                .map(|gen| gen.into_group().format())
-                .collect();
-            json!({
-                "gens": generators
-            })
-        }
-    }
-    // impl Circomfmt for HyraxGenerators<ark_grumpkin::Projective> {
-    //     fn format(&self) -> serde_json::Value {
-    //         json!({
-    //             "gens": self.gens.format()
-
-    //         })
-    //     }
-    // }
-
     #[test]
     fn spartan() {
-        let constraint_path = Some("src/spartan/verifier_constraints.json");
-        let witness_path = Some("src/spartan/witness.json");
-
         let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
         let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
             preprocessing.inputs.len() + preprocessing.vars.len(),
         );
         let pcs_setup = PCS::setup(&commitment_shapes);
         let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &mut preprocessing);
+
         SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof)
             .unwrap();
-
-        let pi = preprocessing.inputs;
-        let formatted_pub_inp: Vec<serde_json::Value> =
-            pi.iter().map(|elem| elem.format()).collect();
-
-        // let input_json = json!({
-        //     "pub_inp": formatted_pub_inp,
-        //     "vk": pcs_setup.1.format(),
-        //     "proof": proof.format(),
-        //     "w_commitment": proof.witness_commit.format(),
-        //     "transcript" : transcipt_init.format()
-        // });
-        // let input_json = json!({
-        //     "pub_inp": formatted_pub_inp,
-        //     "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
-        //     "proof": proof.format(),
-        //     "w_commitment": proof.witness_commit.format(),
-        //     "transcript" : transcipt_init.format()
-        // });
-
-        // TODO: Read witness.json file and put the first half into witness.
-
-        let file =
-            File::open(witness_path.expect("Path doesn't exist")).expect("Witness file not found");
-        let reader = std::io::BufReader::new(file);
-        let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
-        let mut z = Vec::new();
-        for value in witness {
-            let val: BigUint = value.parse().unwrap();
-            let mut bytes = val.to_bytes_le();
-            bytes.resize(32, 0u8);
-            let val = Fr::from_bytes(&bytes);
-            z.push(val);
-        }
-        let jolt_pi = JoltPreprocessingNew::new(z);
-
-        // TODO: Get jolt_stuff.
-        // let linking_stuff = LinkingStuff1::new(jolt_stuff, z);
-
-        // let input_json = json!({
-        //     "jolt_pi": jolt_pi.format(),
-        //     "linking_stuff": linking_stuff.format(),
-        //     "vk": pcs_setup.1.format(),
-        //     "proof": proof.format(),
-        //     "w_commitment": proof.witness_commit.format(),
-        //     "transcript" : transcipt_init.format()
-        // });
-
-        // // Convert the JSON to a pretty-printed string
-        // let pretty_json =
-        //     serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
-
-        // let input_file_path = "input.json";
-        // let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
-        // input_file
-        //     .write_all(pretty_json.as_bytes())
-        //     .expect("Failed to write to input.json");
     }
 }

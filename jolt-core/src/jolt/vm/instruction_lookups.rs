@@ -22,10 +22,8 @@ use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        unipoly::{CompressedUniPoly, UniPoly},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, transcript::AppendToTranscript},
@@ -692,7 +690,7 @@ where
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript> {
-        let protocol_name = Self::protocol_name();
+        // let protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         let trace_length = polynomials.instruction_lookups.dim[0].len();
@@ -777,7 +775,7 @@ where
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let protocol_name = Self::protocol_name();
+        // let protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         let r_eq = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);

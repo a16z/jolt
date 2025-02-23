@@ -9,7 +9,6 @@ use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
-use crate::utils::poseidon_transcript::PoseidonTranscript;
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
@@ -227,8 +226,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-pub type ProofTranscript = PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fr>;
-// pub type ProofTranscript = KeccakTranscript;
+pub type ProofTranscript = KeccakTranscript;
 pub type PCS = HyperKZG<Bn254, ProofTranscript>;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltHyperKZGProof {
@@ -241,7 +239,7 @@ impl Serializable for JoltHyperKZGProof {}
 // ==================== TEST ====================
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use ark_bn254::{Bn254, Fr, G1Projective};
 
     use std::collections::HashSet;
@@ -356,11 +354,7 @@ pub mod tests {
 
     #[test]
     fn fib_e2e_zeromorph() {
-        fib_e2e::<
-            Fr,
-            Zeromorph<Bn254, PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fr>>,
-            PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fr>,
-        >();
+        fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
     }
 
     #[test]

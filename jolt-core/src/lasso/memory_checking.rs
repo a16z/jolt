@@ -301,7 +301,7 @@ where
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
-        let protocol_name = Self::protocol_name();
+        // let protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         let (read_write_leaves, init_final_leaves) =
@@ -550,7 +550,7 @@ where
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
-        let protocol_name = Self::protocol_name();
+        // let protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);

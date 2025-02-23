@@ -4,7 +4,7 @@ use ark_std::{test_rng, UniformRand};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use jolt_core::{
     field::JoltField,
-    msm::{CurveGroupConfig, Icicle, VariableBaseMSM},
+    msm::{Icicle, VariableBaseMSM},
     poly::dense_mlpoly::DensePolynomial,
 };
 use std::hint::black_box;
