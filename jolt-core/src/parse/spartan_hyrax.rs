@@ -61,10 +61,14 @@ impl PostponedEval {
 }
 impl Parse for PostponedEval {
     fn format(&self) -> serde_json::Value {
-        let point: Vec<serde_json::Value> = self.point.iter().map(|elem| elem.format()).collect();
+        let point: Vec<serde_json::Value> = self
+            .point
+            .iter()
+            .map(|elem| elem.format_non_native())
+            .collect();
         json!({
             "point": point,
-            "y": self.eval.format()
+            "y": self.eval.format_non_native()
         })
     }
 }
@@ -137,7 +141,12 @@ pub(crate) fn spartan_hyrax(
     // TODO: Read witness.json file and put the first half into witness.
 
     let to_eval = PostponedEval::new(z, POSTPONED_POINT_LEN);
-
+    let public_io = json!( {
+        "jolt_pi": jolt_pi,
+        "linking_stuff": linking_stuff,
+        "vk1": jolt_vk,
+        "vk2": hyperkzg_vk,
+    });
     let input_json = json!({
         "public_io": {
                 "jolt_pi": jolt_pi,
