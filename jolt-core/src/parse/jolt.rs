@@ -38,7 +38,7 @@ pub(crate) type Fq = ark_bn254::Fq;
 pub(crate) type ProofTranscript = PoseidonTranscript<Fr, Fr>;
 pub(crate) type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
 
-pub fn convert_to_3_limbs<F: PrimeField, K: PrimeField>(r: F) -> [K; 3] {
+pub fn to_limbs<F: PrimeField, K: PrimeField>(r: F) -> [K; 3] {
     let mut limbs = [K::ZERO; 3];
     let r_bits = r.into_bigint().to_bits_le();
     limbs[0] = K::from_le_bytes_mod_order(
@@ -72,7 +72,7 @@ pub fn convert_to_3_limbs<F: PrimeField, K: PrimeField>(r: F) -> [K; 3] {
 
 impl Parse for Fr {
     fn format_non_native(&self) -> serde_json::Value {
-        let limbs = convert_to_3_limbs::<Fr, Fq>(*self);
+        let limbs = to_limbs::<Fr, Fq>(*self);
         json!({
             "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
         })

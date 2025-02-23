@@ -1,6 +1,6 @@
 use super::Parse;
 use crate::{
-    parse::jolt::{convert_to_3_limbs, Fq, Fr},
+    parse::jolt::{to_limbs, Fq, Fr},
     poly::commitment::{
         hyperkzg::{HyperKZGCommitment, HyperKZGProof, HyperKZGVerifierKey},
         hyrax::{HyraxCommitment, HyraxOpeningProof},
@@ -22,8 +22,8 @@ impl Parse for ark_bn254::G1Affine {
     }
 
     fn format_non_native(&self) -> serde_json::Value {
-        let x_limbs = convert_to_3_limbs::<Fq, Fr>(self.x);
-        let y_limbs = convert_to_3_limbs::<Fq, Fr>(self.y);
+        let x_limbs = to_limbs::<Fq, Fr>(self.x);
+        let y_limbs = to_limbs::<Fq, Fr>(self.y);
         json!({
             "x":{"limbs": [x_limbs[0].to_string(), x_limbs[1].to_string(), x_limbs[2].to_string()]},
             "y":{"limbs": [y_limbs[0].to_string(), y_limbs[1].to_string(), y_limbs[2].to_string()]}

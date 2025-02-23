@@ -103,7 +103,7 @@ pub struct LinkingStuff1 {
 impl LinkingStuff1 {
     pub fn new(
         commitments: JoltStuff<HyperKZGCommitment<Bn254>>,
-        witness: Vec<Fr>,
+        witness: &Vec<Fr>,
     ) -> LinkingStuff1 {
         let bytecode_stuff_size = 6 * 9;
         let read_write_memory_stuff_size = 6 * 13;
@@ -189,6 +189,7 @@ pub(crate) fn spartan_hkzg(
     jolt_pi: serde_json::Value,
     jolt2_input: serde_json::Value,
     jolt_vk: serde_json::Value,
+    z: &Vec<Fr>,
 ) {
     type Fr = ark_bn254::Fr;
     type ProofTranscript = PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fq>;
@@ -230,9 +231,8 @@ pub(crate) fn spartan_hkzg(
     //TODO(Ashish):- Add code to generate jolt1_constraints
 
     let constraint_path = Some("src/spartan/jolt1_constraints.json");
-    let witness_path = Some("src/spartan/witness.json");
 
-    let preprocessing = SpartanPreprocessing::<Fr>::preprocess(constraint_path, witness_path, 9);
+    let preprocessing = SpartanPreprocessing::<Fr>::preprocess(constraint_path, Some(z), 9);
     let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
         preprocessing.inputs.len() + preprocessing.vars.len(),
     );

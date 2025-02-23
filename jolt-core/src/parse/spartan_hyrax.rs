@@ -1,6 +1,6 @@
 use super::*;
 use crate::field::JoltField;
-use crate::parse::jolt::convert_to_3_limbs;
+use crate::parse::jolt::to_limbs;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
@@ -18,7 +18,7 @@ type Fq = ark_grumpkin::Fq;
 type ProofTranscript = PoseidonTranscript<Fr, ark_grumpkin::Fq>;
 type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
-pub fn combine_limbs(limbs: Vec<Fr>) -> Fq {
+pub fn from_limbs(limbs: Vec<Fr>) -> Fq {
     assert_eq!(limbs.len(), 3);
     let bits = limbs[0]
         .into_bigint()
@@ -34,7 +34,7 @@ pub fn combine_limbs(limbs: Vec<Fr>) -> Fq {
 
 impl Parse for Fr {
     fn format(&self) -> serde_json::Value {
-        let limbs = convert_to_3_limbs::<Fr, Fq>(*self);
+        let limbs = to_limbs::<Fr, Fq>(*self);
         json!({
             "limbs": [limbs[0].to_string(), limbs[1].to_string(), limbs[2].to_string()]
         })
@@ -50,9 +50,9 @@ impl PostponedEval {
     pub fn new(witness: Vec<Fr>, postponed_eval_size: usize) -> Self {
         let point = (0..postponed_eval_size)
             .into_iter()
-            .map(|i| combine_limbs(witness[1 + 3 * i..1 + 3 * i + 3].to_vec()))
+            .map(|i| from_limbs(witness[1 + 3 * i..1 + 3 * i + 3].to_vec()))
             .collect();
-        let eval = combine_limbs(
+        let eval = from_limbs(
             witness[1 + 3 * postponed_eval_size..1 + 3 * postponed_eval_size + 3].to_vec(),
         );
 
@@ -109,8 +109,21 @@ pub(crate) fn spartan_hyrax(
 ) {
     let constraint_path = Some("src/spartan/verifier_constraints.json");
     let witness_path = Some("src/spartan/witness.json");
+    let file =
+        File::open(witness_path.expect("Path doesn't exist")).expect("Witness file not found");
+    let reader = std::io::BufReader::new(file);
+    let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
 
-    let preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
+    let mut z = Vec::new();
+    for value in witness {
+        let val: BigUint = value.parse().unwrap();
+        let mut bytes = val.to_bytes_le();
+        bytes.resize(32, 0u8);
+        let val = Fr::from_bytes(&bytes);
+        z.push(val);
+    }
+
+    let preprocessing = SpartanPreprocessing::<Fr>::preprocess(constraint_path, Some(&z), 9);
     let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
         preprocessing.inputs.len() + preprocessing.vars.len(),
     );
@@ -122,19 +135,6 @@ pub(crate) fn spartan_hyrax(
     SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
 
     // TODO: Read witness.json file and put the first half into witness.
-
-    let file =
-        File::open(witness_path.expect("Path doesn't exist")).expect("Witness file not found");
-    let reader = std::io::BufReader::new(file);
-    let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
-    let mut z = Vec::new();
-    for value in witness {
-        let val: BigUint = value.parse().unwrap();
-        let mut bytes = val.to_bytes_le();
-        bytes.resize(32, 0u8);
-        let val = Fr::from_bytes(&bytes);
-        z.push(val);
-    }
 
     let to_eval = PostponedEval::new(z, POSTPONED_POINT_LEN);
 

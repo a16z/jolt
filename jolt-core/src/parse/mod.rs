@@ -114,7 +114,7 @@ mod test {
             let val = Fr::from_bytes(&bytes);
             z.push(val);
         }
-        let linking_stuff = LinkingStuff1::new(jolt_commitments, z);
+        let linking_stuff = LinkingStuff1::new(jolt_commitments, &z);
         let jolt_vk = jolt_preprocessing.generators.1.format();
         let jolt2_input = json!(
         {
@@ -137,7 +137,7 @@ mod test {
                 "bytecode_words_hash": jolt_preprocessing.read_write_memory.hash.format_non_native()
         });
 
-        spartan_hkzg(linking_stuff, jolt_pi, jolt2_input, jolt_vk);
+        spartan_hkzg(linking_stuff, jolt_pi, jolt2_input, jolt_vk, &z);
     }
 
     fn fib_e2e<F, PCS, ProofTranscript>() -> (

@@ -115,25 +115,13 @@ impl<F: JoltField> SpartanPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "Spartan::preprocess")]
     pub fn preprocess(
         constraints_file: Option<&str>,
-        witness_file: Option<&str>,
+        z: Option<&Vec<F>>,
         num_inputs: usize,
     ) -> Self {
         match constraints_file {
             Some(constraints_file) => {
                 println!("Preprocess started");
-                let file = File::open(witness_file.expect("Path doesn't exist"))
-                    .expect("Witness file not found");
-                let reader = std::io::BufReader::new(file);
-                let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
-                let mut z = Vec::new();
-                for value in witness {
-                    let val: BigUint = value.parse().unwrap();
-                    let mut bytes = val.to_bytes_le();
-                    bytes.resize(32, 0u8);
-                    let val = F::from_bytes(&bytes);
-                    z.push(val);
-                }
-                println!("Witness reading done");
+                let z = z.unwrap();
 
                 let num_vars = z.len() - num_inputs - 1;
                 assert!(num_inputs < num_vars);
@@ -212,12 +200,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                 let (inst, vars, inputs) =
                     Instance::<F>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
-                SpartanPreprocessing {
-                    inst,
-                    vars,
-                    inputs,
-                    // rx_ry: None,
-                }
+                SpartanPreprocessing { inst, vars, inputs }
             }
         }
     }
