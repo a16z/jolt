@@ -106,7 +106,7 @@ pub struct BytecodeRow {
     address: usize,
     /// Packed instruction/circuit flags, used for r1cs
     pub bitflags: u64,
-    /// Index of the destination register for this instruction (0 if register is unused).
+    /// Index of the desti-------nation register for this instruction (0 if register is unused).
     rd: u8,
     /// Index of the first source register for this instruction (0 if register is unused).
     rs1: u8,

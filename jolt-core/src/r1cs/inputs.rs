@@ -130,6 +130,9 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
     }
 }
 
+/// Raw representations of Jolt's R1CS polynomials as `Vec<u32>` instead of `MultilinearPolynomial<F>`.
+pub type R1CSPolyRaw = R1CSStuff<Vec<u32>>;
+
 /// Witness polynomials specific to Jolt's R1CS constraints (i.e. not used
 /// for any offline memory-checking instances).
 ///
@@ -138,6 +141,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> f
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type R1CSPolynomials<F: JoltField> = R1CSStuff<MultilinearPolynomial<F>>;
+
 /// Openings specific to Jolt's R1CS constraints (i.e. not used
 /// for any offline memory-checking instances).
 ///
@@ -146,6 +150,7 @@ pub type R1CSPolynomials<F: JoltField> = R1CSStuff<MultilinearPolynomial<F>>;
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
+
 /// Commitments specific to Jolt's R1CS constraints (i.e. not used
 /// for any offline memory-checking instances).
 ///
