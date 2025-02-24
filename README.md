@@ -105,6 +105,10 @@ Where `--name` can be `sha2`, `sha3`, `sha2-chain`, or `fibonacci`. The correspo
 
 The above command will output a JSON file, e.g. `trace-1712455107389520.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 
+## CI Benchmarking
+
+We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/) to track performance changes over time in terms of prover runtime and peak memory usage.
+
 ## Acknowledgements
 
 *This repository started as a fork of https://github.com/arkworks-rs/spartan. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty.*
