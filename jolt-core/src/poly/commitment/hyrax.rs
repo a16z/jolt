@@ -292,9 +292,9 @@ where
         poly: &DensePolynomial<G::ScalarField>,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         ratio: usize,
-        transcript: &mut ProofTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> HyraxOpeningProof<G, ProofTranscript> {
-        let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         // assert vectors are of the right size
@@ -317,13 +317,13 @@ where
     pub fn verify(
         &self,
         pedersen_generators: &PedersenGenerators<G>,
-        transcript: &mut ProofTranscript,
+        _transcript: &mut ProofTranscript,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         opening: &G::ScalarField,         // evaluation \widetilde{Z}(r)
         commitment: &HyraxCommitment<G>,
         ratio: usize,
     ) -> Result<(), ProofVerifyError> {
-        let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         // compute L and R
@@ -398,7 +398,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle, ProofTranscript: Tra
         batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         // append the claimed evaluations to transcript
@@ -487,7 +487,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle, ProofTranscript: Tra
             )
         });
 
-        let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         // append the claimed evaluations to transcript

@@ -10,7 +10,10 @@ use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::marker::PhantomData;
+use std::path::Path;
+use std::{fs::File, io::Write};
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
@@ -462,6 +465,20 @@ where
             ProofTranscript,
         >::setup(&r1cs_builder, padded_trace_length);
 
+        let binding = env::current_dir().unwrap().join("src/parse/requirements");
+        let file_name = format!("{}", "args.txt");
+        let file_path = Path::new(&binding).join(&file_name);
+        let mut file = File::create(file_path).unwrap();
+        write!(
+            file,
+            "{}, {}, {}, {}",
+            spartan_key.num_steps,
+            spartan_key.num_cons_total,
+            spartan_key.uniform_r1cs.num_vars,
+            spartan_key.uniform_r1cs.num_rows,
+        )
+        .unwrap();
+
         let r1cs_polynomials = R1CSPolynomials::new::<
             C,
             M,
@@ -603,6 +620,7 @@ where
             &r1cs_builder,
             padded_trace_length,
         );
+
         // transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {

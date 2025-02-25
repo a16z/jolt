@@ -114,7 +114,7 @@ pub struct SpartanPreprocessing<F: JoltField> {
 impl<F: JoltField> SpartanPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "Spartan::preprocess")]
     pub fn preprocess(
-        constraints_file: Option<&str>,
+        constraints_file: Option<&String>,
         z: Option<&Vec<F>>,
         num_inputs: usize,
     ) -> Self {
@@ -194,7 +194,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                 }
             }
             None => {
-                let num_vars = (2_usize).pow(5 as u32);
+                let num_vars = (2_usize).pow(5_u32);
                 let num_cons = num_vars;
                 let num_inputs = 10;
                 let (inst, vars, inputs) =
@@ -911,10 +911,10 @@ where
     }
 
     /// Computes the shape of all commitments.
-    pub fn commitment_shapes(max_trace_length: usize) -> Vec<CommitShape> {
-        let max_trace_length = max_trace_length.next_power_of_two();
+    pub fn commitment_shapes(max_witness_size: usize) -> Vec<CommitShape> {
+        let max_witness_size = max_witness_size.next_power_of_two();
 
-        vec![CommitShape::new(max_trace_length, BatchType::Big)]
+        vec![CommitShape::new(max_witness_size, BatchType::Big)]
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -936,7 +936,7 @@ pub mod tests {
     fn spartan() {
         let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
         let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
-            preprocessing.inputs.len() + preprocessing.vars.len(),
+            2 * preprocessing.vars.len(),
         );
         let pcs_setup = PCS::setup(&commitment_shapes);
         let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &mut preprocessing);

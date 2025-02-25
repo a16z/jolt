@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::sparse_mlpoly::SparseMatPolynomial;
 use crate::{
     field::JoltField, poly::dense_mlpoly::DensePolynomial, spartan::sparse_mlpoly::SparseMatEntry,

@@ -272,7 +272,7 @@ where
         eval: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<ZeromorphProof<P>, ProofVerifyError> {
-        let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         if pp.commit_pp.g1_powers().len() < poly.Z.len() {
@@ -440,7 +440,7 @@ where
         proof: &ZeromorphProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         let q_comms: Vec<P::G1> = proof.q_k_com.iter().map(|c| c.into_group()).collect();

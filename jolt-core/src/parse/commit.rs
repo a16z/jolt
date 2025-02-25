@@ -48,6 +48,11 @@ impl Parse for HyperKZGVerifierKey<ark_bn254::Bn254> {
             "kzg_vk": self.kzg_vk.format()
         })
     }
+    fn format_non_native(&self) -> serde_json::Value {
+        json!({
+            "kzg_vk": self.kzg_vk.format_non_native()
+        })
+    }
 }
 
 impl Parse for KZGVerifierKey<ark_bn254::Bn254> {
@@ -67,6 +72,25 @@ impl Parse for KZGVerifierKey<ark_bn254::Bn254> {
 
                         "y": {"x": self.beta_g2.y.c0.to_string(),
                               "y": self.beta_g2.y.c1.to_string()}
+                        }
+        })
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        json!({
+            "g1": self.g1.format_non_native(),
+            "g2":{ "x": {"x": self.g2.x.c0.format(),
+                        "y": self.g2.x.c1.format()
+                    },
+
+                    "y": {"x": self.g2.y.c0.format(),
+                         "y": self.g2.y.c1.format()
+                    },
+                },
+            "beta_g2": {"x": {"x": self.beta_g2.x.c0.format(),
+                              "y": self.beta_g2.x.c1.format()},
+
+                        "y": {"x": self.beta_g2.y.c0.format(),
+                              "y": self.beta_g2.y.c1.format()}
                         }
         })
     }

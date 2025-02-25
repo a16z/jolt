@@ -12,7 +12,7 @@ use super::{
     commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
-    unipoly::{CompressedUniPoly, UniPoly},
+    unipoly::UniPoly,
 };
 use crate::{
     field::{JoltField, OptimizedMul},

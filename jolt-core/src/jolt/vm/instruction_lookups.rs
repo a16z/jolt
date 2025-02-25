@@ -596,7 +596,7 @@ pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     memory_to_subtable_index: Vec<usize>,
     memory_to_dimension_index: Vec<usize>,
     materialized_subtables: Vec<Vec<F>>,
-    num_memories: usize,
+    pub num_memories: usize,
 }
 
 impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {

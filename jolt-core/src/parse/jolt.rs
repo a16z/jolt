@@ -36,7 +36,7 @@ use tracer::JoltDevice;
 pub(crate) type Fr = ark_bn254::Fr;
 pub(crate) type Fq = ark_bn254::Fq;
 pub(crate) type ProofTranscript = PoseidonTranscript<Fr, Fr>;
-pub(crate) type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
+pub(crate) type Pcs = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
 
 pub fn to_limbs<F: PrimeField, K: PrimeField>(r: F) -> [K; 3] {
     let mut limbs = [K::ZERO; 3];
@@ -79,18 +79,9 @@ impl Parse for Fr {
     }
 }
 
-impl Parse for ProofTranscript {
-    fn format(&self) -> serde_json::Value {
-        json!({
-            "state": self.state.state[1].to_string(),
-            "nRounds": self.n_rounds.to_string(),
-        })
-    }
-}
-
 //Parse Jolt
 impl Parse
-    for JoltProof<{ C }, { M }, JoltR1CSInputs, Fr, PCS, RV32I, RV32ISubtables<Fr>, ProofTranscript>
+    for JoltProof<{ C }, { M }, JoltR1CSInputs, Fr, Pcs, RV32I, RV32ISubtables<Fr>, ProofTranscript>
 {
     fn format(&self) -> serde_json::Value {
         json!({
@@ -141,9 +132,9 @@ impl Parse for BytecodeProof<Fr, HyperKZG<Bn254, ProofTranscript>, ProofTranscri
         })
     }
 }
-impl Parse for ReadWriteMemoryProof<Fr, PCS, ProofTranscript> {
+impl Parse for ReadWriteMemoryProof<Fr, Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
-        let mut openings = Vec::new();
+        let mut openings = vec![];
         openings.push(self.memory_checking_proof.openings.a_ram.to_string());
         openings.push(self.memory_checking_proof.openings.v_read_rd.to_string());
         openings.push(self.memory_checking_proof.openings.v_read_rs1.to_string());
@@ -191,7 +182,7 @@ impl Parse for ReadWriteMemoryProof<Fr, PCS, ProofTranscript> {
     }
 }
 impl Parse
-    for InstructionLookupsProof<{ C }, { M }, Fr, PCS, RV32I, RV32ISubtables<Fr>, ProofTranscript>
+    for InstructionLookupsProof<{ C }, { M }, Fr, Pcs, RV32I, RV32ISubtables<Fr>, ProofTranscript>
 {
     fn format(&self) -> serde_json::Value {
         let openings: Vec<String> = self
@@ -227,7 +218,7 @@ impl Parse for UniformSpartanProof<{ C }, JoltR1CSInputs, Fr, ProofTranscript> {
         })
     }
 }
-impl Parse for ReducedOpeningProof<Fr, PCS, ProofTranscript> {
+impl Parse for ReducedOpeningProof<Fr, Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         json!({
             "sumcheck_proof":self.sumcheck_proof.format(),
@@ -294,7 +285,7 @@ impl Parse for MultisetHashes<Fr> {
         })
     }
 }
-impl Parse for TimestampValidityProof<Fr, PCS, ProofTranscript> {
+impl Parse for TimestampValidityProof<Fr, Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         json!({
             "multiset_hashes": self.multiset_hashes.format(),
@@ -305,7 +296,7 @@ impl Parse for TimestampValidityProof<Fr, PCS, ProofTranscript> {
     }
 }
 
-impl Parse for OutputSumcheckProof<Fr, PCS, ProofTranscript> {
+impl Parse for OutputSumcheckProof<Fr, Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         json!({
             "sumcheck_proof": self.sumcheck_proof.format(),
@@ -335,7 +326,7 @@ impl Parse for JoltStuff<HyperKZGCommitment<Bn254>> {
     }
 }
 
-impl Parse for BatchedGrandProductProof<PCS, ProofTranscript> {
+impl Parse for BatchedGrandProductProof<Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         let num_gkr_layers = self.gkr_layers.len();
 
@@ -712,7 +703,7 @@ impl Parse for AuxVariableStuff<HyperKZGCommitment<Bn254>> {
     }
 }
 
-impl Parse for JoltPreprocessing<{ C }, Fr, PCS, ProofTranscript> {
+impl Parse for JoltPreprocessing<{ C }, Fr, Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         let v_init_final: Vec<Vec<String>> = self
             .bytecode

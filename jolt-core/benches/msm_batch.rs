@@ -1,5 +1,4 @@
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
-use ark_ff::BigInteger;
 use ark_std::rand::seq::SliceRandom;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;

@@ -1,10 +1,9 @@
-use super::{
-    jolt::Fr, Parse, CHUNKS_X_SIZE, CHUNKS_Y_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_CIRCUIT_FLAGS,
-    NUM_INSTRUCTIONS, NUM_MEMORIES, RELEVANT_Y_CHUNKS_LEN,
-};
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
+use super::{jolt::Fr, Parse};
 use crate::{
-    jolt::vm::{rv32i_vm::C, JoltStuff},
-    parse::spartan_hyrax::spartan_hyrax,
+    jolt::vm::JoltStuff,
+    parse::{generate_r1cs, get_path, spartan2::spartan_hyrax, write_json},
     poly::commitment::{
         commitment_scheme::CommitmentScheme,
         hyperkzg::{HyperKZG, HyperKZGCommitment},
@@ -15,7 +14,6 @@ use crate::{
 };
 use ark_bn254::Bn254;
 use serde_json::json;
-use std::{fs::File, io::Write};
 
 pub struct InstructionLookupCombiners {
     pub rho: [Fr; 3],
@@ -28,6 +26,7 @@ impl Parse for InstructionLookupCombiners {
         })
     }
 }
+
 pub struct ReadWriteOutputTimestampCombiners {
     pub rho: [Fr; 4],
 }
@@ -38,6 +37,7 @@ impl Parse for ReadWriteOutputTimestampCombiners {
         })
     }
 }
+
 pub struct R1CSCombiners {
     pub rho: Fr,
 }
@@ -48,6 +48,7 @@ impl Parse for R1CSCombiners {
         })
     }
 }
+
 pub struct BytecodeCombiners {
     pub rho: [Fr; 2],
 }
@@ -58,6 +59,7 @@ impl Parse for BytecodeCombiners {
         })
     }
 }
+
 pub struct OpeningCombiners {
     pub bytecode_combiners: BytecodeCombiners,
     pub instruction_lookup_combiners: InstructionLookupCombiners,
@@ -69,14 +71,15 @@ pub struct OpeningCombiners {
 impl Parse for OpeningCombiners {
     fn format_non_native(&self) -> serde_json::Value {
         json!({
-            "bytecodecombiners": self.bytecode_combiners.format_non_native(),
-            "instructionlookupcombiners": self.instruction_lookup_combiners.format_non_native(),
-            "readwriteoutputtimestampcombiners": self.read_write_output_timestamp_combiners.format_non_native(),
-            "spartancombiners": self.r1cs_combiners.format_non_native(),
+            "bytecode_combiners": self.bytecode_combiners.format_non_native(),
+            "instruction_lookup_combiners": self.instruction_lookup_combiners.format_non_native(),
+            "read_write_output_timestamp_combiners": self.read_write_output_timestamp_combiners.format_non_native(),
+            "spartan_combiners": self.r1cs_combiners.format_non_native(),
             "coefficient": self.coefficient.format_non_native()
         })
     }
 }
+
 pub struct HyperKzgVerifierAdvice {
     pub r: Fr,
     pub d_0: Fr,
@@ -103,21 +106,9 @@ pub struct LinkingStuff1 {
 impl LinkingStuff1 {
     pub fn new(
         commitments: JoltStuff<HyperKZGCommitment<Bn254>>,
+        jolt_stuff_size: usize,
         witness: &Vec<Fr>,
     ) -> LinkingStuff1 {
-        let bytecode_stuff_size = 6 * 9;
-        let read_write_memory_stuff_size = 6 * 13;
-        let instruction_lookups_stuff_size = 6 * (C + 3 * NUM_MEMORIES + NUM_INSTRUCTIONS + 1);
-        let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
-        let aux_variable_stuff_size = 6 * (8 + RELEVANT_Y_CHUNKS_LEN);
-        let r1cs_stuff_size =
-            6 * (CHUNKS_X_SIZE + CHUNKS_Y_SIZE + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size;
-        let jolt_stuff_size = bytecode_stuff_size
-            + read_write_memory_stuff_size
-            + instruction_lookups_stuff_size
-            + timestamp_range_check_stuff_size
-            + r1cs_stuff_size;
-
         let mut idx = 1 + jolt_stuff_size;
         let bytecode_combiners = BytecodeCombiners {
             rho: [witness[idx], witness[idx + 1]],
@@ -171,39 +162,45 @@ impl Parse for LinkingStuff1 {
     fn format(&self) -> serde_json::Value {
         json!({
             "commitments": self.commitments.format(),
-            "openingcombiners": self.opening_combiners.format_non_native(),
-            "hyperkzgverifieradvice": self.hyper_kzg_verifier_advice.format_non_native()
+            "opening_combiners": self.opening_combiners.format_non_native(),
+            "hyperkzg_verifier_advice": self.hyper_kzg_verifier_advice.format_non_native()
         })
     }
     fn format_non_native(&self) -> serde_json::Value {
         json!({
             "commitments": self.commitments.format_non_native(),
-            "openingcombiners": self.opening_combiners.format_non_native(),
-            "hyperkzgverifieradvice": self.hyper_kzg_verifier_advice.format_non_native()
+            "opening_combiners": self.opening_combiners.format_non_native(),
+            "hyperkzg_verifier_advice": self.hyper_kzg_verifier_advice.format_non_native()
         })
     }
 }
 
 pub(crate) fn spartan_hkzg(
-    linking_stuff: serde_json::Value,
     jolt_pi: serde_json::Value,
-    jolt2_input: serde_json::Value,
-    jolt_vk: serde_json::Value,
+    linking_stuff_1: serde_json::Value,
+    linking_stuff_2: serde_json::Value,
+    vk_jolt_2: serde_json::Value,
+    vk_jolt_2_nn: serde_json::Value,
+    hyperkzg_proof: serde_json::Value,
+    pub_io_len: usize,
+    jolt_stuff_size: usize,
+    jolt_openining_point_len: usize,
     z: &Vec<Fr>,
+    output_dir: &str,
 ) {
     type Fr = ark_bn254::Fr;
     type ProofTranscript = PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fq>;
-    type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
+    type Pcs = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
 
     //Parse Spartan
-    impl Parse for SpartanProof<Fr, PCS, ProofTranscript> {
+    impl Parse for SpartanProof<Fr, Pcs, ProofTranscript> {
         fn format(&self) -> serde_json::Value {
             json!({
                 "outer_sumcheck_proof": self.outer_sumcheck_proof.format_non_native(),
                 "inner_sumcheck_proof": self.inner_sumcheck_proof.format_non_native(),
                 "outer_sumcheck_claims": [self.outer_sumcheck_claims.0.format_non_native(),self.outer_sumcheck_claims.1.format_non_native(),self.outer_sumcheck_claims.2.format_non_native()],
                 "inner_sumcheck_claims": [self.inner_sumcheck_claims.0.format_non_native(),self.inner_sumcheck_claims.1.format_non_native(),self.inner_sumcheck_claims.2.format_non_native(),self.inner_sumcheck_claims.3.format_non_native()],
-                "pi_eval": self.pi_eval.format_non_native(),
+                "pub_io_eval": self.pi_eval.format_non_native(),
                 "joint_opening_proof": self.pcs_proof.format()
             })
         }
@@ -227,48 +224,74 @@ pub(crate) fn spartan_hkzg(
             })
         }
     }
+    let constraint_path = format!("{}/jolt1_constraints.json", output_dir).to_string();
+    let constraint_path = Some(&constraint_path);
 
-    //TODO(Ashish):- Add code to generate jolt1_constraints
+    let preprocessing =
+        SpartanPreprocessing::<Fr>::preprocess(constraint_path, Some(z), pub_io_len - 1);
 
-    let constraint_path = Some("src/spartan/jolt1_constraints.json");
+    let commitment_shapes =
+        SpartanProof::<Fr, Pcs, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
 
-    let preprocessing = SpartanPreprocessing::<Fr>::preprocess(constraint_path, Some(z), 9);
-    let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
-        preprocessing.inputs.len() + preprocessing.vars.len(),
-    );
-    let pcs_setup = PCS::setup(&commitment_shapes);
-    let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &preprocessing);
-    SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
-    let hyperkzg_vk = pcs_setup.1.format();
+    let pcs_setup = Pcs::setup(&commitment_shapes);
 
-    let spartan1_input = json!({
-        "jolt_pi": jolt_pi,
-        "linking_stuff": linking_stuff,
-        "vk": hyperkzg_vk,
-        "proof": proof.format(),
-        "w_commitment": proof.witness_commit.format(),
-    });
+    let proof = SpartanProof::<Fr, Pcs, ProofTranscript>::prove(&pcs_setup, &preprocessing);
 
-    let input_file_path = "spartan1_input.json";
-    let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
-    let pretty_json =
-        serde_json::to_string_pretty(&spartan1_input).expect("Failed to serialize JSON");
-    input_file
-        .write_all(pretty_json.as_bytes())
-        .expect("Failed to write to input.json");
+    SpartanProof::<Fr, Pcs, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
 
     let combine_input = json!({
-        "jolt2": jolt2_input,
-        "spartan1": spartan1_input
+        "jolt_pi": jolt_pi,
+        "linking_stuff_1": linking_stuff_1,
+        "vk_spartan_1": pcs_setup.1.format(),
+        "spartan_proof": proof.format(),
+        "w_commitment": proof.witness_commit.format(),
+        "linking_stuff_2": linking_stuff_2,
+        "vk_jolt_2": vk_jolt_2,
+        "hyperkzg_proof": hyperkzg_proof
     });
 
-    let input_file_path = "combine_input.json";
-    let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
-    let pretty_json =
-        serde_json::to_string_pretty(&combine_input).expect("Failed to serialize JSON");
-    input_file
-        .write_all(pretty_json.as_bytes())
-        .expect("Failed to write to input.json");
+    let combine_r1cs_package = "combined_r1cs";
 
-    spartan_hyrax(linking_stuff, jolt_pi, hyperkzg_vk, jolt_vk);
+    write_json(&combine_input, output_dir, combine_r1cs_package);
+
+    let inner_num_rounds = proof.inner_sumcheck_proof.uni_polys.len();
+
+    // Length of public IO of Combined R1CS including the 1 at index 0.
+    // 1 + postponed eval size (point size = (inner num rounds - 1) * 3, eval size  = 3) +
+    // linking stuff (nn) size (jolt stuff size + 15 * 3) + jolt pi size (2 * 3)
+    // + 2 hyper kzg verifier keys (2 + 4 + 4) + postponed eval size ().
+
+    let pub_io_len_combine_r1cs =
+        1 + (inner_num_rounds - 1) * 3 + 3 + jolt_stuff_size + 15 * 3 + 2 * 3 + 10 + 10;
+    let postponed_point_len = inner_num_rounds - 1;
+
+    let circom_template = "Combine";
+    let combined_r1cs_circom_file_path = get_path(combine_r1cs_package);
+    let combined_r1cs_params = [
+        proof.outer_sumcheck_proof.uni_polys.len(),
+        proof.inner_sumcheck_proof.uni_polys.len(),
+        proof.pcs_proof.com.len() + 1,
+        jolt_openining_point_len,
+    ]
+    .to_vec();
+
+    let prime = "grumpkin";
+
+    generate_r1cs(
+        combined_r1cs_circom_file_path,
+        output_dir,
+        circom_template,
+        combined_r1cs_params,
+        prime,
+    );
+
+    spartan_hyrax(
+        linking_stuff_1,
+        jolt_pi,
+        pcs_setup.1.format_non_native(),
+        vk_jolt_2_nn,
+        pub_io_len_combine_r1cs,
+        postponed_point_len,
+        output_dir,
+    );
 }

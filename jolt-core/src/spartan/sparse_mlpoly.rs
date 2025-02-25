@@ -1,14 +1,12 @@
-#![allow(clippy::type_complexity)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::needless_range_loop)]
-use std::collections::HashMap;
-
+#![allow(dead_code)]
+#[allow(clippy::type_complexity)]
 use crate::{
     field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseMatEntry<F: JoltField> {
@@ -200,7 +198,7 @@ pub fn compute_ts<F: JoltField>(
         read_ts_vec,
         final_ts
             .iter()
-            .map(|fts| DensePolynomial::from_usize(&fts))
+            .map(|fts| DensePolynomial::from_usize(fts))
             .collect(),
         ops_addr_vec,
     )

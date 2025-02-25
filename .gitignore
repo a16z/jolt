@@ -22,3 +22,7 @@ temp_file
 # ide
 .idea
 .vscode
+
+*.json
+*.wtns
+*_js

@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use super::transcript::Transcript;
 use crate::field::JoltField;
 use ark_crypto_primitives::sponge::{
@@ -10,6 +8,7 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
 use ark_serialize::CanonicalSerialize;
 use num_bigint::BigUint;
+use std::marker::PhantomData;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Clone)]
@@ -137,7 +136,6 @@ impl<J: PrimeField, K: PrimeField> PoseidonTranscript<J, K> {
     }
 }
 
-//TODO:- Convert label into scalar element
 impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
     fn new(label: &'static [u8]) -> Self {
         assert!(label.len() < 31);
@@ -180,7 +178,7 @@ impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
 
     //TODO:-
     fn append_message(&mut self, _msg: &'static [u8]) {
-        panic!("In circom code we don't append messages")
+        panic!("In circom we don't append messages")
         // assert!(msg.len() < 32);
         // let scalar = <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&msg);
         // let n_rounds = self.n_rounds;
@@ -190,7 +188,6 @@ impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
         // self.update_state(new_state);
     }
 
-    //TODO:- Convert bytes into scalar
     fn append_bytes(&mut self, bytes: &[u8]) {
         let n_rounds = self.n_rounds;
         self.absorb(&n_rounds);
@@ -393,7 +390,7 @@ impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
 
 fn three_limb_repr(bytes: &Vec<u8>) -> Vec<ark_bn254::Fr> {
     let mut limbs = [ark_bn254::Fr::ZERO; 3];
-    let elem = <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(&bytes);
+    let elem = <ark_bn254::Fq as ark_ff::PrimeField>::from_le_bytes_mod_order(bytes);
 
     let mask = BigUint::from((1u128 << 125) - 1);
     limbs[0] = <ark_bn254::Fr as ark_ff::PrimeField>::from_le_bytes_mod_order(

@@ -395,7 +395,7 @@ where
         let mut transcript = ProofTranscript::new(b"Surge transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
             ProverOpeningAccumulator::new();
-        // let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
 
         let num_lookups = ops.len().next_power_of_two();
@@ -506,7 +506,7 @@ where
             opening_accumulator.compare_to(debug_info.opening_accumulator, &generators);
         }
 
-        // let protocol_name = Self::protocol_name();
+        let _protocol_name = Self::protocol_name();
         // transcript.append_message(protocol_name);
         let instruction = Instruction::default();
 

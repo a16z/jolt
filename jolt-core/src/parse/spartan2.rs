@@ -1,22 +1,19 @@
 use super::*;
-use crate::field::JoltField;
 use crate::parse::jolt::to_limbs;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::utils::math::Math;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
 use ark_ff::{BigInt, BigInteger, PrimeField};
 use itertools::Itertools;
-use num_bigint::BigUint;
 use serde_json::json;
-use std::fs::File;
-use std::io::Write;
 
 type Fr = ark_grumpkin::Fr;
 type Fq = ark_grumpkin::Fq;
 type ProofTranscript = PoseidonTranscript<Fr, ark_grumpkin::Fq>;
-type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
+type Pcs = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
 pub fn from_limbs(limbs: Vec<Fr>) -> Fq {
     assert_eq!(limbs.len(), 3);
@@ -49,7 +46,6 @@ struct PostponedEval {
 impl PostponedEval {
     pub fn new(witness: Vec<Fr>, postponed_eval_size: usize) -> Self {
         let point = (0..postponed_eval_size)
-            .into_iter()
             .map(|i| from_limbs(witness[1 + 3 * i..1 + 3 * i + 3].to_vec()))
             .collect();
         let eval = from_limbs(
@@ -68,12 +64,12 @@ impl Parse for PostponedEval {
             .collect();
         json!({
             "point": point,
-            "y": self.eval.format_non_native()
+            "eval": self.eval.format_non_native()
         })
     }
 }
 
-impl Parse for SpartanProof<Fr, PCS, ProofTranscript> {
+impl Parse for SpartanProof<Fr, Pcs, ProofTranscript> {
     fn format(&self) -> serde_json::Value {
         json!({
             "outer_sumcheck_proof": self.outer_sumcheck_proof.format(),
@@ -108,51 +104,38 @@ impl Parse for UniPoly<Fr> {
 pub(crate) fn spartan_hyrax(
     linking_stuff: serde_json::Value,
     jolt_pi: serde_json::Value,
-    hyperkzg_vk: serde_json::Value,
-    jolt_vk: serde_json::Value,
+    vk_spartan_1: serde_json::Value,
+    vk_jolt_2: serde_json::Value,
+    pub_io_len: usize,
+    postponed_point_len: usize,
+    output_dir: &str,
 ) {
-    let constraint_path = Some("src/spartan/verifier_constraints.json");
-    let witness_path = Some("src/spartan/witness.json");
-    let file =
-        File::open(witness_path.expect("Path doesn't exist")).expect("Witness file not found");
-    let reader = std::io::BufReader::new(file);
-    let witness: Vec<String> = serde_json::from_reader(reader).unwrap();
+    let witness_file_path = format!("{}/combined_r1cs_witness.json", output_dir).to_string();
 
-    let mut z = Vec::new();
-    for value in witness {
-        let val: BigUint = value.parse().unwrap();
-        let mut bytes = val.to_bytes_le();
-        bytes.resize(32, 0u8);
-        let val = Fr::from_bytes(&bytes);
-        z.push(val);
-    }
+    let z = read_witness::<Fr>(&witness_file_path);
 
-    let preprocessing = SpartanPreprocessing::<Fr>::preprocess(constraint_path, Some(&z), 9);
-    let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
-        preprocessing.inputs.len() + preprocessing.vars.len(),
-    );
+    let constraint_path = format!("{}/combined_r1cs_constraints.json", output_dir).to_string();
 
-    let pcs_setup = PCS::setup(&commitment_shapes);
-    let proof: SpartanProof<Fr, PCS, ProofTranscript> =
-        SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &preprocessing);
+    let preprocessing =
+        SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
 
-    SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
+    let commitment_shapes =
+        SpartanProof::<Fr, Pcs, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
 
-    // TODO: Read witness.json file and put the first half into witness.
+    let pcs_setup = Pcs::setup(&commitment_shapes);
+    let proof: SpartanProof<Fr, Pcs, ProofTranscript> =
+        SpartanProof::<Fr, Pcs, ProofTranscript>::prove(&pcs_setup, &preprocessing);
 
-    let to_eval = PostponedEval::new(z, POSTPONED_POINT_LEN);
-    let public_io = json!( {
-        "jolt_pi": jolt_pi,
-        "linking_stuff": linking_stuff,
-        "vk1": jolt_vk,
-        "vk2": hyperkzg_vk,
-    });
-    let input_json = json!({
-        "public_io": {
+    SpartanProof::<Fr, Pcs, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
+
+    let to_eval = PostponedEval::new(z, postponed_point_len);
+
+    let spartan_hyrax_input = json!({
+        "pub_io": {
                 "jolt_pi": jolt_pi,
                 "linking_stuff": linking_stuff,
-                "vk1": jolt_vk,
-                "vk2": hyperkzg_vk,
+                "vk_spartan_1": vk_spartan_1,
+                "vk_jolt_2": vk_jolt_2,
             },
         "to_eval": to_eval.format(),
         "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
@@ -160,12 +143,35 @@ pub(crate) fn spartan_hyrax(
         "w_commitment": proof.witness_commit.format(),
     });
 
-    // Convert the JSON to a pretty-printed string
-    let pretty_json = serde_json::to_string_pretty(&input_json).expect("Failed to serialize JSON");
+    let spartan_hyrax_package = "spartan_hyrax";
+    write_json(&spartan_hyrax_input, output_dir, spartan_hyrax_package);
 
-    let input_file_path = "input.json";
-    let mut input_file = File::create(input_file_path).expect("Failed to create input.json");
-    input_file
-        .write_all(pretty_json.as_bytes())
-        .expect("Failed to write to input.json");
+    let circom_template = "VerifySpartan";
+    let spartan_hyrax_circom_file_path = get_path(spartan_hyrax_package);
+    let spartan_hyrax_args = [
+        proof.outer_sumcheck_proof.uni_polys.len(),
+        proof.inner_sumcheck_proof.uni_polys.len(),
+        proof.pcs_proof.vector_matrix_product.len().log_2() + 1,
+        postponed_point_len,
+    ]
+    .to_vec();
+
+    let prime = "bn128";
+    generate_r1cs(
+        spartan_hyrax_circom_file_path,
+        output_dir,
+        circom_template,
+        spartan_hyrax_args,
+        prime,
+    );
+
+    let witness_file_path =
+        format!("{}/{}_witness.json", output_dir, spartan_hyrax_package).to_string();
+
+    let z = read_witness::<Fr>(&witness_file_path);
+
+    let constraint_path =
+        format!("{}/{}_constraints.json", output_dir, spartan_hyrax_package).to_string();
+
+    let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
 }
