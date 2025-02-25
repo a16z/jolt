@@ -198,7 +198,7 @@ where
     };
 
     let vs = {
-        let v_numer = squares_of_x[num_vars] - P::ScalarField::one();
+        let v_number = squares_of_x[num_vars] - P::ScalarField::one();
         let mut v_denoms = squares_of_x
             .iter()
             .map(|squares_of_x| *squares_of_x - P::ScalarField::one())
@@ -206,7 +206,7 @@ where
         batch_inversion(&mut v_denoms);
         v_denoms
             .iter()
-            .map(|v_denom| v_numer * *v_denom)
+            .map(|v_denom| v_number * *v_denom)
             .collect::<Vec<_>>()
     };
 
@@ -517,7 +517,7 @@ mod test {
     use ark_std::{test_rng, UniformRand};
     use rand_core::SeedableRng;
 
-    // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficent formula
+    // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficient formula
     fn phi<P: Pairing>(challenge: &P::ScalarField, subscript: usize) -> P::ScalarField {
         let len = (1 << subscript) as u64;
         (0..len).fold(P::ScalarField::zero(), |mut acc, i| {

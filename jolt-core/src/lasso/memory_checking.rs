@@ -69,7 +69,7 @@ where
 }
 
 /// This type, used within a `StructuredPolynomialData` struct, indicates that the
-/// field has a corresponding opening but no corrresponding polynomial or commitment ––
+/// field has a corresponding opening but no corresponding polynomial or commitment ––
 /// the prover doesn't need to compute a witness polynomial or commitment because
 /// the verifier can compute the opening on its own.
 pub type VerifierComputedOpening<T> = Option<T>;

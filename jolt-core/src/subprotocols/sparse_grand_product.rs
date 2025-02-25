@@ -38,11 +38,11 @@ struct BatchedGrandProductToggleLayer<F: JoltField> {
     flag_values: Vec<Vec<F>>,
     /// The Reed-Solomon fingerprints for each circuit in the batch.
     fingerprints: Vec<Vec<F>>,
-    /// Once the sparse flag/fingerprint vectors cannnot be bound further
+    /// Once the sparse flag/fingerprint vectors cannot be bound further
     /// (i.e. binding would require processing values in different vectors),
     /// we switch to using `coalesced_flags` to represent the flag values.
     coalesced_flags: Option<Vec<F>>,
-    /// Once the sparse flag/fingerprint vectors cannnot be bound further
+    /// Once the sparse flag/fingerprint vectors cannot be bound further
     /// (i.e. binding would require processing values in different vectors),
     /// we switch to using `coalesced_fingerprints` to represent the fingerprint values.
     coalesced_fingerprints: Option<Vec<F>>,
@@ -127,7 +127,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
     /// Computes the grand product layer output by this one.
     /// Since this is a toggle layer, most of the output values are 1s, so
-    /// the return type is a SparseInterleavedPolyomial
+    /// the return type is a SparseInterleavedPolynomial
     ///   o      o     o      o    <-  output layer
     ///  / \    / \   / \    / \
     /// 🏴  o  🏳️ o  🏳️ o  🏴  o  <- toggle layer
