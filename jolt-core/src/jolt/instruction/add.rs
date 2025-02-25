@@ -45,23 +45,33 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
+    fn to_lookup_index(&self) -> u64 {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => self.0 + self.1,
+            32 => self.0 + self.1,
+            // 64 => (self.0 as u128) + (self.1 as u128),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
     fn lookup_entry(&self) -> u64 {
-        if WORD_SIZE == 32 {
-            (self.0 as u32).overflowing_add(self.1 as u32).0.into()
-        } else if WORD_SIZE == 64 {
-            self.0.overflowing_add(self.1).0
-        } else {
-            panic!("ADD is only implemented for 32-bit or 64-bit word sizes")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (self.0 as u8).overflowing_add(self.1 as u8).0.into(),
+            32 => (self.0 as u32).overflowing_add(self.1 as u32).0.into(),
+            64 => self.0.overflowing_add(self.1).0,
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }

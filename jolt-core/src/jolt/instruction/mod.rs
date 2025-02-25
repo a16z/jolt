@@ -15,6 +15,31 @@ use std::fmt::Debug;
 
 #[enum_dispatch]
 pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
+    // k = x || y
+    fn to_lookup_index(&self) -> u64 {
+        todo!();
+    }
+
+    // \tilde{t}_\ell(y)
+    fn decomposed_values(&self) -> Vec<u64> {
+        todo!();
+    }
+
+    // m_\ell(r_j, j, b_j)
+    fn multiplicative_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+        todo!()
+    }
+
+    // a_\ell(r_j, j, b_j)
+    fn additive_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+        todo!()
+    }
+
+    #[cfg(test)]
+    fn materialize(&self) -> Vec<u64> {
+        todo!()
+    }
+
     fn operands(&self) -> (u64, u64);
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the

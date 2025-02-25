@@ -43,23 +43,58 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
         multiply_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
+    #[cfg(test)]
+    fn materialize(&self) -> Vec<u64> {
+        assert_eq!(WORD_SIZE, 8);
+        (0..1 << 16).map(|i| i >> 8).collect()
+    }
+
+    fn to_lookup_index(&self) -> u64 {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => self.0 * self.1,
+            32 => self.0 * self.1,
+            // 64 => (self.0 as u128) + (self.1 as u128),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
     fn lookup_entry(&self) -> u64 {
-        if WORD_SIZE == 32 {
-            (self.0).wrapping_mul(self.1) >> 32
-        } else if WORD_SIZE == 64 {
-            ((self.0 as u128).wrapping_mul(self.1 as u128) >> 64) as u64
-        } else {
-            panic!("MULHU is only implemented for 32-bit or 64-bit word sizes")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (self.0).wrapping_mul(self.1) >> 8,
+            32 => (self.0).wrapping_mul(self.1) >> 32,
+            64 => ((self.0 as u128).wrapping_mul(self.1 as u128) >> 64) as u64,
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
+    // m_\ell(r_j, j, b_j)
+    fn multiplicative_update<F: JoltField>(&self, _: F, _: usize, _: bool) -> F {
+        F::one()
+    }
+
+    // a_\ell(r_j, j, b_j)
+    fn additive_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+        if j >= WORD_SIZE {
+            return F::zero();
+        }
+        let d_j = F::from_u32(1 << (WORD_SIZE - 1 - j));
+        // (r_j - b_j) * d_j
+        if b_j {
+            r_j * d_j - d_j
         } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+            r_j * d_j
         }
     }
 }
