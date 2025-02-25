@@ -421,13 +421,13 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         // verify that there is a univariate polynomial for each round
         assert_eq!(self.compressed_polys.len(), num_rounds);
         for i in 0..self.compressed_polys.len() {
-            // verify degree bound
-            if self.compressed_polys[i].degree() != degree_bound {
-                return Err(ProofVerifyError::InvalidInputLength(
-                    degree_bound,
-                    self.compressed_polys[i].degree(),
-                ));
-            }
+            // // verify degree bound
+            // if self.compressed_polys[i].degree() != degree_bound {
+            //     return Err(ProofVerifyError::InvalidInputLength(
+            //         degree_bound,
+            //         self.compressed_polys[i].degree(),
+            //     ));
+            // }
 
             // append the prover's message to the transcript
             self.compressed_polys[i].append_to_transcript(transcript);

@@ -44,6 +44,10 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
         todo!()
     }
 
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        todo!()
+    }
+
     fn operands(&self) -> (u64, u64);
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
