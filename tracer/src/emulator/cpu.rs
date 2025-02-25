@@ -2696,7 +2696,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
     Instruction {
         mask: 0xfe00707f,
         data: 0xa2000053,
-        name: "FILE.D",
+        name: "FLE.D",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
             cpu.x[f.rd] = match cpu.f[f.rs1] <= cpu.f[f.rs2] {
