@@ -198,7 +198,7 @@ where
     };
 
     let vs = {
-        let v_number = squares_of_x[num_vars] - P::ScalarField::one();
+        let v_numer = squares_of_x[num_vars] - P::ScalarField::one();
         let mut v_denoms = squares_of_x
             .iter()
             .map(|squares_of_x| *squares_of_x - P::ScalarField::one())
@@ -206,7 +206,7 @@ where
         batch_inversion(&mut v_denoms);
         v_denoms
             .iter()
-            .map(|v_denom| v_number * *v_denom)
+            .map(|v_denom| v_numer * *v_denom)
             .collect::<Vec<_>>()
     };
 
