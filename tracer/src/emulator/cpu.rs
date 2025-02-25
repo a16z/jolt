@@ -1406,7 +1406,7 @@ impl Cpu {
                     _ => {} // Not happens
                 };
             }
-            _ => {} // No happnes
+            _ => {} // Not happens
         };
         0xffffffff // Return invalid value
     }
