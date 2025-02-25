@@ -46,7 +46,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
     #[cfg(test)]
     fn materialize(&self) -> Vec<u64> {
         assert_eq!(WORD_SIZE, 8);
-        (0..1 << 16).map(|i| i >> 8).collect()
+        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
+    }
+
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index >> WORD_SIZE
     }
 
     fn to_lookup_index(&self) -> u64 {
@@ -60,13 +64,14 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => (self.0).wrapping_mul(self.1) >> 8,
-            32 => (self.0).wrapping_mul(self.1) >> 32,
-            64 => ((self.0 as u128).wrapping_mul(self.1 as u128) >> 64) as u64,
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
+        self.materialize_entry(self.to_lookup_index())
+        // match WORD_SIZE {
+        //     #[cfg(test)]
+        //     8 => (self.0).wrapping_mul(self.1) >> 8,
+        //     32 => (self.0).wrapping_mul(self.1) >> 32,
+        //     64 => ((self.0 as u128).wrapping_mul(self.1 as u128) >> 64) as u64,
+        //     _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        // }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -107,6 +112,34 @@ mod test {
 
     use super::MULHUInstruction;
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+
+    #[test]
+    fn mulhu_materialize() {
+        for (i, entry) in MULHUInstruction::<8>::default()
+            .materialize()
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(
+                *entry,
+                MULHUInstruction::<8>::default().materialize_entry(i as u64)
+            );
+        }
+    }
+
+    #[test]
+    fn mulhu_index_entry() {
+        for (i, entry) in MULHUInstruction::<8>::default()
+            .materialize()
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(
+                *entry,
+                MULHUInstruction::<8>::default().materialize_entry(i as u64)
+            );
+        }
+    }
 
     #[test]
     fn mulhu_instruction_32_e2e() {

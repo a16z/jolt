@@ -45,6 +45,16 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
+    #[cfg(test)]
+    fn materialize(&self) -> Vec<u64> {
+        assert_eq!(WORD_SIZE, 8);
+        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
+    }
+
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index % (1 << WORD_SIZE)
+    }
+
     fn to_lookup_index(&self) -> u64 {
         match WORD_SIZE {
             #[cfg(test)]
@@ -56,13 +66,14 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry(&self) -> u64 {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => (self.0 as u8).overflowing_add(self.1 as u8).0.into(),
-            32 => (self.0 as u32).overflowing_add(self.1 as u32).0.into(),
-            64 => self.0.overflowing_add(self.1).0,
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
+        self.materialize_entry(self.to_lookup_index())
+        // match WORD_SIZE {
+        //     #[cfg(test)]
+        //     8 => (self.0 as u8).overflowing_add(self.1 as u8).0.into(),
+        //     32 => (self.0 as u32).overflowing_add(self.1 as u32).0.into(),
+        //     64 => self.0.overflowing_add(self.1).0,
+        //     _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        // }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -72,6 +83,25 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
             32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
             64 => Self(rng.next_u64(), rng.next_u64()),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
+    // m_\ell(r_j, j, b_j)
+    fn multiplicative_update<F: JoltField>(&self, _: F, _: usize, _: bool) -> F {
+        F::one()
+    }
+
+    // a_\ell(r_j, j, b_j)
+    fn additive_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+        if j < WORD_SIZE {
+            return F::zero();
+        }
+        let d_j = F::from_u32(1 << (2 * WORD_SIZE - 1 - j));
+        // (r_j - b_j) * d_j
+        if b_j {
+            r_j * d_j - d_j
+        } else {
+            r_j * d_j
         }
     }
 }

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
@@ -20,6 +18,7 @@ use crate::{
     },
 };
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 pub fn prove_single_instruction<
     const TREE_WIDTH: usize,
@@ -44,7 +43,12 @@ pub fn prove_single_instruction<
     let mut r: Vec<F> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-    let mut u_evals: HashMap<u64, F> = HashMap::with_capacity(T);
+    // let mut u_evals: HashMap<u64, F> = HashMap::with_capacity(T);
+    let mut u_evals: Vec<(u64, F)> = instructions
+        .par_iter()
+        .enumerate()
+        .map(|(j, instruction)| (instruction.to_lookup_index(), eq_r_prime[j]))
+        .collect();
     let mut t_evals: HashMap<u64, F> = HashMap::with_capacity(T);
 
     let mut previous_claim;
@@ -57,10 +61,11 @@ pub fn prove_single_instruction<
     let chi_2 = [F::one() - two, two];
 
     #[cfg(test)]
-    let mut val: MultilinearPolynomial<F> = MultilinearPolynomial::from(I::default().materialize());
+    let mut val_test: MultilinearPolynomial<F> =
+        MultilinearPolynomial::from(I::default().materialize());
     #[cfg(test)]
     let mut eq_ra: MultilinearPolynomial<F> = {
-        let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(1 << 16);
+        let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH.pow(4));
         for (j, instruction) in instructions.iter().enumerate() {
             let k = instruction.to_lookup_index();
             eq_ra[k as usize] += eq_r_prime[j];
@@ -69,15 +74,22 @@ pub fn prove_single_instruction<
     };
 
     let mut j = 0;
+    let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
 
     for phase in 0..3 {
         // Condensation
-        if phase != 0 {
+
+        if phase == 0 {
+            t_evals.par_extend(
+                (0..(TREE_WIDTH as u64))
+                    .into_par_iter()
+                    .map(|k| (k, F::from_u64(I::default().materialize_entry(k)))),
+            );
+        } else {
             u_evals.par_iter_mut().for_each(|(k, u)| {
-                let k_bound = ((k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
+                let k_bound = ((*k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
                 *u *= v[k_bound as usize];
             });
-
             t_evals.par_iter_mut().for_each(|(k, t)| {
                 let k_bound = ((k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
                 *t *= x[k_bound];
@@ -88,18 +100,8 @@ pub fn prove_single_instruction<
         // Build binary trees Q_\ell and Z for each \ell = 1, ..., \kappa
         let mut z_leaves = unsafe_allocate_zero_vec(TREE_WIDTH);
         // TODO(moodlezoup): parallelize
-        for (j, instruction) in instructions.iter().enumerate() {
-            let k = instruction.to_lookup_index();
-            let u = match u_evals.get(&k) {
-                Some(eval) => *eval,
-                None => {
-                    debug_assert_eq!(phase, 0);
-                    let eval = eq_r_prime[j];
-                    u_evals.insert(k, eval);
-                    eval
-                }
-            };
-            z_leaves[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += u;
+        for (k, u) in u_evals.iter() {
+            z_leaves[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += *u;
         }
 
         let mut Z_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
@@ -117,15 +119,13 @@ pub fn prove_single_instruction<
         // TODO(moodlezoup): Handle \ell > 1
         let mut q_leaves = unsafe_allocate_zero_vec(TREE_WIDTH);
         // TODO(moodlezoup): parallelize
-        for instruction in instructions.iter() {
-            let k = instruction.to_lookup_index();
-            let u = u_evals.get(&k).unwrap();
+        for (k, u) in u_evals.iter() {
             let t = match t_evals.get(&k) {
                 Some(eval) => *eval,
                 None => {
                     debug_assert_eq!(phase, 0);
-                    let eval = F::from_u64(instruction.lookup_entry());
-                    t_evals.insert(k, eval);
+                    let eval = F::from_u64(I::default().materialize_entry(*k));
+                    t_evals.insert(*k, eval);
                     eval
                 }
             };
@@ -152,12 +152,12 @@ pub fn prove_single_instruction<
         for round in 0..log_m {
             #[cfg(test)]
             {
-                let expected: F = (0..val.len())
-                    .map(|k| eq_ra.get_bound_coeff(k) * val.get_bound_coeff(k))
+                let expected: F = (0..val_test.len())
+                    .map(|k| eq_ra.get_bound_coeff(k) * val_test.get_bound_coeff(k))
                     .sum();
                 assert_eq!(
                     expected, previous_claim,
-                    "Sumcheck sanity check failed in round {j}"
+                    "Sumcheck sanity check failed in phase {phase} round {round}"
                 );
             }
 
@@ -279,10 +279,35 @@ pub fn prove_single_instruction<
             #[cfg(test)]
             {
                 eq_ra.bind_parallel(r_j, BindingOrder::HighToLow);
-                val.bind_parallel(r_j, BindingOrder::HighToLow);
+                val_test.bind_parallel(r_j, BindingOrder::HighToLow);
             }
 
             j += 1;
+        }
+
+        let ra_i: Vec<F> = instructions
+            .par_iter()
+            .map(|instruction| {
+                let k = instruction.to_lookup_index();
+                let k_bound = ((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
+                v[k_bound as usize]
+            })
+            .collect();
+        ra.push(MultilinearPolynomial::from(ra_i));
+    }
+
+    // ra[3] = { todo!() };
+
+    let mut val: Vec<F> = (0..TREE_WIDTH)
+        .into_par_iter()
+        .map(|k| x[0] * t_evals.get(&(k as u64)).unwrap() + w[0])
+        .collect();
+    let mut val = MultilinearPolynomial::from(val);
+
+    #[cfg(test)]
+    {
+        for i in 0..TREE_WIDTH {
+            assert_eq!(val.get_bound_coeff(i), val_test.get_bound_coeff(i));
         }
     }
 
@@ -292,20 +317,44 @@ pub fn prove_single_instruction<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{jolt::instruction::mulhu::MULHUInstruction, utils::transcript::KeccakTranscript};
+    use crate::{
+        jolt::instruction::{add::ADDInstruction, mulhu::MULHUInstruction},
+        utils::transcript::KeccakTranscript,
+    };
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
-    fn test_range_check() {
+    fn test_mulhu() {
         const WORD_SIZE: usize = 8;
-        const K: usize = 1 << 16;
-        const T: usize = 1 << 4;
+        const T: usize = 1 << 8;
 
         let mut rng = StdRng::seed_from_u64(12345);
 
         let instructions: Vec<_> = (0..T)
             .map(|_| MULHUInstruction::<WORD_SIZE>::default().random(&mut rng))
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        const TREE_WIDTH: usize = 1 << 4;
+        prove_single_instruction::<TREE_WIDTH, _, _, _>(
+            &instructions,
+            r_prime,
+            &mut prover_transcript,
+        );
+    }
+
+    #[test]
+    fn test_add() {
+        const WORD_SIZE: usize = 8;
+        const T: usize = 1 << 8;
+
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        let instructions: Vec<_> = (0..T)
+            .map(|_| ADDInstruction::<WORD_SIZE>::default().random(&mut rng))
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
