@@ -45,68 +45,13 @@ pub fn prove_single_instruction<
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let mut u_evals: HashMap<u64, F> = HashMap::with_capacity(T);
-
-    // Build binary trees Q_\ell and Z for each \ell = 1, ..., \kappa
-    let mut z_leaves: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    // TODO(moodlezoup): parallelize
-    for (j, instruction) in instructions.iter().enumerate() {
-        let k = instruction.to_lookup_index();
-        z_leaves[(k >> (3 * log_m)) as usize] += eq_r_prime[j];
-        match u_evals.get_mut(&k) {
-            Some(eval) => *eval += eq_r_prime[j],
-            None => {
-                u_evals.insert(k, eq_r_prime[j]);
-            }
-        };
-    }
-
-    let mut Z_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
-    Z_tree[log_m] = z_leaves;
-    for layer_index in (0..log_m).rev() {
-        Z_tree[layer_index] = Z_tree[layer_index + 1]
-            .par_chunks(2)
-            .map(|pair| pair[0] + pair[1])
-            .collect();
-    }
-
-    debug_assert_eq!(Z_tree[0].len(), 1);
-    debug_assert_eq!(Z_tree[0][0], Z_tree[log_m].par_iter().sum());
-
     let mut t_evals: HashMap<u64, F> = HashMap::with_capacity(T);
 
-    // TODO(moodlezoup): Handle \ell > 1
-    let mut q_leaves: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    // TODO(moodlezoup): parallelize
-    for (j, instruction) in instructions.iter().enumerate() {
-        let k = instruction.to_lookup_index();
-        let t = match t_evals.get(&k) {
-            Some(eval) => *eval,
-            None => {
-                let eval = F::from_u64(instruction.lookup_entry());
-                t_evals.insert(k, eval);
-                eval
-            }
-        };
+    let mut previous_claim;
 
-        q_leaves[(k >> (3 * log_m)) as usize] += eq_r_prime[j] * t;
-    }
-
-    let mut Q_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
-    Q_tree[log_m] = q_leaves;
-    for layer_index in (0..log_m).rev() {
-        Q_tree[layer_index] = Q_tree[layer_index + 1]
-            .par_chunks(2)
-            .map(|pair| pair[0] + pair[1])
-            .collect();
-    }
-    debug_assert_eq!(Q_tree[0].len(), 1);
-    debug_assert_eq!(Q_tree[0][0], Q_tree[log_m].par_iter().sum());
-
-    let mut previous_claim = Q_tree[0][0];
-
-    let mut v = vec![F::one()];
-    let mut w = vec![F::zero()];
-    let mut x = vec![F::one()];
+    let mut v = Vec::with_capacity(TREE_WIDTH);
+    let mut w = Vec::with_capacity(TREE_WIDTH);
+    let mut x = Vec::with_capacity(TREE_WIDTH);
 
     let two = F::from_u8(2);
     let chi_2 = [F::one() - two, two];
@@ -123,532 +68,221 @@ pub fn prove_single_instruction<
         MultilinearPolynomial::from(eq_ra)
     };
 
-    for j in 0..log_m {
-        #[cfg(test)]
-        {
-            let expected: F = (0..val.len())
-                .map(|k| eq_ra.get_bound_coeff(k) * val.get_bound_coeff(k))
-                .sum();
-            assert_eq!(
-                expected, previous_claim,
-                "Sumcheck sanity check failed in round {j}"
-            );
+    let mut j = 0;
+
+    for phase in 0..3 {
+        // Condensation
+        if phase != 0 {
+            u_evals.par_iter_mut().for_each(|(k, u)| {
+                let k_bound = ((k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
+                *u *= v[k_bound as usize];
+            });
+
+            t_evals.par_iter_mut().for_each(|(k, t)| {
+                let k_bound = ((k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
+                *t *= x[k_bound];
+                *t += w[k_bound];
+            });
         }
 
-        let q_layer = &Q_tree[j + 1];
-        let z_layer = &Z_tree[j + 1];
+        // Build binary trees Q_\ell and Z for each \ell = 1, ..., \kappa
+        let mut z_leaves = unsafe_allocate_zero_vec(TREE_WIDTH);
+        // TODO(moodlezoup): parallelize
+        for (j, instruction) in instructions.iter().enumerate() {
+            let k = instruction.to_lookup_index();
+            let u = match u_evals.get(&k) {
+                Some(eval) => *eval,
+                None => {
+                    debug_assert_eq!(phase, 0);
+                    let eval = eq_r_prime[j];
+                    u_evals.insert(k, eval);
+                    eval
+                }
+            };
+            z_leaves[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += u;
+        }
 
-        let q_inner_products: [F; 2] = (&v, &x)
-            .into_par_iter()
-            .enumerate()
-            .map(|(b, (v, x))| {
-                // Element of v ◦ x
-                let v_x = *v * x;
-                // Contribution to <v ◦ x, q_even>
-                let q_v_x_even = v_x * q_layer[2 * b];
-                let q_v_x_odd = v_x * q_layer[2 * b + 1];
+        let mut Z_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
+        Z_tree[log_m] = z_leaves;
+        for layer_index in (0..log_m).rev() {
+            Z_tree[layer_index] = Z_tree[layer_index + 1]
+                .par_chunks(2)
+                .map(|pair| pair[0] + pair[1])
+                .collect();
+        }
 
-                [q_v_x_even, q_v_x_odd]
-            })
-            .reduce(
-                || [F::zero(); 2],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
+        debug_assert_eq!(Z_tree[0].len(), 1);
+        debug_assert_eq!(Z_tree[0][0], Z_tree[log_m].par_iter().sum());
 
-        let z_inner_products: [F; 4] = (&v, &w)
-            .into_par_iter()
-            .enumerate()
-            .map(|(b, (v_b, w_b))| {
-                // Contribution to <v, z_even>
-                let z_v_even = z_layer[2 * b] * v_b;
-                // Contribution to <v, z_odd>
-                let z_v_odd = z_layer[2 * b + 1] * v_b;
-                // Contribution to <v ◦ w, z_even>
-                let z_v_w_even = z_v_even * w_b;
-                // Contribution to <v ◦ w, z_odd>
-                let z_v_w_odd = z_v_odd * w_b;
+        // TODO(moodlezoup): Handle \ell > 1
+        let mut q_leaves = unsafe_allocate_zero_vec(TREE_WIDTH);
+        // TODO(moodlezoup): parallelize
+        for instruction in instructions.iter() {
+            let k = instruction.to_lookup_index();
+            let u = u_evals.get(&k).unwrap();
+            let t = match t_evals.get(&k) {
+                Some(eval) => *eval,
+                None => {
+                    debug_assert_eq!(phase, 0);
+                    let eval = F::from_u64(instruction.lookup_entry());
+                    t_evals.insert(k, eval);
+                    eval
+                }
+            };
+            q_leaves[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += *u * t;
+        }
 
-                [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
-            })
-            .reduce(
-                || [F::zero(); 4],
-                |running, new| {
+        let mut Q_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
+        Q_tree[log_m] = q_leaves;
+        for layer_index in (0..log_m).rev() {
+            Q_tree[layer_index] = Q_tree[layer_index + 1]
+                .par_chunks(2)
+                .map(|pair| pair[0] + pair[1])
+                .collect();
+        }
+        debug_assert_eq!(Q_tree[0].len(), 1);
+        debug_assert_eq!(Q_tree[0][0], Q_tree[log_m].par_iter().sum());
+
+        v = vec![F::one()];
+        w = vec![F::zero()];
+        x = vec![F::one()];
+
+        previous_claim = Q_tree[0][0];
+
+        for round in 0..log_m {
+            #[cfg(test)]
+            {
+                let expected: F = (0..val.len())
+                    .map(|k| eq_ra.get_bound_coeff(k) * val.get_bound_coeff(k))
+                    .sum();
+                assert_eq!(
+                    expected, previous_claim,
+                    "Sumcheck sanity check failed in round {j}"
+                );
+            }
+
+            let q_layer = &Q_tree[round + 1];
+            let z_layer = &Z_tree[round + 1];
+
+            let q_inner_products: [F; 2] = (&v, &x)
+                .into_par_iter()
+                .enumerate()
+                .map(|(b, (v, x))| {
+                    // Element of v ◦ x
+                    let v_x = *v * x;
+                    // Contribution to <v ◦ x, q_even>
+                    let q_v_x_even = v_x * q_layer[2 * b];
+                    let q_v_x_odd = v_x * q_layer[2 * b + 1];
+
+                    [q_v_x_even, q_v_x_odd]
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
+
+            let z_inner_products: [F; 4] = (&v, &w)
+                .into_par_iter()
+                .enumerate()
+                .map(|(b, (v_b, w_b))| {
+                    // Contribution to <v, z_even>
+                    let z_v_even = z_layer[2 * b] * v_b;
+                    // Contribution to <v, z_odd>
+                    let z_v_odd = z_layer[2 * b + 1] * v_b;
+                    // Contribution to <v ◦ w, z_even>
+                    let z_v_w_even = z_v_even * w_b;
+                    // Contribution to <v ◦ w, z_odd>
+                    let z_v_w_odd = z_v_odd * w_b;
+
+                    [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
+                })
+                .reduce(
+                    || [F::zero(); 4],
+                    |running, new| {
+                        [
+                            running[0] + new[0],
+                            running[1] + new[1],
+                            running[2] + new[2],
+                            running[3] + new[3],
+                        ]
+                    },
+                );
+
+            let mut univariate_poly_evals = [F::zero(), F::zero()];
+
+            // Expression (52), c = 0
+            univariate_poly_evals[0] +=
+                I::default().multiplicative_update(F::zero(), j, false) * q_inner_products[0];
+            // Expression (53), c = 0
+            univariate_poly_evals[0] += z_inner_products[2]
+                + I::default().additive_update(F::zero(), j, false) * z_inner_products[0];
+
+            // Expression (52), c = 2
+            univariate_poly_evals[1] +=
+                chi_2[0] * I::default().multiplicative_update(two, j, false) * q_inner_products[0];
+            univariate_poly_evals[1] +=
+                chi_2[1] * I::default().multiplicative_update(two, j, true) * q_inner_products[1];
+            // Expression (53), c = 2
+            univariate_poly_evals[1] += chi_2[0]
+                * (z_inner_products[2]
+                    + I::default().additive_update(two, j, false) * z_inner_products[0]);
+            univariate_poly_evals[1] += chi_2[1]
+                * (z_inner_products[3]
+                    + I::default().additive_update(two, j, true) * z_inner_products[1]);
+
+            let univariate_poly = UniPoly::from_evals(&[
+                univariate_poly_evals[0],
+                previous_claim - univariate_poly_evals[0],
+                univariate_poly_evals[1],
+            ]);
+
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_poly);
+
+            let r_j = transcript.challenge_scalar::<F>();
+            r.push(r_j);
+
+            previous_claim = univariate_poly.evaluate(&r_j);
+
+            v = v
+                .into_par_iter()
+                .flat_map(|v_i| {
+                    let eval_1 = v_i * r_j;
+                    [v_i - eval_1, eval_1]
+                })
+                .collect();
+
+            let additive_updates = [
+                I::default().additive_update(r_j, j, false),
+                I::default().additive_update(r_j, j, true),
+            ];
+            w = w
+                .into_par_iter()
+                .flat_map(|w_i| [w_i + additive_updates[0], w_i + additive_updates[1]])
+                .collect();
+
+            let multiplicative_updates = [
+                I::default().multiplicative_update(r_j, j, false),
+                I::default().multiplicative_update(r_j, j, true),
+            ];
+            x = x
+                .into_par_iter()
+                .flat_map(|x_i| {
                     [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                        running[3] + new[3],
+                        x_i * multiplicative_updates[0],
+                        x_i * multiplicative_updates[1],
                     ]
-                },
-            );
-
-        let mut univariate_poly_evals = [F::zero(), F::zero()];
-
-        // Expression (52), c = 0
-        univariate_poly_evals[0] +=
-            I::default().multiplicative_update(F::zero(), j, false) * q_inner_products[0];
-        // Expression (53), c = 0
-        univariate_poly_evals[0] += z_inner_products[2]
-            + I::default().additive_update(F::zero(), j, false) * z_inner_products[0];
-
-        // Expression (52), c = 2
-        univariate_poly_evals[1] +=
-            chi_2[0] * I::default().multiplicative_update(two, j, false) * q_inner_products[0];
-        univariate_poly_evals[1] +=
-            chi_2[1] * I::default().multiplicative_update(two, j, true) * q_inner_products[1];
-        // Expression (53), c = 2
-        univariate_poly_evals[1] += chi_2[0]
-            * (z_inner_products[2]
-                + I::default().additive_update(two, j, false) * z_inner_products[0]);
-        univariate_poly_evals[1] += chi_2[1]
-            * (z_inner_products[3]
-                + I::default().additive_update(two, j, true) * z_inner_products[1]);
-
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-        ]);
-
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
-
-        let r_j = transcript.challenge_scalar::<F>();
-        r.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
-
-        v = v
-            .into_par_iter()
-            .flat_map(|v_i| {
-                let eval_1 = v_i * r_j;
-                [v_i - eval_1, eval_1]
-            })
-            .collect();
-
-        let additive_updates = [
-            I::default().additive_update(r_j, j, false),
-            I::default().additive_update(r_j, j, true),
-        ];
-        w = w
-            .into_par_iter()
-            .flat_map(|w_i| [w_i + additive_updates[0], w_i + additive_updates[1]])
-            .collect();
-
-        let multiplicative_updates = [
-            I::default().multiplicative_update(r_j, j, false),
-            I::default().multiplicative_update(r_j, j, true),
-        ];
-        x = x
-            .into_par_iter()
-            .flat_map(|x_i| {
-                [
-                    x_i * multiplicative_updates[0],
-                    x_i * multiplicative_updates[1],
-                ]
-            })
-            .collect();
-
-        #[cfg(test)]
-        {
-            eq_ra.bind_parallel(r_j, BindingOrder::HighToLow);
-            val.bind_parallel(r_j, BindingOrder::HighToLow);
-        }
-    }
-
-    // Condensation
-
-    u_evals.par_iter_mut().for_each(|(k, u)| {
-        let k_bound = (k >> (3 * log_m)) as usize;
-        *u *= v[k_bound as usize];
-    });
-
-    // Build binary trees Q_\ell and Z for each \ell = 1, ..., \kappa
-    let mut z_leaves: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    // TODO(moodlezoup): parallelize
-    for instruction in instructions.iter() {
-        let k = instruction.to_lookup_index();
-        let u = u_evals.get(&k).unwrap();
-        z_leaves[((k >> (2 * log_m)) % TREE_WIDTH as u64) as usize] += *u;
-    }
-
-    let mut Z_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
-    Z_tree[log_m] = z_leaves;
-    for layer_index in (0..log_m).rev() {
-        Z_tree[layer_index] = Z_tree[layer_index + 1]
-            .par_chunks(2)
-            .map(|pair| pair[0] + pair[1])
-            .collect();
-    }
-
-    debug_assert_eq!(Z_tree[0].len(), 1);
-    debug_assert_eq!(Z_tree[0][0], Z_tree[log_m].par_iter().sum());
-
-    t_evals.par_iter_mut().for_each(|(k, t)| {
-        let k_bound = (k >> (3 * log_m)) as usize;
-        *t *= x[k_bound];
-        *t += w[k_bound];
-    });
-
-    // TODO(moodlezoup): Handle \ell > 1
-    let mut q_leaves: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    // TODO(moodlezoup): parallelize
-    for instruction in instructions.iter() {
-        let k = instruction.to_lookup_index();
-        let u = u_evals.get(&k).unwrap();
-        let t = t_evals.get(&k).unwrap();
-        q_leaves[((k >> (2 * log_m)) % TREE_WIDTH as u64) as usize] += *u * t;
-    }
-
-    let mut Q_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
-    Q_tree[log_m] = q_leaves;
-    for layer_index in (0..log_m).rev() {
-        Q_tree[layer_index] = Q_tree[layer_index + 1]
-            .par_chunks(2)
-            .map(|pair| pair[0] + pair[1])
-            .collect();
-    }
-    debug_assert_eq!(Q_tree[0].len(), 1);
-    debug_assert_eq!(Q_tree[0][0], Q_tree[log_m].par_iter().sum());
-
-    let mut v = vec![F::one()];
-    let mut w = vec![F::zero()];
-    let mut x = vec![F::one()];
-
-    let mut previous_claim = Q_tree[0][0];
-
-    for j in 0..log_m {
-        #[cfg(test)]
-        {
-            let expected: F = (0..val.len())
-                .map(|k| eq_ra.get_bound_coeff(k) * val.get_bound_coeff(k))
-                .sum();
-            assert_eq!(
-                expected, previous_claim,
-                "Sumcheck sanity check failed in round {j}"
-            );
-        }
-
-        let q_layer = &Q_tree[j + 1];
-        let z_layer = &Z_tree[j + 1];
-
-        let q_inner_products: [F; 2] = (&v, &x)
-            .into_par_iter()
-            .enumerate()
-            .map(|(b, (v, x))| {
-                // Element of v ◦ x
-                let v_x = *v * x;
-                // Contribution to <v ◦ x, q_even>
-                let q_v_x_even = v_x * q_layer[2 * b];
-                let q_v_x_odd = v_x * q_layer[2 * b + 1];
-
-                [q_v_x_even, q_v_x_odd]
-            })
-            .reduce(
-                || [F::zero(); 2],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        let z_inner_products: [F; 4] = (&v, &w)
-            .into_par_iter()
-            .enumerate()
-            .map(|(b, (v_b, w_b))| {
-                // Contribution to <v, z_even>
-                let z_v_even = z_layer[2 * b] * v_b;
-                // Contribution to <v, z_odd>
-                let z_v_odd = z_layer[2 * b + 1] * v_b;
-                // Contribution to <v ◦ w, z_even>
-                let z_v_w_even = z_v_even * w_b;
-                // Contribution to <v ◦ w, z_odd>
-                let z_v_w_odd = z_v_odd * w_b;
-
-                [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
-            })
-            .reduce(
-                || [F::zero(); 4],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                        running[3] + new[3],
-                    ]
-                },
-            );
-
-        let mut univariate_poly_evals = [F::zero(), F::zero()];
-
-        // Expression (52), c = 0
-        univariate_poly_evals[0] +=
-            I::default().multiplicative_update(F::zero(), log_m + j, false) * q_inner_products[0];
-        // Expression (53), c = 0
-        univariate_poly_evals[0] += z_inner_products[2]
-            + I::default().additive_update(F::zero(), log_m + j, false) * z_inner_products[0];
-
-        // Expression (52), c = 2
-        univariate_poly_evals[1] += chi_2[0]
-            * I::default().multiplicative_update(two, log_m + j, false)
-            * q_inner_products[0];
-        univariate_poly_evals[1] += chi_2[1]
-            * I::default().multiplicative_update(two, log_m + j, true)
-            * q_inner_products[1];
-        // Expression (53), c = 2
-        univariate_poly_evals[1] += chi_2[0]
-            * (z_inner_products[2]
-                + I::default().additive_update(two, log_m + j, false) * z_inner_products[0]);
-        univariate_poly_evals[1] += chi_2[1]
-            * (z_inner_products[3]
-                + I::default().additive_update(two, log_m + j, true) * z_inner_products[1]);
-
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-        ]);
-
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
-
-        let r_j = transcript.challenge_scalar::<F>();
-        r.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
-
-        v = v
-            .into_par_iter()
-            .flat_map(|v_i| {
-                let eval_1 = v_i * r_j;
-                [v_i - eval_1, eval_1]
-            })
-            .collect();
-
-        let additive_updates = [
-            I::default().additive_update(r_j, log_m + j, false),
-            I::default().additive_update(r_j, log_m + j, true),
-        ];
-        w = w
-            .into_par_iter()
-            .flat_map(|w_i| [w_i + additive_updates[0], w_i + additive_updates[1]])
-            .collect();
-
-        let multiplicative_updates = [
-            I::default().multiplicative_update(r_j, log_m + j, false),
-            I::default().multiplicative_update(r_j, log_m + j, true),
-        ];
-        x = x
-            .into_par_iter()
-            .flat_map(|x_i| {
-                [
-                    x_i * multiplicative_updates[0],
-                    x_i * multiplicative_updates[1],
-                ]
-            })
-            .collect();
-
-        #[cfg(test)]
-        {
-            eq_ra.bind_parallel(r_j, BindingOrder::HighToLow);
-            val.bind_parallel(r_j, BindingOrder::HighToLow);
-        }
-    }
-
-    // Condensation
-
-    u_evals.par_iter_mut().for_each(|(k, u)| {
-        let k_bound = ((k >> (2 * log_m)) % TREE_WIDTH as u64) as usize;
-        *u *= v[k_bound as usize];
-    });
-
-    // Build binary trees Q_\ell and Z for each \ell = 1, ..., \kappa
-    let mut z_leaves: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    // TODO(moodlezoup): parallelize
-    for instruction in instructions.iter() {
-        let k = instruction.to_lookup_index();
-        let u = u_evals.get(&k).unwrap();
-        z_leaves[((k >> log_m) % TREE_WIDTH as u64) as usize] += *u;
-    }
-
-    let mut Z_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
-    Z_tree[log_m] = z_leaves;
-    for layer_index in (0..log_m).rev() {
-        Z_tree[layer_index] = Z_tree[layer_index + 1]
-            .par_chunks(2)
-            .map(|pair| pair[0] + pair[1])
-            .collect();
-    }
-
-    debug_assert_eq!(Z_tree[0].len(), 1);
-    debug_assert_eq!(Z_tree[0][0], Z_tree[log_m].par_iter().sum());
-
-    t_evals.par_iter_mut().for_each(|(k, v)| {
-        let k_bound = ((k >> (2 * log_m)) % TREE_WIDTH as u64) as usize;
-        *v *= x[k_bound];
-        *v += w[k_bound];
-    });
-
-    // TODO(moodlezoup): Handle \ell > 1
-    let mut q_leaves: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    // TODO(moodlezoup): parallelize
-    for instruction in instructions.iter() {
-        let k = instruction.to_lookup_index();
-        let u = u_evals.get(&k).unwrap();
-        let t = t_evals.get(&k).unwrap();
-        q_leaves[((k >> log_m) % TREE_WIDTH as u64) as usize] += *u * t;
-    }
-
-    let mut Q_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
-    Q_tree[log_m] = q_leaves;
-    for layer_index in (0..log_m).rev() {
-        Q_tree[layer_index] = Q_tree[layer_index + 1]
-            .par_chunks(2)
-            .map(|pair| pair[0] + pair[1])
-            .collect();
-    }
-    debug_assert_eq!(Q_tree[0].len(), 1);
-    debug_assert_eq!(Q_tree[0][0], Q_tree[log_m].par_iter().sum());
-
-    let mut v = vec![F::one()];
-    let mut w = vec![F::zero()];
-    let mut x = vec![F::one()];
-
-    let mut previous_claim = Q_tree[0][0];
-
-    for j in 0..log_m {
-        #[cfg(test)]
-        {
-            let expected: F = (0..val.len())
-                .map(|k| eq_ra.get_bound_coeff(k) * val.get_bound_coeff(k))
-                .sum();
-            assert_eq!(
-                expected, previous_claim,
-                "Sumcheck sanity check failed in round {j}"
-            );
-        }
-
-        let q_layer = &Q_tree[j + 1];
-        let z_layer = &Z_tree[j + 1];
-
-        let q_inner_products: [F; 2] = (&v, &x)
-            .into_par_iter()
-            .enumerate()
-            .map(|(b, (v, x))| {
-                // Element of v ◦ x
-                let v_x = *v * x;
-                // Contribution to <v ◦ x, q_even>
-                let q_v_x_even = v_x * q_layer[2 * b];
-                let q_v_x_odd = v_x * q_layer[2 * b + 1];
-
-                [q_v_x_even, q_v_x_odd]
-            })
-            .reduce(
-                || [F::zero(); 2],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        let z_inner_products: [F; 4] = (&v, &w)
-            .into_par_iter()
-            .enumerate()
-            .map(|(b, (v_b, w_b))| {
-                // Contribution to <v, z_even>
-                let z_v_even = z_layer[2 * b] * v_b;
-                // Contribution to <v, z_odd>
-                let z_v_odd = z_layer[2 * b + 1] * v_b;
-                // Contribution to <v ◦ w, z_even>
-                let z_v_w_even = z_v_even * w_b;
-                // Contribution to <v ◦ w, z_odd>
-                let z_v_w_odd = z_v_odd * w_b;
-
-                [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
-            })
-            .reduce(
-                || [F::zero(); 4],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                        running[3] + new[3],
-                    ]
-                },
-            );
-
-        let mut univariate_poly_evals = [F::zero(), F::zero()];
-
-        // Expression (52), c = 0
-        univariate_poly_evals[0] +=
-            I::default().multiplicative_update(F::zero(), 2 * log_m + j, false)
-                * q_inner_products[0];
-        // Expression (53), c = 0
-        univariate_poly_evals[0] += z_inner_products[2]
-            + I::default().additive_update(F::zero(), 2 * log_m + j, false) * z_inner_products[0];
-
-        // Expression (52), c = 2
-        univariate_poly_evals[1] += chi_2[0]
-            * I::default().multiplicative_update(two, 2 * log_m + j, false)
-            * q_inner_products[0];
-        univariate_poly_evals[1] += chi_2[1]
-            * I::default().multiplicative_update(two, 2 * log_m + j, true)
-            * q_inner_products[1];
-        // Expression (53), c = 2
-        univariate_poly_evals[1] += chi_2[0]
-            * (z_inner_products[2]
-                + I::default().additive_update(two, 2 * log_m + j, false) * z_inner_products[0]);
-        univariate_poly_evals[1] += chi_2[1]
-            * (z_inner_products[3]
-                + I::default().additive_update(two, 2 * log_m + j, true) * z_inner_products[1]);
-
-        let univariate_poly = UniPoly::from_evals(&[
-            univariate_poly_evals[0],
-            previous_claim - univariate_poly_evals[0],
-            univariate_poly_evals[1],
-        ]);
-
-        let compressed_poly = univariate_poly.compress();
-        compressed_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_poly);
-
-        let r_j = transcript.challenge_scalar::<F>();
-        r.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
-
-        v = v
-            .into_par_iter()
-            .flat_map(|v_i| {
-                let eval_1 = v_i * r_j;
-                [v_i - eval_1, eval_1]
-            })
-            .collect();
-
-        let additive_updates = [
-            I::default().additive_update(r_j, 2 * log_m + j, false),
-            I::default().additive_update(r_j, 2 * log_m + j, true),
-        ];
-        w = w
-            .into_par_iter()
-            .flat_map(|w_i| [w_i + additive_updates[0], w_i + additive_updates[1]])
-            .collect();
-
-        let multiplicative_updates = [
-            I::default().multiplicative_update(r_j, 2 * log_m + j, false),
-            I::default().multiplicative_update(r_j, 2 * log_m + j, true),
-        ];
-        x = x
-            .into_par_iter()
-            .flat_map(|x_i| {
-                [
-                    x_i * multiplicative_updates[0],
-                    x_i * multiplicative_updates[1],
-                ]
-            })
-            .collect();
-
-        #[cfg(test)]
-        {
-            eq_ra.bind_parallel(r_j, BindingOrder::HighToLow);
-            val.bind_parallel(r_j, BindingOrder::HighToLow);
+                })
+                .collect();
+
+            #[cfg(test)]
+            {
+                eq_ra.bind_parallel(r_j, BindingOrder::HighToLow);
+                val.bind_parallel(r_j, BindingOrder::HighToLow);
+            }
+
+            j += 1;
         }
     }
 
