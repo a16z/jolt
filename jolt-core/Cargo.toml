@@ -97,9 +97,6 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 
 [build-dependencies]
-combined_r1cs = { git = "https://github.com/arithmic/circom_jolt.git", branch = "template_fixes" }
-jolt1 = { git = "https://github.com/arithmic/circom_jolt.git", branch = "template_fixes" }
-spartan_hyrax = { git = "https://github.com/arithmic/circom_jolt.git", branch = "template_fixes" }
 common = { path = "../common" }
 
 [[bench]]
