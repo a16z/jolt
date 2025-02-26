@@ -524,7 +524,6 @@ pub(crate) fn generate_r1cs(
         .unwrap();
 
     let backup_file = format!("{}.bak", circom_file_path);
-    println!("Circom file name is {:?}", circom_file_name);
 
     // Backup original file
     fs::copy(circom_file_path, &backup_file).expect("Failed to create backup");
@@ -606,10 +605,13 @@ pub(crate) fn generate_r1cs(
         let cpp_executable = format!("{}/{}", cpp_dir, circom_file_name);
         let witness_status = Command::new(&cpp_executable)
             .args([&input_path, &witness_output])
-            .status()
+            .stderr(Stdio::piped())
+            .output()
             .expect("Failed to execute C++ witness generation");
 
-        if !witness_status.success() {
+        if !witness_status.status.success() {
+            let stderr = String::from_utf8_lossy(&witness_status.stderr);
+            println!("C++ witness generation failed with error:\n{}", stderr);
             panic!("C++ witness generation failed");
         }
     } else {
@@ -624,10 +626,13 @@ pub(crate) fn generate_r1cs(
                 &input_path,
                 &witness_output,
             ])
-            .status()
+            .stderr(Stdio::piped())
+            .output()
             .expect("Failed to execute WASM witness generation");
 
-        if !witness_status.success() {
+        if !witness_status.status.success() {
+            let stderr = String::from_utf8_lossy(&witness_status.stderr);
+            println!("C++ witness generation failed with error:\n{}", stderr);
             panic!("WASM witness generation failed");
         }
     }
@@ -642,10 +647,13 @@ pub(crate) fn generate_r1cs(
             &witness_output,
             &witness_file_path,
         ])
-        .status()
+        .stderr(Stdio::piped())
+        .output()
         .expect("Failed to execute export witness");
 
-    if !export_witness.success() {
+    if !export_witness.status.success() {
+        let stderr = String::from_utf8_lossy(&export_witness.stderr);
+        println!("Circom compilation failed with error:\n{}", stderr);
         panic!("Failed to convert wtns into json");
     }
 }
