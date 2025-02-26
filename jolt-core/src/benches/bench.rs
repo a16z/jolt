@@ -1,16 +1,21 @@
 use crate::field::JoltField;
 use crate::host;
+use crate::jolt::instruction::mulhu::MULHUInstruction;
+use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
+use crate::subprotocols::sparse_dense_sumcheck::prove_single_instruction;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use serde::Serialize;
@@ -28,6 +33,7 @@ pub enum BenchType {
     Sha3,
     Sha2Chain,
     Shout,
+    SparseDenseShout,
     Twist,
 }
 
@@ -51,6 +57,7 @@ pub fn benchmarks(
             }
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+            BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -64,6 +71,7 @@ pub fn benchmarks(
             }
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+            BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
@@ -104,6 +112,44 @@ where
 
     tasks.push((
         tracing::info_span!("Shout d=1"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn sparse_dense_shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let small_value_lookup_tables = F::compute_lookup_tables();
+    F::initialize_lookup_tables(small_value_lookup_tables);
+
+    let mut tasks = Vec::new();
+
+    const T: usize = 1 << 20;
+    const TREE_WIDTH: usize = 1 << 16;
+
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    let instructions: Vec<_> = (0..T)
+        .map(|_| MULHUInstruction::<32>::default().random(&mut rng))
+        .collect();
+
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    let r_cycle: Vec<F> = prover_transcript.challenge_vector(T.log_2());
+
+    let task = move || {
+        let _ = prove_single_instruction::<TREE_WIDTH, _, _, _>(
+            &instructions,
+            r_cycle,
+            &mut prover_transcript,
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Sparse-dense shout d=4"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 

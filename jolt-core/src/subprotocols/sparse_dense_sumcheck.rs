@@ -36,19 +36,42 @@ pub fn prove_single_instruction<
     let log_T = T.log_2();
     debug_assert_eq!(r_cycle.len(), log_T);
 
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+    let chunk_size = (T / num_chunks).max(1);
+
+    let span = tracing::span!(tracing::Level::INFO, "compute instruction_index_iters");
+    let _guard = span.enter();
+    let instruction_index_iters: Vec<_> = (0..num_chunks)
+        .into_par_iter()
+        .map(|i| {
+            instructions
+                .par_iter()
+                .enumerate()
+                .filter_map(move |(j, instruction)| {
+                    let k = instruction.to_lookup_index();
+                    if k as usize % num_chunks == i {
+                        Some(j)
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
+    drop(_guard);
+    drop(span);
+
     let eq_r_prime = EqPolynomial::evals(&r_cycle);
     // log(K) + log(T)
     let num_rounds = 4 * log_m + log_T;
     let mut r: Vec<F> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-    // let mut u_evals: HashMap<u64, F> = HashMap::with_capacity(T);
     let mut u_evals: Vec<(u64, F)> = instructions
         .par_iter()
         .enumerate()
         .map(|(j, instruction)| (instruction.to_lookup_index(), eq_r_prime[j]))
         .collect();
-    let mut t_evals: HashMap<u64, F> = HashMap::with_capacity(T);
+    let mut t_evals: HashMap<u64, F> = HashMap::with_capacity(T + TREE_WIDTH);
 
     let mut rv_claim = F::zero();
     let mut previous_claim = F::zero();
@@ -77,18 +100,35 @@ pub fn prove_single_instruction<
     let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
 
     for phase in 0..3 {
+        let span = tracing::span!(tracing::Level::INFO, "sparse-dense phase");
+        let _guard = span.enter();
+
         // Condensation
         if phase == 0 {
+            let span = tracing::span!(tracing::Level::INFO, "compute initial t evals");
+            let _guard = span.enter();
             t_evals.par_extend(
                 (0..(TREE_WIDTH as u64))
                     .into_par_iter()
                     .map(|k| (k, F::from_u64(I::default().materialize_entry(k)))),
             );
+            t_evals.par_extend(
+                u_evals
+                    .par_iter()
+                    .map(|(k, _)| (*k, F::from_u64(I::default().materialize_entry(*k)))),
+            );
         } else {
+            let span = tracing::span!(tracing::Level::INFO, "Update u_evals");
+            let _guard = span.enter();
             u_evals.par_iter_mut().for_each(|(k, u)| {
                 let k_bound = ((*k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
                 *u *= v[k_bound as usize];
             });
+            drop(_guard);
+            drop(span);
+
+            let span = tracing::span!(tracing::Level::INFO, "Update t_evals");
+            let _guard = span.enter();
             t_evals.par_iter_mut().for_each(|(k, t)| {
                 let k_bound = ((k >> ((4 - phase) * log_m)) % TREE_WIDTH as u64) as usize;
                 *t *= x[k_bound];
@@ -97,11 +137,33 @@ pub fn prove_single_instruction<
         }
 
         // Build binary trees Q_\ell and Z for each \ell = 1, ..., \kappa
-        let mut z_leaves = unsafe_allocate_zero_vec(TREE_WIDTH);
-        // TODO(moodlezoup): parallelize
-        for (k, u) in u_evals.iter() {
-            z_leaves[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += *u;
-        }
+
+        let span = tracing::span!(tracing::Level::INFO, "Compute Z tree leaves");
+        let _guard = span.enter();
+        let z_leaves = u_evals
+            .par_chunks(chunk_size)
+            .map(|u_evals_chunk| {
+                let mut result: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
+                for (k, u) in u_evals_chunk.iter() {
+                    result[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += *u;
+                }
+                result
+            })
+            .reduce(
+                || unsafe_allocate_zero_vec(TREE_WIDTH),
+                |mut running, new| {
+                    running
+                        .par_iter_mut()
+                        .zip(new.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running
+                },
+            );
+
+        drop(_guard);
+        drop(span);
+        let span = tracing::span!(tracing::Level::INFO, "Build Z tree");
+        let _guard = span.enter();
 
         let mut Z_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
         Z_tree[log_m] = z_leaves;
@@ -111,25 +173,41 @@ pub fn prove_single_instruction<
                 .map(|pair| pair[0] + pair[1])
                 .collect();
         }
+        drop(_guard);
+        drop(span);
 
         debug_assert_eq!(Z_tree[0].len(), 1);
         debug_assert_eq!(Z_tree[0][0], Z_tree[log_m].par_iter().sum());
 
+        let span = tracing::span!(tracing::Level::INFO, "Compute Q tree leaves");
+        let _guard = span.enter();
+
         // TODO(moodlezoup): Handle \ell > 1
-        let mut q_leaves = unsafe_allocate_zero_vec(TREE_WIDTH);
-        // TODO(moodlezoup): parallelize
-        for (k, u) in u_evals.iter() {
-            let t = match t_evals.get(&k) {
-                Some(eval) => *eval,
-                None => {
-                    debug_assert_eq!(phase, 0);
-                    let eval = F::from_u64(I::default().materialize_entry(*k));
-                    t_evals.insert(*k, eval);
-                    eval
+        let q_leaves = u_evals
+            .par_chunks(chunk_size)
+            .map(|u_evals_chunk| {
+                let mut result: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
+                for (k, u) in u_evals_chunk.iter() {
+                    let t = t_evals.get(&k).unwrap();
+                    result[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += *u * t;
                 }
-            };
-            q_leaves[((k >> ((3 - phase) * log_m)) % TREE_WIDTH as u64) as usize] += *u * t;
-        }
+                result
+            })
+            .reduce(
+                || unsafe_allocate_zero_vec(TREE_WIDTH),
+                |mut running, new| {
+                    running
+                        .par_iter_mut()
+                        .zip(new.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running
+                },
+            );
+
+        drop(_guard);
+        drop(span);
+        let span = tracing::span!(tracing::Level::INFO, "Build Q tree");
+        let _guard = span.enter();
 
         let mut Q_tree: Vec<Vec<F>> = vec![vec![]; log_m + 1];
         Q_tree[log_m] = q_leaves;
@@ -139,6 +217,9 @@ pub fn prove_single_instruction<
                 .map(|pair| pair[0] + pair[1])
                 .collect();
         }
+        drop(_guard);
+        drop(span);
+
         debug_assert_eq!(Q_tree[0].len(), 1);
         debug_assert_eq!(Q_tree[0][0], Q_tree[log_m].par_iter().sum());
 
@@ -152,6 +233,9 @@ pub fn prove_single_instruction<
         }
 
         for round in 0..log_m {
+            let span = tracing::span!(tracing::Level::INFO, "sparse-dense sumcheck round");
+            let _guard = span.enter();
+
             #[cfg(test)]
             {
                 let expected: F = (0..val_test.len())
@@ -162,6 +246,10 @@ pub fn prove_single_instruction<
                     "Sumcheck sanity check failed in phase {phase} round {round}"
                 );
             }
+
+            let prover_message_span =
+                tracing::span!(tracing::Level::INFO, "Compute univariate poly");
+            let _prover_message_guard = prover_message_span.enter();
 
             let q_layer = &Q_tree[round + 1];
             let z_layer = &Z_tree[round + 1];
@@ -238,6 +326,9 @@ pub fn prove_single_instruction<
                 univariate_poly_evals[1],
             ]);
 
+            drop(_prover_message_guard);
+            drop(prover_message_span);
+
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
@@ -246,6 +337,9 @@ pub fn prove_single_instruction<
             r.push(r_j);
 
             previous_claim = univariate_poly.evaluate(&r_j);
+
+            let binding_span = tracing::span!(tracing::Level::INFO, "Binding");
+            let _binding_guard = binding_span.enter();
 
             v = v
                 .into_par_iter()
@@ -287,6 +381,9 @@ pub fn prove_single_instruction<
             j += 1;
         }
 
+        let span = tracing::span!(tracing::Level::INFO, "cache ra_i");
+        let _guard = span.enter();
+
         let ra_i: Vec<F> = instructions
             .par_iter()
             .map(|instruction| {
@@ -304,13 +401,36 @@ pub fn prove_single_instruction<
     // are fully bound when we start "vanilla" Shout.
 
     // Modified version of the C array described in Equation (47) of the Twist+Shout paper
-    let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
-    for (j, instruction) in instructions.iter().enumerate() {
-        let k = instruction.to_lookup_index();
-        eq_ra[(k as usize) % TREE_WIDTH] +=
-            eq_r_prime[j] * ra[0].get_coeff(j) * ra[1].get_coeff(j) * ra[2].get_coeff(j);
-    }
+
+    let span = tracing::span!(tracing::Level::INFO, "Materialize eq_ra");
+    let _guard = span.enter();
+    let eq_ra = instructions
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, instructions_chunk)| {
+            let mut result: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH);
+            for (j, instruction) in instructions_chunk.iter().enumerate() {
+                let j = chunk_index * chunk_size + j;
+                let k = instruction.to_lookup_index();
+                result[(k as usize) % TREE_WIDTH] +=
+                    eq_r_prime[j] * ra[0].get_coeff(j) * ra[1].get_coeff(j) * ra[2].get_coeff(j);
+            }
+            result
+        })
+        .reduce(
+            || unsafe_allocate_zero_vec(TREE_WIDTH),
+            |mut running, new| {
+                running
+                    .par_iter_mut()
+                    .zip(new.into_par_iter())
+                    .for_each(|(x, y)| *x += y);
+                running
+            },
+        );
+
     let mut eq_ra = MultilinearPolynomial::from(eq_ra);
+    drop(_guard);
+    drop(span);
 
     #[cfg(test)]
     {
@@ -319,11 +439,15 @@ pub fn prove_single_instruction<
         }
     }
 
+    let span = tracing::span!(tracing::Level::INFO, "Materialize val");
+    let _guard = span.enter();
     let val: Vec<F> = (0..TREE_WIDTH)
         .into_par_iter()
         .map(|k| x[0] * t_evals.get(&(k as u64)).unwrap() + w[0])
         .collect();
     let mut val = MultilinearPolynomial::from(val);
+    drop(_guard);
+    drop(span);
 
     #[cfg(test)]
     {
@@ -333,6 +457,9 @@ pub fn prove_single_instruction<
     }
 
     v = vec![F::one()];
+
+    let span = tracing::span!(tracing::Level::INFO, "Next log(m) sumcheck rounds");
+    let _guard = span.enter();
 
     for _round in 0..log_m {
         #[cfg(test)]
@@ -395,6 +522,12 @@ pub fn prove_single_instruction<
             .collect();
     }
 
+    drop(_guard);
+    drop(span);
+
+    let span = tracing::span!(tracing::Level::INFO, "cache ra_i");
+    let _guard = span.enter();
+
     let ra_i: Vec<F> = instructions
         .par_iter()
         .map(|instruction| {
@@ -404,9 +537,14 @@ pub fn prove_single_instruction<
         })
         .collect();
     ra.push(MultilinearPolynomial::from(ra_i));
+    drop(_guard);
+    drop(span);
 
     let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
     let val_eval = val.final_sumcheck_claim();
+
+    let span = tracing::span!(tracing::Level::INFO, "last log(T) sumcheck rounds");
+    let _guard = span.enter();
 
     for _round in 0..log_T {
         let mut univariate_poly_evals: [F; 5] = (0..eq_r_prime.len() / 2)
