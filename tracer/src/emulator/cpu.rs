@@ -2524,10 +2524,10 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let precompile_enum = cpu.read_register(5);
             let precompile = Precompile::from_u64(precompile_enum).expect("invalid precompile");
 
-            let precompile_input_address = 0_u64; // @TODO: which address should be supplied to fetch the input?
-            let inputs = cpu.mmu.get_precompile_input(precompile_input_address); // which address should be supplied to fetch the input?
+            let precompile_input_address = cpu.mmu.jolt_device.memory_layout.precompile_input_start;
+            let inputs = cpu.mmu.get_precompile_input(precompile_input_address);
             let output = precompile.execute(input);
-            let precompile_output_address = 0_u64; // @TODO: which address should be supplied to store the output?
+            let precompile_output_address = cpu.mmu.jolt_device.memory_layout.precompile_output_start;
             cpu.get_mut_mmu
                 .set_precompile_output(output, precompile_output_address);
             Ok(())
