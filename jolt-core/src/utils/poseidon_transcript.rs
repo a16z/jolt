@@ -191,7 +191,7 @@ impl<J: PrimeField, K: PrimeField> Transcript for PoseidonTranscript<J, K> {
     fn append_bytes(&mut self, bytes: &[u8]) {
         let n_rounds = self.n_rounds;
         self.absorb(&n_rounds);
-        self.absorb(&bytes);
+        self.absorb(&bytes.iter().map(|byte| *byte as u32).collect::<Vec<u32>>());
         let new_state = self.squeeze_field_element();
         self.update_state(new_state);
     }

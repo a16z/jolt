@@ -9,7 +9,7 @@ extern crate sha3;
 #[derive(Clone)]
 pub struct Instance<F: JoltField> {
     inst: R1CSInstance<F>,
-    // digest: Vec<u8>,
+    digest: F,
 }
 
 impl<F: JoltField> Instance<F> {
@@ -21,8 +21,10 @@ impl<F: JoltField> Instance<F> {
     ) -> (Instance<F>, Vec<F>, Vec<F>) {
         let (inst, inputs, vars) =
             R1CSInstance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
-        // let digest = inst.get_digest();
-        (Instance { inst }, vars, inputs)
+
+        let digest = inst.get_digest();
+
+        (Instance { inst, digest }, vars, inputs)
     }
 }
 

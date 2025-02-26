@@ -1,14 +1,16 @@
 #![allow(dead_code)]
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::Deserialize;
+
 #[allow(clippy::type_complexity)]
 use crate::{
     field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatEntry<F: JoltField> {
     pub row: usize,
     pub col: usize,
@@ -25,7 +27,7 @@ pub struct CircuitConfig {
     pub constraints: Vec<Vec<HashMap<String, String>>>, // List of lists of HashMaps
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatPolynomial<F: JoltField> {
     num_vars_x: usize,
     num_vars_y: usize,

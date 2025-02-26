@@ -185,12 +185,12 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                 );
                 let inst =
                     R1CSInstance::new(num_cons, num_vars, num_inputs, poly_A, poly_B, poly_C);
+                let digest = inst.get_digest();
                 assert!(inst.is_sat(&inputs, &vars));
                 SpartanPreprocessing {
-                    inst: Instance { inst },
+                    inst: Instance { inst, digest },
                     vars,
                     inputs,
-                    // rx_ry: None,
                 }
             }
             None => {
@@ -668,6 +668,7 @@ where
     pub fn prove<'a>(pcs_setup: &PCS::Setup, preprocessing: &SpartanPreprocessing<F>) -> Self {
         let protocol_name = Self::protocol_name();
         let mut transcript = ProofTranscript::new(protocol_name);
+        transcript.append_scalar(&preprocessing.inst.digest);
 
         let num_inputs = preprocessing.inputs.len();
         let num_vars = preprocessing.vars.len();
@@ -817,6 +818,7 @@ where
         let num_vars = preprocessing.vars.len();
         let protocol_name = Self::protocol_name();
         let mut transcript = ProofTranscript::new(protocol_name);
+        transcript.append_scalar(&preprocessing.inst.digest);
 
         proof.witness_commit.append_to_transcript(&mut transcript);
 

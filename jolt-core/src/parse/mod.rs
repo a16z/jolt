@@ -138,6 +138,9 @@ mod test {
     const NUM_INSTRUCTIONS: usize = RV32I::COUNT;
     #[test]
     fn end_to_end_testing() {
+        let binding = env::current_dir().unwrap().join("src/parse/requirements");
+        let output_dir = binding.to_str().unwrap();
+
         let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
             fib_e2e::<Fr, PCS, ProofTranscript>();
         // let verification_result =
@@ -147,7 +150,6 @@ mod test {
         //     "Verification failed with error: {:?}",
         //     verification_result.err()
         // );
-
         let jolt1_input = json!(
         {
             "preprocessing": {
@@ -158,18 +160,15 @@ mod test {
             "commitments": jolt_commitments.format_non_native(),
             "pi_proof": jolt_preprocessing.format()
         });
-        let binding = env::current_dir().unwrap().join("src/parse/requirements");
-        let output_dir = binding.to_str().unwrap();
-        write_json(&jolt1_input, output_dir, "jolt1");     
+
+        write_json(&jolt1_input, output_dir, "jolt1");
 
         let jolt_package = "jolt1";
         let circom_template = "verify";
         let jolt1_circom_file_path = get_path(jolt_package);
 
-        #[rustfmt::skip]
-        let jolt1_params:Vec<usize> =  get_jolt_args(&jolt_proof, & jolt_preprocessing);
+        let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
         let prime = "bn128";
-
         generate_r1cs(
             jolt1_circom_file_path,
             &output_dir,
@@ -215,7 +214,6 @@ mod test {
         let jolt_openining_point_len = jolt_proof.opening_proof.joint_opening_proof.com.len() + 1;
 
         println!("Running Spartan Hyperkzg");
-
         spartan_hkzg(
             jolt_pi,
             linking_stuff_1,
@@ -479,21 +477,8 @@ mod test {
         verify_args.push(num_cons_total);
         verify_args.push(num_vars);
         verify_args.push(num_cols);
-
-        verify_args.push(
-            preprocessing
-                .memory_layout
-                .max_output_size
-                .try_into()
-                .unwrap(),
-        );
-        verify_args.push(
-            preprocessing
-                .memory_layout
-                .max_input_size
-                .try_into()
-                .unwrap(),
-        );
+        verify_args.push(preprocessing.memory_layout.max_output_size as usize);
+        verify_args.push(preprocessing.memory_layout.max_input_size as usize);
 
         verify_args
     }

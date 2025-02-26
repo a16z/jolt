@@ -583,9 +583,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64ct"
-version = "1.6.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
+checksum = "c103cbbedac994e292597ab79342dbd5b306a362045095db54917d92a9fdfd92"
 
 [[package]]
 name = "bincode"
@@ -905,7 +905,7 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 [[package]]
 name = "combined_r1cs"
 version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#6d777df21682da4845c1a27888cb1ce849c519cf"
+source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#21f840953f9e76209cee6f747398fa478b6f9d25"
 dependencies = [
  "matrix",
  "serde_json",
@@ -2199,7 +2199,7 @@ dependencies = [
 [[package]]
 name = "jolt1"
 version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#6d777df21682da4845c1a27888cb1ce849c519cf"
+source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#21f840953f9e76209cee6f747398fa478b6f9d25"
 dependencies = [
  "num-bigint",
  "rand 0.8.5",
@@ -2325,7 +2325,7 @@ checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
 [[package]]
 name = "matrix"
 version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#6d777df21682da4845c1a27888cb1ce849c519cf"
+source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#21f840953f9e76209cee6f747398fa478b6f9d25"
 dependencies = [
  "num",
  "num-bigint",
@@ -3623,7 +3623,7 @@ dependencies = [
 [[package]]
 name = "spartan_hyrax"
 version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#6d777df21682da4845c1a27888cb1ce849c519cf"
+source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes#21f840953f9e76209cee6f747398fa478b6f9d25"
 dependencies = [
  "serde_json",
 ]

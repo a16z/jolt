@@ -4,11 +4,13 @@ use crate::{
     field::JoltField, poly::dense_mlpoly::DensePolynomial, spartan::sparse_mlpoly::SparseMatEntry,
     utils::math::Math,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
-use serde::{Deserialize, Serialize};
+use sha3::Digest;
+use sha3::Sha3_256;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSInstance<F: JoltField> {
     num_cons: usize,
     num_vars: usize,
@@ -57,14 +59,38 @@ impl<F: JoltField> R1CSInstance<F> {
     pub fn get_num_inputs(&self) -> usize {
         self.num_inputs
     }
+
     pub fn get_matrices(&self) -> [&SparseMatPolynomial<F>; 3] {
         [&self.A, &self.B, &self.C]
     }
-    // pub fn get_digest(&self) -> Vec<u8> {
-    //     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    //     bincode::serialize_into(&mut encoder, &self).unwrap();
-    //     encoder.finish().unwrap()
-    // }
+
+    pub fn get_digest(&self) -> F {
+        let mut hash_bytes = Vec::new();
+        self.serialize_compressed(&mut hash_bytes).unwrap();
+
+        let mut hasher = Sha3_256::new();
+        hasher.update(hash_bytes);
+
+        let map_to_field = |digest: &[u8]| -> F {
+            let bv = (0..250).map(|i| {
+                let (byte_pos, bit_pos) = (i / 8, i % 8);
+                let bit = (digest[byte_pos] >> bit_pos) & 1;
+                bit == 1
+            });
+
+            // turn the bit vector into a scalar
+            let mut digest = F::zero();
+            let mut coeff = F::one();
+            for bit in bv {
+                if bit {
+                    digest += coeff;
+                }
+                coeff += coeff;
+            }
+            digest
+        };
+        map_to_field(&hasher.finalize())
+    }
 
     pub fn produce_synthetic_r1cs(
         num_cons: usize,

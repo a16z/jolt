@@ -422,7 +422,6 @@ where
             &program_io.memory_layout,
             trace_length,
         );
-
         let instruction_polynomials =
             InstructionLookupsProof::<
                 C,
