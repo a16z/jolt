@@ -46,7 +46,7 @@ pub mod sign_extend;
 pub mod sll;
 pub mod sra_sign;
 pub mod srl;
-pub mod truncate_overflow;
+// pub mod truncate_overflow;
 pub mod xor;
 
 #[cfg(test)]

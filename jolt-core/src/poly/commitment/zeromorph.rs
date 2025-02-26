@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::{iter, marker::PhantomData};
 
 use super::{
-    commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+    commitment_scheme::CommitmentScheme,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 use crate::field::JoltField;
@@ -427,19 +427,17 @@ where
     type Proof = ZeromorphProof<P>;
     type BatchedProof = ZeromorphProof<P>;
 
-    fn setup(shapes: &[CommitShape]) -> Self::Setup
+    fn setup(max_poly_len: usize) -> Self::Setup
     where
         P::ScalarField: JoltField,
         P::G1: Icicle,
     {
-        let max_len = shapes.iter().map(|shape| shape.input_length).max().unwrap();
-
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
-            max_len,
-            max_len,
+            max_poly_len,
+            max_poly_len,
         )))
-        .trim(max_len)
+        .trim(max_poly_len)
     }
 
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
@@ -452,11 +450,7 @@ where
         ZeromorphCommitment(UnivariateKZG::commit_as_univariate(&setup.0.commit_pp, poly).unwrap())
     }
 
-    fn batch_commit<U>(
-        polys: &[U],
-        gens: &Self::Setup,
-        _batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
@@ -789,7 +783,7 @@ mod test {
                 &mut prover_transcript,
             )
             .unwrap();
-            let p_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
+            let p_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 prover_transcript.challenge_scalar();
 
             // Verify proof.
@@ -803,10 +797,10 @@ mod test {
                 &mut verifier_transcript,
             )
             .unwrap();
-            let v_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
+            let v_transcript_squeeze: <Bn254 as Pairing>::ScalarField =
                 verifier_transcript.challenge_scalar();
 
-            assert_eq!(p_transcipt_squeeze, v_transcipt_squeeze);
+            assert_eq!(p_transcript_squeeze, v_transcript_squeeze);
 
             // evaluate bad proof for soundness
             let altered_verifier_point = point

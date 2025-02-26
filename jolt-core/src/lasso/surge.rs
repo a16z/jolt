@@ -2,7 +2,6 @@ use crate::{
     field::JoltField,
     jolt::vm::{JoltCommitments, JoltPolynomials, ProverDebugInfo},
     poly::{
-        commitment::commitment_scheme::BatchType,
         compact_polynomial::{CompactPolynomial, SmallScalar},
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
@@ -416,18 +415,13 @@ where
 
         let mut commitments = SurgeCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
         let trace_polys = polynomials.read_write_values();
-        let trace_comitments =
-            PCS::batch_commit(&trace_polys, generators, BatchType::SurgeReadWrite);
+        let trace_comitments = PCS::batch_commit(&trace_polys, generators);
         commitments
             .read_write_values_mut()
             .into_iter()
             .zip(trace_comitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
-        commitments.final_cts = PCS::batch_commit(
-            &polynomials.final_cts,
-            generators,
-            BatchType::SurgeInitFinal,
-        );
+        commitments.final_cts = PCS::batch_commit(&polynomials.final_cts, generators);
 
         let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
@@ -679,10 +673,7 @@ mod tests {
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
-        poly::commitment::{
-            commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
-            hyperkzg::HyperKZG,
-        },
+        poly::commitment::{commitment_scheme::CommitmentScheme, hyperkzg::HyperKZG},
     };
     use ark_bn254::{Bn254, Fr};
     use ark_std::test_rng;
@@ -703,10 +694,7 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::<_, KeccakTranscript>::setup(&[CommitShape::new(
-            M,
-            BatchType::SurgeReadWrite,
-        )]);
+        let generators = HyperKZG::<_, KeccakTranscript>::setup(M);
         let (proof, debug_info) = SurgeProof::<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
@@ -735,10 +723,7 @@ mod tests {
         .collect();
 
         let preprocessing = SurgePreprocessing::preprocess();
-        let generators = HyperKZG::<_, KeccakTranscript>::setup(&[CommitShape::new(
-            M,
-            BatchType::SurgeReadWrite,
-        )]);
+        let generators = HyperKZG::<_, KeccakTranscript>::setup(M);
         let (proof, debug_info) = SurgeProof::<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
