@@ -11,7 +11,7 @@ pub const DEFAULT_MEMORY_SIZE: u64 = 10 * 1024 * 1024;
 pub const DEFAULT_STACK_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
-pub const DEFAULT_MAX_PRECOMPILE_INPUT_SIZE: u64 = 512;    
+pub const DEFAULT_MAX_PRECOMPILE_INPUT_SIZE: u64 = 512;
 pub const DEFAULT_MAX_PRECOMPILE_OUTPUT_SIZE: u64 = 512;
 
 pub const fn virtual_register_index(index: u64) -> u64 {

@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::trace::Tracer;
-use common::rv_trace::*;
 use common::precompiles;
+use common::rv_trace::*;
 
 use self::fnv::FnvHashMap;
 
@@ -2516,15 +2516,20 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "ECALL",
         operation: |cpu, _word, _address| {
             // make sure that the t0 register contains non zero value
-            assert_ne!(cpu.read_register(5), 0, "No precompile enum provided in t0 register.");
+            assert_ne!(
+                cpu.read_register(5),
+                0,
+                "No precompile enum provided in t0 register."
+            );
             let precompile_enum = cpu.read_register(5);
             let precompile = Precompile::from_u64(precompile_enum).expect("invalid precompile");
 
-            let precompile_input_address = 0_u64; // @TODO: which address should be supplied to fetch the input?            
+            let precompile_input_address = 0_u64; // @TODO: which address should be supplied to fetch the input?
             let inputs = cpu.mmu.get_precompile_input(precompile_input_address); // which address should be supplied to fetch the input?
             let output = precompile.execute(input);
             let precompile_output_address = 0_u64; // @TODO: which address should be supplied to store the output?
-            cpu.get_mut_mmu.set_precompile_output(output, precompile_output_address);
+            cpu.get_mut_mmu
+                .set_precompile_output(output, precompile_output_address);
             Ok(())
 
             // let exception_type = match cpu.privilege_mode {

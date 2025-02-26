@@ -614,17 +614,17 @@ impl JoltDevice {
         }
 
         let internal_address = self.convert_write_address(address);
-        
+
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
 
-        if self.precompile_outputs.len() <= internal_address {
-            self.precompile_outputs.resize(internal_address + 1, 0);
+        if self.precompile_output.len() <= internal_address {
+            self.precompile_output.resize(internal_address + 1, 0);
         }
 
-        if self.precompile_outputs.len() <= internal_address {
-            self.precompile_outputs.resize(internal_address + 1, 0);
+        if self.precompile_output.len() <= internal_address {
+            self.precompile_output.resize(internal_address + 1, 0);
         }
 
         self.outputs[internal_address] = value;
@@ -643,11 +643,13 @@ impl JoltDevice {
     }
 
     pub fn is_precompile_input(&self, address: u64) -> bool {
-        address >= self.memory_layout.precompile_input_start && address < self.memory_layout.precompile_input_end
+        address >= self.memory_layout.precompile_input_start
+            && address < self.memory_layout.precompile_input_end
     }
 
     pub fn is_precompile_output(&self, address: u64) -> bool {
-        address >= self.memory_layout.precompile_output_start && address < self.memory_layout.precompile_output_end
+        address >= self.memory_layout.precompile_output_start
+            && address < self.memory_layout.precompile_output_end
     }
 
     pub fn is_panic(&self, address: u64) -> bool {
