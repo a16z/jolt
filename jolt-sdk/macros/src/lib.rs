@@ -14,12 +14,9 @@ use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, PatType, ReturnType, 
 static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
-pub fn provable(attr: TokenStream, item: TokenStream, precompile: Option<TokenStream>) -> TokenStream {
+pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttributeArgs);
     let func = parse_macro_input!(item as ItemFn);
-    if let Some(precompile_func) = precompile.map(|precompile| {
-        parse_macro_input!(precompile as ItemFn)
-    });
     let mut builder = MacroBuilder::new(attr, func);
 
     let mut token_stream = builder.build();
@@ -43,16 +40,11 @@ struct MacroBuilder {
     func: ItemFn,
     std: bool,
     func_args: Vec<(Ident, Box<Type>)>,
-    precompile_func: Option<ItemFn>,
-    precompile_func_args: Option<Vec<(Ident, Box<Type>)>>, // should be Option<Vec<Vec<(Ident, Box<Type>)>>> for multiple precompiles?
 }
 
 impl MacroBuilder {
-    fn new(attr: AttributeArgs, func: ItemFn, precompile_func: Option<ItemFn>) -> Self {
+    fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let func_args = Self::get_func_args(&func);
-        if let Some(precompile_func_args) = precompile_func.map(|precompile_func| {
-            Self::get_func_args(&precompile_func)
-        });
         #[cfg(feature = "guest-std")]
         let std = true;
         #[cfg(not(feature = "guest-std"))]
@@ -63,8 +55,6 @@ impl MacroBuilder {
             func,
             std,
             func_args,
-            precompile_func,
-            precompile_func_args,
         }
     }
 
@@ -294,10 +284,6 @@ impl MacroBuilder {
         let output_start = memory_layout.output_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
-        let max_precompile_input_len = attributes.max_precompile_input_size as usize;
-        let max_precompile_output_len = attributes.max_precompile_output_size as usize;
-        let precompile_input_start = memory_layout.precompile_input_start; // empty if no precompile used, no option
-        let precompile_output_start = memory_layout.precompile_output_start;
         let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
@@ -333,39 +319,6 @@ impl MacroBuilder {
             },
         };
 
-        // How should we handle multiple precompiles in one provable function?
-        let get_precompile_input_slice = quote! {
-            let precompile_input_ptr = #precompile_input_start as *const u8;
-            let precompile_input_slice = unsafe {
-                core::slice::from_raw_parts(precompile_input_ptr, #max_precompile_input_len)
-            };
-        };
-
-        let precompile_args = &self.precompile_func_args;
-        let precompile_args_fetch = precompile_args.iter().map(|(name, ty)| {
-            quote! {
-                let (#name, precompile_input_slice) =
-                    jolt::postcard::take_from_bytes::<#ty>(precompile_input_slice).unwrap();
-            }
-        });
-
-        // I'm unsure about this bit of code for the precompile output
-        let precompile_block = &self.precompile_func.block;
-        let precompile_block = quote! {let to_return = (|| -> _ { #precompile_block })();};
-
-        let handle_precompile_return = match &self.precompile_func.sig.output {
-            ReturnType::Default => quote! {},
-            ReturnType::Type(_, ty) => quote! {
-                let precompile_output_ptr = #precompile_output_start as *mut u8;
-                let precompile_output_slice = unsafe {
-                    core::slice::from_raw_parts_mut(precompile_output_ptr, #max_precompile_output_len)
-                };
-
-                jolt::postcard::to_slice::<#ty>(&to_return, precompile_output_slice).unwrap();
-            },
-        };
-
-        // let precompile_fn = self.make_precompile_fn(PrecompileEnum); // check with Michael
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
@@ -463,7 +416,6 @@ impl MacroBuilder {
                 MemoryOp,
                 MemoryLayout,
                 MEMORY_OPS_PER_INSTRUCTION,
-                Precompiles,
                 instruction::add::ADDInstruction,
                 tracer,
             };
@@ -574,27 +526,6 @@ impl MacroBuilder {
         &self.func.sig.ident
     }
 
-    fn get_precompile_args(precompile: &ItemFn) -> Vec<(Ident, Box<Type>)> {
-        let mut args = Vec::new();
-        for arg in &precompile.sig.inputs {
-            if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
-                if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
-                    args.push((pat_ident.ident.clone(), ty.clone()));
-                } else {
-                    panic!("cannot parse arg");
-                }
-            } else {
-                panic!("cannot parse arg");
-            }
-        }
-
-        args
-    }
-
-    fn get_precompile_fn_name(&self) -> &Ident {
-        &self.precompile_func.sig.ident
-    }
-
     fn get_guest_name(&self) -> String {
         proc_macro::tracked_env::var("CARGO_PKG_NAME").unwrap()
     }
@@ -633,41 +564,4 @@ impl MacroBuilder {
             }
         }
     }
-
-    //  Not sure if I should move the precompile code in `make_main_func` to this function...
-    fn make_build_precompile_fn(&self, precompile_enum: PrecompileEnum) -> TokenStream2 {
-        // Iterate over the inputs
-        // Serialize the inputs from the array using correct type
-                asm!(
-                    "ecall",
-                    in("t0") PrecompileEnum::fn_name as u32,
-                )
-
-                // quote! {
-                //     #[cfg(feature = "guest")]
-                //     pub fn #fn_name(#inputs) #output {
-                //         #body
-                //     }
-                // }
-            
-        
-    }
-
-    #[cfg(not(feature = "guest"))]
-    pub fn prove_precompile(
-        preprocessing: Self::Preprocessing,
-        witness: Self::Witness,
-    ) -> Self::Proof {
-        // This is a placeholder for the actual implementation.
-        // Will likely require pattern matching on the precompile enum to determine which precompile to run.
-    }
-
-    #[cfg(not(feature = "guest"))]
-    pub fn verify(
-        preprocessing: Self::Preprocessing,
-        proof: Self::Proof,
-    ) -> bool {
-        // This is a placeholder for the actual implementation.
-    }
-
 }
