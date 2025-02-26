@@ -622,7 +622,7 @@ dependencies = [
 [[package]]
 name = "binius_field"
 version = "0.2.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#4f56acaf95ec85916151d3b5af078af6c8b4eab5"
+source = "git+https://gitlab.com/UlvetannaOSS/binius#ee30936cfb5a311d562494dffb2c93011f27dbc3"
 dependencies = [
  "binius_maybe_rayon",
  "binius_utils",
@@ -640,7 +640,7 @@ dependencies = [
 [[package]]
 name = "binius_maybe_rayon"
 version = "0.2.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#4f56acaf95ec85916151d3b5af078af6c8b4eab5"
+source = "git+https://gitlab.com/UlvetannaOSS/binius#ee30936cfb5a311d562494dffb2c93011f27dbc3"
 dependencies = [
  "cfg-if",
  "either",
@@ -650,7 +650,7 @@ dependencies = [
 [[package]]
 name = "binius_utils"
 version = "0.2.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#4f56acaf95ec85916151d3b5af078af6c8b4eab5"
+source = "git+https://gitlab.com/UlvetannaOSS/binius#ee30936cfb5a311d562494dffb2c93011f27dbc3"
 dependencies = [
  "auto_impl",
  "binius_maybe_rayon",

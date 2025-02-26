@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
+use std::path::PathBuf;
+
 use super::{jolt::Fr, Parse};
 use crate::{
     jolt::vm::JoltStuff,
-    parse::{generate_r1cs, get_path, spartan2::spartan_hyrax, write_json},
+    parse::{generate_r1cs, spartan2::spartan_hyrax, write_json},
     poly::commitment::{
         commitment_scheme::CommitmentScheme,
         hyperkzg::{HyperKZG, HyperKZGCommitment},
@@ -185,6 +187,8 @@ pub(crate) fn spartan_hkzg(
     pub_io_len: usize,
     jolt_stuff_size: usize,
     jolt_openining_point_len: usize,
+    file_paths: &Vec<PathBuf>,
+    packages: &[&str],
     z: &Vec<Fr>,
     output_dir: &str,
 ) {
@@ -224,7 +228,11 @@ pub(crate) fn spartan_hkzg(
             })
         }
     }
-    let constraint_path = format!("{}/jolt1_constraints.json", output_dir).to_string();
+
+    let circom_template = "Combine";
+    let prime = "grumpkin";
+
+    let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[0]).to_string();
     let constraint_path = Some(&constraint_path);
 
     let preprocessing =
@@ -250,9 +258,7 @@ pub(crate) fn spartan_hkzg(
         "hyperkzg_proof": hyperkzg_proof
     });
 
-    let combine_r1cs_package = "combined_r1cs";
-
-    write_json(&combine_input, output_dir, combine_r1cs_package);
+    write_json(&combine_input, output_dir, packages[1]);
 
     let inner_num_rounds = proof.inner_sumcheck_proof.uni_polys.len();
 
@@ -265,8 +271,6 @@ pub(crate) fn spartan_hkzg(
         1 + (inner_num_rounds - 1) * 3 + 3 + jolt_stuff_size + 15 * 3 + 2 * 3 + 10 + 10;
     let postponed_point_len = inner_num_rounds - 1;
 
-    let circom_template = "Combine";
-    let combined_r1cs_circom_file_path = get_path(combine_r1cs_package);
     let combined_r1cs_params = [
         proof.outer_sumcheck_proof.uni_polys.len(),
         proof.inner_sumcheck_proof.uni_polys.len(),
@@ -275,10 +279,8 @@ pub(crate) fn spartan_hkzg(
     ]
     .to_vec();
 
-    let prime = "grumpkin";
-
     generate_r1cs(
-        combined_r1cs_circom_file_path,
+        &file_paths[1],
         output_dir,
         circom_template,
         combined_r1cs_params,
@@ -292,6 +294,8 @@ pub(crate) fn spartan_hkzg(
         vk_jolt_2_nn,
         pub_io_len_combine_r1cs,
         postponed_point_len,
+        file_paths,
+        packages,
         output_dir,
     );
 }

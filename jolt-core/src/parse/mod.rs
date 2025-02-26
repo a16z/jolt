@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::field::JoltField;
 use num_bigint::BigUint;
 use std::{
@@ -51,18 +52,25 @@ pub(crate) fn read_witness<F: JoltField>(witness_file_path: &str) -> Vec<F> {
     z
 }
 
-pub(crate) fn get_path(package_name: &str) -> PathBuf {
-    // Build the package first
-    let status = Command::new("cargo")
-        .args(["build", "--package", package_name])
-        .status()
-        .expect("Failed to build package");
+fn get_paths(package_names: &[&str]) -> Vec<PathBuf> {
+    let mut package_paths = Vec::new();
 
-    if !status.success() {
-        panic!("Failed to build");
+    let mut build_args = vec!["build"];
+    for package_name in package_names {
+        build_args.push("--package");
+        build_args.push(package_name);
     }
 
-    // Get Cargo metadata to find where the dependency is stored
+    let status = Command::new("cargo")
+        .args(&build_args)
+        .status()
+        .expect("Failed to build packages");
+
+    if !status.success() {
+        panic!("Failed to build one or more packages.");
+    }
+
+    // Get Cargo metadata once to find where dependencies are stored
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1"])
         .output()
@@ -71,11 +79,16 @@ pub(crate) fn get_path(package_name: &str) -> PathBuf {
     let metadata: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata");
 
-    // Find the `spartan_hyperkzg` package in dependencies
-    let mut repo_b_path = None;
-    if let Some(packages) = metadata.get("packages").and_then(|p| p.as_array()) {
+    let packages = metadata
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .expect("Invalid metadata format");
+
+    for package_name in package_names {
+        let mut repo_b_path = None;
+
         for package in packages {
-            if package.get("name").and_then(|n| n.as_str()) == Some(package_name) {
+            if package.get("name").and_then(|n| n.as_str()) == Some(*package_name) {
                 repo_b_path = package
                     .get("manifest_path")
                     .and_then(|m| m.as_str())
@@ -83,17 +96,19 @@ pub(crate) fn get_path(package_name: &str) -> PathBuf {
                 break;
             }
         }
+
+        let repo_b_path =
+            repo_b_path.unwrap_or_else(|| panic!("Could not find package: {}", package_name));
+
+        let circom_file_name = format!("{}.circom", package_name);
+        let circom_file = repo_b_path.join(circom_file_name);
+
+        // Ensure the file exists
+        assert!(circom_file.exists(), "File not found at {:?}", circom_file);
+
+        package_paths.push(circom_file);
     }
-
-    let repo_b_path = repo_b_path.expect("Could not find spartan_hyperkzg in cargo metadata");
-
-    let circom_file_name = format!("{}.circom", package_name);
-
-    let circom_file = repo_b_path.join(circom_file_name);
-
-    // Ensure the file exists
-    assert!(circom_file.exists(), "File not found at {:?}", circom_file);
-    circom_file
+    package_paths
 }
 
 #[cfg(test)]
@@ -126,7 +141,7 @@ mod test {
     };
     use strum::EnumCount;
 
-    use super::{generate_r1cs, get_path, read_witness};
+    use super::{generate_r1cs, get_paths, read_witness};
     type Fr = ark_bn254::Fr;
     type ProofTranscript = PoseidonTranscript<Fr, Fr>;
     type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
@@ -141,6 +156,15 @@ mod test {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
 
+        let jolt_package = "jolt1";
+        let combine_r1cs_package = "combined_r1cs";
+        let spartan_hyrax_package = "spartan_hyrax";
+        let packages = &[jolt_package, combine_r1cs_package, spartan_hyrax_package];
+
+        let file_paths = get_paths(packages);
+
+        let circom_template = "verify";
+        let prime = "bn128";
         let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
             fib_e2e::<Fr, PCS, ProofTranscript>();
         // let verification_result =
@@ -150,6 +174,7 @@ mod test {
         //     "Verification failed with error: {:?}",
         //     verification_result.err()
         // );
+
         let jolt1_input = json!(
         {
             "preprocessing": {
@@ -161,16 +186,11 @@ mod test {
             "pi_proof": jolt_preprocessing.format()
         });
 
-        write_json(&jolt1_input, output_dir, "jolt1");
-
-        let jolt_package = "jolt1";
-        let circom_template = "verify";
-        let jolt1_circom_file_path = get_path(jolt_package);
+        write_json(&jolt1_input, output_dir, packages[0]);
 
         let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
-        let prime = "bn128";
         generate_r1cs(
-            jolt1_circom_file_path,
+            &file_paths[0],
             &output_dir,
             circom_template,
             jolt1_params,
@@ -224,6 +244,8 @@ mod test {
             pub_io_len,
             jolt_stuff_size,
             jolt_openining_point_len,
+            &file_paths,
+            packages,
             &z,
             output_dir,
         );
@@ -485,7 +507,7 @@ mod test {
 }
 
 pub(crate) fn generate_r1cs(
-    circom_file_path: PathBuf,
+    circom_file_path: &PathBuf,
     output_dir: &str,
     circom_template: &str,
     params: Vec<usize>,

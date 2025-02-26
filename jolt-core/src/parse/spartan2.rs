@@ -108,13 +108,18 @@ pub(crate) fn spartan_hyrax(
     vk_jolt_2: serde_json::Value,
     pub_io_len: usize,
     postponed_point_len: usize,
+    file_paths: &Vec<PathBuf>,
+    packages: &[&str],
     output_dir: &str,
 ) {
-    let witness_file_path = format!("{}/combined_r1cs_witness.json", output_dir).to_string();
+    let circom_template = "VerifySpartan";
+    let prime = "bn128";
+    
+    let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[1]).to_string();
 
     let z = read_witness::<Fr>(&witness_file_path);
 
-    let constraint_path = format!("{}/combined_r1cs_constraints.json", output_dir).to_string();
+    let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[1]).to_string();
 
     let preprocessing =
         SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
@@ -143,11 +148,8 @@ pub(crate) fn spartan_hyrax(
         "w_commitment": proof.witness_commit.format(),
     });
 
-    let spartan_hyrax_package = "spartan_hyrax";
-    write_json(&spartan_hyrax_input, output_dir, spartan_hyrax_package);
+    write_json(&spartan_hyrax_input, output_dir, packages[2]);
 
-    let circom_template = "VerifySpartan";
-    let spartan_hyrax_circom_file_path = get_path(spartan_hyrax_package);
     let spartan_hyrax_args = [
         proof.outer_sumcheck_proof.uni_polys.len(),
         proof.inner_sumcheck_proof.uni_polys.len(),
@@ -156,22 +158,19 @@ pub(crate) fn spartan_hyrax(
     ]
     .to_vec();
 
-    let prime = "bn128";
     generate_r1cs(
-        spartan_hyrax_circom_file_path,
+        &file_paths[2],
         output_dir,
         circom_template,
         spartan_hyrax_args,
         prime,
     );
 
-    let witness_file_path =
-        format!("{}/{}_witness.json", output_dir, spartan_hyrax_package).to_string();
+    let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
 
     let z = read_witness::<Fr>(&witness_file_path);
 
-    let constraint_path =
-        format!("{}/{}_constraints.json", output_dir, spartan_hyrax_package).to_string();
+    let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
 
     let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
 }
