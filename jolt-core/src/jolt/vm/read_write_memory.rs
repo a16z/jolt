@@ -205,8 +205,7 @@ pub type ReadWriteMemoryCommitments<
     ProofTranscript: Transcript,
 > = ReadWriteMemoryStuff<PCS::Commitment>;
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
-    Initializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
+impl<T: CanonicalSerialize + CanonicalDeserialize> Initializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
 {
 }
 
@@ -713,16 +712,16 @@ where
         // Optimized computation of v_init opening without creating the full polynomial
         let memory_size = r_init_final.len().pow2();
         let mut v_init_eval = F::zero();
-        let mut current_power = F::one();
         
         // Calculate contribution from bytecode
         let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address, memory_layout);
         for word in preprocessing.bytecode_words.iter() {
             if v_init_index < memory_size {
-                v_init_eval += F::from_u64(*word as u64).unwrap() * current_power;
+                let mut current_power = F::one();
                 for _ in 0..v_init_index {
                     current_power *= r_init_final[0];
                 }
+                v_init_eval += F::from_u64(*word as u64).unwrap() * current_power;
             }
             v_init_index += 1;
         }
@@ -736,10 +735,11 @@ where
                     word[i] = *byte;
                 }
                 let word = u32::from_le_bytes(word);
-                v_init_eval += F::from_u64(word as u64).unwrap() * current_power;
+                let mut current_power = F::one();
                 for _ in 0..v_init_index {
                     current_power *= r_init_final[0];
                 }
+                v_init_eval += F::from_u64(word as u64).unwrap() * current_power;
             }
             v_init_index += 1;
         }
