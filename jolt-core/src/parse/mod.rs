@@ -12,6 +12,9 @@ mod commit;
 mod jolt;
 mod spartan1;
 mod spartan2;
+
+const USE_CPP: bool = false;
+
 pub(crate) trait Parse {
     fn format(&self) -> serde_json::Value {
         unimplemented!("")
@@ -521,7 +524,8 @@ pub(crate) fn generate_r1cs(
         .unwrap();
 
     let backup_file = format!("{}.bak", circom_file_path);
-    println!("circom file name is {:?}", circom_file_name);
+    println!("Circom file name is {:?}", circom_file_name);
+
     // Backup original file
     fs::copy(circom_file_path, &backup_file).expect("Failed to create backup");
 
@@ -547,18 +551,25 @@ pub(crate) fn generate_r1cs(
         .write_all(component_line.as_bytes())
         .expect("Failed to write to Circom file");
 
-    // Compile Circom file
+    // Compile Circom file with selected output
+    let mut circom_args = vec![
+        circom_file_path,
+        "--json",
+        "--prime",
+        prime,
+        "--O2",
+        "--output",
+        output_dir,
+    ];
+
+    if USE_CPP {
+        circom_args.push("--c");
+    } else {
+        circom_args.push("--wasm");
+    }
+
     let output = Command::new("circom")
-        .args([
-            circom_file_path,
-            "--wasm",
-            "--json",
-            "--prime",
-            prime,
-            "--O2",
-            "--output",
-            output_dir,
-        ])
+        .args(&circom_args)
         .stderr(Stdio::piped())
         .output()
         .expect("Failed to execute Circom compilation");
@@ -574,33 +585,56 @@ pub(crate) fn generate_r1cs(
 
     println!("Circom compilation successful.");
 
-    let js_dir = format!("{}/{}_js", output_dir, circom_file_name);
-
-    // Generate witness
-    let wasm_file = format!("{}/{}.wasm", js_dir, circom_file_name);
-
     let witness_output = format!("{}/{}_witness.wtns", output_dir, circom_file_name);
-    let input_path = format!("{}/{}_input.json", output_dir, circom_file_name,);
+    let input_path = format!("{}/{}_input.json", output_dir, circom_file_name);
 
-    let witness_status = Command::new("node")
-        .args([
-            &format!("{}/generate_witness.js", js_dir),
-            &wasm_file,
-            &input_path,
-            &witness_output,
-        ])
-        .status()
-        .expect("Failed to execute witness generation");
+    if USE_CPP {
+        println!("Using C++ witness generator...");
+        let cpp_dir = format!("{}/{}_cpp", output_dir, circom_file_name);
 
-    if !witness_status.success() {
-        println!("Witness generation failed.");
-        // fs::rename(&backup_file, circom_file_path).expect("Failed to restore Circom file");
-        panic!("Witness generation failed");
+        // Compile C++ witness generator
+        let make_status = Command::new("make")
+            .current_dir(&cpp_dir)
+            .status()
+            .expect("Failed to execute `make` for C++ witness generator");
+
+        if !make_status.success() {
+            panic!("C++ witness generator compilation failed");
+        }
+
+        // Run the C++ witness generator
+        let cpp_executable = format!("{}/{}", cpp_dir, circom_file_name);
+        let witness_status = Command::new(&cpp_executable)
+            .args([&input_path, &witness_output])
+            .status()
+            .expect("Failed to execute C++ witness generation");
+
+        if !witness_status.success() {
+            panic!("C++ witness generation failed");
+        }
+    } else {
+        println!("Using WASM witness generator...");
+        let js_dir = format!("{}/{}_js", output_dir, circom_file_name);
+
+        let wasm_file = format!("{}/{}.wasm", js_dir, circom_file_name);
+        let witness_status = Command::new("node")
+            .args([
+                &format!("{}/generate_witness.js", js_dir),
+                &wasm_file,
+                &input_path,
+                &witness_output,
+            ])
+            .status()
+            .expect("Failed to execute WASM witness generation");
+
+        if !witness_status.success() {
+            panic!("WASM witness generation failed");
+        }
     }
 
     let witness_file_path = format!("{}/{}_witness.json", output_dir, circom_file_name);
 
-    let export_witnes = Command::new("snarkjs")
+    let export_witness = Command::new("snarkjs")
         .args([
             "wtns",
             "export",
@@ -610,7 +644,8 @@ pub(crate) fn generate_r1cs(
         ])
         .status()
         .expect("Failed to execute export witness");
-    if !export_witnes.success() {
+
+    if !export_witness.success() {
         panic!("Failed to convert wtns into json");
     }
 }
