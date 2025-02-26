@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use crate::poly::commitment::commitment_scheme::BatchType;
-use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
@@ -42,7 +40,7 @@ impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     type Proof = BiniusProof;
     type BatchedProof = BiniusBatchedProof;
 
-    fn setup(_shapes: &[CommitShape]) -> Self::Setup {
+    fn setup(_max_poly_len: usize) -> Self::Setup {
         None {}
     }
     fn commit(
@@ -51,11 +49,7 @@ impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
     ) -> Self::Commitment {
         todo!()
     }
-    fn batch_commit<P>(
-        _polys: &[P],
-        _gens: &Self::Setup,
-        _batch_type: BatchType,
-    ) -> Vec<Self::Commitment>
+    fn batch_commit<P>(_polys: &[P], _gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {

@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
-use crate::jolt::subtable::{
-    identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
-};
+use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
 };
@@ -21,9 +19,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        assert!(vals.len() == C);
-        // The output is the TruncateOverflow(most significant chunk) || identity of other chunks
-        concatenate_lookups(vals, C, log2(M) as usize)
+        assert!(vals.len() == C / 2);
+        // The output is the identity of lower chunks
+        concatenate_lookups(vals, C / 2, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -36,16 +34,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-        vec![
-            (
-                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
-                SubtableIndices::from(0..msb_chunk_index + 1),
-            ),
-            (
-                Box::new(IdentitySubtable::new()),
-                SubtableIndices::from(msb_chunk_index + 1..C),
-            ),
-        ]
+        vec![(
+            Box::new(IdentitySubtable::new()),
+            SubtableIndices::from(msb_chunk_index + 1..C),
+        )]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {

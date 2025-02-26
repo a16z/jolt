@@ -1,9 +1,8 @@
 use ark_bn254::{Bn254, Fr};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
-use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::hyperkzg::HyperKZG;
-use jolt_core::poly::commitment::kzg::CommitMode;
 use jolt_core::poly::commitment::zeromorph::Zeromorph;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
@@ -58,7 +57,7 @@ where
     // Compute known products (one per layer)
     let known_products: Vec<F> = leaves.iter().map(|layer| layer.iter().product()).collect();
 
-    let setup = PCS::setup(&[CommitShape::new(SRS_SIZE, BatchType::Big)]);
+    let setup = PCS::setup(SRS_SIZE);
 
     (leaves, setup, known_products)
 }
@@ -69,7 +68,6 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
     num_layer: usize,
     layer_size: usize,
     threshold: u32,
-    batch_type: BatchType,
 ) where
     PCS: CommitmentScheme<ProofTranscript, Field = F>, // Generic over PCS implementing CommitmentScheme for field F
     F: JoltField,                                      // Generic over a field F
@@ -81,15 +79,11 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
         .into_iter()
         .map(|layer| MultilinearPolynomial::from(layer))
         .collect::<Vec<_>>();
-    let mode = match batch_type {
-        BatchType::GrandProduct => CommitMode::GrandProduct,
-        _ => CommitMode::Default,
-    };
     c.bench_function(
         &format!("{} Commit(mode:{:?}): {}% Ones", name, mode, threshold),
         |b| {
             b.iter(|| {
-                PCS::batch_commit(&leaves, &setup, batch_type.clone());
+                PCS::batch_commit(&leaves, &setup);
             });
         },
     );
@@ -108,7 +102,6 @@ fn main() {
         num_layers,
         layer_size,
         90,
-        BatchType::Big,
     );
     benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
         &mut criterion,
@@ -116,15 +109,6 @@ fn main() {
         num_layers,
         layer_size,
         90,
-        BatchType::GrandProduct,
-    );
-    benchmark_commit::<HyperKZG<Bn254, KeccakTranscript>, Fr, KeccakTranscript>(
-        &mut criterion,
-        "HyperKZG",
-        num_layers,
-        layer_size,
-        90,
-        BatchType::Big,
     );
 
     criterion.final_summary();

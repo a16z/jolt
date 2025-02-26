@@ -29,7 +29,7 @@ use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
 };
 use crate::msm::icicle;
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
@@ -248,8 +248,7 @@ impl<F: JoltField> JoltPolynomials<F> {
         drop(span);
 
         let trace_polys = self.read_write_values();
-        let trace_commitments =
-            PCS::batch_commit(&trace_polys, &preprocessing.generators, BatchType::Big);
+        let trace_commitments = PCS::batch_commit(&trace_polys, &preprocessing.generators);
 
         commitments
             .read_write_values_mut()
@@ -276,7 +275,6 @@ impl<F: JoltField> JoltPolynomials<F> {
         commitments.instruction_lookups.final_cts = PCS::batch_commit(
             &self.instruction_lookups.final_cts,
             &preprocessing.generators,
-            BatchType::Big,
         );
         drop(_guard);
         drop(span);
@@ -308,27 +306,6 @@ where
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
         icicle::icicle_init();
 
-        let bytecode_commitment_shapes = BytecodeProof::<F, PCS, ProofTranscript>::commit_shapes(
-            max_bytecode_size,
-            max_trace_length,
-        );
-        let ram_commitment_shapes = ReadWriteMemoryPolynomials::<F>::commitment_shapes(
-            max_memory_address,
-            max_trace_length,
-        );
-        let timestamp_range_check_commitment_shapes =
-            TimestampValidityProof::<F, PCS, ProofTranscript>::commitment_shapes(max_trace_length);
-
-        let instruction_lookups_commitment_shapes = InstructionLookupsProof::<
-            C,
-            M,
-            F,
-            PCS,
-            Self::InstructionSet,
-            Self::Subtables,
-            ProofTranscript,
-        >::commitment_shapes(max_trace_length);
-
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             M,
             Self::InstructionSet,
@@ -358,14 +335,16 @@ where
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
-        let commitment_shapes = [
-            bytecode_commitment_shapes,
-            ram_commitment_shapes,
-            timestamp_range_check_commitment_shapes,
-            instruction_lookups_commitment_shapes,
+        let max_poly_len: usize = [
+            (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
+            max_trace_length.next_power_of_two(),
+            max_memory_address.next_power_of_two(),
+            M,
         ]
-        .concat();
-        let generators = PCS::setup(&commitment_shapes);
+        .into_iter()
+        .max()
+        .unwrap();
+        let generators = PCS::setup(max_poly_len);
 
         JoltPreprocessing {
             generators,

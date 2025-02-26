@@ -288,10 +288,10 @@ pub enum QuarkError {
     #[error("InvalidSumcheck")]
     InvalidQuarkSumcheck,
     /// Returned if a quark opening proof fails
-    #[error("IvalidOpeningProof")]
+    #[error("InvalidOpeningProof")]
     InvalidOpeningProof,
     /// Returned if eq(tau, r)*(f(1, r) - f(r, 0)*f(r,1)) does not match the result from sumcheck
-    #[error("IvalidOpeningProof")]
+    #[error("InvalidOpeningProof")]
     InvalidBinding,
 }
 
