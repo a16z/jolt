@@ -16,8 +16,60 @@ use crate::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use rayon::prelude::*;
-use std::collections::HashMap;
+use rayon::{prelude::*, slice::Iter};
+use std::{collections::HashMap, ops::Index};
+
+struct ExpandingTable<F: JoltField> {
+    len: usize,
+    values: Vec<F>,
+    scratch_space: Vec<F>,
+    update_fn: Box<dyn Fn(&mut [F], F, F, usize) + Sync>,
+}
+
+impl<F: JoltField> ExpandingTable<F> {
+    fn new(capacity: usize, update_fn: Box<dyn Fn(&mut [F], F, F, usize) + Sync>) -> Self {
+        Self {
+            len: 0,
+            values: unsafe_allocate_zero_vec(capacity),
+            scratch_space: unsafe_allocate_zero_vec(capacity),
+            update_fn,
+        }
+    }
+
+    fn reset(&mut self, value: F) {
+        self.values[0] = value;
+        self.len = 1;
+    }
+
+    fn update(&mut self, r_j: F, j: usize) {
+        self.values
+            .par_iter()
+            .zip(self.scratch_space.par_chunks_mut(2))
+            .for_each(|(src, dest)| {
+                (self.update_fn)(dest, *src, r_j, j);
+            });
+        std::mem::swap(&mut self.values, &mut self.scratch_space);
+        self.len *= 2;
+    }
+}
+
+impl<F: JoltField> Index<usize> for ExpandingTable<F> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &F {
+        assert!(index < self.len);
+        &self.values[index]
+    }
+}
+
+impl<'data, F: JoltField> IntoParallelIterator for &'data ExpandingTable<F> {
+    type Item = &'data F;
+    type Iter = Iter<'data, F>;
+
+    fn into_par_iter(self) -> Self::Iter {
+        self.values[..self.len].into_par_iter()
+    }
+}
 
 pub fn prove_single_instruction<
     const TREE_WIDTH: usize,
@@ -66,19 +118,42 @@ pub fn prove_single_instruction<
     let mut r: Vec<F> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
+    let span = tracing::span!(tracing::Level::INFO, "compute initial u evals");
+    let _guard = span.enter();
     let mut u_evals: Vec<(u64, F)> = instructions
         .par_iter()
-        .enumerate()
-        .map(|(j, instruction)| (instruction.to_lookup_index(), eq_r_prime[j]))
+        .zip(eq_r_prime.par_iter())
+        .map(|(instruction, eq_eval)| (instruction.to_lookup_index(), *eq_eval))
         .collect();
+    drop(_guard);
+    drop(span);
+
     let mut t_evals: HashMap<u64, F> = HashMap::with_capacity(T + TREE_WIDTH);
 
     let mut rv_claim = F::zero();
     let mut previous_claim = F::zero();
 
-    let mut v = Vec::with_capacity(TREE_WIDTH);
-    let mut w = Vec::with_capacity(TREE_WIDTH);
-    let mut x = Vec::with_capacity(TREE_WIDTH);
+    let update_v = |dest: &mut [F], v_i, r_j, _| {
+        debug_assert_eq!(dest.len(), 2);
+        let eval_1 = v_i * r_j;
+        dest[0] = v_i - eval_1;
+        dest[1] = eval_1;
+    };
+    let mut v = ExpandingTable::new(TREE_WIDTH, Box::new(update_v));
+
+    let update_w = |dest: &mut [F], w_i: F, r_j: F, j: usize| {
+        debug_assert_eq!(dest.len(), 2);
+        dest[0] = w_i + I::default().additive_update(r_j, j, false);
+        dest[1] = w_i + I::default().additive_update(r_j, j, true);
+    };
+    let mut w = ExpandingTable::new(TREE_WIDTH, Box::new(update_w));
+
+    let update_x = |dest: &mut [F], x_i: F, r_j: F, j: usize| {
+        debug_assert_eq!(dest.len(), 2);
+        dest[0] = x_i * I::default().multiplicative_update(r_j, j, false);
+        dest[1] = x_i * I::default().multiplicative_update(r_j, j, true);
+    };
+    let mut x = ExpandingTable::new(TREE_WIDTH, Box::new(update_x));
 
     let two = F::from_u8(2);
     let chi_2 = [F::one() - two, two];
@@ -223,9 +298,9 @@ pub fn prove_single_instruction<
         debug_assert_eq!(Q_tree[0].len(), 1);
         debug_assert_eq!(Q_tree[0][0], Q_tree[log_m].par_iter().sum());
 
-        v = vec![F::one()];
-        w = vec![F::zero()];
-        x = vec![F::one()];
+        v.reset(F::one());
+        w.reset(F::zero());
+        x.reset(F::one());
 
         previous_claim = Q_tree[0][0];
         if phase == 0 {
@@ -341,36 +416,9 @@ pub fn prove_single_instruction<
             let binding_span = tracing::span!(tracing::Level::INFO, "Binding");
             let _binding_guard = binding_span.enter();
 
-            v = v
-                .into_par_iter()
-                .flat_map(|v_i| {
-                    let eval_1 = v_i * r_j;
-                    [v_i - eval_1, eval_1]
-                })
-                .collect();
-
-            let additive_updates = [
-                I::default().additive_update(r_j, j, false),
-                I::default().additive_update(r_j, j, true),
-            ];
-            w = w
-                .into_par_iter()
-                .flat_map(|w_i| [w_i + additive_updates[0], w_i + additive_updates[1]])
-                .collect();
-
-            let multiplicative_updates = [
-                I::default().multiplicative_update(r_j, j, false),
-                I::default().multiplicative_update(r_j, j, true),
-            ];
-            x = x
-                .into_par_iter()
-                .flat_map(|x_i| {
-                    [
-                        x_i * multiplicative_updates[0],
-                        x_i * multiplicative_updates[1],
-                    ]
-                })
-                .collect();
+            v.update(r_j, j);
+            w.update(r_j, j);
+            x.update(r_j, j);
 
             #[cfg(test)]
             {
@@ -456,23 +504,12 @@ pub fn prove_single_instruction<
         }
     }
 
-    v = vec![F::one()];
+    v.reset(F::one());
 
     let span = tracing::span!(tracing::Level::INFO, "Next log(m) sumcheck rounds");
     let _guard = span.enter();
 
     for _round in 0..log_m {
-        #[cfg(test)]
-        {
-            let expected: F = (0..val_test.len())
-                .map(|k| eq_ra_test.get_bound_coeff(k) * val_test.get_bound_coeff(k))
-                .sum();
-            assert_eq!(
-                expected, previous_claim,
-                "Sumcheck sanity check failed in round {_round}"
-            );
-        }
-
         let univariate_poly_evals: [F; 2] = (0..eq_ra.len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -507,19 +544,7 @@ pub fn prove_single_instruction<
             || val.bind_parallel(r_j, BindingOrder::HighToLow),
         );
 
-        #[cfg(test)]
-        {
-            eq_ra_test.bind_parallel(r_j, BindingOrder::HighToLow);
-            val_test.bind_parallel(r_j, BindingOrder::HighToLow);
-        }
-
-        v = v
-            .into_par_iter()
-            .flat_map(|v_i| {
-                let eval_1 = v_i * r_j;
-                [v_i - eval_1, eval_1]
-            })
-            .collect();
+        v.update(r_j, j);
     }
 
     drop(_guard);

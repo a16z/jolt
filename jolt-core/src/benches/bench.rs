@@ -128,7 +128,7 @@ where
 
     let mut tasks = Vec::new();
 
-    const T: usize = 1 << 20;
+    const T: usize = 1 << 19;
     const TREE_WIDTH: usize = 1 << 16;
 
     let mut rng = StdRng::seed_from_u64(12345);
