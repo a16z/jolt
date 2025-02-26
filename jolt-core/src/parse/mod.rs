@@ -221,8 +221,8 @@ mod test {
             + r1cs_stuff_size;
 
         // Length of public IO of V_{Jolt, 1} including the 1 at index 0.
-        // 1 + linking stuff size (jolt stuff size + 15) + jolt pi size (2).
-        let pub_io_len = 1 + jolt_stuff_size + 15 + 2;
+        // 1 + counter_jolt_1 (1) + linking stuff size (jolt stuff size + 15) + jolt pi size (2).
+        let pub_io_len = 1 + 1 + jolt_stuff_size + 15 + 2;
 
         let linking_stuff = LinkingStuff1::new(jolt_commitments, jolt_stuff_size, &z);
 
