@@ -26,6 +26,9 @@ impl<F: JoltField> Instance<F> {
 
         (Instance { inst, digest }, vars, inputs)
     }
+    pub fn get_digest(&self) -> F {
+        self.digest
+    }
 }
 
 mod r1csinstance;

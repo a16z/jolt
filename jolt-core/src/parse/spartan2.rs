@@ -136,25 +136,19 @@ pub(crate) fn spartan_hyrax(
 
     let to_eval = PostponedEval::new(z, postponed_point_len);
 
-    let s1 = String::from(1);
-    let counter_jolt_1 = json!({ s1 }); //TODO: will this work?
-
-    let s2 = String::from(2);
-    let counter_combined_r1cs = json!({ s2 }); //TODO: will this work?
-
     let spartan_hyrax_input = json!({
         "pub_io": {
                 "jolt_pi": jolt_pi,
-                "counter_jolt_1": counter_jolt_1,
+                "counter_jolt_1": 1.to_string(),
                 "linking_stuff": linking_stuff,
                 "vk_spartan_1": vk_spartan_1,
-                "digest": spartan_1_digest,    //TODO: check if this is correct
+                "digest": spartan_1_digest,
                 "vk_jolt_2": vk_jolt_2,
             },
-        "counter_combined_r1cs": counter_combined_r1cs,
+        "counter_combined_r1cs": 2.to_string(),
         "to_eval": to_eval.format(),
         "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
-        "digest": preprocessing.instance.digest.format(),
+        "digest": preprocessing.inst.get_digest().format(),
         "proof": proof.format(),
         "w_commitment": proof.witness_commit.format(),
     });

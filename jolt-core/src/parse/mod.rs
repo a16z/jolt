@@ -593,8 +593,6 @@ pub(crate) fn generate_r1cs(
         .expect("Failed to execute witness generation");
 
     if !witness_status.success() {
-        println!("Witness generation failed.");
-        // fs::rename(&backup_file, circom_file_path).expect("Failed to restore Circom file");
         panic!("Witness generation failed");
     }
 
