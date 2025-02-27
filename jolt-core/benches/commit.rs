@@ -80,7 +80,7 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
         .map(|layer| MultilinearPolynomial::from(layer))
         .collect::<Vec<_>>();
     c.bench_function(
-        &format!("{} Commit(mode:{:?}): {}% Ones", name, threshold),
+        &format!("{} Commit: {}% Ones", name, threshold),
         |b| {
             b.iter(|| {
                 PCS::batch_commit(&leaves, &setup);
