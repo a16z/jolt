@@ -1,4 +1,4 @@
-pub fn bn254_add(input_1: [u8; 16], input_2: [u8; 16]) -> [u8; 16] {
+pub fn bn254_add(inputs: [u32; 16]) -> [u32; 16] {
     // This is a placeholder for the actual implementation.
     [0; 16]
 }

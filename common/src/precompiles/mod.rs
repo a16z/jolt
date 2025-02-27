@@ -1,7 +1,7 @@
 pub mod bn254_add;
 
 pub enum Precompile {
-    Bn254_add,
+    Bn254Add,
 }
 
 impl Precompile {
@@ -13,9 +13,9 @@ impl Precompile {
         }
     }
 
-    pub fn execute(&self, inputs: &[u8]) -> Vec<u8> {
+    pub fn execute(&self, inputs: &[u32; 16]) -> [u32; 16] {
         match self {
-            Precompile::Bn254_add => bn254_add::bn254_add(inputs),
+            Precompile::Bn254Add => bn254_add::bn254_add(inputs),
         }
     }
 }

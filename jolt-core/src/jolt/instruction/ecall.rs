@@ -7,7 +7,7 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    virtual_advice::ADVICEInstruction, JoltInstruction,
+    virtual_advice::ADVICEInstruction, JoltInstruction, precompile::PRECOMPILEInstruction,
 };
 /// Call a precompile based on the value in to register,
 /// fetch the input from the precompile input memory region,
@@ -366,7 +366,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction {
         });
 
         // Precompile instruction.  How do we set the precompile circuit flag to 1?
-        let precompile_instruction = PRECOMPILEInstructionInstruction::(trace_row.register_state.t0).lookup_entry();
+        let precompile_instruction = PRECOMPILEInstruction::<WORD_SIZE>(trace_row.register_state.rs1_val).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
