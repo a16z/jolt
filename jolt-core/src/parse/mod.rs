@@ -19,9 +19,6 @@ pub(crate) trait Parse {
     fn format_non_native(&self) -> serde_json::Value {
         unimplemented!("")
     }
-    fn format_setup(&self, _size: usize) -> serde_json::Value {
-        unimplemented!("added for setup")
-    }
 }
 
 pub(crate) fn write_json(input: &serde_json::Value, out_dir: &str, package_name: &str) {
@@ -159,14 +156,16 @@ mod test {
         let jolt_package = "jolt1";
         let combine_r1cs_package = "combined_r1cs";
         let spartan_hyrax_package = "spartan_hyrax";
+
         let packages = &[jolt_package, combine_r1cs_package, spartan_hyrax_package];
 
         let file_paths = get_paths(packages);
-
+        println!("file_paths is {:?}", file_paths);
         let circom_template = "verify";
         let prime = "bn128";
         let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
             fib_e2e::<Fr, PCS, ProofTranscript>();
+
         // let verification_result =
         //     RV32IJoltVM::verify(jolt_preprocessing, jolt_proof, jolt_commitments, debug_info);
         // assert!(
@@ -186,7 +185,7 @@ mod test {
             "pi_proof": jolt_preprocessing.format()
         });
 
-        // write_json(&jolt1_input, output_dir, packages[0]);
+        write_json(&jolt1_input, output_dir, packages[0]);
 
         let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
         generate_r1cs(
@@ -197,7 +196,7 @@ mod test {
             prime,
         );
 
-        // Read the witness.json file
+        // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_package);
         let z = read_witness::<Fr>(&witness_file_path.to_string());
 

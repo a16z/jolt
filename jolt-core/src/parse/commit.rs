@@ -154,7 +154,7 @@ impl Parse for HyraxCommitment<ark_grumpkin::Projective> {
             .iter()
             .map(|commit| {
                 if *commit == ark_grumpkin::Projective::ZERO {
-                    ark_grumpkin::Projective::new(
+                    ark_grumpkin::Projective::new_unchecked(
                         ark_grumpkin::Fq::ZERO,
                         ark_grumpkin::Fq::ONE,
                         ark_grumpkin::Fq::ZERO,
@@ -190,11 +190,10 @@ impl Parse
 }
 
 impl Parse for PedersenGenerators<ark_grumpkin::Projective> {
-    fn format_setup(&self, size: usize) -> serde_json::Value {
+    fn format(&self) -> serde_json::Value {
         let generators: Vec<serde_json::Value> = self
             .generators
             .iter()
-            .take(size)
             .map(|gen| gen.into_group().format())
             .collect();
         json!({
@@ -202,12 +201,3 @@ impl Parse for PedersenGenerators<ark_grumpkin::Projective> {
         })
     }
 }
-
-// impl ParseJolt for HyraxGenerators<ark_grumpkin::Projective> {
-//     fn format(&self) -> serde_json::Value {
-//         json!({
-//             "gens": self.gens.format()
-
-//         })
-//     }
-// }

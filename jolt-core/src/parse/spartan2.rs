@@ -4,7 +4,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::utils::math::Math;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
 use ark_ff::{BigInt, BigInteger, PrimeField};
 use itertools::Itertools;
@@ -147,7 +146,7 @@ pub(crate) fn spartan_hyrax(
             },
         "counter_combined_r1cs": 2.to_string(),
         "to_eval": to_eval.format(),
-        "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
+        "setup": pcs_setup.format(),
         "digest": preprocessing.inst.get_digest().format(),
         "proof": proof.format(),
         "w_commitment": proof.witness_commit.format(),
@@ -158,7 +157,7 @@ pub(crate) fn spartan_hyrax(
     let spartan_hyrax_args = [
         proof.outer_sumcheck_proof.uni_polys.len(),
         proof.inner_sumcheck_proof.uni_polys.len(),
-        proof.pcs_proof.vector_matrix_product.len().log_2() * 2,
+        proof.inner_sumcheck_proof.uni_polys.len() - 1,
         postponed_point_len,
     ]
     .to_vec();
@@ -171,11 +170,11 @@ pub(crate) fn spartan_hyrax(
         prime,
     );
 
-    let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
+    // let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
 
-    let z = read_witness::<Fr>(&witness_file_path);
+    // let z = read_witness::<Fr>(&witness_file_path);
 
-    let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
+    // let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
 
-    let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
+    // let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
 }
