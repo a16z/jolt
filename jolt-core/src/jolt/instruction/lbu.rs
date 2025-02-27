@@ -230,6 +230,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBUInstruction<WORD_
                 value: 0,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
         Self::virtual_trace(dummy_trace_row)
             .into_iter()
