@@ -1,6 +1,6 @@
 pub fn bn254_add(inputs: [u32; 16]) -> [u32; 16] {
-    let input_1 = inputs[0..8].try_into().unwrap();
-    let input_2 = inputs[8..16].try_into().unwrap();
+    let input_1 = inputs[0..8];
+    let input_2 = inputs[8..16];
     // This is a placeholder for the actual implementation.
     [0; 16]
 }
