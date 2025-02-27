@@ -53,6 +53,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
@@ -75,6 +77,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let word = match trace_row.memory_state.unwrap() {
@@ -133,6 +137,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let bit_shift = SLLInstruction::<WORD_SIZE>(byte_shift, 3).lookup_entry();
@@ -153,6 +159,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let left_aligned_byte = SLLInstruction::<WORD_SIZE>(word, bit_shift).lookup_entry();
@@ -173,6 +181,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let sign_extended_byte = SRAInstruction::<WORD_SIZE>(left_aligned_byte, 24).lookup_entry();
@@ -194,6 +204,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
@@ -279,6 +291,8 @@ mod test {
                     value: word,
                 }),
                 advice_value: None,
+                precompile_input: None,
+                precompile_output_address: None,
             };
 
             let trace = LBInstruction::<32>::virtual_trace(lb_trace_row);
