@@ -14,14 +14,13 @@ use crate::jolt::instruction::{
 /// and write the output to the precompile output memory region.
 pub struct EcallInstruction<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction {
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WORD_SIZE> {
     const SEQUENCE_LENGTH: usize = 16; // 16 or 17?
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         assert_eq!(trace_row.instruction.opcode, RV32IM::ECALL);
         // Ecall source registers
-        let r_x = trace_row.instruction.rs1;
-        let r_y = trace_row.instruction.rs2;
+        let r_t0 = trace_row.instruction.rs1;
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
         let v_ao0: Option<u64> = Some(virtual_register_index(1));
@@ -43,7 +42,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction {
 
         let mut virtual_trace = vec![];
 
-        let precompile_output: &[u32; 16] = &[0u32; 16];  // compute precompile output based on t0 register
+        // Precompile input is in the memory region reserved for the precompile input.
+        let precompile_input = trace_row.precompile_input.unwrap();
+        let precompile_output: &[u32; 16] = Precompile::from_u64(trace_row.register_state.rs1_val.unwrap()).unwrap().execute(precompile_input);
 
         let  ao0 = ADVICEInstruction::<WORD_SIZE>(precompile_output[0]).lookup_entry();
         virtual_trace.push(RVTraceRow {
@@ -378,7 +379,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction {
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
-                rs1_val: None,
+                rs1_val: None, // Set to t0 register?
                 rs2_val: None,
                 rd_post_val: None,
             },

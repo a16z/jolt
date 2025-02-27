@@ -1152,20 +1152,20 @@ impl Mmu {
     }
 
     /// Gets the precompile input from the correct location in memory designated for precompile inputs.
-    pub fn get_precompile_input(&self) -> Result<Vec<32>, Trap> {
+    pub fn get_precompile_input(&mut self) -> Result<[u32; 16], Trap> {
         // Load the world from virtual memory.
-        let mut input = Vec::new();
+        let mut input = [0u32; 16];
         let mut v_address = self.jolt_device.memory_layout.precompile_input_start;
         for i in 0..16 {
-            let input_word = self.load_word(v_address);
-            input.push(input_word);
+            let input_word = self.load_word(v_address)?;
+            input[i] = input_word;
             v_address += 4;
         }
-        input
+        Ok(input)
     }
 
     /// Sets the precompile output to the correct location in memory designated for precompile outputs.
-    pub fn set_precompile_output(&mut self, output: Vec<u32>) {
+    pub fn set_precompile_output(&mut self, output: [u32; 16]) {
         // Store the word in the correct precompile output memory location
         let mut p_address = self.jolt_device.memory_layout.precompile_output_start;
         for i in 0..16 {

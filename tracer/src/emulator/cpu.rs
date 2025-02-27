@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::trace::Tracer;
-use common::precompiles;
+use common::precompiles::Precompile;
 use common::rv_trace::*;
 
 use self::fnv::FnvHashMap;
@@ -2521,10 +2521,10 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
                 0,
                 "No precompile enum provided in t0 register."
             );
-            let precompile_enum = cpu.read_register(5);
+            let precompile_enum = cpu.read_register(5) as u64;
             let precompile = Precompile::from_u64(precompile_enum).expect("invalid precompile");
-            let inputs = cpu.mmu.get_precompile_input();
-            let output = precompile.execute(input);
+            let inputs = cpu.mmu.get_precompile_input()?;
+            let output = precompile.execute(inputs);
             cpu.mmu.set_precompile_output(output);
             Ok(())
 
