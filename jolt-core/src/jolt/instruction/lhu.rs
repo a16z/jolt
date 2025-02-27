@@ -320,6 +320,8 @@ mod test {
                     value: word,
                 }),
                 advice_value: None,
+                precompile_input: None,
+                precompile_output_address: None,
             };
 
             let trace = LHUInstruction::<32>::virtual_trace(lhu_trace_row);
