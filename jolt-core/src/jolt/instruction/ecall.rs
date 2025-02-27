@@ -366,8 +366,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
             advice_value: Some(precompile_output[15]),
         });
 
-        // Precompile instruction.  How do we set the precompile circuit flag to 1?
-        let precompile_instruction = PRECOMPILEInstruction::<WORD_SIZE>(trace_row.register_state.rs1_val).lookup_entry();
+        let precompile_instruction = PRECOMPILEInstruction::<WORD_SIZE>(trace_row.register_state.rs1_val.unwrap()).lookup_entry();
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -379,7 +378,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
-                rs1_val: None, // Set to t0 register?
+                rs1_val: None
                 rs2_val: None,
                 rd_post_val: None,
             },

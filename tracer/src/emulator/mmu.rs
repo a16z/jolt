@@ -1156,11 +1156,12 @@ impl Mmu {
         // Load the world from virtual memory.
         let mut input = [0u32; 16];
         let mut v_address = self.jolt_device.memory_layout.precompile_input_start;
-        for i in 0..16 {
-            let input_word = self.load_word(v_address)?;
-            input[i] = input_word;
+
+        for input_word in input.iter_mut() {
+            *input_word = self.load_word(v_address)?;
             v_address += 4;
         }
+        
         Ok(input)
     }
 
@@ -1168,8 +1169,8 @@ impl Mmu {
     pub fn set_precompile_output(&mut self, output: [u32; 16]) {
         // Store the word in the correct precompile output memory location
         let mut p_address = self.jolt_device.memory_layout.precompile_output_start;
-        for i in 0..16 {
-            self.store_word(p_address, output[i]);
+        for &word in &output {
+            let _ = self.store_word(p_address, word);
             p_address += 4;
         }
     }
