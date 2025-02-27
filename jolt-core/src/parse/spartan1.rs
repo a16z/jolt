@@ -111,7 +111,7 @@ impl LinkingStuff1 {
         jolt_stuff_size: usize,
         witness: &Vec<Fr>,
     ) -> LinkingStuff1 {
-        let mut idx = 1 + jolt_stuff_size;
+        let mut idx = 2 + jolt_stuff_size;
         let bytecode_combiners = BytecodeCombiners {
             rho: [witness[idx], witness[idx + 1]],
         };
@@ -246,7 +246,7 @@ pub(crate) fn spartan_hkzg(
     let proof = SpartanProof::<Fr, Pcs, ProofTranscript>::prove(&pcs_setup, &preprocessing);
 
     SpartanProof::<Fr, Pcs, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
-    let digest = preprocessing.inst.get_digest().format();
+    let digest = preprocessing.inst.get_digest().format_non_native();
     let combine_input = json!({
         "jolt_pi": jolt_pi,
         "counter_jolt_1": 1.to_string(),

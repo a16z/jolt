@@ -9,7 +9,9 @@ use crate::{
     },
     utils::poseidon_transcript::PoseidonTranscript,
 };
+use ark_ec::AdditiveGroup;
 use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::Field;
 use serde_json::json;
 
 //Parse Group
@@ -150,7 +152,18 @@ impl Parse for HyraxCommitment<ark_grumpkin::Projective> {
         let commitments: Vec<serde_json::Value> = self
             .row_commitments
             .iter()
-            .map(|commit| commit.into_affine().into_group().format())
+            .map(|commit| {
+                if *commit == ark_grumpkin::Projective::ZERO {
+                    ark_grumpkin::Projective::new(
+                        ark_grumpkin::Fq::ZERO,
+                        ark_grumpkin::Fq::ONE,
+                        ark_grumpkin::Fq::ZERO,
+                    )
+                    .format()
+                } else {
+                    commit.into_affine().into_group().format()
+                }
+            })
             .collect();
         json!({
             "row_commitments": commitments,

@@ -46,10 +46,10 @@ struct PostponedEval {
 impl PostponedEval {
     pub fn new(witness: Vec<Fr>, postponed_eval_size: usize) -> Self {
         let point = (0..postponed_eval_size)
-            .map(|i| from_limbs(witness[1 + 3 * i..1 + 3 * i + 3].to_vec()))
+            .map(|i| from_limbs(witness[2 + 3 * i..2 + 3 * i + 3].to_vec()))
             .collect();
         let eval = from_limbs(
-            witness[1 + 3 * postponed_eval_size..1 + 3 * postponed_eval_size + 3].to_vec(),
+            witness[2 + 3 * postponed_eval_size..2 + 3 * postponed_eval_size + 3].to_vec(),
         );
 
         Self { point, eval }
@@ -158,7 +158,7 @@ pub(crate) fn spartan_hyrax(
     let spartan_hyrax_args = [
         proof.outer_sumcheck_proof.uni_polys.len(),
         proof.inner_sumcheck_proof.uni_polys.len(),
-        proof.pcs_proof.vector_matrix_product.len().log_2() + 1,
+        proof.pcs_proof.vector_matrix_product.len().log_2() * 2,
         postponed_point_len,
     ]
     .to_vec();

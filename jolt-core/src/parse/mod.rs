@@ -186,7 +186,7 @@ mod test {
             "pi_proof": jolt_preprocessing.format()
         });
 
-        write_json(&jolt1_input, output_dir, packages[0]);
+        // write_json(&jolt1_input, output_dir, packages[0]);
 
         let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
         generate_r1cs(
