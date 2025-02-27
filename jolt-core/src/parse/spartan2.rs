@@ -4,7 +4,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::utils::math::Math;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
 use ark_ff::{BigInt, BigInteger, PrimeField};
 use itertools::Itertools;
@@ -46,10 +45,10 @@ struct PostponedEval {
 impl PostponedEval {
     pub fn new(witness: Vec<Fr>, postponed_eval_size: usize) -> Self {
         let point = (0..postponed_eval_size)
-            .map(|i| from_limbs(witness[1 + 3 * i..1 + 3 * i + 3].to_vec()))
+            .map(|i| from_limbs(witness[2 + 3 * i..2 + 3 * i + 3].to_vec()))
             .collect();
         let eval = from_limbs(
-            witness[1 + 3 * postponed_eval_size..1 + 3 * postponed_eval_size + 3].to_vec(),
+            witness[2 + 3 * postponed_eval_size..2 + 3 * postponed_eval_size + 3].to_vec(),
         );
 
         Self { point, eval }
@@ -104,6 +103,7 @@ impl Parse for UniPoly<Fr> {
 pub(crate) fn spartan_hyrax(
     linking_stuff: serde_json::Value,
     jolt_pi: serde_json::Value,
+    spartan_1_digest: serde_json::Value,
     vk_spartan_1: serde_json::Value,
     vk_jolt_2: serde_json::Value,
     pub_io_len: usize,
@@ -114,7 +114,7 @@ pub(crate) fn spartan_hyrax(
 ) {
     let circom_template = "VerifySpartan";
     let prime = "bn128";
-    
+
     let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[1]).to_string();
 
     let z = read_witness::<Fr>(&witness_file_path);
@@ -138,12 +138,16 @@ pub(crate) fn spartan_hyrax(
     let spartan_hyrax_input = json!({
         "pub_io": {
                 "jolt_pi": jolt_pi,
+                "counter_jolt_1": 1.to_string(),
                 "linking_stuff": linking_stuff,
                 "vk_spartan_1": vk_spartan_1,
+                "digest": spartan_1_digest,
                 "vk_jolt_2": vk_jolt_2,
             },
+        "counter_combined_r1cs": 2.to_string(),
         "to_eval": to_eval.format(),
-        "setup": pcs_setup.format_setup(proof.pcs_proof.vector_matrix_product.len()),
+        "setup": pcs_setup.format(),
+        "digest": preprocessing.inst.get_digest().format(),
         "proof": proof.format(),
         "w_commitment": proof.witness_commit.format(),
     });
@@ -153,7 +157,7 @@ pub(crate) fn spartan_hyrax(
     let spartan_hyrax_args = [
         proof.outer_sumcheck_proof.uni_polys.len(),
         proof.inner_sumcheck_proof.uni_polys.len(),
-        proof.pcs_proof.vector_matrix_product.len().log_2() + 1,
+        proof.inner_sumcheck_proof.uni_polys.len() - 1,
         postponed_point_len,
     ]
     .to_vec();
@@ -166,11 +170,11 @@ pub(crate) fn spartan_hyrax(
         prime,
     );
 
-    let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
+    // let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
 
-    let z = read_witness::<Fr>(&witness_file_path);
+    // let z = read_witness::<Fr>(&witness_file_path);
 
-    let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
+    // let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
 
-    let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
+    // let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
 }

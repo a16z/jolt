@@ -9,7 +9,9 @@ use crate::{
     },
     utils::poseidon_transcript::PoseidonTranscript,
 };
+use ark_ec::AdditiveGroup;
 use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::Field;
 use serde_json::json;
 
 //Parse Group
@@ -150,7 +152,18 @@ impl Parse for HyraxCommitment<ark_grumpkin::Projective> {
         let commitments: Vec<serde_json::Value> = self
             .row_commitments
             .iter()
-            .map(|commit| commit.into_affine().into_group().format())
+            .map(|commit| {
+                if *commit == ark_grumpkin::Projective::ZERO {
+                    ark_grumpkin::Projective::new_unchecked(
+                        ark_grumpkin::Fq::ZERO,
+                        ark_grumpkin::Fq::ONE,
+                        ark_grumpkin::Fq::ZERO,
+                    )
+                    .format()
+                } else {
+                    commit.into_affine().into_group().format()
+                }
+            })
             .collect();
         json!({
             "row_commitments": commitments,
@@ -177,11 +190,10 @@ impl Parse
 }
 
 impl Parse for PedersenGenerators<ark_grumpkin::Projective> {
-    fn format_setup(&self, size: usize) -> serde_json::Value {
+    fn format(&self) -> serde_json::Value {
         let generators: Vec<serde_json::Value> = self
             .generators
             .iter()
-            .take(size)
             .map(|gen| gen.into_group().format())
             .collect();
         json!({
@@ -189,12 +201,3 @@ impl Parse for PedersenGenerators<ark_grumpkin::Projective> {
         })
     }
 }
-
-// impl ParseJolt for HyraxGenerators<ark_grumpkin::Projective> {
-//     fn format(&self) -> serde_json::Value {
-//         json!({
-//             "gens": self.gens.format()
-
-//         })
-//     }
-// }

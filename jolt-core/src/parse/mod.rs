@@ -13,17 +13,12 @@ mod jolt;
 mod spartan1;
 mod spartan2;
 
-const USE_CPP: bool = false;
-
 pub(crate) trait Parse {
     fn format(&self) -> serde_json::Value {
         unimplemented!("")
     }
     fn format_non_native(&self) -> serde_json::Value {
         unimplemented!("")
-    }
-    fn format_setup(&self, _size: usize) -> serde_json::Value {
-        unimplemented!("added for setup")
     }
 }
 
@@ -162,14 +157,16 @@ mod test {
         let jolt_package = "jolt1";
         let combine_r1cs_package = "combined_r1cs";
         let spartan_hyrax_package = "spartan_hyrax";
+
         let packages = &[jolt_package, combine_r1cs_package, spartan_hyrax_package];
 
         let file_paths = get_paths(packages);
-
+        println!("file_paths is {:?}", file_paths);
         let circom_template = "verify";
         let prime = "bn128";
         let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
             fib_e2e::<Fr, PCS, ProofTranscript>();
+
         // let verification_result =
         //     RV32IJoltVM::verify(jolt_preprocessing, jolt_proof, jolt_commitments, debug_info);
         // assert!(
@@ -200,7 +197,7 @@ mod test {
             prime,
         );
 
-        // Read the witness.json file
+        // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_package);
         let z = read_witness::<Fr>(&witness_file_path.to_string());
 
@@ -224,8 +221,8 @@ mod test {
             + r1cs_stuff_size;
 
         // Length of public IO of V_{Jolt, 1} including the 1 at index 0.
-        // 1 + linking stuff size (jolt stuff size + 15) + jolt pi size (2).
-        let pub_io_len = 1 + jolt_stuff_size + 15 + 2;
+        // 1 + counter_jolt_1 (1) + linking stuff size (jolt stuff size + 15) + jolt pi size (2).
+        let pub_io_len = 1 + 1 + jolt_stuff_size + 15 + 2;
 
         let linking_stuff = LinkingStuff1::new(jolt_commitments, jolt_stuff_size, &z);
 
@@ -551,21 +548,16 @@ pub(crate) fn generate_r1cs(
         .expect("Failed to write to Circom file");
 
     // Compile Circom file with selected output
-    let mut circom_args = vec![
+    let circom_args = vec![
         circom_file_path,
         "--json",
+        "--wasm",
         "--prime",
         prime,
         "--O2",
         "--output",
         output_dir,
     ];
-
-    if USE_CPP {
-        circom_args.push("--c");
-    } else {
-        circom_args.push("--wasm");
-    }
 
     let output = Command::new("circom")
         .args(&circom_args)
@@ -587,54 +579,24 @@ pub(crate) fn generate_r1cs(
     let witness_output = format!("{}/{}_witness.wtns", output_dir, circom_file_name);
     let input_path = format!("{}/{}_input.json", output_dir, circom_file_name);
 
-    if USE_CPP {
-        println!("Using C++ witness generator...");
-        let cpp_dir = format!("{}/{}_cpp", output_dir, circom_file_name);
+    println!("Using WASM witness generator...");
+    let js_dir = format!("{}/{}_js", output_dir, circom_file_name);
 
-        // Compile C++ witness generator
-        let make_status = Command::new("make")
-            .current_dir(&cpp_dir)
-            .status()
-            .expect("Failed to execute `make` for C++ witness generator");
+    let wasm_file = format!("{}/{}.wasm", js_dir, circom_file_name);
+    let witness_status = Command::new("node")
+        .args([
+            &format!("{}/generate_witness.js", js_dir),
+            &wasm_file,
+            &input_path,
+            &witness_output,
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to execute WASM witness generation");
 
-        if !make_status.success() {
-            panic!("C++ witness generator compilation failed");
-        }
-
-        // Run the C++ witness generator
-        let cpp_executable = format!("{}/{}", cpp_dir, circom_file_name);
-        let witness_status = Command::new(&cpp_executable)
-            .args([&input_path, &witness_output])
-            .stderr(Stdio::piped())
-            .output()
-            .expect("Failed to execute C++ witness generation");
-
-        if !witness_status.status.success() {
-            let stderr = String::from_utf8_lossy(&witness_status.stderr);
-            println!("C++ witness generation failed with error:\n{}", stderr);
-            panic!("C++ witness generation failed");
-        }
-    } else {
-        println!("Using WASM witness generator...");
-        let js_dir = format!("{}/{}_js", output_dir, circom_file_name);
-
-        let wasm_file = format!("{}/{}.wasm", js_dir, circom_file_name);
-        let witness_status = Command::new("node")
-            .args([
-                &format!("{}/generate_witness.js", js_dir),
-                &wasm_file,
-                &input_path,
-                &witness_output,
-            ])
-            .stderr(Stdio::piped())
-            .output()
-            .expect("Failed to execute WASM witness generation");
-
-        if !witness_status.status.success() {
-            let stderr = String::from_utf8_lossy(&witness_status.stderr);
-            println!("C++ witness generation failed with error:\n{}", stderr);
-            panic!("WASM witness generation failed");
-        }
+    if !witness_status.status.success() {
+        let stderr = String::from_utf8_lossy(&witness_status.stderr);
+        panic!("WASM witness generation failed with error:\n{}", stderr);
     }
 
     let witness_file_path = format!("{}/{}_witness.json", output_dir, circom_file_name);

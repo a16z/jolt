@@ -111,7 +111,7 @@ impl LinkingStuff1 {
         jolt_stuff_size: usize,
         witness: &Vec<Fr>,
     ) -> LinkingStuff1 {
-        let mut idx = 1 + jolt_stuff_size;
+        let mut idx = 2 + jolt_stuff_size;
         let bytecode_combiners = BytecodeCombiners {
             rho: [witness[idx], witness[idx + 1]],
         };
@@ -246,10 +246,12 @@ pub(crate) fn spartan_hkzg(
     let proof = SpartanProof::<Fr, Pcs, ProofTranscript>::prove(&pcs_setup, &preprocessing);
 
     SpartanProof::<Fr, Pcs, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
-
+    let digest = preprocessing.inst.get_digest().format_non_native();
     let combine_input = json!({
         "jolt_pi": jolt_pi,
+        "counter_jolt_1": 1.to_string(),
         "linking_stuff_1": linking_stuff_1,
+        "digest":digest,
         "vk_spartan_1": pcs_setup.1.format(),
         "spartan_proof": proof.format(),
         "w_commitment": proof.witness_commit.format(),
@@ -263,12 +265,12 @@ pub(crate) fn spartan_hkzg(
     let inner_num_rounds = proof.inner_sumcheck_proof.uni_polys.len();
 
     // Length of public IO of Combined R1CS including the 1 at index 0.
-    // 1 + postponed eval size (point size = (inner num rounds - 1) * 3, eval size  = 3) +
-    // linking stuff (nn) size (jolt stuff size + 15 * 3) + jolt pi size (2 * 3)
-    // + 2 hyper kzg verifier keys (2 + 4 + 4) + postponed eval size ().
+    // 1 + counter_combined_r1cs (1) + postponed eval size (point size = (inner num rounds - 1) * 3, eval size  = 3) +
+    // counter_jolt_1 (1) + linking stuff (nn) size (jolt stuff size + 15 * 3) + jolt pi size (2 * 3)
+    // + digest size (3) + 2 hyper kzg verifier keys (2 + 4 + 4).
 
     let pub_io_len_combine_r1cs =
-        1 + (inner_num_rounds - 1) * 3 + 3 + jolt_stuff_size + 15 * 3 + 2 * 3 + 10 + 10;
+        1 + 1 + (inner_num_rounds - 1) * 3 + 3 + 1 + jolt_stuff_size + 15 * 3 + 2 * 3 + 3 + 10 + 10;
     let postponed_point_len = inner_num_rounds - 1;
 
     let combined_r1cs_params = [
@@ -290,6 +292,7 @@ pub(crate) fn spartan_hkzg(
     spartan_hyrax(
         linking_stuff_1,
         jolt_pi,
+        digest,
         pcs_setup.1.format_non_native(),
         vk_jolt_2_nn,
         pub_io_len_combine_r1cs,

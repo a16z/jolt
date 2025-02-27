@@ -916,7 +916,7 @@ where
     pub fn commitment_shapes(max_witness_size: usize) -> Vec<CommitShape> {
         let max_witness_size = max_witness_size.next_power_of_two();
 
-        vec![CommitShape::new(max_witness_size, BatchType::Big)]
+        vec![CommitShape::new(max_witness_size, BatchType::Small)]
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -927,22 +927,21 @@ where
 pub mod tests {
     use super::*;
     use crate::{
-        poly::commitment::hyperkzg::HyperKZG, utils::poseidon_transcript::PoseidonTranscript,
+        poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript,
     };
-    type Fr = ark_bn254::Fr;
-    type Fq = ark_bn254::Fq;
+    type Fr = ark_grumpkin::Fr;
+    type Fq = ark_grumpkin::Fq;
     pub type ProofTranscript = PoseidonTranscript<Fr, Fq>;
-    pub type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
+    pub type PCS = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
     #[test]
     fn spartan() {
-        let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 9);
-        let commitment_shapes = SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(
-            2 * preprocessing.vars.len(),
-        );
+        let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 0);
+        let commitment_shapes =
+            SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
         let pcs_setup = PCS::setup(&commitment_shapes);
-        let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &mut preprocessing);
 
+        let proof = SpartanProof::<Fr, PCS, ProofTranscript>::prove(&pcs_setup, &mut preprocessing);
         SpartanProof::<Fr, PCS, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof)
             .unwrap();
     }
