@@ -15,7 +15,7 @@ type Fq = ark_grumpkin::Fq;
 type ProofTranscript = PoseidonTranscript<Fr, ark_grumpkin::Fq>;
 type Pcs = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
-pub fn from_limbs(limbs: Vec<Fr>) -> Fq {
+pub fn from_limbs<F: PrimeField, K: PrimeField>(limbs: Vec<F>) -> K {
     assert_eq!(limbs.len(), 3);
     let bits = limbs[0]
         .into_bigint()
@@ -26,7 +26,7 @@ pub fn from_limbs(limbs: Vec<Fr>) -> Fq {
         .chain(limbs[2].into_bigint().to_bits_le().iter().take(4))
         .cloned()
         .collect_vec();
-    Fq::from(BigInt::from_bits_le(&bits))
+    K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&bits).to_bytes_le())
 }
 
 impl Parse for Fr {
@@ -46,9 +46,9 @@ struct PostponedEval {
 impl PostponedEval {
     pub fn new(witness: Vec<Fr>, postponed_eval_size: usize) -> Self {
         let point = (0..postponed_eval_size)
-            .map(|i| from_limbs(witness[2 + 3 * i..2 + 3 * i + 3].to_vec()))
+            .map(|i| from_limbs::<Fr, Fq>(witness[2 + 3 * i..2 + 3 * i + 3].to_vec()))
             .collect();
-        let eval = from_limbs(
+        let eval = from_limbs::<Fr, Fq>(
             witness[2 + 3 * postponed_eval_size..2 + 3 * postponed_eval_size + 3].to_vec(),
         );
 

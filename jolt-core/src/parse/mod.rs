@@ -11,12 +11,11 @@ use std::{
 
 mod commit;
 mod field;
-mod group;
-pub mod sum_check;
 mod jolt;
 mod pcs;
 mod spartan1;
 mod spartan2;
+mod sum_check;
 #[cfg(test)]
 mod test {
     use crate::{
