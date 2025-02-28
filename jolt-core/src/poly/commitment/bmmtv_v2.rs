@@ -1,21 +1,14 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use afgho::inner_product;
-use ark_ec::{
-    pairing::{Pairing, PairingOutput},
-    CurveGroup,
-};
+use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{end_timer, start_timer, One, Zero};
+use ark_std::{One, Zero};
 use eyre::Error;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{
-    field::JoltField,
-    msm::{Icicle, VariableBaseMSM},
-    poly::{multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly},
-};
+use crate::{field::JoltField, msm::Icicle, poly::unipoly::UniPoly};
 
 use super::kzg::{KZGVerifierKey, UnivariateKZG, SRS};
 
@@ -203,13 +196,13 @@ where
         proof: &OpeningProof<P>,
     ) -> Result<bool, Error> {
         let (x, y) = point;
-        let ip_proof_valid =
-            PolynomialEvaluationSecondTierIPA::verify_with_structured_scalar_message(
-                v_srs,
-                (com, &IdentityOutput(vec![proof.y_eval_comm])),
-                x,
-                &proof.ip_proof,
-            )?;
+        let ip_proof_valid = todo!();
+        // PolynomialEvaluationSecondTierIPA::verify_with_structured_scalar_message(
+        //     v_srs,
+        //     (com, &IdentityOutput(vec![proof.y_eval_comm])),
+        //     x,
+        //     &proof.ip_proof,
+        // )?;
         let kzg_proof_valid =
             UnivariateKZG::verify(v_srs, &proof.y_eval_comm, y, &proof.kzg_proof, eval)?;
         Ok(ip_proof_valid && kzg_proof_valid)
@@ -281,7 +274,7 @@ where
     pub fn open(
         srs: &SRS<P>,
         polynomial: &UniPoly<P::ScalarField>,
-        y_polynomial_comms: &[P::G1],
+        y_polynomial_comms: &[P::G1Affine],
         point: &P::ScalarField,
     ) -> Result<OpeningProof<P>, Error> {
         let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(srs);
