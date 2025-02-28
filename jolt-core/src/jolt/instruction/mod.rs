@@ -26,12 +26,26 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     }
 
     // m_\ell(r_j, j, b_j)
-    fn multiplicative_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+    fn multiplicative_update<F: JoltField>(
+        &self,
+        j: usize,
+        r_j: F,
+        b_j: u8,
+        r_prev: Option<F>,
+        b_next: Option<u8>,
+    ) -> F {
         todo!()
     }
 
     // a_\ell(r_j, j, b_j)
-    fn additive_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+    fn additive_update<F: JoltField>(
+        &self,
+        j: usize,
+        r_j: F,
+        b_j: u8,
+        r_prev: Option<F>,
+        b_next: Option<u8>,
+    ) -> F {
         todo!()
     }
 

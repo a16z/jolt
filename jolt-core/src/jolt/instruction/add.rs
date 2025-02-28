@@ -87,20 +87,35 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 
     // m_\ell(r_j, j, b_j)
-    fn multiplicative_update<F: JoltField>(&self, _: F, _: usize, _: bool) -> F {
+    fn multiplicative_update<F: JoltField>(
+        &self,
+        j: usize,
+        r_j: F,
+        b_j: u8,
+        r_prev: Option<F>,
+        b_next: Option<u8>,
+    ) -> F {
         F::one()
     }
 
     // a_\ell(r_j, j, b_j)
-    fn additive_update<F: JoltField>(&self, r_j: F, j: usize, b_j: bool) -> F {
+    fn additive_update<F: JoltField>(
+        &self,
+        j: usize,
+        r_j: F,
+        b_j: u8,
+        r_prev: Option<F>,
+        b_next: Option<u8>,
+    ) -> F {
         if j < WORD_SIZE {
             return F::zero();
         }
         let d_j = F::from_u32(1 << (2 * WORD_SIZE - 1 - j));
         // (r_j - b_j) * d_j
-        if b_j {
+        if b_j == 1 {
             r_j * d_j - d_j
         } else {
+            debug_assert_eq!(b_j, 0);
             r_j * d_j
         }
     }

@@ -36,6 +36,22 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
+    #[cfg(test)]
+    fn materialize(&self) -> Vec<u64> {
+        assert_eq!(WORD_SIZE, 8);
+        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
+    }
+
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let x = (index >> WORD_SIZE) % WORD_SIZE as u64;
+        let y = index % WORD_SIZE as u64;
+        x & y
+    }
+
+    fn to_lookup_index(&self) -> u64 {
+        self.0 << WORD_SIZE | self.1
+    }
+
     fn lookup_entry(&self) -> u64 {
         // This is the same for 32-bit and 64-bit word sizes
         self.0 & self.1
@@ -49,6 +65,19 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
         } else {
             panic!("Only 32-bit and 64-bit word sizes are supported")
         }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        let (x, y) = r.split_at(WORD_SIZE);
+
+        let mut result = F::zero();
+        for i in 0..WORD_SIZE {
+            let x_i = x[i];
+            let y_i = y[i];
+            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i)) * x_i * y_i;
+        }
+        result
     }
 }
 

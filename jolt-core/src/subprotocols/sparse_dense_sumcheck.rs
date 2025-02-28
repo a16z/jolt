@@ -1,7 +1,7 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::instruction::JoltInstruction,
+    jolt::instruction::{mulhu::MULHUInstruction, JoltInstruction},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -23,11 +23,11 @@ struct ExpandingTable<F: JoltField> {
     len: usize,
     values: Vec<F>,
     scratch_space: Vec<F>,
-    update_fn: Box<dyn Fn(&mut [F], F, F, usize) + Sync>,
 }
 
 impl<F: JoltField> ExpandingTable<F> {
-    fn new(capacity: usize, update_fn: Box<dyn Fn(&mut [F], F, F, usize) + Sync>) -> Self {
+    #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
+    fn new(capacity: usize) -> Self {
         let (values, scratch_space) = rayon::join(
             || unsafe_allocate_zero_vec(capacity),
             || unsafe_allocate_zero_vec(capacity),
@@ -36,24 +36,12 @@ impl<F: JoltField> ExpandingTable<F> {
             len: 0,
             values,
             scratch_space,
-            update_fn,
         }
     }
 
     fn reset(&mut self, value: F) {
         self.values[0] = value;
         self.len = 1;
-    }
-
-    fn update(&mut self, r_j: F, j: usize) {
-        self.values
-            .par_iter()
-            .zip(self.scratch_space.par_chunks_mut(2))
-            .for_each(|(src, dest)| {
-                (self.update_fn)(dest, *src, r_j, j);
-            });
-        std::mem::swap(&mut self.values, &mut self.scratch_space);
-        self.len *= 2;
     }
 }
 
@@ -75,10 +63,270 @@ impl<'data, F: JoltField> IntoParallelIterator for &'data ExpandingTable<F> {
     }
 }
 
+struct BinarySumTree<F: JoltField> {
+    layers: Vec<Vec<F>>,
+}
+
+impl<F: JoltField> BinarySumTree<F> {
+    #[tracing::instrument(skip_all, name = "BinarySumTree::new")]
+    fn new(num_layers: usize) -> Self {
+        let mut layers = Vec::with_capacity(num_layers);
+        for layer in 0..num_layers {
+            layers.push(unsafe_allocate_zero_vec(1 << layer));
+        }
+        Self { layers }
+    }
+
+    fn leaves_mut(&mut self) -> &mut Vec<F> {
+        let num_layers = self.layers.len();
+        &mut self.layers[num_layers - 1]
+    }
+
+    #[tracing::instrument(skip_all, name = "BinarySumTree::build")]
+    fn build(&mut self) {
+        let num_layers = self.layers.len();
+        for layer_index in (0..(num_layers - 1)).rev() {
+            let (top, bottom) = self.layers.split_at_mut(layer_index + 1);
+            let layer = top.last_mut().unwrap();
+            let prev_layer = bottom.first().unwrap();
+            layer
+                .par_iter_mut()
+                .zip(prev_layer.par_chunks(2))
+                .for_each(|(dest, src)| *dest = src[0] + src[1]);
+        }
+    }
+}
+
+impl<F: JoltField> Index<usize> for BinarySumTree<F> {
+    type Output = Vec<F>;
+
+    fn index(&self, index: usize) -> &Vec<F> {
+        assert!(index < self.layers.len());
+        &self.layers[index]
+    }
+}
+
+pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
+    const GAMMA: usize;
+    // const ETA: usize
+
+    #[tracing::instrument(skip_all, name = "SparseDenseSumcheck::compute_prover_message")]
+    fn compute_prover_message(
+        round: usize,
+        Q_tree: &BinarySumTree<F>,
+        Z_tree: &BinarySumTree<F>,
+        r: &[F],
+        j: usize,
+        v: &ExpandingTable<F>,
+        x: &ExpandingTable<F>,
+        w: &ExpandingTable<F>,
+    ) -> [F; 2] {
+        let two = F::from_u8(2);
+        let chi_2 = [F::one() - two, two];
+
+        match Self::GAMMA {
+            0 => {
+                let q_layer = &Q_tree[round + 1];
+                let z_layer = &Z_tree[round + 1];
+
+                let q_inner_products: [F; 2] = (v, x)
+                    .into_par_iter()
+                    .enumerate()
+                    .map(|(b, (v, x))| {
+                        // Element of v ◦ x
+                        let v_x = *v * x;
+                        // Contribution to <v ◦ x, q_even>
+                        let q_v_x_even = v_x * q_layer[2 * b];
+                        let q_v_x_odd = v_x * q_layer[2 * b + 1];
+
+                        [q_v_x_even, q_v_x_odd]
+                    })
+                    .reduce(
+                        || [F::zero(); 2],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    );
+
+                let z_inner_products: [F; 4] = (v, w)
+                    .into_par_iter()
+                    .enumerate()
+                    .map(|(b, (v_b, w_b))| {
+                        // Contribution to <v, z_even>
+                        let z_v_even = z_layer[2 * b] * v_b;
+                        // Contribution to <v, z_odd>
+                        let z_v_odd = z_layer[2 * b + 1] * v_b;
+                        // Contribution to <v ◦ w, z_even>
+                        let z_v_w_even = z_v_even * w_b;
+                        // Contribution to <v ◦ w, z_odd>
+                        let z_v_w_odd = z_v_odd * w_b;
+
+                        [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
+                    })
+                    .reduce(
+                        || [F::zero(); 4],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                                running[3] + new[3],
+                            ]
+                        },
+                    );
+
+                let mut univariate_poly_evals = [F::zero(), F::zero()];
+
+                // Expression (52), c = 0
+                univariate_poly_evals[0] +=
+                    Self::default().multiplicative_update(j, F::zero(), 0, None, None)
+                        * q_inner_products[0];
+                // Expression (53), c = 0
+                univariate_poly_evals[0] += z_inner_products[2]
+                    + Self::default().additive_update(j, F::zero(), 0, None, None)
+                        * z_inner_products[0];
+
+                // Expression (52), c = 2
+                univariate_poly_evals[1] += chi_2[0]
+                    * Self::default().multiplicative_update(j, two, 0, None, None)
+                    * q_inner_products[0];
+                univariate_poly_evals[1] += chi_2[1]
+                    * Self::default().multiplicative_update(j, two, 1, None, None)
+                    * q_inner_products[1];
+                // Expression (53), c = 2
+                univariate_poly_evals[1] += chi_2[0]
+                    * (z_inner_products[2]
+                        + Self::default().additive_update(j, two, 0, None, None)
+                            * z_inner_products[0]);
+                univariate_poly_evals[1] += chi_2[1]
+                    * (z_inner_products[3]
+                        + Self::default().additive_update(j, two, 1, None, None)
+                            * z_inner_products[1]);
+
+                univariate_poly_evals
+            }
+            1 => {
+                let (q_layer, z_layer) = if j % 2 == 0 {
+                    (&Q_tree[round + 1], &Z_tree[round + 1])
+                } else {
+                    (&Q_tree[round + 2], &Z_tree[round + 2])
+                };
+
+                debug_assert_eq!(q_layer.len(), z_layer.len());
+                debug_assert_eq!(2 * v.len, q_layer.len());
+                if j % 2 == 0 {
+                    debug_assert_eq!(2 * x.len, q_layer.len());
+                    debug_assert_eq!(2 * w.len, q_layer.len());
+                } else {
+                    debug_assert_eq!(4 * x.len, q_layer.len());
+                    debug_assert_eq!(4 * w.len, q_layer.len());
+                }
+
+                todo!()
+            }
+            _ => unimplemented!("gamma > 1 not supported"),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "SparseDenseSumcheck::update_tables")]
+    fn update_tables(
+        v: &mut ExpandingTable<F>,
+        x: &mut ExpandingTable<F>,
+        w: &mut ExpandingTable<F>,
+        r: &[F],
+        j: usize,
+    ) {
+        Self::update_v_table(v, r, j);
+
+        match Self::GAMMA {
+            0 => {
+                x.values
+                    .par_iter()
+                    .zip(x.scratch_space.par_chunks_mut(2))
+                    .for_each(|(&x_i, dest)| {
+                        dest[0] =
+                            x_i * Self::default().multiplicative_update(j, r[j], 0, None, None);
+                        dest[1] =
+                            x_i * Self::default().multiplicative_update(j, r[j], 1, None, None);
+                    });
+                std::mem::swap(&mut x.values, &mut x.scratch_space);
+                x.len *= 2;
+
+                w.values
+                    .par_iter()
+                    .zip(w.scratch_space.par_chunks_mut(2))
+                    .for_each(|(&w_i, dest)| {
+                        dest[0] = w_i + Self::default().additive_update(j, r[j], 0, None, None);
+                        dest[1] = w_i + Self::default().additive_update(j, r[j], 1, None, None);
+                    });
+                std::mem::swap(&mut w.values, &mut w.scratch_space);
+                w.len *= 2;
+            }
+            1 => {
+                if j % 2 == 0 {
+                    return;
+                }
+                x.values
+                    .par_iter()
+                    .zip(x.scratch_space.par_chunks_mut(4))
+                    .for_each(|(&x_i, dest)| {
+                        for (b_j, b_next) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                            dest[2 * b_j + b_next] = x_i
+                                * Self::default().multiplicative_update(
+                                    j,
+                                    r[j],
+                                    b_j as u8,
+                                    Some(r[j - 1]),
+                                    Some(b_next as u8),
+                                );
+                        }
+                    });
+                std::mem::swap(&mut x.values, &mut x.scratch_space);
+                x.len *= 4;
+
+                w.values
+                    .par_iter()
+                    .zip(w.scratch_space.par_chunks_mut(4))
+                    .for_each(|(&w_i, dest)| {
+                        for (b_j, b_next) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                            dest[2 * b_j + b_next] = w_i
+                                + Self::default().additive_update(
+                                    j,
+                                    r[j],
+                                    b_j as u8,
+                                    Some(r[j - 1]),
+                                    Some(b_next as u8),
+                                );
+                        }
+                    });
+                std::mem::swap(&mut w.values, &mut w.scratch_space);
+                w.len *= 4;
+            }
+            _ => unimplemented!("gamma > 1 not supported"),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "SparseDenseSumcheck::update_v_table")]
+    fn update_v_table(v: &mut ExpandingTable<F>, r: &[F], j: usize) {
+        v.values
+            .par_iter()
+            .zip(v.scratch_space.par_chunks_mut(2))
+            .for_each(|(&v_i, dest)| {
+                let eval_1 = r[j] * v_i;
+                dest[0] = v_i - eval_1;
+                dest[1] = eval_1;
+            });
+        std::mem::swap(&mut v.values, &mut v.scratch_space);
+        v.len *= 2;
+    }
+}
+
+impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<32> {
+    const GAMMA: usize = 0;
+}
+
 pub fn prove_single_instruction<
     const TREE_WIDTH: usize,
     F: JoltField,
-    I: JoltInstruction + Default,
+    I: SparseDenseSumcheck<F>,
     ProofTranscript: Transcript,
 >(
     instructions: &[I],
@@ -121,30 +369,9 @@ pub fn prove_single_instruction<
     let mut rv_claim = F::zero();
     let mut previous_claim = F::zero();
 
-    let update_v = |dest: &mut [F], v_i, r_j, _| {
-        debug_assert_eq!(dest.len(), 2);
-        let eval_1 = v_i * r_j;
-        dest[0] = v_i - eval_1;
-        dest[1] = eval_1;
-    };
-    let mut v = ExpandingTable::new(TREE_WIDTH, Box::new(update_v));
-
-    let update_w = |dest: &mut [F], w_i: F, r_j: F, j: usize| {
-        debug_assert_eq!(dest.len(), 2);
-        dest[0] = w_i + I::default().additive_update(r_j, j, false);
-        dest[1] = w_i + I::default().additive_update(r_j, j, true);
-    };
-    let mut w = ExpandingTable::new(TREE_WIDTH, Box::new(update_w));
-
-    let update_x = |dest: &mut [F], x_i: F, r_j: F, j: usize| {
-        debug_assert_eq!(dest.len(), 2);
-        dest[0] = x_i * I::default().multiplicative_update(r_j, j, false);
-        dest[1] = x_i * I::default().multiplicative_update(r_j, j, true);
-    };
-    let mut x = ExpandingTable::new(TREE_WIDTH, Box::new(update_x));
-
-    let two = F::from_u8(2);
-    let chi_2 = [F::one() - two, two];
+    let mut v = ExpandingTable::new(TREE_WIDTH);
+    let mut w = ExpandingTable::new(TREE_WIDTH);
+    let mut x = ExpandingTable::new(TREE_WIDTH);
 
     #[cfg(test)]
     let mut val_test: MultilinearPolynomial<F> =
@@ -158,15 +385,13 @@ pub fn prove_single_instruction<
         MultilinearPolynomial::from(eq_ra)
     };
 
-    let mut j = 0;
+    let mut j: usize = 0;
     let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
 
-    let mut Z_tree: Vec<Vec<F>> = Vec::with_capacity(log_m + 1);
-    let mut Q_tree: Vec<Vec<F>> = Vec::with_capacity(log_m + 1);
-    for layer in 0..=log_m {
-        Z_tree.push(unsafe_allocate_zero_vec(1 << layer));
-        Q_tree.push(unsafe_allocate_zero_vec(1 << layer));
-    }
+    let (mut Z_tree, mut Q_tree) = rayon::join(
+        || BinarySumTree::new(log_m + 1),
+        || BinarySumTree::new(log_m + 1),
+    );
 
     for phase in 0..3 {
         let span = tracing::span!(tracing::Level::INFO, "sparse-dense phase");
@@ -186,6 +411,7 @@ pub fn prove_single_instruction<
                             .map(|k| (*k, F::from_u64(I::default().materialize_entry(*k)))),
                     ),
             );
+            // TODO(moodlezoup): Directly map j to reference of `t_eval` value
         } else {
             let span = tracing::span!(tracing::Level::INFO, "Update u_evals");
             let _guard = span.enter();
@@ -228,10 +454,13 @@ pub fn prove_single_instruction<
         drop(_guard);
         drop(span);
 
+        // TODO(moodlezoup): Compute Z and Q tree leaves at the same time
         let span = tracing::span!(tracing::Level::INFO, "Compute Z tree leaves");
         let _guard = span.enter();
-        let z_leaves = &mut Z_tree[log_m];
-        z_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero());
+        let z_leaves = Z_tree.leaves_mut();
+        if phase != 0 {
+            z_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero());
+        }
         instruction_index_iters
             .par_iter()
             .zip(z_leaves.par_chunks_mut(leaves_per_chunk))
@@ -244,24 +473,14 @@ pub fn prove_single_instruction<
             });
         drop(_guard);
         drop(span);
-        let span = tracing::span!(tracing::Level::INFO, "Build Z tree");
-        let _guard = span.enter();
-        for layer_index in (0..log_m).rev() {
-            let (top, bottom) = Z_tree.split_at_mut(layer_index + 1);
-            let layer = top.last_mut().unwrap();
-            let prev_layer = bottom.first().unwrap();
-            layer
-                .par_iter_mut()
-                .zip(prev_layer.par_chunks(2))
-                .for_each(|(dest, src)| *dest = src[0] + src[1]);
-        }
-        drop(_guard);
-        drop(span);
+        Z_tree.build();
 
         let span = tracing::span!(tracing::Level::INFO, "Compute Q tree leaves");
         let _guard = span.enter();
-        let q_leaves = &mut Q_tree[log_m];
-        q_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero());
+        let q_leaves = Q_tree.leaves_mut();
+        if phase != 0 {
+            q_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero());
+        }
         instruction_index_iters
             .into_par_iter()
             .zip(q_leaves.par_chunks_mut(leaves_per_chunk))
@@ -276,19 +495,7 @@ pub fn prove_single_instruction<
             });
         drop(_guard);
         drop(span);
-        let span = tracing::span!(tracing::Level::INFO, "Build Q tree");
-        let _guard = span.enter();
-        for layer_index in (0..log_m).rev() {
-            let (top, bottom) = Q_tree.split_at_mut(layer_index + 1);
-            let layer = top.last_mut().unwrap();
-            let prev_layer = bottom.first().unwrap();
-            layer
-                .par_iter_mut()
-                .zip(prev_layer.par_chunks(2))
-                .for_each(|(dest, src)| *dest = src[0] + src[1]);
-        }
-        drop(_guard);
-        drop(span);
+        Q_tree.build();
 
         v.reset(F::one());
         w.reset(F::zero());
@@ -314,87 +521,14 @@ pub fn prove_single_instruction<
                 );
             }
 
-            let prover_message_span =
-                tracing::span!(tracing::Level::INFO, "Compute univariate poly");
-            let _prover_message_guard = prover_message_span.enter();
-
-            let q_layer = &Q_tree[round + 1];
-            let z_layer = &Z_tree[round + 1];
-
-            let q_inner_products: [F; 2] = (&v, &x)
-                .into_par_iter()
-                .enumerate()
-                .map(|(b, (v, x))| {
-                    // Element of v ◦ x
-                    let v_x = *v * x;
-                    // Contribution to <v ◦ x, q_even>
-                    let q_v_x_even = v_x * q_layer[2 * b];
-                    let q_v_x_odd = v_x * q_layer[2 * b + 1];
-
-                    [q_v_x_even, q_v_x_odd]
-                })
-                .reduce(
-                    || [F::zero(); 2],
-                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                );
-
-            let z_inner_products: [F; 4] = (&v, &w)
-                .into_par_iter()
-                .enumerate()
-                .map(|(b, (v_b, w_b))| {
-                    // Contribution to <v, z_even>
-                    let z_v_even = z_layer[2 * b] * v_b;
-                    // Contribution to <v, z_odd>
-                    let z_v_odd = z_layer[2 * b + 1] * v_b;
-                    // Contribution to <v ◦ w, z_even>
-                    let z_v_w_even = z_v_even * w_b;
-                    // Contribution to <v ◦ w, z_odd>
-                    let z_v_w_odd = z_v_odd * w_b;
-
-                    [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
-                })
-                .reduce(
-                    || [F::zero(); 4],
-                    |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                            running[3] + new[3],
-                        ]
-                    },
-                );
-
-            let mut univariate_poly_evals = [F::zero(), F::zero()];
-
-            // Expression (52), c = 0
-            univariate_poly_evals[0] +=
-                I::default().multiplicative_update(F::zero(), j, false) * q_inner_products[0];
-            // Expression (53), c = 0
-            univariate_poly_evals[0] += z_inner_products[2]
-                + I::default().additive_update(F::zero(), j, false) * z_inner_products[0];
-
-            // Expression (52), c = 2
-            univariate_poly_evals[1] +=
-                chi_2[0] * I::default().multiplicative_update(two, j, false) * q_inner_products[0];
-            univariate_poly_evals[1] +=
-                chi_2[1] * I::default().multiplicative_update(two, j, true) * q_inner_products[1];
-            // Expression (53), c = 2
-            univariate_poly_evals[1] += chi_2[0]
-                * (z_inner_products[2]
-                    + I::default().additive_update(two, j, false) * z_inner_products[0]);
-            univariate_poly_evals[1] += chi_2[1]
-                * (z_inner_products[3]
-                    + I::default().additive_update(two, j, true) * z_inner_products[1]);
+            let univariate_poly_evals =
+                I::compute_prover_message(round, &Q_tree, &Z_tree, &r, j, &v, &x, &w);
 
             let univariate_poly = UniPoly::from_evals(&[
                 univariate_poly_evals[0],
                 previous_claim - univariate_poly_evals[0],
                 univariate_poly_evals[1],
             ]);
-
-            drop(_prover_message_guard);
-            drop(prover_message_span);
 
             let compressed_poly = univariate_poly.compress();
             compressed_poly.append_to_transcript(transcript);
@@ -405,12 +539,7 @@ pub fn prove_single_instruction<
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
-            let binding_span = tracing::span!(tracing::Level::INFO, "Binding");
-            let _binding_guard = binding_span.enter();
-
-            v.update(r_j, j);
-            w.update(r_j, j);
-            x.update(r_j, j);
+            I::update_tables(&mut v, &mut x, &mut w, &r, j);
 
             #[cfg(test)]
             {
@@ -544,7 +673,8 @@ pub fn prove_single_instruction<
             || val.bind_parallel(r_j, BindingOrder::HighToLow),
         );
 
-        v.update(r_j, j);
+        I::update_v_table(&mut v, &r, j);
+        j += 1;
     }
 
     drop(_guard);
@@ -685,6 +815,14 @@ mod tests {
     };
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, SeedableRng};
+
+    impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<8> {
+        const GAMMA: usize = 0;
+    }
+
+    impl<F: JoltField> SparseDenseSumcheck<F> for ADDInstruction<8> {
+        const GAMMA: usize = 0;
+    }
 
     #[test]
     fn test_mulhu() {
