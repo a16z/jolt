@@ -47,7 +47,7 @@ and one attests to the validity of initialization of memory plus a final pass ov
 The reason we do not run these grand products "together as one big grand product" is they are 
 each potentially of different sizes,
 and it is annoying (though possible) to "batch prove" differently-sized grand products together.
-However, a relatively easy way to get down to 3 grand prodcuts is to set the memory size
+However, a relatively easy way to get down to 3 grand products is to set the memory size
 in each of the three categories above to equal the number of reads/writes. This simply involves 
 padding the memory with zeros to make it equal in size to 
 the number of reads/writes into the memory (i.e., NUM_CYCLES). Doing this will not substantially increase

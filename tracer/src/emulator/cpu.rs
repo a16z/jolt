@@ -158,7 +158,7 @@ pub fn get_privilege_mode(encoding: u64) -> PrivilegeMode {
         0 => PrivilegeMode::User,
         1 => PrivilegeMode::Supervisor,
         3 => PrivilegeMode::Machine,
-        _ => panic!("Unknown privilege uncoding"),
+        _ => panic!("Unknown privilege encoding"),
     }
 }
 
@@ -770,7 +770,7 @@ impl Cpu {
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
     fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
-            // @TODO: Mask shuld consider of 32-bit mode
+            // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
             CSR_FRM_ADDRESS => (self.csr[CSR_FCSR_ADDRESS as usize] >> 5) & 0x7,
             CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
@@ -1286,7 +1286,7 @@ impl Cpu {
                         if rd != 0 {
                             return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x7;
                         }
-                        // rd == 0 is reseved instruction
+                        // rd == 0 is reserved instruction
                     }
                     2 => {
                         // C.LWSP
@@ -1298,7 +1298,7 @@ impl Cpu {
                         if r != 0 {
                             return (offset << 20) | (2 << 15) | (2 << 12) | (r << 7) | 0x3;
                         }
-                        // r == 0 is reseved instruction
+                        // r == 0 is reserved instruction
                     }
                     3 => {
                         // @TODO: Support C.FLWSP in 32-bit mode
@@ -1311,7 +1311,7 @@ impl Cpu {
                         if rd != 0 {
                             return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x3;
                         }
-                        // rd == 0 is reseved instruction
+                        // rd == 0 is reserved instruction
                     }
                     4 => {
                         let funct1 = (halfword >> 12) & 1; // [12]
@@ -1406,7 +1406,7 @@ impl Cpu {
                     _ => {} // Not happens
                 };
             }
-            _ => {} // No happnes
+            _ => {} // Not happens
         };
         0xffffffff // Return invalid value
     }

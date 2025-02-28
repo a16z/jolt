@@ -37,7 +37,7 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
         let ptr = std::alloc::alloc_zeroed(layout) as *mut F;
 
         if ptr.is_null() {
-            panic!("Zero vec allocaiton failed");
+            panic!("Zero vec allocation failed");
         }
 
         result = Vec::from_raw_parts(ptr, size, size);

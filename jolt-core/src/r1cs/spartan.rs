@@ -39,7 +39,7 @@ pub enum SpartanError {
     #[error("InvalidSumcheckProof")]
     InvalidSumcheckProof,
 
-    /// returned when the recusive sumcheck proof fails
+    /// returned when the recursive sumcheck proof fails
     #[error("InvalidOuterSumcheckProof")]
     InvalidOuterSumcheckProof,
 
@@ -47,7 +47,7 @@ pub enum SpartanError {
     #[error("InvalidOuterSumcheckClaim")]
     InvalidOuterSumcheckClaim,
 
-    /// returned when the recusive sumcheck proof fails
+    /// returned when the recursive sumcheck proof fails
     #[error("InvalidInnerSumcheckProof")]
     InvalidInnerSumcheckProof,
 

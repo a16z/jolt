@@ -79,7 +79,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         Self { row_commitments }
     }
 
-    /// Same result as commiting to each polynomial in the batch individually,
+    /// Same result as committing to each polynomial in the batch individually,
     /// but tends to have better parallelism.
     #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit")]
     pub fn batch_commit(

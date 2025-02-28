@@ -8,7 +8,7 @@ We call directly representing the Jolt verifier (with HyperKZG polynomial commit
 as constraints to then feeding those constraints into Groth16 "naive composition". Unfortunately, this naive procedure
 will result 
 in over a hundred millions of constraints. Applying Groth16 
-to such a large constraint system will result in far more latency than we'd lik, (and may even be impossible over the BN254 scalar field
+to such a large constraint system will result in far more latency than we'd like, (and may even be impossible over the BN254 scalar field
 because that field only supports FFTs of length $2^{27}$. 
 Below, we describe alternate ways forward. 
 
