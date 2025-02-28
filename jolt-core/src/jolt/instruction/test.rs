@@ -73,6 +73,8 @@ macro_rules! jolt_virtual_sequence_test {
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
 
         let virtual_sequence = <$instr_type>::virtual_trace(trace_row);
