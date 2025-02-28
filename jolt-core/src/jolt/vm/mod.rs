@@ -705,6 +705,8 @@ where
             outputs: program_io.outputs,
             panic: program_io.panic,
             memory_layout: memory_layout.clone(),
+            precompile_input: program_io.precompile_input,
+            precompile_output: program_io.precompile_output,
         });
 
         ReadWriteMemoryProof::verify(

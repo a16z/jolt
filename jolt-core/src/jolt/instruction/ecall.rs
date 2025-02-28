@@ -3,6 +3,7 @@
 // Last instruction is a call to the precompile based on t0 register. 
 
 use common::constants::virtual_register_index;
+use common::precompiles::Precompile;
 use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
@@ -44,7 +45,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
 
         // Precompile input is in the memory region reserved for the precompile input.
         let precompile_input = trace_row.precompile_input.unwrap();
-        let precompile_output: &[u32; 16] = Precompile::from_u64(trace_row.register_state.rs1_val.unwrap()).unwrap().execute(precompile_input);
+        let precompile_output: [u32; 16] = Precompile::from_u64(trace_row.register_state.rs1_val.unwrap()).unwrap().execute(precompile_input);
 
         let  ao0 = ADVICEInstruction::<WORD_SIZE>(precompile_output[0]).lookup_entry();
         virtual_trace.push(RVTraceRow {
@@ -260,7 +261,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(a10),
+                rd_post_val: Some(ao10),
             },
             memory_state: None,
             advice_value: Some(precompile_output[10]),
@@ -293,7 +294,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_a012,
+                rd: v_ao12,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
@@ -378,7 +379,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
-                rs1_val: None
+                rs1_val: None,
                 rs2_val: None,
                 rd_post_val: None,
             },
@@ -387,6 +388,10 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
         });
 
         virtual_trace
+    }
+
+    fn sequence_output(x: u64, y: u64) -> u64 {
+        unimplemented!()
     }
 }
 

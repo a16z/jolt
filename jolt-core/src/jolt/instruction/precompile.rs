@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
-use crate::jolt::subtable::{
-    identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
+use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::utils::instruction_utils::{
+    assert_valid_parameters, concatenate_lookups, chunk_operand_usize,
 };
-use crate::utils::instruction_utils::{assert_valid_parameters};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PRECOMPILEInstruction<const WORD_SIZE: usize>(pub u64);
@@ -33,10 +33,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for PRECOMPILEInstruction<WORD_SIZE
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![
-            (
-                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
-                SubtableIndices::from(0..msb_chunk_index + 1),
-            ),
             (
                 Box::new(IdentitySubtable::new()),
                 SubtableIndices::from(msb_chunk_index + 1..C),
