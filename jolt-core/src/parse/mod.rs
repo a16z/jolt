@@ -15,7 +15,6 @@ mod jolt;
 mod pcs;
 mod spartan1;
 mod spartan2;
-mod postponed_eval;
 
 #[cfg(test)]
 mod test {
