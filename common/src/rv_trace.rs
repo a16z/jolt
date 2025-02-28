@@ -12,6 +12,8 @@ pub struct RVTraceRow {
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,
     pub advice_value: Option<u64>,
+    pub precompile_input: Option<[u32; 16]>,
+    pub precompile_output_address: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]

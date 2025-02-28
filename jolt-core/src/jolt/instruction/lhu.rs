@@ -57,6 +57,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let ram_address = ADDInstruction::<WORD_SIZE>(rs1_val, offset_unsigned).lookup_entry();
@@ -77,6 +79,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
@@ -99,6 +103,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let word = match trace_row.memory_state.unwrap() {
@@ -137,6 +143,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
                 value: word,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let byte_shift = XORInstruction::<WORD_SIZE>(ram_address, 0b10).lookup_entry();
@@ -157,6 +165,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let bit_shift = SLLInstruction::<WORD_SIZE>(byte_shift, 3).lookup_entry();
@@ -177,6 +187,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let left_aligned_byte = SLLInstruction::<WORD_SIZE>(word, bit_shift).lookup_entry();
@@ -197,6 +209,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let zero_extended_halfword =
@@ -219,6 +233,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
@@ -241,6 +257,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHUInstruction<WORD_
                 value: 0,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
         Self::virtual_trace(dummy_trace_row)
             .into_iter()
@@ -302,6 +320,8 @@ mod test {
                     value: word,
                 }),
                 advice_value: None,
+                precompile_input: None,
+                precompile_output_address: None,
             };
 
             let trace = LHUInstruction::<32>::virtual_trace(lhu_trace_row);
