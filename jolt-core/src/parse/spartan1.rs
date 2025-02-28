@@ -12,7 +12,7 @@ use crate::{
     },
     spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof},
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::poseidon_transcript::PoseidonTranscript,
+    utils::{poseidon_transcript::PoseidonTranscript, thread::drop_in_background_thread},
 };
 use ark_bn254::Bn254;
 use serde_json::json;
@@ -188,8 +188,8 @@ pub(crate) fn spartan_hkzg(
     jolt_stuff_size: usize,
     jolt_openining_point_len: usize,
     file_paths: &Vec<PathBuf>,
-    packages: &[&str],
     z: &Vec<Fr>,
+    packages: &[&str],
     output_dir: &str,
 ) {
     type Fr = ark_bn254::Fr;
@@ -246,6 +246,7 @@ pub(crate) fn spartan_hkzg(
     let proof = SpartanProof::<Fr, Pcs, ProofTranscript>::prove(&pcs_setup, &preprocessing);
 
     SpartanProof::<Fr, Pcs, ProofTranscript>::verify(&pcs_setup, &preprocessing, &proof).unwrap();
+
     let digest = preprocessing.inst.get_digest().format_non_native();
     let combine_input = json!({
         "jolt_pi": jolt_pi,
@@ -261,6 +262,8 @@ pub(crate) fn spartan_hkzg(
     });
 
     write_json(&combine_input, output_dir, packages[1]);
+    drop_in_background_thread(combine_input);
+    drop_in_background_thread(preprocessing);
 
     let inner_num_rounds = proof.inner_sumcheck_proof.uni_polys.len();
 
@@ -280,6 +283,8 @@ pub(crate) fn spartan_hkzg(
         jolt_openining_point_len,
     ]
     .to_vec();
+
+    drop_in_background_thread(proof);
 
     generate_r1cs(
         &file_paths[1],

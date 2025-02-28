@@ -622,7 +622,7 @@ dependencies = [
 [[package]]
 name = "binius_field"
 version = "0.2.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#c035caef0bda2d5e187c362cb79ea776f0f1cc21"
+source = "git+https://gitlab.com/UlvetannaOSS/binius#3e9423575d6977722261a1817a8b86d523c4e832"
 dependencies = [
  "binius_maybe_rayon",
  "binius_utils",
@@ -640,7 +640,7 @@ dependencies = [
 [[package]]
 name = "binius_maybe_rayon"
 version = "0.2.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#c035caef0bda2d5e187c362cb79ea776f0f1cc21"
+source = "git+https://gitlab.com/UlvetannaOSS/binius#3e9423575d6977722261a1817a8b86d523c4e832"
 dependencies = [
  "cfg-if",
  "either",
@@ -650,7 +650,7 @@ dependencies = [
 [[package]]
 name = "binius_utils"
 version = "0.2.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#c035caef0bda2d5e187c362cb79ea776f0f1cc21"
+source = "git+https://gitlab.com/UlvetannaOSS/binius#3e9423575d6977722261a1817a8b86d523c4e832"
 dependencies = [
  "auto_impl",
  "binius_maybe_rayon",
@@ -816,6 +816,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "circuits"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -901,15 +908,6 @@ name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
-
-[[package]]
-name = "combined_r1cs"
-version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes_counter#50b4f281ae458a6aabf0394854dadef0527e9a2a"
-dependencies = [
- "matrix",
- "serde_json",
-]
 
 [[package]]
 name = "common"
@@ -2128,8 +2126,8 @@ dependencies = [
  "bincode",
  "binius_field",
  "bytemuck",
+ "circuits",
  "clap",
- "combined_r1cs",
  "common",
  "criterion",
  "dirs",
@@ -2144,7 +2142,6 @@ dependencies = [
  "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
- "jolt1",
  "memory-stats",
  "num-bigint",
  "num-integer",
@@ -2158,7 +2155,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "spartan_hyrax",
  "strum",
  "strum_macros",
  "sys-info",
@@ -2194,18 +2190,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "jolt1"
-version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes_counter#50b4f281ae458a6aabf0394854dadef0527e9a2a"
-dependencies = [
- "num-bigint",
- "rand 0.8.5",
- "regex",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2321,18 +2305,6 @@ name = "log"
 version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
-
-[[package]]
-name = "matrix"
-version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes_counter#50b4f281ae458a6aabf0394854dadef0527e9a2a"
-dependencies = [
- "num",
- "num-bigint",
- "num-traits",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "memchr"
@@ -2488,20 +2460,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
-dependencies = [
- "num-bigint",
- "num-complex",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
-]
-
-[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2512,42 +2470,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-complex"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "num-iter"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
-dependencies = [
- "autocfg",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-rational"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
-dependencies = [
- "num-bigint",
- "num-integer",
  "num-traits",
 ]
 
@@ -3618,14 +3545,6 @@ checksum = "c970269d99b64e60ec3bd6ad27270092a5394c4e309314b18ae3fe575695fbe8"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "spartan_hyrax"
-version = "0.1.0"
-source = "git+https://github.com/arithmic/circom_jolt.git?branch=template_fixes_counter#50b4f281ae458a6aabf0394854dadef0527e9a2a"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]

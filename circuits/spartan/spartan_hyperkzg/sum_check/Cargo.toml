@@ -1,0 +1,26 @@
+[package]
+name = "sum_check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+jolt-core = { git = "https://github.com/arithmic/jolt.git", branch = "test_circom_native"}
+ark-ff = { version = "0.5.0", default-features = false }
+ark-std = { version = "0.5.0" }
+ark-bn254 = "0.5.0"
+ark-grumpkin = "0.5.0"
+ark-ec = { version = "0.5.0", default-features = false }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+regex = "1"
+num-bigint = {version = "0.4"}
+rand = "0.8" 
+parsing = { path = "../../../../parsing" }
+
+[features]
+default = [
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "ark-ff/asm",
+]

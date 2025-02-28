@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use crate::field::JoltField;
 use num_bigint::BigUint;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     fs::{self, File},
     io::Write,
@@ -12,102 +13,6 @@ mod commit;
 mod jolt;
 mod spartan1;
 mod spartan2;
-
-pub(crate) trait Parse {
-    fn format(&self) -> serde_json::Value {
-        unimplemented!("")
-    }
-    fn format_non_native(&self) -> serde_json::Value {
-        unimplemented!("")
-    }
-}
-
-pub(crate) fn write_json(input: &serde_json::Value, out_dir: &str, package_name: &str) {
-    let file_name = format!("{}_input.json", package_name);
-    let file_path = Path::new(out_dir).join(&file_name);
-
-    // Convert the JSON to a pretty-printed string
-    let pretty_json = serde_json::to_string_pretty(&input).expect("Failed to serialize JSON");
-
-    let mut input_file = File::create(file_path).expect("Failed to create input.json");
-    input_file
-        .write_all(pretty_json.as_bytes())
-        .expect("Failed to write input file");
-}
-
-pub(crate) fn read_witness<F: JoltField>(witness_file_path: &str) -> Vec<F> {
-    let witness_file = File::open(witness_file_path).expect("Failed to open witness.json");
-    let witness: Vec<String> = serde_json::from_reader(witness_file).unwrap();
-    let mut z = Vec::new();
-
-    for value in witness {
-        let val: BigUint = value.parse().unwrap();
-        let mut bytes = val.to_bytes_le();
-        bytes.resize(32, 0u8);
-        let val = F::from_bytes(&bytes);
-        z.push(val);
-    }
-    z
-}
-
-fn get_paths(package_names: &[&str]) -> Vec<PathBuf> {
-    let mut package_paths = Vec::new();
-
-    let mut build_args = vec!["build"];
-    for package_name in package_names {
-        build_args.push("--package");
-        build_args.push(package_name);
-    }
-
-    let status = Command::new("cargo")
-        .args(&build_args)
-        .status()
-        .expect("Failed to build packages");
-
-    if !status.success() {
-        panic!("Failed to build one or more packages.");
-    }
-
-    // Get Cargo metadata once to find where dependencies are stored
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1"])
-        .output()
-        .expect("Failed to get cargo metadata");
-
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata");
-
-    let packages = metadata
-        .get("packages")
-        .and_then(|p| p.as_array())
-        .expect("Invalid metadata format");
-
-    for package_name in package_names {
-        let mut repo_b_path = None;
-
-        for package in packages {
-            if package.get("name").and_then(|n| n.as_str()) == Some(*package_name) {
-                repo_b_path = package
-                    .get("manifest_path")
-                    .and_then(|m| m.as_str())
-                    .map(|m| PathBuf::from(m).parent().unwrap().to_path_buf());
-                break;
-            }
-        }
-
-        let repo_b_path =
-            repo_b_path.unwrap_or_else(|| panic!("Could not find package: {}", package_name));
-
-        let circom_file_name = format!("{}.circom", package_name);
-        let circom_file = repo_b_path.join(circom_file_name);
-
-        // Ensure the file exists
-        assert!(circom_file.exists(), "File not found at {:?}", circom_file);
-
-        package_paths.push(circom_file);
-    }
-    package_paths
-}
 
 #[cfg(test)]
 mod test {
@@ -124,7 +29,10 @@ mod test {
         },
         poly::commitment::{commitment_scheme::CommitmentScheme, hyperkzg::HyperKZG},
         r1cs::inputs::JoltR1CSInputs,
-        utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript},
+        utils::{
+            poseidon_transcript::PoseidonTranscript, thread::drop_in_background_thread,
+            transcript::Transcript,
+        },
     };
     use common::{
         constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT},
@@ -160,20 +68,19 @@ mod test {
 
         let packages = &[jolt_package, combine_r1cs_package, spartan_hyrax_package];
 
-        let file_paths = get_paths(packages);
-        println!("file_paths is {:?}", file_paths);
+        let file_paths = get_paths();
         let circom_template = "verify";
         let prime = "bn128";
         let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
             fib_e2e::<Fr, PCS, ProofTranscript>();
 
-        // let verification_result =
-        //     RV32IJoltVM::verify(jolt_preprocessing, jolt_proof, jolt_commitments, debug_info);
-        // assert!(
-        //     verification_result.is_ok(),
-        //     "Verification failed with error: {:?}",
-        //     verification_result.err()
-        // );
+        // // let verification_result =
+        // //     RV32IJoltVM::verify(jolt_preprocessing, jolt_proof, jolt_commitments, debug_info);
+        // // assert!(
+        // //     verification_result.is_ok(),
+        // //     "Verification failed with error: {:?}",
+        // //     verification_result.err()
+        // // );
 
         let jolt1_input = json!(
         {
@@ -187,6 +94,7 @@ mod test {
         });
 
         write_json(&jolt1_input, output_dir, packages[0]);
+        drop_in_background_thread(jolt1_input);
 
         let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
         generate_r1cs(
@@ -208,22 +116,7 @@ mod test {
             "bytecode_words_hash": jolt_preprocessing.read_write_memory.hash.format_non_native()
         });
 
-        let bytecode_stuff_size = 6 * 9;
-        let read_write_memory_stuff_size = 6 * 13;
-        let instruction_lookups_stuff_size = 6 * (C + 3 * 54 + NUM_INSTRUCTIONS + 1); //NUM_MEMORIES = 54
-        let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
-        let aux_variable_stuff_size = 6 * (8 + 4); //RELEVANT_Y_CHUNKS_LEN = 4
-        let r1cs_stuff_size = 6 * (4 + 4 + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size; //CHUNKS_X_SIZE + CHUNKS_Y_SIZE = 4 + 4
-        let jolt_stuff_size = bytecode_stuff_size
-            + read_write_memory_stuff_size
-            + instruction_lookups_stuff_size
-            + timestamp_range_check_stuff_size
-            + r1cs_stuff_size;
-
-        // Length of public IO of V_{Jolt, 1} including the 1 at index 0.
-        // 1 + counter_jolt_1 (1) + linking stuff size (jolt stuff size + 15) + jolt pi size (2).
-        let pub_io_len = 1 + 1 + jolt_stuff_size + 15 + 2;
-
+        let (jolt_stuff_size, pub_io_len) = compute_size();
         let linking_stuff = LinkingStuff1::new(jolt_commitments, jolt_stuff_size, &z);
 
         let linking_stuff_1 = linking_stuff.format_non_native();
@@ -232,6 +125,10 @@ mod test {
         let vk_jolt_2 = jolt_preprocessing.generators.1.format();
         let vk_jolt_2_nn = jolt_preprocessing.generators.1.format_non_native();
         let jolt_openining_point_len = jolt_proof.opening_proof.joint_opening_proof.com.len() + 1;
+
+        drop_in_background_thread(linking_stuff);
+        drop_in_background_thread(jolt_preprocessing);
+        drop_in_background_thread(jolt_proof);
 
         println!("Running Spartan Hyperkzg");
         spartan_hkzg(
@@ -245,8 +142,8 @@ mod test {
             jolt_stuff_size,
             jolt_openining_point_len,
             &file_paths,
-            packages,
             &z,
+            packages,
             output_dir,
         );
     }
@@ -504,6 +401,110 @@ mod test {
 
         verify_args
     }
+    fn compute_size() -> (usize, usize) {
+        let bytecode_stuff_size = 6 * 9;
+        let read_write_memory_stuff_size = 6 * 13;
+        let instruction_lookups_stuff_size = 6 * (C + 3 * 54 + NUM_INSTRUCTIONS + 1); //NUM_MEMORIES = 54
+        let timestamp_range_check_stuff_size = 6 * (4 * MEMORY_OPS_PER_INSTRUCTION);
+        let aux_variable_stuff_size = 6 * (8 + 4); //RELEVANT_Y_CHUNKS_LEN = 4
+        let r1cs_stuff_size = 6 * (4 + 4 + NUM_CIRCUIT_FLAGS) + aux_variable_stuff_size; //CHUNKS_X_SIZE + CHUNKS_Y_SIZE = 4 + 4
+        let jolt_stuff_size = bytecode_stuff_size
+            + read_write_memory_stuff_size
+            + instruction_lookups_stuff_size
+            + timestamp_range_check_stuff_size
+            + r1cs_stuff_size;
+
+        // Length of public IO of V_{Jolt, 1} including the 1 at index 0.
+        // 1 + counter_jolt_1 (1) + linking stuff size (jolt stuff size + 15) + jolt pi size (2).
+        let pub_io_len = 1 + 1 + jolt_stuff_size + 15 + 2;
+        (jolt_stuff_size, pub_io_len)
+    }
+}
+
+pub(crate) trait Parse {
+    fn format(&self) -> serde_json::Value {
+        unimplemented!("")
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        unimplemented!("")
+    }
+}
+
+pub(crate) fn write_json(input: &serde_json::Value, out_dir: &str, package_name: &str) {
+    let file_name = format!("{}_input.json", package_name);
+    let file_path = Path::new(out_dir).join(&file_name);
+
+    // Convert the JSON to a pretty-printed string
+    let pretty_json = serde_json::to_string_pretty(&input).expect("Failed to serialize JSON");
+
+    let mut input_file = File::create(file_path).expect("Failed to create input.json");
+    input_file
+        .write_all(pretty_json.as_bytes())
+        .expect("Failed to write input file");
+}
+
+pub(crate) fn read_witness<F: JoltField>(witness_file_path: &str) -> Vec<F> {
+    let witness_file = File::open(witness_file_path).expect("Failed to open witness.json");
+    let witness: Vec<String> = serde_json::from_reader(witness_file).unwrap();
+
+    let z = witness
+        .into_par_iter()
+        .map(|value| {
+            let val: BigUint = value.parse().unwrap();
+            let mut bytes = val.to_bytes_le();
+            bytes.resize(32, 0u8);
+            F::from_bytes(&bytes)
+        })
+        .collect();
+    z
+}
+
+fn get_paths() -> Vec<PathBuf> {
+    let package_name = "circuits";
+    let mut package_paths = Vec::new();
+
+    // Get Cargo metadata once to find where dependency is stored
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1"])
+        .output()
+        .expect("Failed to get cargo metadata");
+
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata");
+
+    let packages = metadata
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .expect("Invalid metadata format");
+
+    let mut repo_b_path = None;
+
+    for package in packages {
+        if package.get("name").and_then(|n| n.as_str()) == Some(package_name) {
+            repo_b_path = package
+                .get("manifest_path")
+                .and_then(|m| m.as_str())
+                .map(|m| PathBuf::from(m).parent().unwrap().to_path_buf());
+            break;
+        }
+    }
+
+    let repo_b_path =
+        repo_b_path.unwrap_or_else(|| panic!("Could not find package: {}", package_name));
+
+    let jolt1_file_name = format!("{}.circom", "jolt/jolt1/jolt1");
+    let jolt1_file = repo_b_path.join(jolt1_file_name);
+    package_paths.push(jolt1_file);
+
+    let combined_r1cs_file_name = format!("{}.circom", "combined_r1cs/combined_r1cs");
+    let combined_r1cs_file = repo_b_path.join(combined_r1cs_file_name);
+    package_paths.push(combined_r1cs_file);
+
+    let spartan_hyrax_file_name = format!("{}.circom", "spartan/spartan_hyrax/spartan_hyrax");
+    let spartan_hyrax_file = repo_b_path.join(spartan_hyrax_file_name);
+    package_paths.push(spartan_hyrax_file);
+
+    package_paths
 }
 
 pub(crate) fn generate_r1cs(
@@ -521,7 +522,7 @@ pub(crate) fn generate_r1cs(
         .unwrap();
 
     let backup_file = format!("{}.bak", circom_file_path);
-
+    println!("circom_file_path is {:?}", circom_file_path);
     // Backup original file
     fs::copy(circom_file_path, &backup_file).expect("Failed to create backup");
 
@@ -615,7 +616,6 @@ pub(crate) fn generate_r1cs(
 
     if !export_witness.status.success() {
         let stderr = String::from_utf8_lossy(&export_witness.stderr);
-        println!("Circom compilation failed with error:\n{}", stderr);
-        panic!("Failed to convert wtns into json");
+        panic!("Circom compilation failed with error:\n{}", stderr);
     }
 }

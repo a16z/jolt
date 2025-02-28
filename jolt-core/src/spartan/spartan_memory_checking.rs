@@ -144,6 +144,8 @@ impl<F: JoltField> SpartanPreprocessing<F> {
 
                 // Reading JSON file
                 let num_cons = config.constraints.len().next_power_of_two();
+
+                //TODO:- Parallelize
                 for (row, constraint) in config.constraints.iter().enumerate() {
                     for (j, dict) in constraint.iter().enumerate() {
                         for (key, value) in dict {

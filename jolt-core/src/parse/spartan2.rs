@@ -4,6 +4,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::utils::thread::drop_in_background_thread;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
 use ark_ff::{BigInt, BigInteger, PrimeField};
 use itertools::Itertools;
@@ -153,6 +154,8 @@ pub(crate) fn spartan_hyrax(
     });
 
     write_json(&spartan_hyrax_input, output_dir, packages[2]);
+    drop_in_background_thread(spartan_hyrax_input);
+    drop_in_background_thread(preprocessing);
 
     let spartan_hyrax_args = [
         proof.outer_sumcheck_proof.uni_polys.len(),
@@ -161,6 +164,7 @@ pub(crate) fn spartan_hyrax(
         postponed_point_len,
     ]
     .to_vec();
+    drop_in_background_thread(proof);
 
     generate_r1cs(
         &file_paths[2],
@@ -170,11 +174,11 @@ pub(crate) fn spartan_hyrax(
         prime,
     );
 
-    // let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
+    let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();
 
-    // let z = read_witness::<Fr>(&witness_file_path);
+    let z = read_witness::<Fq>(&witness_file_path);
 
-    // let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
+    let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
 
-    // let _ = SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
+    let _ = SpartanPreprocessing::<Fq>::preprocess(Some(&constraint_path), Some(&z), 20);
 }
