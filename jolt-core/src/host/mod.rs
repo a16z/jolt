@@ -170,8 +170,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
-        self.build();
+    pub fn decode(&self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {:?}", elf));
