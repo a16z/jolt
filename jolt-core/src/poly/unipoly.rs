@@ -99,7 +99,7 @@ impl<F: JoltField> UniPoly<F> {
         self.coeffs.last()
     }
 
-    fn zero() -> Self {
+    pub fn zero() -> Self {
         Self::from_coeff(Vec::new())
     }
 
