@@ -77,7 +77,7 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>::default().into()),
 
-            _ => Err("No corresponding RV32I instruction")
+            _ => Err(format!("Unsupported RV32I instruction: {:#010x}", instruction).as_str())
         }
     }
 }
@@ -134,7 +134,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
 
-            _ => Err("No corresponding RV32I instruction")
+            _ => Err(format!("Unsupported RV32I instruction: {:#010x}", row.instruction.opcode).as_str())
         }
     }
 }
