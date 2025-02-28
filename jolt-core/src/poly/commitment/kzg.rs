@@ -156,10 +156,6 @@ where
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.srs.g1_powers.len()
-    }
-
     pub fn g1_powers(&self) -> &[P::G1Affine] {
         &self.srs.g1_powers[self.offset..self.offset + self.supported_size]
     }
