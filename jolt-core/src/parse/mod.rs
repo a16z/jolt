@@ -11,6 +11,8 @@ use std::{
 
 mod commit;
 mod field;
+mod group;
+pub mod sum_check;
 mod jolt;
 mod pcs;
 mod spartan1;

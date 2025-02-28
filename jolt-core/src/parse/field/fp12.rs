@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod tests {
     use std::env;
-    use ark_ff::{CyclotomicMultSubgroup, Field, PrimeField, UniformRand};
-    use num_bigint::BigUint;
+    use ark_ff::{CyclotomicMultSubgroup, Field, UniformRand};
     use rand_chacha::ChaCha8Rng;
-    use ark_bn254::{Fq, Fq12, Fq2, Fq6, Fr};
+    use ark_bn254::{Fq, Fq12, Fq2, Fq6};
     use rand_core::SeedableRng;
     use serde_json::json;
 

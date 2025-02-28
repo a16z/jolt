@@ -209,25 +209,7 @@ pub(crate) fn spartan_hkzg(
             })
         }
     }
-    impl Parse for SumcheckInstanceProof<Fr, ProofTranscript> {
-        fn format(&self) -> serde_json::Value {
-            let uni_polys: Vec<serde_json::Value> =
-                self.uni_polys.iter().map(|poly| poly.format()).collect();
-            json!({
-                "uni_polys": uni_polys,
-            })
-        }
-        fn format_non_native(&self) -> serde_json::Value {
-            let uni_polys: Vec<serde_json::Value> = self
-                .uni_polys
-                .iter()
-                .map(|poly| poly.format_non_native())
-                .collect();
-            json!({
-                "uni_polys": uni_polys,
-            })
-        }
-    }
+
 
     let circom_template = "Combine";
     let prime = "grumpkin";
@@ -305,4 +287,25 @@ pub(crate) fn spartan_hkzg(
         packages,
         output_dir,
     );
+}
+
+
+impl Parse for SumcheckInstanceProof<Fr, PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fq>> {
+    fn format(&self) -> serde_json::Value {
+        let uni_polys: Vec<serde_json::Value> =
+            self.uni_polys.iter().map(|poly| poly.format()).collect();
+        json!({
+            "uni_polys": uni_polys,
+        })
+    }
+    fn format_non_native(&self) -> serde_json::Value {
+        let uni_polys: Vec<serde_json::Value> = self
+            .uni_polys
+            .iter()
+            .map(|poly| poly.format_non_native())
+            .collect();
+        json!({
+            "uni_polys": uni_polys,
+        })
+    }
 }
