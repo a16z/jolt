@@ -10,10 +10,10 @@ use std::{
 };
 
 mod commit;
+mod field;
 mod jolt;
 mod spartan1;
 mod spartan2;
-
 #[cfg(test)]
 mod test {
     use crate::{
@@ -29,6 +29,7 @@ mod test {
         },
         poly::commitment::{commitment_scheme::CommitmentScheme, hyperkzg::HyperKZG},
         r1cs::inputs::JoltR1CSInputs,
+        spartan::spartan_memory_checking::R1CSConstructor,
         utils::{
             poseidon_transcript::PoseidonTranscript, thread::drop_in_background_thread,
             transcript::Transcript,
@@ -47,7 +48,7 @@ mod test {
     };
     use strum::EnumCount;
 
-    use super::{generate_r1cs, get_paths, read_witness};
+    use super::{generate_circuit_and_witness, get_path, read_witness};
     type Fr = ark_bn254::Fr;
     type ProofTranscript = PoseidonTranscript<Fr, Fr>;
     type PCS = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
@@ -58,17 +59,32 @@ mod test {
     const NUM_SUBTABLES: usize = RV32ISubtables::<Fr>::COUNT;
     const NUM_INSTRUCTIONS: usize = RV32I::COUNT;
     #[test]
-    fn end_to_end_testing() {
+    fn on_chain() {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
 
-        let jolt_package = "jolt1";
-        let combine_r1cs_package = "combined_r1cs";
-        let spartan_hyrax_package = "spartan_hyrax";
+        let jolt_circuit = "jolt1";
+        let combine_r1cs_circuit = "combined_r1cs";
+        let spartan_hyrax_circuit = "spartan_hyrax";
 
-        let packages = &[jolt_package, combine_r1cs_package, spartan_hyrax_package];
+        let circuits = &[jolt_circuit, combine_r1cs_circuit, spartan_hyrax_circuit];
 
-        let file_paths = get_paths();
+        let package_path = get_path();
+
+        let mut file_paths = Vec::new();
+
+        let jolt1_file_name = format!("{}.circom", "jolt/jolt1/jolt1");
+        let jolt1_file_path = package_path.join(jolt1_file_name);
+        file_paths.push(jolt1_file_path);
+
+        let combined_r1cs_file_name = format!("{}.circom", "combined_r1cs/combined_r1cs");
+        let combined_r1cs_file_path = package_path.join(combined_r1cs_file_name);
+        file_paths.push(combined_r1cs_file_path);
+
+        let spartan_hyrax_file_name = format!("{}.circom", "spartan/spartan_hyrax/spartan_hyrax");
+        let spartan_hyrax_file_path = package_path.join(spartan_hyrax_file_name);
+        file_paths.push(spartan_hyrax_file_path);
+
         let circom_template = "verify";
         let prime = "bn128";
         let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
@@ -93,11 +109,11 @@ mod test {
             "pi_proof": jolt_preprocessing.format()
         });
 
-        write_json(&jolt1_input, output_dir, packages[0]);
+        write_json(&jolt1_input, output_dir, circuits[0]);
         drop_in_background_thread(jolt1_input);
 
         let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
-        generate_r1cs(
+        generate_circuit_and_witness(
             &file_paths[0],
             &output_dir,
             circom_template,
@@ -106,7 +122,7 @@ mod test {
         );
 
         // // Read the witness.json file
-        let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_package);
+        let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_circuit);
         let z = read_witness::<Fr>(&witness_file_path.to_string());
 
         let hyperkzg_proof = jolt_proof.opening_proof.joint_opening_proof.format();
@@ -143,9 +159,65 @@ mod test {
             jolt_openining_point_len,
             &file_paths,
             &z,
-            packages,
+            circuits,
             output_dir,
         );
+    }
+    #[test]
+    fn jolt1() {
+        let binding = env::current_dir().unwrap().join("src/parse/requirements");
+        let output_dir = binding.to_str().unwrap();
+        let jolt_package = "jolt1";
+
+        let package_path = get_path();
+        let jolt1_file_name = format!("{}.circom", "jolt/jolt1/jolt1");
+        let jolt1_file_path = package_path.join(jolt1_file_name);
+
+        let circom_template = "verify";
+        let prime = "bn128";
+        let (jolt_preprocessing, jolt_proof, jolt_commitments, _debug_info) =
+            fib_e2e::<Fr, PCS, ProofTranscript>();
+
+        // // let verification_result =
+        // //     RV32IJoltVM::verify(jolt_preprocessing, jolt_proof, jolt_commitments, debug_info);
+        // // assert!(
+        // //     verification_result.is_ok(),
+        // //     "Verification failed with error: {:?}",
+        // //     verification_result.err()
+        // // );
+
+        let jolt1_input = json!(
+        {
+            "preprocessing": {
+                "v_init_final_hash": jolt_preprocessing.bytecode.v_init_final_hash.to_string(),
+                "bytecode_words_hash": jolt_preprocessing.read_write_memory.hash.to_string()
+            },
+            "proof": jolt_proof.format(),
+            "commitments": jolt_commitments.format_non_native(),
+            "pi_proof": jolt_preprocessing.format()
+        });
+
+        write_json(&jolt1_input, output_dir, jolt_package);
+        drop_in_background_thread(jolt1_input);
+
+        let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
+        generate_circuit_and_witness(
+            &jolt1_file_path,
+            &output_dir,
+            circom_template,
+            jolt1_params,
+            prime,
+        );
+
+        // // Read the witness.json file
+        let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_package);
+        let z = read_witness::<Fr>(&witness_file_path.to_string());
+
+        let constraint_path =
+            format!("{}/{}_constraints.json", output_dir, jolt_package).to_string();
+
+        //To Check Az.Bz = C.z
+        let _ = R1CSConstructor::<Fr>::construct(Some(&constraint_path), Some(&z), 20);
     }
 
     fn fib_e2e<F, PCS, ProofTranscript>() -> (
@@ -459,10 +531,8 @@ pub(crate) fn read_witness<F: JoltField>(witness_file_path: &str) -> Vec<F> {
     z
 }
 
-fn get_paths() -> Vec<PathBuf> {
+fn get_path() -> PathBuf {
     let package_name = "circuits";
-    let mut package_paths = Vec::new();
-
     // Get Cargo metadata once to find where dependency is stored
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1"])
@@ -491,23 +561,10 @@ fn get_paths() -> Vec<PathBuf> {
 
     let repo_b_path =
         repo_b_path.unwrap_or_else(|| panic!("Could not find package: {}", package_name));
-
-    let jolt1_file_name = format!("{}.circom", "jolt/jolt1/jolt1");
-    let jolt1_file = repo_b_path.join(jolt1_file_name);
-    package_paths.push(jolt1_file);
-
-    let combined_r1cs_file_name = format!("{}.circom", "combined_r1cs/combined_r1cs");
-    let combined_r1cs_file = repo_b_path.join(combined_r1cs_file_name);
-    package_paths.push(combined_r1cs_file);
-
-    let spartan_hyrax_file_name = format!("{}.circom", "spartan/spartan_hyrax/spartan_hyrax");
-    let spartan_hyrax_file = repo_b_path.join(spartan_hyrax_file_name);
-    package_paths.push(spartan_hyrax_file);
-
-    package_paths
+    repo_b_path
 }
 
-pub(crate) fn generate_r1cs(
+pub(crate) fn generate_circuit_and_witness(
     circom_file_path: &PathBuf,
     output_dir: &str,
     circom_template: &str,
@@ -522,7 +579,6 @@ pub(crate) fn generate_r1cs(
         .unwrap();
 
     let backup_file = format!("{}.bak", circom_file_path);
-    println!("circom_file_path is {:?}", circom_file_path);
     // Backup original file
     fs::copy(circom_file_path, &backup_file).expect("Failed to create backup");
 
@@ -619,3 +675,4 @@ pub(crate) fn generate_r1cs(
         panic!("Circom compilation failed with error:\n{}", stderr);
     }
 }
+fn final_check() {}

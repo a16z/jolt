@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use super::{jolt::Fr, Parse};
 use crate::{
     jolt::vm::JoltStuff,
-    parse::{generate_r1cs, spartan2::spartan_hyrax, write_json},
+    parse::{generate_circuit_and_witness, spartan2::spartan_hyrax, write_json},
     poly::commitment::{
         commitment_scheme::CommitmentScheme,
         hyperkzg::{HyperKZG, HyperKZGCommitment},
     },
-    spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof},
+    spartan::spartan_memory_checking::{R1CSConstructor, SpartanProof},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{poseidon_transcript::PoseidonTranscript, thread::drop_in_background_thread},
 };
@@ -235,8 +235,7 @@ pub(crate) fn spartan_hkzg(
     let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[0]).to_string();
     let constraint_path = Some(&constraint_path);
 
-    let preprocessing =
-        SpartanPreprocessing::<Fr>::preprocess(constraint_path, Some(z), pub_io_len - 1);
+    let preprocessing = R1CSConstructor::<Fr>::construct(constraint_path, Some(z), pub_io_len - 1);
 
     let commitment_shapes =
         SpartanProof::<Fr, Pcs, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
@@ -286,7 +285,7 @@ pub(crate) fn spartan_hkzg(
 
     drop_in_background_thread(proof);
 
-    generate_r1cs(
+    generate_circuit_and_witness(
         &file_paths[1],
         output_dir,
         circom_template,

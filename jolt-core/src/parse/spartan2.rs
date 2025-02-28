@@ -2,7 +2,7 @@ use super::*;
 use crate::parse::jolt::to_limbs;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::unipoly::UniPoly;
-use crate::spartan::spartan_memory_checking::{SpartanPreprocessing, SpartanProof};
+use crate::spartan::spartan_memory_checking::{R1CSConstructor, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::thread::drop_in_background_thread;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
@@ -123,7 +123,7 @@ pub(crate) fn spartan_hyrax(
     let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[1]).to_string();
 
     let preprocessing =
-        SpartanPreprocessing::<Fr>::preprocess(Some(&constraint_path), Some(&z), pub_io_len);
+        R1CSConstructor::<Fr>::construct(Some(&constraint_path), Some(&z), pub_io_len);
 
     let commitment_shapes =
         SpartanProof::<Fr, Pcs, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
@@ -166,7 +166,7 @@ pub(crate) fn spartan_hyrax(
     .to_vec();
     drop_in_background_thread(proof);
 
-    generate_r1cs(
+    generate_circuit_and_witness(
         &file_paths[2],
         output_dir,
         circom_template,
@@ -180,5 +180,5 @@ pub(crate) fn spartan_hyrax(
 
     let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[2]).to_string();
 
-    let _ = SpartanPreprocessing::<Fq>::preprocess(Some(&constraint_path), Some(&z), 20);
+    let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 20);
 }

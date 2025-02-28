@@ -105,15 +105,15 @@ use std::fs::File;
 // }
 
 #[derive(Clone)]
-pub struct SpartanPreprocessing<F: JoltField> {
+pub struct R1CSConstructor<F: JoltField> {
     pub(crate) inst: Instance<F>,
     pub(crate) vars: Vec<F>,
     pub(crate) inputs: Vec<F>,
 }
 
-impl<F: JoltField> SpartanPreprocessing<F> {
+impl<F: JoltField> R1CSConstructor<F> {
     #[tracing::instrument(skip_all, name = "Spartan::preprocess")]
-    pub fn preprocess(
+    pub fn construct(
         constraints_file: Option<&String>,
         z: Option<&Vec<F>>,
         num_inputs: usize,
@@ -189,7 +189,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                     R1CSInstance::new(num_cons, num_vars, num_inputs, poly_A, poly_B, poly_C);
                 let digest = inst.get_digest();
                 assert!(inst.is_sat(&inputs, &vars));
-                SpartanPreprocessing {
+                R1CSConstructor {
                     inst: Instance { inst, digest },
                     vars,
                     inputs,
@@ -202,7 +202,7 @@ impl<F: JoltField> SpartanPreprocessing<F> {
                 let (inst, vars, inputs) =
                     Instance::<F>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
-                SpartanPreprocessing { inst, vars, inputs }
+                R1CSConstructor { inst, vars, inputs }
             }
         }
     }
@@ -667,7 +667,7 @@ where
     // }
 
     #[tracing::instrument(skip_all, name = "SpartanProof::prove")]
-    pub fn prove<'a>(pcs_setup: &PCS::Setup, preprocessing: &SpartanPreprocessing<F>) -> Self {
+    pub fn prove<'a>(pcs_setup: &PCS::Setup, preprocessing: &R1CSConstructor<F>) -> Self {
         let protocol_name = Self::protocol_name();
         let mut transcript = ProofTranscript::new(protocol_name);
         transcript.append_scalar(&preprocessing.inst.digest);
@@ -814,7 +814,7 @@ where
 
     pub fn verify(
         pcs_setup: &PCS::Setup,
-        preprocessing: &SpartanPreprocessing<F>,
+        preprocessing: &R1CSConstructor<F>,
         proof: &SpartanProof<F, PCS, ProofTranscript>,
     ) -> Result<(), ProofVerifyError> {
         let num_vars = preprocessing.vars.len();
@@ -938,7 +938,7 @@ pub mod tests {
 
     #[test]
     fn spartan() {
-        let mut preprocessing = SpartanPreprocessing::<Fr>::preprocess(None, None, 0);
+        let mut preprocessing = R1CSConstructor::<Fr>::construct(None, None, 0);
         let commitment_shapes =
             SpartanProof::<Fr, PCS, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
         let pcs_setup = PCS::setup(&commitment_shapes);
