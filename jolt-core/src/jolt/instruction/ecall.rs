@@ -385,6 +385,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
