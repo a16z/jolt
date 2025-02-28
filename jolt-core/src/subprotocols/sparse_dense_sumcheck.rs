@@ -454,48 +454,36 @@ pub fn prove_single_instruction<
         drop(_guard);
         drop(span);
 
-        // TODO(moodlezoup): Compute Z and Q tree leaves at the same time
-        let span = tracing::span!(tracing::Level::INFO, "Compute Z tree leaves");
+        let span = tracing::span!(tracing::Level::INFO, "Compute Q/Z tree leaves");
         let _guard = span.enter();
         let z_leaves = Z_tree.leaves_mut();
-        if phase != 0 {
-            z_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero());
-        }
-        instruction_index_iters
-            .par_iter()
-            .zip(z_leaves.par_chunks_mut(leaves_per_chunk))
-            .for_each(|(j_iter, leaves)| {
-                j_iter.clone().for_each(|j| {
-                    let k = lookup_indices[j];
-                    let u = u_evals[j];
-                    leaves[((k >> ((3 - phase) * log_m)) % leaves_per_chunk as u64) as usize] += u;
-                });
-            });
-        drop(_guard);
-        drop(span);
-        Z_tree.build();
-
-        let span = tracing::span!(tracing::Level::INFO, "Compute Q tree leaves");
-        let _guard = span.enter();
         let q_leaves = Q_tree.leaves_mut();
         if phase != 0 {
-            q_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero());
+            rayon::join(
+                || z_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero()),
+                || q_leaves.par_iter_mut().for_each(|leaf| *leaf = F::zero()),
+            );
         }
+
         instruction_index_iters
             .into_par_iter()
+            .zip(z_leaves.par_chunks_mut(leaves_per_chunk))
             .zip(q_leaves.par_chunks_mut(leaves_per_chunk))
-            .for_each(|(j_iter, leaves)| {
+            .for_each(|((j_iter, z_leaves), q_leaves)| {
                 j_iter.for_each(|j| {
                     let k = lookup_indices[j];
                     let u = u_evals[j];
                     let t = t_evals.get(&k).unwrap();
-                    leaves[((k >> ((3 - phase) * log_m)) % leaves_per_chunk as u64) as usize] +=
-                        u * t;
+                    let leaf_index =
+                        ((k >> ((3 - phase) * log_m)) % leaves_per_chunk as u64) as usize;
+                    z_leaves[leaf_index] += u;
+                    q_leaves[leaf_index] += u * t;
                 });
             });
         drop(_guard);
         drop(span);
-        Q_tree.build();
+
+        rayon::join(|| Z_tree.build(), || Q_tree.build());
 
         v.reset(F::one());
         w.reset(F::zero());
