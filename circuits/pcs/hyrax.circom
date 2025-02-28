@@ -1,6 +1,7 @@
 pragma circom 2.2.1;
 
 include "./../groups/grumpkin_g1.circom";
+include "./../spartan/spartan_hyrax/utils.circom";
 
 template HyraxVerifier(num_vars){
     input HyraxCommitment(num_vars) commit;
