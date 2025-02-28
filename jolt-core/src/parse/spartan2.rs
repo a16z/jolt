@@ -123,7 +123,7 @@ pub(crate) fn spartan_hyrax(
     let constraint_path = format!("{}/{}_constraints.json", output_dir, packages[1]).to_string();
 
     let preprocessing =
-        R1CSConstructor::<Fr>::construct(Some(&constraint_path), Some(&z), pub_io_len);
+        R1CSConstructor::<Fr>::construct(Some(&constraint_path), Some(&z), pub_io_len - 1);
 
     let commitment_shapes =
         SpartanProof::<Fr, Pcs, ProofTranscript>::commitment_shapes(preprocessing.vars.len());
@@ -164,7 +164,15 @@ pub(crate) fn spartan_hyrax(
         postponed_point_len,
     ]
     .to_vec();
+
     drop_in_background_thread(proof);
+
+    // Add component main to Circom file
+    let public_inputs = ["counter_combined_r1cs", "to_eval", "pub_io", "digest"]
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
 
     generate_circuit_and_witness(
         &file_paths[2],
@@ -172,6 +180,7 @@ pub(crate) fn spartan_hyrax(
         circom_template,
         spartan_hyrax_args,
         prime,
+        Some(public_inputs),
     );
 
     let witness_file_path = format!("{}/{}_witness.json", output_dir, packages[2]).to_string();

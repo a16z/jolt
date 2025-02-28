@@ -65,6 +65,7 @@ mod test {
             circom_template,
             [vars].to_vec(),
             prime,
+            None,
         );
 
         // // Read the witness.json file

@@ -115,14 +115,18 @@ mod test {
         // write_json(&jolt1_input, output_dir, circuits[0]);
         drop_in_background_thread(jolt1_input);
 
-        // let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
-        // generate_circuit_and_witness(
-        //     &file_paths[0],
-        //     &output_dir,
-        //     circom_template,
-        //     jolt1_params,
-        //     prime,
-        // );
+        let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
+        // Add component main to Circom file
+        let args_string = "preprocessing";
+
+        generate_circuit_and_witness(
+            &file_paths[0],
+            &output_dir,
+            circom_template,
+            jolt1_params,
+            prime,
+            Some(args_string.to_owned()),
+        );
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_circuit);
@@ -210,6 +214,7 @@ mod test {
             circom_template,
             jolt1_params,
             prime,
+            None,
         );
 
         // // Read the witness.json file
@@ -573,6 +578,7 @@ pub(crate) fn generate_circuit_and_witness(
     circom_template: &str,
     params: Vec<usize>,
     prime: &str,
+    public_inputs: Option<String>,
 ) {
     let circom_file_path = circom_file_path.to_str().unwrap();
     let circom_file_name = Path::new(circom_file_path)
@@ -593,9 +599,25 @@ pub(crate) fn generate_circuit_and_witness(
         .join(",");
 
     let component_line = if args_string.is_empty() {
-        format!("\ncomponent main = {}();", circom_template)
+        if !public_inputs.is_some() {
+            format!("\ncomponent main = {}();", circom_template)
+        } else {
+            let public_inputs = public_inputs.unwrap();
+            format!(
+                "\ncomponent main {{public [{}]}} = {}();",
+                public_inputs, circom_template
+            )
+        }
     } else {
-        format!("\ncomponent main = {}({});", circom_template, args_string)
+        if !public_inputs.is_some() {
+            format!("\ncomponent main = {}({});", circom_template, args_string)
+        } else {
+            let public_inputs = public_inputs.unwrap();
+            format!(
+                "\ncomponent main {{public [{}]}} = {}({});",
+                public_inputs, circom_template, args_string
+            )
+        }
     };
 
     let mut circom_file = fs::OpenOptions::new()

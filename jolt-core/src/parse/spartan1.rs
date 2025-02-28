@@ -285,12 +285,27 @@ pub(crate) fn spartan_hkzg(
 
     drop_in_background_thread(proof);
 
+    // Add component main to Circom file
+    let public_inputs = [
+        "counter_jolt_1",
+        "jolt_pi",
+        "linking_stuff_1",
+        "digest",
+        "vk_spartan_1",
+        "vk_jolt_2",
+    ]
+    .iter()
+    .map(|p| p.to_string())
+    .collect::<Vec<_>>()
+    .join(",");
+
     generate_circuit_and_witness(
         &file_paths[1],
         output_dir,
         circom_template,
         combined_r1cs_params,
         prime,
+        Some(public_inputs),
     );
 
     spartan_hyrax(

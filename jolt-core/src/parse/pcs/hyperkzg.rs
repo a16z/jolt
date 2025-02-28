@@ -1,11 +1,5 @@
 #[cfg(test)]
 mod test {
-    use std::env;
-
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
-    use serde_json::json;
-
     use crate::{
         field::JoltField,
         parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse},
@@ -19,6 +13,10 @@ mod test {
         spartan::spartan_memory_checking::R1CSConstructor,
         utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript},
     };
+    use rand_chacha::ChaCha8Rng;
+    use rand_core::SeedableRng;
+    use serde_json::json;
+    use std::env;
     type Fr = ark_bn254::Fr;
     type Fq = ark_bn254::Fq;
     type ProofTranscript = PoseidonTranscript<Fr, Fq>;
@@ -84,6 +82,7 @@ mod test {
             circom_template,
             [vars].to_vec(),
             prime,
+            None,
         );
 
         // // Read the witness.json file
