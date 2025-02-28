@@ -33,7 +33,6 @@ template VerifyInstructionLookups(max_rounds, max_rounds_init_final,
     
     (int_transcript[1], claim_last, r_primary_sumcheck) <== SumCheck(primary_sumcheck_num_rounds, primary_sumcheck_degree)(0, proof.primary_sumcheck.sumcheck_proof, int_transcript[0]);
 
-    // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
     signal eq_eval <== EvaluateEq(primary_sumcheck_num_rounds)(r_eq, r_primary_sumcheck);
         
 
@@ -238,8 +237,6 @@ template ComputeVerifierOpenings(r_init_final_len, WORD_SIZE){
         v_init_final[8] <==  evaluate_mle_or(r_init_final_len)(r_init_final);
         v_init_final[9] <==  evaluate_mle_sign_extend(r_init_final_len, 16)(r_init_final);    // jolt fizes WIDTH to 16.
 
-        // eq_vec is used by the following 9 template calls. Computing it outside as it is non-native
-        // operations intensive.
         var b = r_init_final_len / 2;
         var min = 0;
         var log_WORD_SIZE = log2(WORD_SIZE);
@@ -368,7 +365,6 @@ template CheckFingerprintsInstructionsInstructionLookups(
 }
 
 template FingerprintInstructionLookups() {
-    // Declare the input signals
     input signal a , v, t; 
     input signal gamma, tau;   
     output signal result; 
@@ -466,7 +462,6 @@ template MemoryFlags(NUM_INSTRUCTIONS, NUM_MEMORIES) {
 
     var  memory_flags[NUM_MEMORIES];
 
-    // Initialize all memory flags to 0
     for (var i = 0; i < NUM_MEMORIES; i++) {
         memory_flags[i] = 0;
     }

@@ -1,4 +1,5 @@
 pragma circom 2.1.1;
+
 //flag = 1 is used to hash over Bn254 Scalar 
 //flag = 2 is used to hash over Bn254 Base field. 
 template permute(flag) {
@@ -1069,15 +1070,3 @@ function mds(flag){
     ]];
     }
 }
-
-// //TODO:- add valid ark
-// function ark(){
-//     return [[1, 1, 1, 1, 1],[1, 1, 1, 1, 1],[1, 1, 1, 1, 1],[1, 1, 1, 1, 1]];
-// }
-
-// //TODO:- add valid mds
-// function mds(){
-//     return [[1, 1, 1, 1, 1], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1],[1, 1, 1, 1, 1], [1, 1, 1, 1, 1]];
-// }
-
-// component main = permute();

@@ -210,19 +210,19 @@ template CheckFingerprintsReadWriteMemory(
         input signal  gamma;
         input signal  tau;
         
-        // Computing  read_hashes
+        
         signal read_hashes[4] <== ComputeReadHashes()(exogenous_openings, openings, gamma, tau);
 
-        // Computing  write_hashes
+        
         signal write_hashes[4] <== ComputeWriteHashes()(exogenous_openings, openings, gamma, tau);
 
-        // Computing  init_hashes and final_hashes
+    
         signal init_hashes[1] <== ComputeInitHashes()(exogenous_openings, openings, gamma, tau);
 
         signal final_hashes[1] <== ComputeFinalHashes()(exogenous_openings, openings, gamma, tau);
 
         
-        //ineterleave
+   
         signal read_write_hashes[2 * 4];
         signal init_final_hashes[2 * 1];
         for (var i = 0; i < 4; i++) {
@@ -340,7 +340,6 @@ template  ComputeVerifierOpeningsReadWriteMemory(read_write_grand_product_layers
         }
         signal one <== 1;
         // starting index for bytecode  = 4096
-        // (1 - r_0) (1 - r_1) (1 - r_2) (1 - r_3) (1 - r_4) (1 - r_5) (1 - r_6) (1 - r_7) (1 - r_8) (1 - r_9) (1 - r_10) (1 - r_11) r_12
         var log_bytecode_words_size = log2(NextPowerOf2(bytecode_words_size));
 
         signal r_init_final_bytecode[log_bytecode_words_size];
@@ -366,7 +365,6 @@ template  ComputeVerifierOpeningsReadWriteMemory(read_write_grand_product_layers
         // Computation for the values of input_index
         // This will only work when input_size <= 32
         // Input index should start from 64
-        // (1 - r_0) (1 - r_1) (1 - r_2) (1 - r_3) (1 - r_4) (1 - r_5) r_6 (1 - r_7) (1 - r_8) (1 - r_9) (1 - r_10) (1 - r_11)(1-r_12)
         var non_zero_values_input_size =   v_init_index_1 - starting_input_idx;
         if  (non_zero_values_input_size == 1){
                 non_zero_values_input_size = 2;
@@ -422,22 +420,18 @@ template CheckMultisetEqualityReadWriteMemory(num_read_write_hashes,
 
      input MultisetHashes(num_read_write_hashes,  num_init_final_hashes, num_init_final_hashes) multiset_hashes;
 
-     //TODO(Bhargav) Asserts? Can be avoided by setting num_init_final_hashes = num_read_write_hashes.
-
      var NUM_MEMORIES = num_read_write_hashes;
 
-     signal read_hash[NUM_MEMORIES+1];  // Temporary signal to accumulate the read_hash
+     signal read_hash[NUM_MEMORIES+1];  
      read_hash[0]  <== 1;
    
 
-     signal write_hash[NUM_MEMORIES+1];  // Temporary signal to accumulate the product
+     signal write_hash[NUM_MEMORIES+1];  
      write_hash[0]  <== 1;
    
-
-	//TODO: This is wrong. Need to check LHS = RHS in each iteration.
      for (var i = 0; i < NUM_MEMORIES; i++) {
-       read_hash[i+1] <==   (read_hash[i]  *  multiset_hashes.read_hashes[i]); // Multiply each element
-       write_hash[i+1] <==   (write_hash[i] *  multiset_hashes.write_hashes[i]); // Multiply each element
+       read_hash[i+1] <==   (read_hash[i]  *  multiset_hashes.read_hashes[i]); 
+       write_hash[i+1] <==   (write_hash[i] *  multiset_hashes.write_hashes[i]); 
      }
 
      signal init_hash_write_hash <== (multiset_hashes.init_hashes[0] *  write_hash[NUM_MEMORIES]);

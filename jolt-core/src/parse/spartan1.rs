@@ -250,7 +250,7 @@ pub(crate) fn spartan_hkzg(
 
     // Length of public IO of Combined R1CS including the 1 at index 0.
     // 1 + counter_combined_r1cs (1) + postponed eval size (point size = (inner num rounds - 1) * 3, eval size  = 3) +
-    // counter_jolt_1 (1) + linking stuff (nn) size (jolt stuff size + 15 * 3) + jolt pi size (2 * 3)
+    // counter_jolt_1 (1) + linking stuff (nn) size (jolt stuff size (1572) + 15 * 3) + jolt pi size (2 * 3)
     // + digest size (3) + 2 hyper kzg verifier keys (2 + 4 + 4).
 
     let pub_io_len_combine_r1cs =
@@ -267,12 +267,27 @@ pub(crate) fn spartan_hkzg(
 
     drop_in_background_thread(proof);
 
+    // Add component main to Circom file
+    let public_inputs = [
+        "counter_jolt_1",
+        "jolt_pi",
+        "linking_stuff_1",
+        "digest",
+        "vk_spartan_1",
+        "vk_jolt_2",
+    ]
+    .iter()
+    .map(|p| p.to_string())
+    .collect::<Vec<_>>()
+    .join(",");
+
     generate_circuit_and_witness(
         &file_paths[1],
         output_dir,
         circom_template,
         combined_r1cs_params,
         prime,
+        Some(public_inputs),
     );
 
     spartan_hyrax(

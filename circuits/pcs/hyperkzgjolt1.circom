@@ -1,14 +1,5 @@
 pragma circom 2.2.1;
 
-// bus Fp() {
-//     signal limbs[3];
-// }
-
-// bus G1Affine {
-//     Fp() x;
-//     Fp() y;
-// }
-
 
 bus HyperKZGCommitment {
     G1Affine() commitment;
@@ -49,7 +40,6 @@ template HyperKzgVerifierJolt1(ell){
     int_transcript[0] <== AppendPoints(ell - 1)(pi.com, transcript);
     (int_transcript[1], r) <== ChallengeScalar()(int_transcript[0]);
 
-    //TODO(Ashish):- add check of r = 0 || C = identity;
     signal ypos[ell] <== pi.v[0];
     signal yneg[ell] <== pi.v[1];
 
@@ -70,13 +60,12 @@ template HyperKzgVerifierJolt1(ell){
         temp[8 * i + 5] <== (ypos[i] - yneg[i]);           
         temp[8 * i + 6] <== (point[ell - i - 1] * temp[8 * i + 5]); // RHS part 2
         temp[8 * i + 7] <== (temp[8 * i + 4] + temp[8 * i + 6]);  // RHS
-        log("i = ", i, "temp[8*i] = ", temp[8 * i], "temp[8*i+7] = ", temp[8 * i + 7]);
         temp[8 * i] ===  temp[8 * i + 7];
     }
 
     signal flat_v[3 * ell]  <== flatten(3, ell)(pi.v);
     int_transcript[2] <== AppendScalars(3 * ell)(flat_v, int_transcript[1]);
-    (int_transcript[3], q_powers) <== ChallengeScalarPowers(ell)(int_transcript[2]);//TODO(Ashish):- Can call ChallengeScalar
+    (int_transcript[3], q_powers) <== ChallengeScalarPowers(ell)(int_transcript[2]);
 
     int_transcript[4] <== AppendPoints(3)(pi.w, int_transcript[3]);
     (int_transcript[5], d_0) <== ChallengeScalar()(int_transcript[4]);

@@ -116,7 +116,6 @@ template verify(
 
     input PIProof( num_evals, bytecode_words_size) pi_proof;
 
-    // Create new transcript.
     Transcript() transcript[10];
     transcript[0].state <== transcript_init.state;
     transcript[0].nRounds <== transcript_init.nRounds;
@@ -130,17 +129,6 @@ template verify(
     preamble.program_io <== proof.program_io;
     preamble.trace_length <== proof.trace_length;
     transcript[1] <== preamble.up_transcript;
-
-// // // //     // // TODO (Bhargav): Add opening_accumulator_0.
-// // // //     // //TODO(Bhargav): Regenerate the uniform Spartan key? Or take it as input to the verifier?
-// // // //     // component append_scalar = AppendScalar();
-// // // //     // append_scalar.scalar = spartan_key.vk_digest.element;      // This must come from the above step. It will be an signal element.
-// // // //     // append_scalar.transcript <== transcript_1;
-// // // //     // Transcript() transcript_2 <== append_scalar.up_transcript;
-// // //         transcript[2] <==  transcript[1];
-// // // //     // R1CSProof() r1cs_proof;
-// // // //     // r1cs_proof.key <== spartan_key;
-// // // //     // r1cs_proof.proof <== proof.r1cs;
     
     component append_read_write_values = AppendReadWriteValues(C, 
                                                                 NUM_MEMORIES, 
@@ -165,16 +153,12 @@ template verify(
     append_init_final_values.commitments <== commitments;
     append_init_final_values.transcript <==  transcript[2];
     transcript[3] <== append_init_final_values.up_transcript;
- 
-////////////////////////////////////////////////////////////////////////////
+
+
     component verify_pi = VerifyPI( num_evals, bytecode_words_size);
     verify_pi.preprocessing <== preprocessing;
-    // verify_pi.proof <== proof.pi_proof;
     verify_pi.proof <== pi_proof;
 
-
-//////////////////////////////////////////////////////////////////////////////
-// Verifying Bytecode
 
     component verify_bytecode = VerifyMemoryCheckingBytecode( 
                                                         num_evals,
@@ -183,7 +167,6 @@ template verify(
                                                         read_write_grand_product_layers_bytecode,
                                                         init_final_grand_product_layers_bytecode,C,                                        
                                                         max_rounds_bytecode);
-    // verify_bytecode.preprocessing <== proof.pi_proof.bytecode;
     verify_bytecode.preprocessing <== pi_proof.bytecode;
     verify_bytecode.proof <== proof.bytecode;
     verify_bytecode.transcript <==  transcript[3];
@@ -191,8 +174,6 @@ template verify(
     VerifierOpening(read_write_grand_product_layers_bytecode) bytecode_read_write_openings <== verify_bytecode.byte_code_read_write_verifier_opening;
     VerifierOpening(init_final_grand_product_layers_bytecode) bytecode_init_final_openings <== verify_bytecode.init_final_verifier_opening;
 
-///////////////////////////////////////////////////////////////////////////
-// Verifying Instruction lookups
 
     component verify_instruction_lookups = VerifyInstructionLookups(
         max_rounds_instruction_lookups,
@@ -212,9 +193,6 @@ template verify(
     VerifierOpening(primary_sumcheck_num_rounds_instruction_lookups) instruction_primary_sum_check_opening <== verify_instruction_lookups.instruction_openings;
     VerifierOpening(instruction_read_write_opening_len) instruction_read_write_opening <== verify_instruction_lookups.inst_read_write_openings;
     VerifierOpening(init_final_grand_product_layers_instruction_lookups) instruction_init_final_opening <== verify_instruction_lookups.inst_init_final_openings;
-
-//////////////////////////////////////////////////////////////////////////////
-// Verify memory read write
 
      component rw_memory = VerifyMemoryCheckingReadWrite(
         bytecode_words_size,
@@ -249,8 +227,6 @@ template verify(
     VerifierOpening(init_final_grand_product_layers_read_write_memory_checking) memory_checking_init_final_opening <== rw_memory.init_final_verifier_opening;
     
 
-////////////////////////////////////////////////////////////////////////////
-// Verify memory output sum check proof
 
     component output_sum_check = VerifyMemoryCheckingOutputSumCheck(
             input_size,
@@ -274,9 +250,6 @@ template verify(
 
     
 
-//////////////////////////////////////////////////////////////////////////////
-// TimestampValidityProof verification
-
     component timestamp_validity_proof = TimestampValidityVerifier(
                          max_rounds_timestamp,
                          ts_validity_grand_product_layers_timestamp,
@@ -299,8 +272,6 @@ template verify(
     VerifierOpening(ts_validity_grand_product_layers_timestamp) timestamp_validity_opening <== timestamp_validity_proof.ts_verifier_opening;
        
 
-//////////////////////////////////////////////////////////////////////////////
-// Uniform Spartan Proof
     var num_var_next_power2 =  NextPowerOf2(num_vars);
     var num_var_next_power2_log2 = log2(num_var_next_power2);
     var n_prefix = num_var_next_power2_log2 + 1;
@@ -310,7 +281,6 @@ template verify(
     spartan_proof.proof <== proof.r1cs;
 
 
-
    component uniform_spartan_proof = VerifyR1CS(num_spartan_witness_evals, num_steps, num_cons_total, num_vars, num_rows);
     uniform_spartan_proof.r1cs_proof <== spartan_proof;
     uniform_spartan_proof.transcript <== transcript[8];
@@ -318,8 +288,6 @@ template verify(
     VerifierOpening(r1cs_opening_len) r1cs_opening <== uniform_spartan_proof.r1cs_opening;
 
 
-////////////////////////////////////////////////////////////////////////////
-// Reduce and verify
     component reduce_and_verify = ReduceAndVerify(
         read_write_grand_product_layers_bytecode, init_final_grand_product_layers_bytecode,
                         primary_sumcheck_num_rounds_instruction_lookups, instruction_read_write_opening_len, init_final_grand_product_layers_instruction_lookups,
@@ -591,7 +559,6 @@ template AppendInitFinalValues(C,
         append_points.points[3 + i] <== commitments.instruction_lookups.final_cts[i].commitment;
     }
 
-    // There are no init_final commitments in TimeStampRangeCheckStuff() and R1CS() buses.
     append_points.transcript <== transcript;
     up_transcript <== append_points.up_transcript;
 }
@@ -642,16 +609,11 @@ template FiatShamirPreamble(input_size, output_size, C , M, maximum_output_size,
     append_7.scalar <-- maximum_output_size;
     append_7.transcript <== int_transcript[5];
     int_transcript[6] <== append_7.up_transcript;
-    log("int_transcript [6] state =", int_transcript[6].state);
     int_transcript[7] <== AppendBytes(input_size)(program_io.inputs, int_transcript[6]);
-    log("int_transcript [7] state =", int_transcript[7].state);
 
     int_transcript[8] <== AppendBytes(output_size)(program_io.outputs, int_transcript[7]);
-    log("int_transcript [8] state =", int_transcript[8].state);
    
     up_transcript <== AppendScalar()(program_io.panic, int_transcript[8]);
-    log("int_transcript [9] state =", up_transcript.state);
-
 }
 
 template VerifyPI ( num_evals, bytecode_words_size) {

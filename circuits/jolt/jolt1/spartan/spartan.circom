@@ -189,9 +189,6 @@ template EvaluateR1CSMatrixMles(total_rows_bits, total_cols_bits, num_cons_total
 }
 
 
-/* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
-That is, it ignores the case where x is all 1s, outputting 0.
-Assumes x and y are provided big-endian. */
 template EqPlusOne(l) {
     input signal x[l];          
     input signal y[l];          

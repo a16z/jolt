@@ -32,8 +32,6 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars,rounds_reduc
 
     input HyperKZGVerifierKey() vk;
     input Fq() digest;
-
-    // The above three together are the public input of V_{Spartan, 1}.
     
     // Public output of V_{Spartan, 1}.
     output PostponedEval(inner_num_rounds - 1) postponed_eval;
@@ -45,8 +43,6 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars,rounds_reduc
     input HyperKZGCommitment() w_commitment;
 
 
-
-    //TODO: Add range checks here.
     JoltPreprocessingNNRangeCheck()(jolt_pi);
 
     LinkingStuff1NNRangeCheck(
@@ -116,7 +112,7 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars,rounds_reduc
     expected_eval_z <== EvaluateZMle(inner_num_rounds)
                                         (r_y, proof.pub_io_eval, proof.inner_sumcheck_claims[3]);
 
-    // Assuming the first three are evaluations of MLEs of A, B, C.
+    
     Fq() inner_sum_check_truncated_claim[3] <== TruncateVec(0, 3, 4)(proof.inner_sumcheck_claims);
     Fq() claim_combined_Az_Bz_Cz <== EvalUniPoly(2)(inner_sum_check_truncated_claim, r_inner_sumcheck_RLC);
     Fq() expected_claim_inner_final <== NonNativeMul()(claim_combined_Az_Bz_Cz, expected_eval_z);
@@ -149,23 +145,9 @@ template EvaluateZMle(r_len) {
     Fq() one;
     one.limbs <== [1, 0, 0];
 
-    // Z can be computed in two halves, [pub_inp, 1, 0 , ...] indexed by the first bit.
+    
     Fq() r_const <== r[0];
     Fq() r_rest[r_len - 1] <== TruncateVec(1, r_len, r_len)(r);
-
-    // var var_bits = log2(NextPowerOf2(pub_inp_len + 1));
-    // Fq() r_rest_hi[r_len - 1 - var_bits];
-    // Fq() r_rest_lo[var_bits]; 
-    
-    // // TODO: Check if this is correct.
-    // (r_rest_hi, r_rest_lo) <== SplitAt(r_len - 1 - var_bits, r_len - 1)(r_rest);
-
-    // Fq() t1[r_len - var_bits];
-    // t1[0] <== pub_io_eval;
-
-    // for (var i = 0; i < r_len - 1 - var_bits; i++) {
-    //     t1[i + 1] <== NonNativeMul()(t1[i], NonNativeSub()(one, r_rest_hi[i]));
-    // }
 
     Fq() t1 <== NonNativeSub()(one, r_const); 
     Fq() t2 <== NonNativeMul()(t1, pub_io_eval); 
@@ -284,7 +266,7 @@ bus NonUniformSpartanProof (outer_num_rounds, inner_num_rounds, num_vars) {
 
     SumcheckInstanceProof(2, inner_num_rounds) inner_sumcheck_proof;
 
-    Fq() inner_sumcheck_claims[4];              // Evaluations of MLEs of A, B, C, z, respectively.
+    Fq() inner_sumcheck_claims[4];              
 
     Fq() pub_io_eval;
 

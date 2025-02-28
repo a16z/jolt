@@ -1,5 +1,4 @@
 include "./pairing.circom";
-include "utils.circom";
 
 template HyperKzgVerifierJolt2(ell){
     input HyperKZGVerifierKey() vk;

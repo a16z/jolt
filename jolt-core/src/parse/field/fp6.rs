@@ -1,13 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use ark_bn254::{Fq2, Fq6};
     use ark_ff::{Field, UniformRand};
     use rand_chacha::ChaCha8Rng;
-    use ark_bn254::{Fq2, Fq6};
     use rand_core::SeedableRng;
     use serde_json::json;
+    use std::env;
 
-    use crate::{parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse}, spartan::spartan_memory_checking::R1CSConstructor};
+    use crate::{
+        parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse},
+        spartan::spartan_memory_checking::R1CSConstructor,
+    };
     impl Parse for Fq6 {
         fn format(&self) -> serde_json::Value {
             json!({
@@ -59,7 +62,7 @@ mod tests {
         let mut rng = ChaCha8Rng::from_seed([2; 32]);
 
         let op1 = Fq6::rand(&mut rng);
-        let actual_result = - op1;
+        let actual_result = -op1;
 
         let input = json!(
         {
@@ -70,7 +73,6 @@ mod tests {
         let circom_template = "Fp6neg";
         verify(input, package_name, circom_template, actual_result);
     }
-
 
     #[test]
     fn Fp6mul() {
@@ -108,9 +110,6 @@ mod tests {
         verify(input, package_name, circom_template, actual_result);
     }
 
-
-
-
     fn verify(
         input: serde_json::Value,
         package_name: &str,
@@ -127,7 +126,14 @@ mod tests {
 
         let prime = "grumpkin";
 
-        generate_circuit_and_witness(&file_path, &output_dir, circom_template, [].to_vec(), prime);
+        generate_circuit_and_witness(
+            &file_path,
+            &output_dir,
+            circom_template,
+            [].to_vec(),
+            prime,
+            None,
+        );
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
@@ -135,11 +141,14 @@ mod tests {
 
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
-        let expected_result = Fq6::new(Fq2::new(z[1], z[2]), Fq2::new(z[3], z[4]), Fq2::new(z[5], z[6]));
+        let expected_result = Fq6::new(
+            Fq2::new(z[1], z[2]),
+            Fq2::new(z[3], z[4]),
+            Fq2::new(z[5], z[6]),
+        );
 
         assert_eq!(expected_result, actual_result, "assertion failed");
         // To Check Az.Bz = C.z
         let _ = R1CSConstructor::<ark_bn254::Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
-    
 }

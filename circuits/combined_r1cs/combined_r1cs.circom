@@ -4,7 +4,6 @@ include "./../spartan/spartan_hyperkzg/spartan.circom";
 include "./linking.circom";
 include "./../pcs/hyperkzg.circom";
 include "./../jolt/jolt2/jolt2.circom";
-// include "./../jolt/jolt1/jolt1_buses.circom";
 
 template Combine(outer_num_rounds, inner_num_rounds, num_vars, rounds_reduced_opening_proof) {
 
@@ -16,13 +15,14 @@ template Combine(outer_num_rounds, inner_num_rounds, num_vars, rounds_reduced_op
     var chunks_y_size = 4; 
     var NUM_CIRCUIT_FLAGS = 11; 
     var relevant_y_chunks_len = 4;
+
+    // Public output of V_{jolt, 1}.
+    input signal counter_jolt_1;
                 
     // Public input of V_{jolt, 1}.
     input JoltPreprocessingNN() jolt_pi;
 
-    // Public output of V_{jolt, 1}.
-    input signal counter_jolt_1;
-
+    // Public input of V_{jolt, 1}.
     input LinkingStuff1NN(C, 
                     NUM_MEMORIES, 
                     NUM_INSTRUCTIONS, 
@@ -32,18 +32,20 @@ template Combine(outer_num_rounds, inner_num_rounds, num_vars, rounds_reduced_op
                     NUM_CIRCUIT_FLAGS, 
                     relevant_y_chunks_len) linking_stuff_1;
 
-    input HyperKZGVerifierKey() vk_spartan_1;
+     // Public input of V_{spartan, 1}.
     input Fq() digest;
 
-    // The above four together are the public input of V_{Spartan, 1}. Thus also are part of public input R1CS, say Combined R1CS.
+    // Public input of V_{spartan, 1}.
+    input HyperKZGVerifierKey() vk_spartan_1;
+                    
+    // Public input of V_{jolt, 2}.
+    input HyperKZGVerifierKey() vk_jolt_2;
 
     input NonUniformSpartanProof(outer_num_rounds, 
                                 inner_num_rounds, 
                                 num_vars) spartan_proof;
                         
     input HyperKZGCommitment() w_commitment;
-
-    // input Transcript() transcript;
 
     input LinkingStuff2(
         C, 
@@ -56,9 +58,6 @@ template Combine(outer_num_rounds, inner_num_rounds, num_vars, rounds_reduced_op
         relevant_y_chunks_len,
         rounds_reduced_opening_proof
     ) linking_stuff_2;
-
-    // This is the public input of V_{jolt, 2}. Thus also a part of the public input of Combined R1CS.
-    input HyperKZGVerifierKey() vk_jolt_2;
 
     input HyperKZGProof(rounds_reduced_opening_proof) hyperkzg_proof;
 

@@ -126,7 +126,6 @@ template VerifyEval(num_vars){
 
 }
 
-//eval proof 
 bus EvalProof(num_vars) {
     Fq() tau[2 ** (num_vars >> 1)];
 }

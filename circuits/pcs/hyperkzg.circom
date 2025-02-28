@@ -58,7 +58,7 @@ template HyperKzgVerifier(ell){
 
     Fq() flat_v[3 * ell]  <== flatten(3, ell)(pi.v);
     int_transcript[2] <== AppendScalars(3 * ell)(flat_v, int_transcript[1]);
-    (int_transcript[3], q_powers) <== ChallengeScalarPowers(ell)(int_transcript[2]);//TODO(Ashish):- Can call ChallengeScalar
+    (int_transcript[3], q_powers) <== ChallengeScalarPowers(ell)(int_transcript[2]);
 
     int_transcript[4] <== AppendPoints(3)(pi.w, int_transcript[3]);
     (int_transcript[5], d_0) <== ChallengeScalar()(int_transcript[4]);
@@ -92,7 +92,7 @@ template HyperKzgVerifier(ell){
 
     G1Projective() temp_point[ell];
     for (var i = 0; i < ell; i++) {
-        temp_point[i] <== G1Mul()(commitments[i], q_powers[i]); //TODO(Anuj):- Can skip first iteration since q_powers[0] = 1;
+        temp_point[i] <== G1Mul()(commitments[i], q_powers[i]); 
         int_sum[i + 1] <== G1Add()(int_sum[i], temp_point[i]);
     }
 

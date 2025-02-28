@@ -1,6 +1,5 @@
 pragma circom 2.2.1;
 
-// include "./../../groups/bn254_g1.circom";
 include "./../../fields/non_native/non_native_over_bn_base.circom";
 
 template EvaluateEq(n) {
@@ -27,7 +26,6 @@ template EvaluateEq(n) {
 
     Fq() int_prod[n + 1];
 
-    // Compute the product of terms
     int_prod[0] <== one;  
     int_prod[1] <== int_add[0];
 
@@ -38,7 +36,6 @@ template EvaluateEq(n) {
     result <== int_prod[n];
 }
 
-//Circuit to compute f(r)
 template EvalUniPoly(degree){
     input Fq() poly[degree + 1]; 
     input Fq() random_point;
@@ -83,7 +80,6 @@ template Evals(ell) {
     var pow_2 = 1 << ell;       
     output Fq() evals[pow_2]; 
 
-    // Temporary signals for intermediate steps
     Fq() temp[ell + 1][pow_2]; 
 
     Fq() one; 
@@ -91,7 +87,6 @@ template Evals(ell) {
 
     temp[0][0] <== one; 
 
-    // Iteratively compute evaluations
     var size = 1;
     for (var j = 0; j < ell; j++) {
         size *= 2; 
@@ -102,7 +97,6 @@ template Evals(ell) {
         }
     }
 
-    // Final output is in the last temp row
     for (var i = 0; i < pow_2; i++) {
         evals[i] <== temp[ell][pow_2 - i - 1];
     }
@@ -113,7 +107,6 @@ template EvalsNew(ell, len) {
     var pow_2 = 1 << ell;       
     output Fq() evals[pow_2]; 
 
-    // Temporary signals for intermediate steps
     Fq() temp[ell + 1][pow_2]; 
 
     Fq() one; 
@@ -124,7 +117,6 @@ template EvalsNew(ell, len) {
 
     temp[0][0] <== one; 
 
-    // Iteratively compute evaluations
     var size = 1;
     for (var j = 0; j < ell; j++) {
         size *= 2; 
@@ -143,7 +135,6 @@ template EvalsNew(ell, len) {
         }
     }
 
-    // Final output is in the last temp row
     for (var i = 0; i < pow_2; i++) {
         evals[i] <== temp[ell][pow_2 - i - 1];
     }
@@ -273,25 +264,6 @@ template TruncateVec(start_index, end_index, size){
         trun_vec[i - start_index] <== vec[i];
     }
 }
-
-// template CombineCommitments(num_commitments){
-//     input G1Projective() commitments[num_commitments];
-//     input Fq() coeffs[num_commitments];
-//     output G1Projective() combine_commitment;
-
-//     G1Projective() int_sum[num_commitments + 1];
-//     (int_sum[0].x, int_sum[0].y, int_sum[0].z) <== (0, 1, 0);
-
-//     G1Projective() temp[num_commitments];
-
-//     for (var i = 0; i < num_commitments; i++) {        
-//         temp[i] <== G1Mul()(commitments[i], coeffs[i]); 
-//         int_sum[i + 1] <== G1Add()(int_sum[i], temp[i]);
-//     }
-//     combine_commitment <== int_sum[num_commitments];
-// }
-
-
 
 template EvaluateIdentityPoly(size){
     input Fq() r[size];

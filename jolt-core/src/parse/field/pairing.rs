@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests{
+mod tests {
     use std::env;
 
     use ark_bn254::{Bn254, Fq12, Fq2, Fq6, G1Projective, G2Projective};
@@ -9,10 +9,13 @@ mod tests{
     use rand_core::SeedableRng;
     use serde_json::json;
 
-    use crate::{parse::{generate_circuit_and_witness, get_path, read_witness, write_json}, spartan::spartan_memory_checking::R1CSConstructor};
+    use crate::{
+        parse::{generate_circuit_and_witness, get_path, read_witness, write_json},
+        spartan::spartan_memory_checking::R1CSConstructor,
+    };
 
     #[test]
-    fn pairing(){
+    fn pairing() {
         let mut rng = ChaCha8Rng::from_seed([2; 32]);
         let P = G1Projective::rand(&mut rng).into_affine().into_group();
         let Q = G2Projective::rand(&mut rng).into_affine().into_group();
@@ -58,7 +61,14 @@ mod tests{
 
         let prime = "grumpkin";
 
-        generate_circuit_and_witness(&file_path, &output_dir, circom_template, [].to_vec(), prime);
+        generate_circuit_and_witness(
+            &file_path,
+            &output_dir,
+            circom_template,
+            [].to_vec(),
+            prime,
+            None,
+        );
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
@@ -66,7 +76,18 @@ mod tests{
 
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
-        let expected_result = Fq12::new(Fq6::new(Fq2::new(z[1], z[2]), Fq2::new(z[3], z[4]), Fq2::new(z[5], z[6])), Fq6::new(Fq2::new(z[7], z[8]), Fq2::new(z[9], z[10]), Fq2::new(z[11], z[12])));
+        let expected_result = Fq12::new(
+            Fq6::new(
+                Fq2::new(z[1], z[2]),
+                Fq2::new(z[3], z[4]),
+                Fq2::new(z[5], z[6]),
+            ),
+            Fq6::new(
+                Fq2::new(z[7], z[8]),
+                Fq2::new(z[9], z[10]),
+                Fq2::new(z[11], z[12]),
+            ),
+        );
 
         assert_eq!(expected_result, actual_result, "assertion failed");
         // To Check Az.Bz = C.z

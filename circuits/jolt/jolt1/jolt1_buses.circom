@@ -1,6 +1,5 @@
 
 pragma circom 2.2.1;
-// include "./../utils.circom"
 
 bus MultisetHashes(num_read_write_hashes, num_init_hashes, num_final_hashes) {
     signal read_hashes[num_read_write_hashes];
@@ -90,8 +89,6 @@ bus JoltProof(input_size,
     UniformSpartanProof(outer_num_rounds_uniform_spartan_proof, inner_num_rounds_uniform_spartan_proof, num_spartan_witness_evals) r1cs;
 
     ReducedOpeningProof(rounds_reduced_opening_proof , num_sumcheck_claims) opening_proof;
-
-    // PIProof( num_evals, bytecode_words_size) pi_proof;
 }
 
 
