@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::trace::Tracer;
+use common::precompiles::Precompile;
 use common::rv_trace::*;
 
 use self::fnv::FnvHashMap;
@@ -2513,17 +2514,30 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         mask: 0xffffffff,
         data: 0x00000073,
         name: "ECALL",
-        operation: |cpu, _word, address| {
-            let exception_type = match cpu.privilege_mode {
-                PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
-                PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,
-                PrivilegeMode::Machine => TrapType::EnvironmentCallFromMMode,
-                PrivilegeMode::Reserved => panic!("Unknown Privilege mode"),
-            };
-            Err(Trap {
-                trap_type: exception_type,
-                value: address,
-            })
+        operation: |cpu, _word, _address| {
+            // make sure that the t0 register contains non zero value
+            assert_ne!(
+                cpu.read_register(5),
+                0,
+                "No precompile enum provided in t0 register."
+            );
+            let precompile_enum = cpu.read_register(5) as u64;
+            let precompile = Precompile::from_u64(precompile_enum).expect("invalid precompile");
+            let inputs = cpu.mmu.get_precompile_input()?;
+            let output = precompile.execute(inputs);
+            cpu.mmu.set_precompile_output(output);
+            Ok(())
+
+            // let exception_type = match cpu.privilege_mode {
+            //     PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
+            //     PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,
+            //     PrivilegeMode::Machine => TrapType::EnvironmentCallFromMMode,
+            //     PrivilegeMode::Reserved => panic!("Unknown Privilege mode"),
+            // };
+            // Err(Trap {
+            //     trap_type: exception_type,
+            //     value: address,
+            // })
         },
         disassemble: dump_empty,
         trace: None,
