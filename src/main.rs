@@ -199,7 +199,9 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "op
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {
-    let (prove_fib, verify_fib) = guest::build_fib();
+    let program = guest::compile_fib();
+    let preprocessing = guest::preprocess_fib(&program);
+    let (prove_fib, verify_fib) = guest::build_fib(program, preprocessing);
 
     let (output, proof) = prove_fib(50);
     let is_valid = verify_fib(proof);

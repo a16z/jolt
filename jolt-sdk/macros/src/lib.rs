@@ -62,6 +62,7 @@ impl MacroBuilder {
         let build_fn = self.make_build_fn();
         let execute_fn = self.make_execute_function();
         let analyze_fn = self.make_analyze_function();
+        let compile_fn = self.make_compile_func();
         let preprocess_fn = self.make_preprocess_func();
         let prove_fn = self.make_prove_func();
 
@@ -79,6 +80,7 @@ impl MacroBuilder {
             #build_fn
             #execute_fn
             #analyze_fn
+            #compile_fn
             #preprocess_fn
             #prove_fn
             #main_fn
@@ -94,18 +96,19 @@ impl MacroBuilder {
         let input_names = self.func_args.iter().map(|(name, _)| name);
         let input_types = self.func_args.iter().map(|(_, ty)| ty);
         let inputs = &self.func.sig.inputs;
-        let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
         let prove_fn_name = Ident::new(&format!("prove_{}", fn_name), fn_name.span());
         let imports = self.make_imports();
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #build_fn_name() -> (
+            pub fn #build_fn_name(
+                program: jolt::host::Program,
+                preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
+            ) -> (
                 impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send,
                 impl Fn(jolt::JoltHyperKZGProof) -> bool + Sync + Send
             ) {
                 #imports
-                let (program, preprocessing) = #preprocess_fn_name();
                 let program = std::sync::Arc::new(program);
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
@@ -177,30 +180,46 @@ impl MacroBuilder {
         }
     }
 
-    fn make_preprocess_func(&self) -> TokenStream2 {
-        let attributes = parse_attributes(&self.attr);
-        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
-        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let set_mem_size = self.make_set_linker_parameters();
-        let guest_name = self.get_guest_name();
+    fn make_compile_func(&self) -> TokenStream2 {
         let imports = self.make_imports();
+        let guest_name = self.get_guest_name();
+        let set_mem_size = self.make_set_linker_parameters();
         let set_std = self.make_set_std();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
-        let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
+        let compile_fn_name = Ident::new(&format!("compile_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_fn_name() -> (
-                jolt::host::Program,
-                jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
-            ) {
+            pub fn #compile_fn_name() -> jolt::host::Program {
                 #imports
 
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
+                program.build();
+
+                program
+            }
+        }
+    }
+
+    fn make_preprocess_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let imports = self.make_imports();
+
+        let fn_name = self.get_func_name();
+        let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #preprocess_fn_name(program: &jolt::host::Program)
+                -> jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
+            {
+                #imports
+
                 let (bytecode, memory_init) = program.decode();
                 let memory_layout = MemoryLayout::new(#max_input_size, #max_output_size);
 
@@ -215,7 +234,7 @@ impl MacroBuilder {
                         1 << 24
                     );
 
-                (program, preprocessing)
+                preprocessing
             }
         }
     }
