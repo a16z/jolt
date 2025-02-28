@@ -19,7 +19,6 @@ template TranscriptNew(){
     var stateSize = getStateSize();
     var capacity = getCapacity();
 
-    // let mut hasher = Self::new() gives state = vec![K::zero(); parameters.rate + parameters.capacity];
     var int_state[stateSize] = [0, scalar, 0, 0, 0];
 
     component permute = permute(1);
@@ -157,7 +156,3 @@ template ChallengeScalarPowers(len){
         challenges[i] <== NonNativeMul()(challenges[i - 1], challenges[1]);
     }
 }
-
-//  component main = ChallengeScalarPowers(3);
-//   component main = AppendScalar();
-// //  component main = FiatShamirPreamble(1, 2);

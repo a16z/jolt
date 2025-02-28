@@ -3,7 +3,6 @@ include "./../groups/bn254_g2.circom";
 include "./../groups/bn254_g1.circom";
 include "./../fields/field/fp12.circom";
 
-//TODO(Ashish):-  add to G1 file
 
 template Fpinv(){
     signal input in;
@@ -14,7 +13,7 @@ template Fpinv(){
     inv * in === 1;
 
 }
-//TODO(Ashish):- add to G2 file
+
 template G2ToAffine(){
     input G2Projective() op1;
     output G2Affine() out;
@@ -300,8 +299,8 @@ template MulFp6ByNonresidue() {
     input Fp6() in;
     output Fp6() out;
 
-    out.y <== in.x;                                 // fe.c1 = fe.c0;
-    out.x <== MulFp2ByNonresidue()(in.z);           // fe.c0 = fe.c2;   Self::Fp6Config::mul_fp2_by_nonresidue_in_place(&mut fe.c0);
+    out.y <== in.x;                                 
+    out.x <== MulFp2ByNonresidue()(in.z);          
     out.z <== in.y;
 }
 
@@ -378,11 +377,9 @@ template LineAddition() {
     G2Projective() output R_New;
     Fp6() output ell_coeff;
 
-    // Step 1: Calculate theta = R.y - Q.y * R.z
     Fp2() Qy_Rz <== Fp2mul()(Q.y, R.z);
     Fp2() theta <== Fp2sub()(R.y, Qy_Rz);
 
-    // Step 2: Calculate lambda = R.x - Q.x * R.z
     Fp2() Qx_Rz <== Fp2mul()(Q.x, R.z);
     Fp2() lambda <== Fp2sub()(R.x, Qx_Rz);
 
@@ -396,7 +393,6 @@ template LineAddition() {
     Fp2() h_temp <== Fp2add()(e, f);
     Fp2() h <== Fp2sub()(h_temp, g_double);
 
-    // Step 5: Update R_New coordinates
     R_New.x <== Fp2mul()(lambda, h);
     Fp2() g_minus_h <== Fp2sub()(g, h);
     Fp2() e_Ry <== Fp2mul()(e, R.y);
@@ -404,7 +400,6 @@ template LineAddition() {
     R_New.y <== Fp2sub()(theta_g_minus_h, e_Ry);
     R_New.z <== Fp2mul()(R.z, e);
 
-    // Step 6: Calculate ell_coeff
     Fp2() theta_Qx <== Fp2mul()(theta, Q.x);
     Fp2() lambda_Qy <== Fp2mul()(lambda, Q.y);
     Fp2() j <== Fp2sub()(theta_Qx, lambda_Qy);
@@ -424,7 +419,6 @@ template EllCoeffs(){
 
     signal two_inv <== Fpinv()(2);
 
-    // G2Affine() Q <== G2ToAffine()(QP);
 
     R[0] <== G2toProjective()(Q);
 

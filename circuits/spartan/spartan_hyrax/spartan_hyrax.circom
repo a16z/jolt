@@ -14,8 +14,15 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars, postponed_p
     var chunks_y_size = 4; 
     var NUM_CIRCUIT_FLAGS = 11; 
     var relevant_y_chunks_len = 4;
+
+    // Public output of Combined R1CS.
+    input signal counter_combined_r1cs;
+
+    // Public output of Combined R1CS. It is the evaluation that was postponed. This verifier is supposed to do this eval natively.
+
+    input PostponedEval(postponed_point_len) to_eval;
     
-    // This is the public input of V_{Spartan, 1} and also R (the R1CS that this Spartan veriifer is verifying).
+    // Public input of Combined R1CS.
     input Spartan1PI(C, 
                     NUM_MEMORIES, 
                     NUM_INSTRUCTIONS, 
@@ -25,16 +32,11 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars, postponed_p
                     NUM_CIRCUIT_FLAGS, 
                     relevant_y_chunks_len) pub_io;   
 
-    // This is the public output of V_{Spartan, 1} and also combined R1CS. It is the evaluation that was postponed.
-    // This verifier is supposed to do this eval natively.
-    // TODO: Better name for eval. Maybe it should be postponed_eval and the other one something else.
-    input signal counter_combined_r1cs;
-
-    input PostponedEval(postponed_point_len) to_eval;
-
-    input PedersenGenerators(num_vars) setup;
+    // The above five are the public IO of Combined R1CS.
 
     input Fq() digest;
+
+    input PedersenGenerators(num_vars) setup;
 
     // The above five are the public input of V_{Spartan, 2}.
 
@@ -88,7 +90,7 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars, postponed_p
     
     Fq() tau[outer_num_rounds];
   
-    var w_num_commitments = 2 ** (num_vars - (num_vars >> 1));
+    var w_num_commitments = 2**(num_vars - (num_vars>>1));
 
     int_transcript[0] <== AppendCommitment(w_num_commitments)(w_commitment.row_commitments, temp_transcript);
 
@@ -127,7 +129,6 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars, postponed_p
     Fq() expected_eval_z;
     expected_eval_z <== EvaluateZMle(inner_num_rounds)(r_y, proof.pub_io_eval, proof.inner_sumcheck_claims[3]);
 
-    // Assuming the first three are evaluations of MLEs of A, B, C.
     Fq() inner_sum_check_truncated_claim[3] <== TruncateVec(0, 3, 4)(proof.inner_sumcheck_claims);
     Fq() claim_combined_Az_Bz_Cz <== EvalUniPoly(2)(inner_sum_check_truncated_claim, r_inner_sumcheck_RLC);
     Fq() expected_claim_inner_final <== NonNativeMul()(claim_combined_Az_Bz_Cz, expected_eval_z);
@@ -140,8 +141,7 @@ template VerifySpartan(outer_num_rounds, inner_num_rounds, num_vars, postponed_p
     // Postponing the eval of public io.
     postponed_eval.point <== r_rest;
     postponed_eval.eval <== proof.pub_io_eval;
-
-    // TODO: Rename Hyrax stuff. Eg. The following should be HyraxVerifier.          
+         
     // VerifyEval(num_vars)(w_commitment , proof.joint_opening_proof, setup, proof.inner_sumcheck_claims[3], r_rest);
 }
 
@@ -154,7 +154,6 @@ template EvaluateZMle(r_len) {
     Fq() one;
     one.limbs <== [1, 0, 0];
 
-    // Z can be computed in two halves, [pub_inp, 1, 0 , ...] indexed by the first bit.
     Fq() r_const <== r[0];
     Fq() r_rest[r_len - 1] <== TruncateVec(1, r_len, r_len)(r);
 
@@ -164,7 +163,7 @@ template EvaluateZMle(r_len) {
     eval_z <== NonNativeAdd()(t2, t3);
 }
 
-// Template to compute the postponed evaluation of the [1, pub out, pub in, 0s] of V_{jolt, 1}.
+// Template to compute the postponed evaluation of teh public IO of V_{jolt, 1}.
 template VerifyPostponedEval(point_len, 
 
                             C, 
@@ -204,8 +203,6 @@ template VerifyPostponedEval(point_len,
     var jolt_stuff_size = bytecode_stuff_size + read_write_memory_stuff_size + instruction_lookups_stuff_size 
                             + timestamp_range_check_stuff_size + r1cs_stuff_size;
 
-    log("jolt_stuff_size = ", jolt_stuff_size);
-
     var bytecode_combiners_size = 2;
 
     var instruction_lookups_combiners_size = 3;
@@ -217,13 +214,7 @@ template VerifyPostponedEval(point_len,
     var opening_combiners_size = bytecode_combiners_size + instruction_lookups_combiners_size
                                     + read_write_output_timestamp_combiners_size + spartan_combiners_size + 1;
 
-    // var opening_combiners_size = 11;
-
-    log("opening_combiners_size = ", opening_combiners_size);
-
     var hyperkzg_verifier_advice_size = 4;
-
-    log("hyperkzg_verifier_advice_size = ", hyperkzg_verifier_advice_size);
 
     var linking_stuff_1_size = jolt_stuff_size + opening_combiners_size + hyperkzg_verifier_advice_size;
 
@@ -275,9 +266,6 @@ template VerifyPostponedEval(point_len,
     signal claimed_eval <== CombineLimbs()(postponed_eval.eval);
 
     claimed_eval === computed_eval;
-
-    log("claimed eval = ", claimed_eval);
-    log("computed eval = ", computed_eval);
 }
 
 template SerialisePubIO(C, NUM_MEMORIES, NUM_INSTRUCTIONS, MEMORY_OPS_PER_INSTRUCTION,chunks_x_size, chunks_y_size, NUM_CIRCUIT_FLAGS, relevant_y_chunks_len,pub_io_len) {
@@ -309,8 +297,6 @@ template SerialisePubIO(C, NUM_MEMORIES, NUM_INSTRUCTIONS, MEMORY_OPS_PER_INSTRU
 
     var jolt_stuff_size = bytecode_stuff_size + read_write_memory_stuff_size + instruction_lookups_stuff_size 
                             + timestamp_range_check_stuff_size + r1cs_stuff_size;
-
-    log("jolt_stuff_size = ", jolt_stuff_size);
 
     pub_io[0] <== 1;
     pub_io[1] <== 1;
@@ -467,7 +453,6 @@ template AppendCommitment(w_num_commitments) {
     signal z_cube[w_num_commitments];
 
     for (var i = 0; i < w_num_commitments; i++) {
-        log("i is ", i);
         x_square[i] <== commitments[i].x * commitments[i].x;
         x_cube[i] <== x_square[i] * commitments[i].x;
 
@@ -588,7 +573,7 @@ bus NonUniformSpartanProof (outer_num_rounds,
 
     SumcheckInstanceProof(2, inner_num_rounds) inner_sumcheck_proof;
 
-    Fq() inner_sumcheck_claims[4];              // Evaluations of MLEs of A, B, C, z, respectively.
+    Fq() inner_sumcheck_claims[4];              
 
     Fq() pub_io_eval;
 
@@ -604,9 +589,9 @@ bus Spartan1PI(C,
                 NUM_CIRCUIT_FLAGS, 
                 relevant_y_chunks_len) {
 
-    JoltPreprocessingNN() jolt_pi;
+    signal counter_jolt_1;                
 
-    signal counter_jolt_1;
+    JoltPreprocessingNN() jolt_pi;
 
     LinkingStuff1NN(C, 
                     NUM_MEMORIES, 
@@ -616,10 +601,10 @@ bus Spartan1PI(C,
                     chunks_y_size, 
                     NUM_CIRCUIT_FLAGS, 
                     relevant_y_chunks_len) linking_stuff;
-    
-    HyperKZGVerifierKeyNN() vk_spartan_1;
 
     Fq() digest;
+    
+    HyperKZGVerifierKeyNN() vk_spartan_1;
 
     HyperKZGVerifierKeyNN() vk_jolt_2;
 }
@@ -640,4 +625,3 @@ template NativeSplitAt(mid, size){
 }
  
 // component main = VerifySpartan( 23, 24, 23, 22);
-

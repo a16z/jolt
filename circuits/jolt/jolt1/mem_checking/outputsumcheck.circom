@@ -137,10 +137,9 @@ template VerifyMemoryCheckingOutputSumCheck(
     v_io[termination_index]   =  1 -  program_io_panic ;
 
 
-//     // Computation for the values of input_index
-//     // This will only work when input_size <= 32
-//     // Input index should start from 64
-//     (1 - r_0) (1 - r_1) (1 - r_2) (1 - r_3) (1 - r_4) r_5 (1 - r_6) (1 - r_7) (1 - r_8) (1 - r_9) (1 - r_10) (1 - r_11)
+    // Computation for the values of input_index
+    // This will only work when input_size <= 32
+    // Input index should start from 64
     var non_zero_v_io_input_size =   input_index - starting_input_idx; 
         if  ( non_zero_v_io_input_size == 1){
                 non_zero_v_io_input_size = 2;
@@ -181,7 +180,6 @@ template VerifyMemoryCheckingOutputSumCheck(
     // output index
     // This will only work when output_size <= 32
     // output index should start from 1088
-    // (1 - r_0) r_1 (1 - r_2) (1 - r_3) (1 - r_4) r_5 (1 - r_6) (1 - r_7) (1 - r_8) (1 - r_9) (1 - r_10) (1 - r_11)
     var non_zero_v_io_output_size =   output_index - starting_output_idx;  
     var log_non_zero_v_io_output_size = 1;
     if  (non_zero_v_io_output_size > 1) {
@@ -220,7 +218,6 @@ template VerifyMemoryCheckingOutputSumCheck(
 
     // panic and termination evals
     // Panic index = 2112  and termination index = 2113
-    // r_0 (1 - r_1) (1 - r_2) (1 - r_3) (1 - r_4) r_5 (1 - r_6) (1 - r_7) (1 - r_8) (1 - r_9) (1 - r_10) (1 - r_11)
    signal r_sumcheck_io_panic_termination[1];  
     for (var i = 0 ; i < 1; i++) {
         r_sumcheck_io_panic_termination[i] <-- temp_r_sumcheck[temp_r_sumcheck_len - 1];

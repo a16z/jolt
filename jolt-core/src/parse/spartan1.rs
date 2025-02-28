@@ -268,7 +268,7 @@ pub(crate) fn spartan_hkzg(
 
     // Length of public IO of Combined R1CS including the 1 at index 0.
     // 1 + counter_combined_r1cs (1) + postponed eval size (point size = (inner num rounds - 1) * 3, eval size  = 3) +
-    // counter_jolt_1 (1) + linking stuff (nn) size (jolt stuff size + 15 * 3) + jolt pi size (2 * 3)
+    // counter_jolt_1 (1) + linking stuff (nn) size (jolt stuff size (1572) + 15 * 3) + jolt pi size (2 * 3)
     // + digest size (3) + 2 hyper kzg verifier keys (2 + 4 + 4).
 
     let pub_io_len_combine_r1cs =

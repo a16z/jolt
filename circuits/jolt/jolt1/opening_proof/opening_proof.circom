@@ -49,8 +49,6 @@ template ReduceAndVerify(byte_code_read_write_opening_len, byte_code_init_final_
                                                          inst_primary_sum_check_openings, inst_read_write_openings, inst_init_final_openings,
                                                         memory_checking_read_write_openings, memory_checking_init_final_openings, output_sum_check_openings, timestamp_validity_openings, r1cs_openings);
     
-    // Compute random linear combination of the claims, accounting for the fact that the
-    // polynomials may be of different sizes
    signal bc_rw_r_lo[num_sumcheck_rounds - byte_code_read_write_opening_len];
    signal bc_rw_r_hi[byte_code_read_write_opening_len];
     (bc_rw_r_lo, bc_rw_r_hi) <== SplitAt(num_sumcheck_rounds - byte_code_read_write_opening_len, num_sumcheck_rounds)(r_sumcheck);
@@ -192,11 +190,6 @@ template ReduceAndVerify(byte_code_read_write_opening_len, byte_code_init_final_
     log("w.y limb 1",reduced_opening_proof.joint_opening_proof.w[0].y.limbs[1]);
     log("w.y limb 2",reduced_opening_proof.joint_opening_proof.w[0].y.limbs[2]);
 
-    // log("w.x",reduced_opening_proof.joint_opening_proof.w[1].x);
-    // log("w.y",reduced_opening_proof.joint_opening_proof.w[1].y);
-    
-    // log("w.x",reduced_opening_proof.joint_opening_proof.w[2].x);
-    // log("w.y",reduced_opening_proof.joint_opening_proof.w[2].y);
     
     hyperkzg_verifier_advice <== HyperKzgVerifierJolt1(num_sumcheck_rounds)(r_sumcheck, reduced_opening_proof.joint_opening_proof, joint_claim, int_transcript[3]);
 

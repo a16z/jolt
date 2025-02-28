@@ -27,7 +27,6 @@ template EvaluateEq(n) {
 
     Fq() int_prod[n + 1];
 
-    // Compute the product of terms
     int_prod[0] <== one;  
     int_prod[1] <== int_add[0];
 
@@ -38,7 +37,6 @@ template EvaluateEq(n) {
     result <== int_prod[n];
 }
 
-//Circuit to compute f(r)
 template EvalUniPoly(degree){
     input Fq() poly[degree + 1]; 
     input Fq() random_point;
@@ -83,7 +81,6 @@ template Evals(ell) {
     var pow_2 = 1 << ell;       
     output Fq() evals[pow_2]; 
 
-    // Temporary signals for intermediate steps
     Fq() temp[ell + 1][pow_2]; 
 
     Fq() one; 
@@ -91,7 +88,6 @@ template Evals(ell) {
 
     temp[0][0] <== one; 
 
-    // Iteratively compute evaluations
     var size = 1;
     for (var j = 0; j < ell; j++) {
         size *= 2; 
@@ -102,7 +98,6 @@ template Evals(ell) {
         }
     }
 
-    // Final output is in the last temp row
     for (var i = 0; i < pow_2; i++) {
         evals[i] <== temp[ell][pow_2 - i - 1];
     }
@@ -113,7 +108,6 @@ template EvalsNew(ell, len) {
     var pow_2 = 1 << ell;       
     output Fq() evals[pow_2]; 
 
-    // Temporary signals for intermediate steps
     Fq() temp[ell + 1][pow_2]; 
 
     Fq() one; 
@@ -124,7 +118,6 @@ template EvalsNew(ell, len) {
 
     temp[0][0] <== one; 
 
-    // Iteratively compute evaluations
     var size = 1;
     for (var j = 0; j < ell; j++) {
         size *= 2; 
@@ -143,7 +136,6 @@ template EvalsNew(ell, len) {
         }
     }
 
-    // Final output is in the last temp row
     for (var i = 0; i < pow_2; i++) {
         evals[i] <== temp[ell][pow_2 - i - 1];
     }
@@ -252,7 +244,6 @@ template Sum(C)  {
     }
 }
 
-//TODO(Bhargav):- Verify if we need constraint to check sum(bits) = value.
 template IndexToFieldBitvector(value, num_bits) {
     output Fq() bitvector[num_bits]; 
     signal bits[num_bits]; 
@@ -320,12 +311,10 @@ template NativeEvals(ell) {
     var pow_2 = 1 << ell;       
     output signal evals[pow_2]; 
 
-    // Temporary signals for intermediate steps
     signal temp[ell + 1][pow_2]; 
 
     temp[0][0] <== 1; 
 
-    // Iteratively compute evaluations
     var size = 1;
     for (var j = 0; j < ell; j++) {
         size *= 2; 
@@ -336,7 +325,6 @@ template NativeEvals(ell) {
         }
     }
 
-    // Final output is in the last temp row
     for (var i = 0; i < pow_2; i++) {
         evals[i] <== temp[ell][pow_2 - i - 1];
     }

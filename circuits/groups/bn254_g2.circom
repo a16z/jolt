@@ -108,8 +108,6 @@ template G2Mul() {
     output G2Projective() out;
 
     var n = 254;
-    // signal op2_element <== op2.limbs[0] + op2.limbs[1] * (1 << 125) + op2.limbs[2] * (1 << 250);
-    // signal bits[n] <== Num2Bits(n)(op2_element);
     signal bits[n] <== ScalarToBits()(op2);
 
     G2Projective() intermediateProducts[n + 1][3];

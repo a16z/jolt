@@ -46,8 +46,6 @@ template SumCheck(rounds, degree) {
 }
  
  
-
-//Circuit to compute f(0) + f(1)
 template eval_at_01(degree){
     input signal  poly[degree + 1];
     output signal  eval;
@@ -64,13 +62,10 @@ template eval_at_01(degree){
 }
 
 bus PrimarySumcheckOpenings(NUM_MEMORIES, NUM_INSTRUCTIONS) {
-    /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     signal E_poly_openings[NUM_MEMORIES];
 
-    /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     signal flag_openings[NUM_INSTRUCTIONS];
 
-    /// Evaluation of the lookup_outputs polynomial at the opening point.
     signal lookup_outputs_opening;
 }
 
@@ -80,7 +75,6 @@ bus SumcheckInstanceProof(degree, rounds) {
 
 bus PrimarySumcheck(degree, rounds, NUM_MEMORIES, NUM_INSTRUCTIONS) {
     SumcheckInstanceProof(degree, rounds) sumcheck_proof;
-    //signal num_rounds;
     PrimarySumcheckOpenings(NUM_MEMORIES, NUM_INSTRUCTIONS) openings;
 }
 

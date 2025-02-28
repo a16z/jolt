@@ -4,14 +4,6 @@ bus HyperKZGCommitment {
     G1Affine() commitment;
 }
 
-// template ConvertToProjective(num_commitments){
-//     input G1Affine() commitments[num_commitments];
-//     output G1Projective() projective_commitments[num_commitments];
-    
-//     for (var i = 0; i < num_commitments; i++) {
-//         projective_commitments[i] <== toProjective()(commitments[i]);
-//     }
-// }
 
 bus HyperKZGVerifierKeyNN() {
     KZGVerifierKeyNN() kzg_vk;

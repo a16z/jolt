@@ -7,13 +7,11 @@ template ReverseVector(n) {
     input signal in[n];  
     output signal out[n]; 
 
-    // Reverse the input vector
     for (var i = 0; i < n; i++) {
         out[i] <== in[n - 1 - i];
     }
 }
 
-//Circuit to compute f(r)
 template EvalUniPoly(degree){
     input signal poly[degree + 1]; 
     input signal random_point;
@@ -38,12 +36,10 @@ template Evals(ell) {
     var pow_2 = 1 << ell;       
     output signal evals[pow_2]; 
 
-    // Temporary signals for intermediate steps
     signal temp[ell + 1][pow_2]; 
 
     temp[0][0] <== 1; 
 
-    // Iteratively compute evaluations
     var size = 1;
     for (var j = 0; j < ell; j++) {
         size *= 2; 
@@ -54,7 +50,6 @@ template Evals(ell) {
         }
     }
 
-    // Final output is in the last temp row
     for (var i = 0; i < pow_2; i++) {
         evals[i] <== temp[ell][pow_2 - i - 1];
     }
@@ -174,7 +169,6 @@ template EvaluateEq(n) {
 
     signal int_prod[n + 1];
 
-    // Compute the product of terms
     int_prod[0] <== 1;  
     int_prod[1] <== int_add[0];
 
@@ -200,7 +194,6 @@ template SplitAt(mid, size){
     }
 }
 
-//TODO(Bhargav):- Verify if we need constraint to check sum(bits) = value.
 template IndexToFieldBitvector(value, num_bits) {
     output signal bitvector[num_bits]; 
     signal bits[num_bits]; 
@@ -213,7 +206,6 @@ template IndexToFieldBitvector(value, num_bits) {
 }
 
 template TruncateVec(start_index, end_index, size){
-    // assert(start_index < end_index);
     input signal vec[size];
     output signal trun_vec[end_index - start_index];
 
@@ -223,7 +215,6 @@ template TruncateVec(start_index, end_index, size){
 }
 
 template OpeningAccumulator(num_commitments, opening_point_len){
-    // input HyperKZGCommitment() commitments[num_commitments];
     input signal opening_point[opening_point_len];
     input signal claims[num_commitments];
     input Transcript() transcript;

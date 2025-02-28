@@ -6,12 +6,12 @@ bus R1CSProof(outer_num_rounds, inner_num_rounds, num_spartan_witness_evals){
 }
 
 bus SparseConstraints(num_non_zero_non_const_coeff, num_non_zero_const_coeff) {
-    /// Non-zero, non-constant coefficients
+    
     signal row[num_non_zero_non_const_coeff];
     signal col[num_non_zero_non_const_coeff];
     signal val[num_non_zero_non_const_coeff];
 
-    /// Non-zero constant coefficients stored as (uniform_row_index, coeff)
+    
     signal uniform_row_index[num_non_zero_const_coeff];
     signal coeff[num_non_zero_const_coeff];
 }

@@ -3,8 +3,6 @@ include "./../../../fields/non_native/utils.circom";
 include "./../utils.circom";
 
 
-
-// // TODO: In all templates, for assignments of constanta to signal type elements use <-- instead of <==.
 template evaluate_mle_and (point_len) {
     input signal point[point_len];
     output signal result;
@@ -371,9 +369,9 @@ template evaluate_mle_sll(point_len, eq_vec_len, CHUNK_INDEX, WORD_SIZE) {
         min_2 =  b;
     }
 
-    // 1 << min_2 should be equal to eq_vec_len. I.e. min_1 should be equal to eq_vec_len.
+    
 
-    signal acc[min_1][b + 1];     // acc[k][m_prime + 1] but m_prime <= b.
+    signal acc[min_1][b + 1];    
     signal t6[min_1][b];
     signal t7[min_1];
     signal t8[min_1];
@@ -403,7 +401,7 @@ template evaluate_mle_sll(point_len, eq_vec_len, CHUNK_INDEX, WORD_SIZE) {
         two_power[k] <-- 1 << k;
  
         t7[k] <== (two_power[k] * acc[k][m_prime]);
-        t8[k] <== (eq_vec[k] * t7[k]); // here
+        t8[k] <== (eq_vec[k] * t7[k]); 
         res[k + 1] <== (res[k] + t8[k]);
     }
 
@@ -438,7 +436,7 @@ template evaluate_mle_srl (point_len, eq_vec_len, CHUNK_INDEX, WORD_SIZE) {
         min_2 =  b;
     }
 
-    signal acc[min_1][b + 1];     // acc[k][chunk_length - m] but chunk_length <= b and m >= 0.
+    signal acc[min_1][b + 1];     
     signal t6[min_1][b];
     signal t7[min_1];
     signal t8[min_1];
@@ -464,13 +462,11 @@ template evaluate_mle_srl (point_len, eq_vec_len, CHUNK_INDEX, WORD_SIZE) {
 
         acc[k][0] <== 0;
       
-        // TODO(Bhargav): Updated this. Check.
         for (var j = 1; j <= chunk_length - m; j++) {
             t6[k][j-1] <==  (acc[k][j-1] + acc[k][j-1]);
             acc[k][j] <==  (t6[k][j-1] + x[b - chunk_length + j - 1]);
         }
 
-        // Need to multiply by 2^{b*CHUNK_INDEX - k + m}.
         two_power[k] <== 1 << (b * CHUNK_INDEX - k + m);
      
         t7[k] <== (two_power[k] * acc[k][chunk_length - m]);
@@ -519,7 +515,6 @@ template evaluate_mle_sra_sign (point_len, eq_vec_len, WORD_SIZE) {
 
     for (var k = 0; k < min_1; k++) {
 
-        // TODO: The instruction in the paper, the code, and the comment above the code are all different.
         diff_two_powers[k] <== (1 << (WORD_SIZE)) - (1 << (WORD_SIZE - k));
      
         t7[k] <==  (diff_two_powers[k] * x_sign);

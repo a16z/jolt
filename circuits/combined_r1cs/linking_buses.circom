@@ -100,33 +100,19 @@ bus ReadWriteMemoryStuffNN() {
 bus InstructionLookupStuffNN(C, 
                             NUM_MEMORIES, 
                             NUM_INSTRUCTIONS
-                         //    instruction_flag_bitvectors_rows, 
-                         //    instruction_flag_bitvectors_cols
                             ) {
     
-    /// `C`-sized vector of polynomials/commitments/openings corresponding to the
-    /// indices at which subtables are queried.
+    
     HyperKZGCommitmentNN() dim[C];
 
-    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
-    /// the read access counts for each memory.
     HyperKZGCommitmentNN() read_cts[NUM_MEMORIES];
 
-    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
-    /// the final access counts for each memory.
     HyperKZGCommitmentNN() final_cts[NUM_MEMORIES];
 
-    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
-    /// the values read from each memory.
     HyperKZGCommitmentNN() E_polys[NUM_MEMORIES];
 
-    /// `NUM_INSTRUCTIONS`-sized vector of polynomials/commitments/openings corresponding
-    /// to the indicator bitvectors designating which lookup to perform at each step of
-    /// the execution trace.
     HyperKZGCommitmentNN() instruction_flags[NUM_INSTRUCTIONS];
 
-    /// The polynomial/commitment/opening corresponding to the lookup output for each
-    /// step of the execution trace.
     HyperKZGCommitmentNN() lookup_outputs;
 
 
@@ -222,14 +208,3 @@ bus JoltPreprocessingNN() {
     Fq() v_init_final_hash;
     Fq() bytecode_words_hash;
 }
-
-// bus Fq() {
-//     // signal element;
-//     signal limbs[3];
-// }
-
-// template test() {
-//     input LinkingStuffNN(1, 2, 3, 4, 5,6,7,8,9) ls;
-// }
-
-// component main = test();

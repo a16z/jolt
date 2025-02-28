@@ -1,5 +1,5 @@
 pragma circom 2.2.1;
-// include "./../../fields/non_native/non_native_over_bn_base.circom";
+
 bus LinkingStuff2(C, 
                     NUM_MEMORIES, 
                     NUM_INSTRUCTIONS, 
@@ -185,37 +185,21 @@ bus AuxVariableStuff(relevant_y_chunks_len) {
 }
 
 
-// Are C and NUM_INSTRUCTIONS comstants?
 bus InstructionLookupStuff(C, 
                             NUM_MEMORIES, 
                             NUM_INSTRUCTIONS
-                         //    instruction_flag_bitvectors_rows, 
-                         //    instruction_flag_bitvectors_cols
                             ) {
     
-    /// `C`-sized vector of polynomials/commitments/openings corresponding to the
-    /// indices at which subtables are queried.
     HyperKZGCommitment() dim[C];
-
-    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
-    /// the read access counts for each memory.
+    
     HyperKZGCommitment() read_cts[NUM_MEMORIES];
-
-    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
-    /// the final access counts for each memory.
+   
     HyperKZGCommitment() final_cts[NUM_MEMORIES];
 
-    /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
-    /// the values read from each memory.
     HyperKZGCommitment() E_polys[NUM_MEMORIES];
 
-    /// `NUM_INSTRUCTIONS`-sized vector of polynomials/commitments/openings corresponding
-    /// to the indicator bitvectors designating which lookup to perform at each step of
-    /// the execution trace.
     HyperKZGCommitment() instruction_flags[NUM_INSTRUCTIONS];
 
-    /// The polynomial/commitment/opening corresponding to the lookup output for each
-    /// step of the execution trace.
     HyperKZGCommitment() lookup_outputs;
 
 

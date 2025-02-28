@@ -6,8 +6,6 @@ include "./../sum_check/sumcheck.circom";
 include "grand_product.circom";
 
 //TODO:- Currently we don't handle the case when claimed_outputs_size = 1;
-
-/// Verifies the given grand product proof.
 template SparseVerifyGrandProduct(max_rounds, proof_layers_size, claimed_outputs_size){
     input BatchedGrandProductProof(max_rounds, proof_layers_size) proof;
     input signal claimed_outputs[claimed_outputs_size];
@@ -17,8 +15,7 @@ template SparseVerifyGrandProduct(max_rounds, proof_layers_size, claimed_outputs
     output signal final_claim;
 
     Transcript() int_transcript[2];
-    // Evaluate the MLE of the output layer at a random point to reduce the outputs to
-    // a single claim.
+
     int_transcript[0] <== AppendScalars(claimed_outputs_size)(claimed_outputs, transcript);
 
     var np2_claimed_output = NextPowerOf2(claimed_outputs_size);
@@ -36,7 +33,6 @@ template SparseVerifyGrandProduct(max_rounds, proof_layers_size, claimed_outputs
 }
 
 
-/// Used for layer sumchecks in the generic batch verifier as well as the quark layered sumcheck hybrid
 template SparseVerifylayers(max_rounds, r_start_size, proof_layers_size){
     input BatchedGrandProductLayerProof(max_rounds) proof_layers[proof_layers_size];
     input signal claim;
@@ -48,10 +44,8 @@ template SparseVerifylayers(max_rounds, r_start_size, proof_layers_size){
 
     
     var fixed_at_start = r_start_size;
-    // `r_start` is the random point at which the MLE of the first layer of the grand product is evaluated.
-    // In the case of the Quarks hybrid grand product, this is obtained from the Quarks grand product sumcheck.
-    // In the case of Thaler'13 GKR-based grand products, this is from Fiat-Shamir.
-    signal int_r_grand_product[proof_layers_size][proof_layers_size + fixed_at_start]; //TODO(Ashish):- Verify the size of 2D array.
+    
+    signal int_r_grand_product[proof_layers_size][proof_layers_size + fixed_at_start]; 
     signal final_r_grand_product[proof_layers_size + fixed_at_start - 1];
     for (var i = 0; i < r_start_size; i++){
         int_r_grand_product[0][i] <== r_start[i];
@@ -118,10 +112,6 @@ template SparseVerifylayers(max_rounds, r_start_size, proof_layers_size){
     r_grand_product <== final_r_grand_product;
 }
 
-/// Verifies that the `sumcheck_claim` output by sumcheck verification is consistent
-/// with the `left_claim` and `right_claim` of corresponding `BatchedGrandProductLayerProof`.
-/// This function may be overridden if the layer isn't just multiplication gates, e.g. in the
-/// case of `ToggledBatchedGrandProduct`.
 template SparseVerifySumcheckClaim() {
     input signal left_claim;
     input signal right_claim;
@@ -138,7 +128,6 @@ template SparseVerifySumcheckClaim() {
     signal expected_sumcheck_claim <== left_right_claim * eq_eval;
     expected_sumcheck_claim === sumcheck_claim;
 
-    // produce a random challenge to condense two claims into a single claim
     (up_transcript, r_layer) <== ChallengeScalar()(transcript);
 
     signal right_minus_left_claim <== right_claim - left_claim;

@@ -44,7 +44,6 @@ template CombineLookupsBeq(C, M) {
     result <== Product(C)(vals);
 }
 
-// Confirm the len
 template CombineLookupsBge(C, M){
     signal input vals[2 * C + 1];
     signal output result;
@@ -55,7 +54,6 @@ template CombineLookupsBge(C, M){
     result <== 1 - temp_prod;
 }
 
-// Confirm the len
 template CombineLookupsBgeu(C, M){
     signal input vals[2 * C - 1];
     signal output result;
@@ -155,7 +153,6 @@ template CombineLookupsSltu(C, M){
        eq_prod[i+1] <== eq_prod[i] * eq[i];
     }
 
-    // LTU(x, y) + EQ(y, 0)
     result <== sum[C-1] + ltu[C-1] * eq_prod[C-1];
      
 
@@ -164,7 +161,6 @@ template CombineLookupsSltu(C, M){
 template CombineLookupsSll(C, M) {
     signal input vals[C];
     signal output result;
-    // assert C <= 10
 
     var log_M_by_2 = log2(M) / 2;
     result <==  ConcatenateLookups(C, log_M_by_2) (vals);
@@ -257,7 +253,6 @@ template CombineLookupsSrl(C, M) {
     result <== Sum(C)(vals);
 }
 
-// assert!(M == 1 << 16);
 template CombineLookupsVirtualMovsign(C, M, WORD_SIZE) {
     signal input vals[C];
     signal output result;
@@ -420,7 +415,6 @@ template CombineLookupsVirtualAssertValidSignedRemainder(C, M) {
         eq_prod[i+1] <== eq_prod[i] * eq[i];
     }
 
-    // (1 - x_s - y_s) * LTU(x_{<s}, y_{<s}) + x_s * y_s * (1 - EQ(x_{<s}, y_{<s})) + (1 - x_s) * y_s * EQ(x, 0) + EQ(y, 0)
     signal temp_result[11];
     temp_result[0] <== 1 - left_msb[0];
     temp_result[1] <== temp_result[0] - right_msb[0];
@@ -512,7 +506,6 @@ template CombineLookupsVirtualAssertValidUnsignedRemainder(C, M) {
         eq_prod[i+1] <== eq_prod[i] * eq[i];
     }
 
-    // LTU(x, y) + EQ(y, 0)
     signal temp_result[2];
     temp_result[0] <== eq_prod[C-1] * ltu[C-1];
     temp_result[1] <== temp_result[0] + sum[C-1];

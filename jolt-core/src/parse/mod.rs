@@ -15,6 +15,8 @@ mod jolt;
 mod pcs;
 mod spartan1;
 mod spartan2;
+mod postponed_eval;
+
 #[cfg(test)]
 mod test {
     use crate::{
@@ -110,17 +112,17 @@ mod test {
             "pi_proof": jolt_preprocessing.format()
         });
 
-        write_json(&jolt1_input, output_dir, circuits[0]);
+        // write_json(&jolt1_input, output_dir, circuits[0]);
         drop_in_background_thread(jolt1_input);
 
-        let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
-        generate_circuit_and_witness(
-            &file_paths[0],
-            &output_dir,
-            circom_template,
-            jolt1_params,
-            prime,
-        );
+        // let jolt1_params: Vec<usize> = get_jolt_args(&jolt_proof, &jolt_preprocessing);
+        // generate_circuit_and_witness(
+        //     &file_paths[0],
+        //     &output_dir,
+        //     circom_template,
+        //     jolt1_params,
+        //     prime,
+        // );
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, jolt_circuit);
