@@ -164,7 +164,14 @@ mod test {
 
         let prime = "grumpkin";
 
-        generate_circuit_and_witness(&file_path, &output_dir, circom_template, [].to_vec(), prime);
+        generate_circuit_and_witness(
+            &file_path,
+            &output_dir,
+            circom_template,
+            [].to_vec(),
+            prime,
+            None,
+        );
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
