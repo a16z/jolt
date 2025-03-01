@@ -31,15 +31,13 @@ mod test {
         poly::commitment::{commitment_scheme::CommitmentScheme, hyperkzg::HyperKZG},
         r1cs::inputs::JoltR1CSInputs,
         spartan::spartan_memory_checking::R1CSConstructor,
+        subprotocols::grand_product::BatchedGrandProductLayerProof,
         utils::{
             poseidon_transcript::PoseidonTranscript, thread::drop_in_background_thread,
             transcript::Transcript,
         },
     };
-    use common::{
-        constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT},
-        rv_trace::NUM_CIRCUIT_FLAGS,
-    };
+    use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
     use serde_json::json;
     use std::{
         env,
@@ -261,7 +259,6 @@ mod test {
 
         (preprocessing, proof, commitments, debug_info)
     }
-
     fn get_jolt_args(
         proof: &JoltProof<
             C,
@@ -275,7 +272,17 @@ mod test {
         >,
         preprocessing: &JoltPreprocessing<C, Fr, PCS, ProofTranscript>,
     ) -> Vec<usize> {
-        let mut verify_args = vec![
+        pub fn max_round_gkr(
+            gkr_layers: &Vec<BatchedGrandProductLayerProof<Fr, PoseidonTranscript<Fr, Fr>>>,
+        ) -> usize {
+            gkr_layers[gkr_layers.len() - 1].proof.uni_polys.len()
+        }
+
+        // 43 total
+        let mut verify_args = Vec::new();
+
+        // Bytecode(9)
+        verify_args.extend([
             preprocessing.bytecode.v_init_final[0].len(),
             preprocessing.read_write_memory.bytecode_words.len(),
             proof.program_io.inputs.len(),
@@ -284,39 +291,25 @@ mod test {
             proof.bytecode.multiset_hashes.init_hashes.len(),
             proof.bytecode.read_write_grand_product.gkr_layers.len(),
             proof.bytecode.init_final_grand_product.gkr_layers.len(),
-            proof.bytecode.read_write_grand_product.gkr_layers
-                [proof.bytecode.read_write_grand_product.gkr_layers.len() - 1]
-                .proof
-                .uni_polys
-                .len(),
-            proof
-                .read_write_memory
-                .memory_checking_proof
-                .read_write_grand_product
-                .gkr_layers[proof
-                .read_write_memory
-                .memory_checking_proof
-                .read_write_grand_product
-                .gkr_layers
-                .len()
-                - 1]
-            .proof
-            .uni_polys
-            .len(),
-            proof
-                .read_write_memory
-                .memory_checking_proof
-                .init_final_grand_product
-                .gkr_layers[proof
-                .read_write_memory
-                .memory_checking_proof
-                .init_final_grand_product
-                .gkr_layers
-                .len()
-                - 1]
-            .proof
-            .uni_polys
-            .len(),
+            max_round_gkr(&proof.bytecode.read_write_grand_product.gkr_layers),
+        ]);
+
+        // read write memchecking(17)
+        verify_args.extend([
+            max_round_gkr(
+                &proof
+                    .read_write_memory
+                    .memory_checking_proof
+                    .read_write_grand_product
+                    .gkr_layers,
+            ),
+            max_round_gkr(
+                &proof
+                    .read_write_memory
+                    .memory_checking_proof
+                    .init_final_grand_product
+                    .gkr_layers,
+            ),
             proof
                 .read_write_memory
                 .memory_checking_proof
@@ -341,20 +334,13 @@ mod test {
                 .init_final_grand_product
                 .gkr_layers
                 .len(),
-            proof
-                .read_write_memory
-                .timestamp_validity_proof
-                .batched_grand_product
-                .gkr_layers[proof
-                .read_write_memory
-                .timestamp_validity_proof
-                .batched_grand_product
-                .gkr_layers
-                .len()
-                - 1]
-            .proof
-            .uni_polys
-            .len(),
+            max_round_gkr(
+                &proof
+                    .read_write_memory
+                    .timestamp_validity_proof
+                    .batched_grand_product
+                    .gkr_layers,
+            ),
             proof
                 .read_write_memory
                 .timestamp_validity_proof
@@ -372,41 +358,36 @@ mod test {
                 .timestamp_validity_proof
                 .multiset_hashes
                 .init_hashes
-                .len(),
-            proof
-                .read_write_memory
-                .timestamp_validity_proof
-                .exogenous_openings
                 .len(),
             proof.read_write_memory.output_proof.num_rounds,
-            proof
-                .instruction_lookups
-                .memory_checking
-                .read_write_grand_product
-                .gkr_layers[proof
-                .instruction_lookups
-                .memory_checking
-                .read_write_grand_product
-                .gkr_layers
-                .len()
-                - 1]
-            .proof
-            .uni_polys
-            .len(),
-            proof
-                .instruction_lookups
-                .memory_checking
-                .init_final_grand_product
-                .gkr_layers[proof
-                .instruction_lookups
-                .memory_checking
-                .init_final_grand_product
-                .gkr_layers
-                .len()
-                - 1]
-            .proof
-            .uni_polys
-            .len(),
+            preprocessing
+                .read_write_memory
+                .min_bytecode_address
+                .try_into()
+                .unwrap(),
+            preprocessing.memory_layout.input_start as usize,
+            preprocessing.memory_layout.output_start as usize,
+            preprocessing.memory_layout.panic as usize,
+            preprocessing.memory_layout.termination as usize,
+            (proof.program_io.panic as u8) as usize,
+        ]);
+
+        // instruction lookups(6)
+        verify_args.extend([
+            max_round_gkr(
+                &proof
+                    .instruction_lookups
+                    .memory_checking
+                    .read_write_grand_product
+                    .gkr_layers,
+            ),
+            max_round_gkr(
+                &proof
+                    .instruction_lookups
+                    .memory_checking
+                    .init_final_grand_product
+                    .gkr_layers,
+            ),
             proof
                 .instruction_lookups
                 .primary_sumcheck
@@ -416,9 +397,6 @@ mod test {
                 .len()
                 - 1,
             proof.instruction_lookups.primary_sumcheck.num_rounds,
-            preprocessing.instruction_lookups.num_memories,
-            NUM_INSTRUCTIONS,
-            NUM_SUBTABLES,
             proof
                 .instruction_lookups
                 .memory_checking
@@ -431,31 +409,17 @@ mod test {
                 .init_final_grand_product
                 .gkr_layers
                 .len(),
+        ]);
+
+        // r1cs(5) other 6 are read from file
+        verify_args.extend([
             proof.r1cs.outer_sumcheck_proof.uni_polys.len(),
             proof.r1cs.inner_sumcheck_proof.uni_polys.len(),
             proof.opening_proof.sumcheck_proof.uni_polys.len(),
             proof.r1cs.claimed_witness_evals.len(),
             proof.opening_proof.sumcheck_claims.len(),
-            32, // Word Size,
-            C,
-            4, // chunks_x_size,
-            4, // chunks_y_size,
-            NUM_CIRCUIT_FLAGS,
-            4, //relevant_y_chunks_len,
-            (1 << 16),
-            REGISTER_COUNT as usize,
-            preprocessing
-                .read_write_memory
-                .min_bytecode_address
-                .try_into()
-                .unwrap(),
-            RAM_START_ADDRESS as usize,
-            preprocessing.memory_layout.input_start as usize,
-            preprocessing.memory_layout.output_start as usize,
-            preprocessing.memory_layout.panic as usize,
-            preprocessing.memory_layout.termination as usize,
-            (proof.program_io.panic as u8) as usize,
-        ];
+        ]);
+
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let file_name = format!("{}", "args.txt");
         let file_path = Path::new(&binding).join(&file_name);
@@ -479,6 +443,223 @@ mod test {
 
         verify_args
     }
+    // fn get_jolt_args(
+    //     proof: &JoltProof<
+    //         C,
+    //         M,
+    //         JoltR1CSInputs,
+    //         Fr,
+    //         PCS,
+    //         RV32I,
+    //         RV32ISubtables<Fr>,
+    //         ProofTranscript,
+    //     >,
+    //     preprocessing: &JoltPreprocessing<C, Fr, PCS, ProofTranscript>,
+    // ) -> Vec<usize> {
+    //     let mut verify_args = vec![
+    //         preprocessing.bytecode.v_init_final[0].len(),
+    //         preprocessing.read_write_memory.bytecode_words.len(),
+    //         proof.program_io.inputs.len(),
+    //         proof.program_io.outputs.len(),
+    //         proof.bytecode.multiset_hashes.read_hashes.len(),
+    //         proof.bytecode.multiset_hashes.init_hashes.len(),
+    //         proof.bytecode.read_write_grand_product.gkr_layers.len(),
+    //         proof.bytecode.init_final_grand_product.gkr_layers.len(),
+    //         proof.bytecode.read_write_grand_product.gkr_layers
+    //             [proof.bytecode.read_write_grand_product.gkr_layers.len() - 1]
+    //             .proof
+    //             .uni_polys
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .read_write_grand_product
+    //             .gkr_layers[proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .read_write_grand_product
+    //             .gkr_layers
+    //             .len()
+    //             - 1]
+    //         .proof
+    //         .uni_polys
+    //         .len(),
+    //         proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .init_final_grand_product
+    //             .gkr_layers[proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .init_final_grand_product
+    //             .gkr_layers
+    //             .len()
+    //             - 1]
+    //         .proof
+    //         .uni_polys
+    //         .len(),
+    //         proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .multiset_hashes
+    //             .read_hashes
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .multiset_hashes
+    //             .init_hashes
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .read_write_grand_product
+    //             .gkr_layers
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .memory_checking_proof
+    //             .init_final_grand_product
+    //             .gkr_layers
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .timestamp_validity_proof
+    //             .batched_grand_product
+    //             .gkr_layers[proof
+    //             .read_write_memory
+    //             .timestamp_validity_proof
+    //             .batched_grand_product
+    //             .gkr_layers
+    //             .len()
+    //             - 1]
+    //         .proof
+    //         .uni_polys
+    //         .len(),
+    //         proof
+    //             .read_write_memory
+    //             .timestamp_validity_proof
+    //             .batched_grand_product
+    //             .gkr_layers
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .timestamp_validity_proof
+    //             .multiset_hashes
+    //             .read_hashes
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .timestamp_validity_proof
+    //             .multiset_hashes
+    //             .init_hashes
+    //             .len(),
+    //         proof
+    //             .read_write_memory
+    //             .timestamp_validity_proof
+    //             .exogenous_openings
+    //             .len(),
+    //         proof.read_write_memory.output_proof.num_rounds,
+    //         proof
+    //             .instruction_lookups
+    //             .memory_checking
+    //             .read_write_grand_product
+    //             .gkr_layers[proof
+    //             .instruction_lookups
+    //             .memory_checking
+    //             .read_write_grand_product
+    //             .gkr_layers
+    //             .len()
+    //             - 1]
+    //         .proof
+    //         .uni_polys
+    //         .len(),
+    //         proof
+    //             .instruction_lookups
+    //             .memory_checking
+    //             .init_final_grand_product
+    //             .gkr_layers[proof
+    //             .instruction_lookups
+    //             .memory_checking
+    //             .init_final_grand_product
+    //             .gkr_layers
+    //             .len()
+    //             - 1]
+    //         .proof
+    //         .uni_polys
+    //         .len(),
+    //         proof
+    //             .instruction_lookups
+    //             .primary_sumcheck
+    //             .sumcheck_proof
+    //             .uni_polys[0]
+    //             .coeffs
+    //             .len()
+    //             - 1,
+    //         proof.instruction_lookups.primary_sumcheck.num_rounds,
+    //         preprocessing.instruction_lookups.num_memories,
+    //         NUM_INSTRUCTIONS,
+    //         NUM_SUBTABLES,
+    //         proof
+    //             .instruction_lookups
+    //             .memory_checking
+    //             .read_write_grand_product
+    //             .gkr_layers
+    //             .len(),
+    //         proof
+    //             .instruction_lookups
+    //             .memory_checking
+    //             .init_final_grand_product
+    //             .gkr_layers
+    //             .len(),
+    //         proof.r1cs.outer_sumcheck_proof.uni_polys.len(),
+    //         proof.r1cs.inner_sumcheck_proof.uni_polys.len(),
+    //         proof.opening_proof.sumcheck_proof.uni_polys.len(),
+    //         proof.r1cs.claimed_witness_evals.len(),
+    //         proof.opening_proof.sumcheck_claims.len(),
+    //         32, // Word Size,
+    //         C,
+    //         4, // chunks_x_size,
+    //         4, // chunks_y_size,
+    //         NUM_CIRCUIT_FLAGS,
+    //         4, //relevant_y_chunks_len,
+    //         (1 << 16),
+    //         REGISTER_COUNT as usize,
+    //         preprocessing
+    //             .read_write_memory
+    //             .min_bytecode_address
+    //             .try_into()
+    //             .unwrap(),
+    //         RAM_START_ADDRESS as usize,
+    //         preprocessing.memory_layout.input_start as usize,
+    //         preprocessing.memory_layout.output_start as usize,
+    //         preprocessing.memory_layout.panic as usize,
+    //         preprocessing.memory_layout.termination as usize,
+    //         (proof.program_io.panic as u8) as usize,
+    //     ];
+    //     let binding = env::current_dir().unwrap().join("src/parse/requirements");
+    //     let file_name = format!("{}", "args.txt");
+    //     let file_path = Path::new(&binding).join(&file_name);
+
+    //     let content = read_to_string(file_path).unwrap();
+
+    //     let mut values = content
+    //         .split(',')
+    //         .map(|s| s.trim().parse::<usize>().unwrap());
+
+    //     let num_steps = values.next().unwrap();
+    //     let num_cons_total = values.next().unwrap();
+    //     let num_vars = values.next().unwrap();
+    //     let num_cols = values.next().unwrap();
+    //     verify_args.push(num_steps);
+    //     verify_args.push(num_cons_total);
+    //     verify_args.push(num_vars);
+    //     verify_args.push(num_cols);
+    //     verify_args.push(preprocessing.memory_layout.max_output_size as usize);
+    //     verify_args.push(preprocessing.memory_layout.max_input_size as usize);
+
+    //     verify_args
+    // }
     fn compute_size() -> (usize, usize) {
         let bytecode_stuff_size = 6 * 9;
         let read_write_memory_stuff_size = 6 * 13;

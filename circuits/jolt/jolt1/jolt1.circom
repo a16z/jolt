@@ -23,7 +23,7 @@ template verify(
             read_write_grand_product_layers_bytecode,
             init_final_grand_product_layers_bytecode,
             max_rounds_bytecode, 
-            
+
             max_rounds_read_write, max_rounds_init_final, num_read_write_hashes_read_write_memory_checking, 
             num_init_final_hashes_read_write_memory_checking,
             read_write_grand_product_layers_read_write_memory_checking,
@@ -32,43 +32,45 @@ template verify(
             ts_validity_grand_product_layers_timestamp,
             num_read_write_hashes_timestamp,
             num_init_hashes_timestamp,
-            MEMORY_OPS_PER_INSTRUCTION,
+
             max_rounds_outputsumcheck,
+
+            min_bytecode_address,
+            memory_layout_input_start,
+            memory_layout_output_start,
+            memory_layout_panic,
+            memory_layout_termination,
+            program_io_panic,
 
             max_rounds_instruction_lookups,
             max_round_init_final_lookups,
             primary_sumcheck_degree_instruction_lookups, 
-            primary_sumcheck_num_rounds_instruction_lookups, NUM_MEMORIES, NUM_INSTRUCTIONS,   NUM_SUBTABLES,
+            primary_sumcheck_num_rounds_instruction_lookups,
             read_write_grand_product_layers_instruction_lookups, init_final_grand_product_layers_instruction_lookups,
 
             outer_num_rounds_uniform_spartan_proof, inner_num_rounds_uniform_spartan_proof,
             rounds_reduced_opening_proof,
             num_spartan_witness_evals, 
             num_sumcheck_claims,
-
-
-            WORD_SIZE,
-            C, 
-            chunks_x_size, 
-            chunks_y_size, 
-            NUM_CIRCUIT_FLAGS, 
-            relevant_y_chunks_len,
-            M,
-      
-            REGISTER_COUNT,
-            min_bytecode_address,
-            RAM_START_ADDRESS,
-            memory_layout_input_start,
-            memory_layout_output_start,
-            memory_layout_panic,
-            memory_layout_termination,
-            program_io_panic,
             num_steps, num_cons_total, num_vars, num_rows,
-
             max_output_size,
             max_input_size
-
             ) {
+
+    var MEMORY_OPS_PER_INSTRUCTION = 4;
+    var REGISTER_COUNT = 64;
+    var RAM_START_ADDRESS = 2147483648;
+    var NUM_MEMORIES = 54; 
+    var NUM_INSTRUCTIONS = 26; 
+    var NUM_SUBTABLES = 26;
+
+    var WORD_SIZE = 32;
+    var C = 4; 
+    var chunks_x_size = 4; 
+    var chunks_y_size = 4; 
+    var NUM_CIRCUIT_FLAGS = 11; 
+    var relevant_y_chunks_len = 4;
+    var M = 1 << 16;
 
     // Scalar representation of label name: b"Jolt transcript"
     Transcript() transcript_init <== TranscriptNew()(604586419824232873836833680384618314);
@@ -632,21 +634,3 @@ template VerifyPI ( num_evals, bytecode_words_size) {
     VerifyHashing(bytecode_words_size)(preprocessing.bytecode_words_hash, proof.read_write_memory.bytecode_words);
 }
 
-
-// component main =  verify( 1<<9, 293, 1, 1, 1, 1, 9, 9, 9,  // num_evals,bytecode_words_size, input_size, output_size, num_read_write_hashes_bytecode,num_init_final_hashes_bytecode,read_write_grand_product_layers_bytecode,init_final_grand_product_layers_bytecode,max_rounds_bytecode, 
-//         11, 13, 4,1,9,13,  // max_rounds_read_write,num_read_write_hashes_read_write_memory_checking, num_init_final_hashes_read_write_memory_checking,read_write_grand_product_layers_read_write_memory_checking,init_final_grand_product_layers_read_write_memory_checking, 
-//         13,9,8,1,4, 
-//         13,  // max_rounds_timestamp,ts_validity_grand_product_layers_timestamp,num_read_write_hashes_timestamp,num_init_hashes_timestamp,MEMORY_OPS_PER_INSTRUCTION,max_rounds_outputsumcheck,
-//         16, 22, 8, 9,  54, 26, 26, 10, 16, // max_rounds_instruction_lookups,primary_sumcheck_degree_instruction_lookups, primary_sumcheck_num_rounds_instruction_lookups, NUM_MEMORIES, NUM_INSTRUCTIONS,   NUM_SUBTABLES,read_write_grand_product_layers_instruction_lookups, init_final_grand_product_layers_instruction_lookups,
-//         16,17, //  outer_num_rounds_uniform_spartan_proof, inner_num_rounds_uniform_spartan_proof,
-//         16,76,10, //rounds_reduced_opening_proof, num_spartan_witness_evals, num_sumcheck_claims,
-    
-//        //  WORD_SIZE, C, chunks_y_size, chunks_x_size, NUM_CIRCUIT_FLAGS, relevant_y_chunks_len,M,
-//         32, 4, 4, 4, 11, 4, 1 << 16, 
-
-//        // REGISTER_COUNT, min_bytecode_address,RAM_START_ADDRESS,,memory_layout_input_start,memory_layout_output_start,memory_layout_panic,memory_layout_termination,program_io_panic,
-//         64,    2147483648, 2147483648, 2147467520, 2147471616,2147475712, 2147475716, 0,
-//        //  num_steps, num_cons_total, num_vars, num_rows
-//         512, 65536, 76, 67, 4096, 4096
-
-// );
