@@ -1,5 +1,3 @@
-use std::env;
-
 use super::*;
 use crate::parse::jolt::to_limbs;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;

@@ -15,7 +15,6 @@ mod jolt;
 mod pcs;
 mod spartan1;
 mod spartan2;
-mod sum_check;
 #[cfg(test)]
 mod test {
     use crate::{
@@ -660,7 +659,6 @@ pub(crate) fn generate_circuit_and_witness(
     let witness_output = format!("{}/{}_witness.wtns", output_dir, circom_file_name);
     let input_path = format!("{}/{}_input.json", output_dir, circom_file_name);
 
-    println!("Using WASM witness generator...");
     let js_dir = format!("{}/{}_js", output_dir, circom_file_name);
 
     let wasm_file = format!("{}/{}.wasm", js_dir, circom_file_name);

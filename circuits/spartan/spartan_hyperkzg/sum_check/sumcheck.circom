@@ -10,9 +10,8 @@ template NonNativeSumCheck(rounds, degree) {
     input SumcheckInstanceProof(degree, rounds) sumcheck_proof;
     input Transcript() transcript ;
     output Transcript() up_transcript;
-    output Fq() finalClaim ; 
+    output Fq() finalClaim; 
     output Fq() randomPoints[rounds];  
-
     Transcript() int_transcript[rounds + 1];
     Fq() r;
 
@@ -30,7 +29,7 @@ template NonNativeSumCheck(rounds, degree) {
     {  
         eval_at_01[i] = eval_at_01(degree);
         eval_at_01[i].poly <== sumcheck_proof.uni_polys[i].coeffs;
-        
+        log("i is ", i);
         NonNativeEquality()(claim[i], eval_at_01[i].eval);
         
         // reseeding with sumcheck_proof.uni_polys[i].coeffs
@@ -41,10 +40,11 @@ template NonNativeSumCheck(rounds, degree) {
         eval_at_r[i].poly <== sumcheck_proof.uni_polys[i].coeffs;
         eval_at_r[i].random_point <== randomPoints[i];
  
-       claim[i + 1] <== eval_at_r[i].eval;
+        claim[i + 1] <== eval_at_r[i].eval;
     } 
-      finalClaim <== claim[rounds] ;
-      up_transcript <== int_transcript[rounds];
+    finalClaim <== claim[rounds] ;
+  
+    up_transcript <== int_transcript[rounds];
 }
  
  
@@ -57,7 +57,8 @@ template eval_at_01(degree){
      Fq() add[degree + 1];  
 
     add[0] <== poly[0];
-     for (var i = 1; i < degree + 1; i++ )
+    
+    for (var i = 1; i < degree + 1; i++ )
     {           
         add[i] <== NonNativeAdd()(add[i - 1], poly[i]);
     }
