@@ -365,6 +365,7 @@ pub fn prove_single_instruction<
     drop(span);
 
     let mut t_evals: HashMap<u64, F> = HashMap::with_capacity(T + TREE_WIDTH);
+    let mut t_evals_vec: Vec<usize> = Vec::with_capacity(T);
 
     let mut rv_claim = F::zero();
     let mut previous_claim = F::zero();
@@ -411,7 +412,10 @@ pub fn prove_single_instruction<
                             .map(|k| (*k, F::from_u64(I::default().materialize_entry(*k)))),
                     ),
             );
-            // TODO(moodlezoup): Directly map j to reference of `t_eval` value
+            t_evals_vec = lookup_indices
+                .par_iter()
+                .map(|k| (t_evals.get(k).unwrap() as *const F) as usize)
+                .collect();
         } else {
             let span = tracing::span!(tracing::Level::INFO, "Update u_evals");
             let _guard = span.enter();
@@ -473,7 +477,8 @@ pub fn prove_single_instruction<
                 j_iter.for_each(|j| {
                     let k = lookup_indices[j];
                     let u = u_evals[j];
-                    let t = t_evals.get(&k).unwrap();
+                    // let t = t_evals.get(&k).unwrap();
+                    let t = unsafe { *(t_evals_vec[j] as *const F) };
                     let leaf_index =
                         ((k >> ((3 - phase) * log_m)) % leaves_per_chunk as u64) as usize;
                     z_leaves[leaf_index] += u;
