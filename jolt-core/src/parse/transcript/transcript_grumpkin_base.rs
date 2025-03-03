@@ -4,12 +4,13 @@ mod tests{
     use ark_ec::short_weierstrass::Projective;
     use ark_grumpkin::{Affine, Fq, Fr, GrumpkinConfig};
     use ark_ff::{PrimeField, UniformRand};
+    use num_bigint::BigUint;
     use rand_chacha::ChaCha8Rng;
     use rand_core::SeedableRng;
     use serde_json::{json, Value};
     use std::env;
 
-    use crate::{field::JoltField, parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse}, spartan::spartan_memory_checking::R1CSConstructor, utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript}};
+    use crate::{field::JoltField, parse::{generate_circuit_and_witness, get_path, read_witness, spartan2::from_limbs, write_json, Parse}, spartan::spartan_memory_checking::R1CSConstructor, utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript}};
 
     #[test]
     fn new(){
@@ -154,74 +155,74 @@ mod tests{
         verify(input, package_name, circom_template, actual_results);
     }
 
-    // #[test]
-    // fn challenge_scalar(){
-    //     let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
+    #[test]
+    fn challenge_scalar(){
+        let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
-    //     let input = json!(
-    //         {
-    //             "transcript": {
-    //                 "state": t.state.state[1].to_string(),
-    //                 "nRounds": 0.to_string()
-    //         }
-    //         }
-    //     );
+        let input = json!(
+            {
+                "transcript": {
+                    "state": t.state.state[1].to_string(),
+                    "nRounds": 0.to_string()
+            }
+            }
+        );
 
-    //     let package_name = "grumpkin_transcript";
-    //     let circom_template = "ChallengeScalar";
+        let package_name = "grumpkin_transcript";
+        let circom_template = "ChallengeScalar";
 
-    //     let rust_challenge = t.challenge_scalar::<Fr>();
+        let rust_challenge = t.challenge_scalar::<Fr>();
 
-    //     let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds), rust_challenge];
+        let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds)];
 
-    //     verify(input, package_name, circom_template, actual_results);
-    // }
+        verify_for_challenges(input, package_name, circom_template, actual_results, vec![rust_challenge]);
+    }
 
-    // #[test]
-    // fn challenge_vector(){
-    //     let mut t = <PoseidonTranscript<Fr, Fr> as Transcript>::new(b"label");
+    #[test]
+    fn challenge_vector(){
+        let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
-    //     let input = json!(
-    //         {
-    //             "transcript": {
-    //                 "state": t.state.state[1].to_string(),
-    //                 "nRounds": 0.to_string()
-    //         }
-    //         }
-    //     );
+        let input = json!(
+            {
+                "transcript": {
+                    "state": t.state.state[1].to_string(),
+                    "nRounds": 0.to_string()
+            }
+            }
+        );
 
-    //     let package_name = "transcript";
-    //     let circom_template = "ChallengeVector";
+        let package_name = "grumpkin_transcript";
+        let circom_template = "ChallengeVector";
 
-    //     let rust_challenge = t.challenge_vector(LEN);
+        let rust_challenges = t.challenge_vector(LEN);
 
-    //     let actual_results = [vec![t.state.state[1], Fr::from(t.n_rounds)], rust_challenge].concat();
+        let actual_results = [vec![t.state.state[1], Fq::from(t.n_rounds)]].concat();
 
-    //     verify(input, package_name, circom_template, actual_results);
-    // }
+        verify_for_challenges(input, package_name, circom_template, actual_results, rust_challenges);
+    }
 
-    // #[test]
-    // fn challenge_powers(){
-    //     let mut t = <PoseidonTranscript<Fr, Fr> as Transcript>::new(b"label");
+    #[test]
+    fn challenge_powers(){
+        let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
-    //     let input = json!(
-    //         {
-    //             "transcript": {
-    //                 "state": t.state.state[1].to_string(),
-    //                 "nRounds": 0.to_string()
-    //         }
-    //         }
-    //     );
+        let input = json!(
+            {
+                "transcript": {
+                    "state": t.state.state[1].to_string(),
+                    "nRounds": 0.to_string()
+            }
+            }
+        );
 
-    //     let package_name = "transcript";
-    //     let circom_template = "ChallengeScalarPowers";
+        let package_name = "grumpkin_transcript";
+        let circom_template = "ChallengeScalarPowers";
 
-    //     let rust_challenge = t.challenge_scalar_powers(LEN);
+        let rust_challenges = t.challenge_scalar_powers(LEN);
 
-    //     let actual_results = [vec![t.state.state[1], Fr::from(t.n_rounds)], rust_challenge].concat();
+        let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds)];
 
-    //     verify(input, package_name, circom_template, actual_results);
-    // }
+        verify_for_challenges(input, package_name, circom_template, actual_results, rust_challenges);
+    }
 
 
     fn verify<F: JoltField + PrimeField>(
@@ -280,5 +281,64 @@ mod tests{
 
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<F>::construct(Some(&constraint_path), Some(&z), 0);
+    }
+
+    fn verify_for_challenges(
+        input: serde_json::Value,
+        package_name: &str,
+        circom_template: &str,
+        actual_results: Vec<Fq>,
+        challenges: Vec<Fr>,
+    ) {
+        let binding = env::current_dir().unwrap().join("src/parse/requirements");
+        let output_dir = binding.to_str().unwrap();
+        let package_path = get_path();
+        write_json(&input, output_dir, package_name);
+
+        let file_name = format!("{}/{}.circom", "transcript", package_name);
+        let file_path = package_path.join(file_name);
+
+        let prime = "bn128";
+
+        let mut params = Vec::new();
+
+        if circom_template == "AppendScalars" || circom_template == "AppendPoints" || circom_template == "AppendBytes" || circom_template == "ChallengeVector" || circom_template ==  "ChallengeScalarPowers" {
+            params.push(LEN);
+        }
+
+        generate_circuit_and_witness(
+            &file_path,
+            &output_dir,
+            circom_template,
+            params,
+            prime,
+            None,
+        );
+
+        // Read the witness.json file
+        let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
+        let z = read_witness::<Fq>(&witness_file_path.to_string());
+
+        let constraint_path =
+            format!("{}/{}_constraints.json", output_dir, package_name).to_string();
+
+        let expected_state = Fq::from(z[1]);
+        let expected_nRounds = Fq::from(z[2]);
+
+        assert_eq!(expected_state, actual_results[0]);
+        assert_eq!(expected_nRounds, actual_results[1]);
+
+        if circom_template == "ChallengeScalar" {
+            assert_eq!(challenges[0], from_limbs([z[3], z[4], z[5]].to_vec()));
+        }
+        if circom_template == "ChallengeVector" || circom_template == "ChallengeScalarPowers" {
+            for i in 0..LEN{
+                assert_eq!(challenges[i], from_limbs([z[3+ 3 * i], z[4 + 3 * i], z[5 + 3 * i]].to_vec()), "failing at {i}");
+            }
+        }
+
+
+        //To Check Az.Bz = C.z
+        let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
 }
