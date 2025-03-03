@@ -1,2 +1,3 @@
-mod transcript_bn_scalar;
-mod transcript_grumpkin_base;
+mod transcript;
+mod transcript_grumpkin;
+mod transcript_bn254;
