@@ -13,6 +13,7 @@ mod commit;
 mod field;
 mod groups;
 mod jolt;
+mod non_native;
 mod pcs;
 mod spartan1;
 mod spartan2;
