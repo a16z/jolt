@@ -17,16 +17,16 @@ type Pcs = HyraxScheme<ark_grumpkin::Projective, ProofTranscript>;
 
 pub fn from_limbs<F: PrimeField, K: PrimeField>(limbs: Vec<F>) -> K {
     assert_eq!(limbs.len(), 3);
-    let bits = limbs[0]
-        .into_bigint()
-        .to_bits_le()
-        .iter()
-        .take(125)
-        .chain(limbs[1].into_bigint().to_bits_le().iter().take(125))
-        .chain(limbs[2].into_bigint().to_bits_le().iter().take(4))
-        .cloned()
-        .collect_vec();
-    K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&bits).to_bytes_le())
+
+    let limb0_bits = limbs[0].into_bigint().to_bits_le();
+    let limb1_bits = limbs[1].into_bigint().to_bits_le();
+    let limb2_bits = limbs[2].into_bigint().to_bits_le();
+    
+    K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&limb0_bits).to_bytes_le())
+        + K::from(2u8).pow([(125) as u64, 0, 0, 0])
+            * K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&limb1_bits).to_bytes_le())
+        + K::from(2u8).pow([(250) as u64, 0, 0, 0])
+            * K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&limb2_bits).to_bytes_le())
 }
 
 impl Parse for Fr {
