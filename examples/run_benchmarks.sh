@@ -32,7 +32,7 @@ function write_to_json() {
   printf "        \"unit\": \"%s\",\n" "$3" >>"$output_file"
   printf "        \"value\": %.4f,\n" "$2" >>"$output_file"
   printf "        \"extra\": \"\"\n" >>"$output_file"
-  if [ "$4" = false ]; then
+  if [ "$4" = "false" ]; then
     printf "    },\n" >>"$output_file"
   else
     printf "    }\n" >>"$output_file"
