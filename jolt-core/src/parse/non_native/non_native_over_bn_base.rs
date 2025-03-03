@@ -9,7 +9,10 @@ mod test {
     use serde_json::json;
 
     use crate::{
-        parse::{generate_circuit_and_witness, get_path, read_witness, spartan2::from_limbs, write_json, Parse},
+        parse::{
+            generate_circuit_and_witness, get_path, read_witness, spartan2::from_limbs, write_json,
+            Parse,
+        },
         spartan::spartan_memory_checking::R1CSConstructor,
     };
     type Fr = ark_bn254::Fr;
@@ -121,15 +124,9 @@ mod test {
         let package_name = "non_native_over_bn_base";
         let circom_template = "NonNativeEquality";
         verify_equality(input, package_name, circom_template);
-
-
     }
 
-    fn verify_equality(
-        input: serde_json::Value,
-        package_name: &str,
-        circom_template: &str,
-    ) {
+    fn verify_equality(input: serde_json::Value, package_name: &str, circom_template: &str) {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
         let package_path = get_path();
@@ -154,7 +151,7 @@ mod test {
         let z = read_witness::<ark_bn254::Fq>(&witness_file_path.to_string());
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
-        
+
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<ark_bn254::Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
