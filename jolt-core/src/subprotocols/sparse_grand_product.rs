@@ -38,11 +38,11 @@ struct BatchedGrandProductToggleLayer<F: JoltField> {
     flag_values: Vec<Vec<F>>,
     /// The Reed-Solomon fingerprints for each circuit in the batch.
     fingerprints: Vec<Vec<F>>,
-    /// Once the sparse flag/fingerprint vectors cannnot be bound further
+    /// Once the sparse flag/fingerprint vectors cannot be bound further
     /// (i.e. binding would require processing values in different vectors),
     /// we switch to using `coalesced_flags` to represent the flag values.
     coalesced_flags: Option<Vec<F>>,
-    /// Once the sparse flag/fingerprint vectors cannnot be bound further
+    /// Once the sparse flag/fingerprint vectors cannot be bound further
     /// (i.e. binding would require processing values in different vectors),
     /// we switch to using `coalesced_fingerprints` to represent the fingerprint values.
     coalesced_fingerprints: Option<Vec<F>>,
@@ -127,7 +127,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
     /// Computes the grand product layer output by this one.
     /// Since this is a toggle layer, most of the output values are 1s, so
-    /// the return type is a SparseInterleavedPolyomial
+    /// the return type is a SparseInterleavedPolynomial
     ///   o      o     o      o    <-  output layer
     ///  / \    / \   / \    / \
     /// 🏴  o  🏳️ o  🏳️ o  🏴  o  <- toggle layer
@@ -210,11 +210,11 @@ impl<F: JoltField> Bindable<F> for BatchedGrandProductToggleLayer<F> {
             }
             self.coalesced_flags = Some(bound_flags);
 
-            let coalesced_fingerpints = self.coalesced_fingerprints.as_mut().unwrap();
-            let mut bound_fingerprints = vec![F::zero(); coalesced_fingerpints.len() / 2];
+            let coalesced_fingerprints = self.coalesced_fingerprints.as_mut().unwrap();
+            let mut bound_fingerprints = vec![F::zero(); coalesced_fingerprints.len() / 2];
             for i in 0..bound_fingerprints.len() {
-                bound_fingerprints[i] = coalesced_fingerpints[2 * i]
-                    + r * (coalesced_fingerpints[2 * i + 1] - coalesced_fingerpints[2 * i]);
+                bound_fingerprints[i] = coalesced_fingerprints[2 * i]
+                    + r * (coalesced_fingerprints[2 * i + 1] - coalesced_fingerprints[2 * i]);
             }
             self.coalesced_fingerprints = Some(bound_fingerprints);
             self.batched_layer_len /= 2;
@@ -399,14 +399,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
         if let Some(coalesced_flags) = &self.coalesced_flags {
-            let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();
+            let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
             let cubic_evals = if eq_poly.E1_len == 1 {
                 // 1. Flags/fingerprints are coalesced, and E1 is fully bound
                 // This is similar to the if case of `DenseInterleavedPolynomial::compute_cubic`
                 coalesced_flags
                     .par_chunks(2)
-                    .zip(coalesced_fingerpints.par_chunks(2))
+                    .zip(coalesced_fingerprints.par_chunks(2))
                     .zip(eq_poly.E2.par_chunks(2))
                     .map(|((flags, fingerprints), eq_chunk)| {
                         let eq_evals = {
@@ -453,12 +453,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
                 let flag_chunk_size = coalesced_flags.len().next_power_of_two() / eq_poly.E2_len;
                 let fingerprint_chunk_size =
-                    coalesced_fingerpints.len().next_power_of_two() / eq_poly.E2_len;
+                    coalesced_fingerprints.len().next_power_of_two() / eq_poly.E2_len;
 
                 eq_poly.E2[..eq_poly.E2_len]
                     .par_iter()
                     .zip(coalesced_flags.par_chunks(flag_chunk_size))
-                    .zip(coalesced_fingerpints.par_chunks(fingerprint_chunk_size))
+                    .zip(coalesced_fingerprints.par_chunks(fingerprint_chunk_size))
                     .map(|((E2_eval, flag_x2), fingerprint_x2)| {
                         let mut inner_sum = (F::zero(), F::zero(), F::zero());
                         for ((E1_evals, flag_chunk), fingerprint_chunk) in E1_evals

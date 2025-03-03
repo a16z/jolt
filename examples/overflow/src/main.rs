@@ -22,13 +22,13 @@ pub fn main() {
 
     // valid case for stack allocation, calls overflow_stack() under the hood
     // but with stack_size=8192
-    let (prove_allocate_stack_with_increased_size, verfiy_allocate_stack_with_increased_size) =
+    let (prove_allocate_stack_with_increased_size, verify_allocate_stack_with_increased_size) =
         guest::build_allocate_stack_with_increased_size();
 
     let now = Instant::now();
     let (output, proof) = prove_allocate_stack_with_increased_size();
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verfiy_allocate_stack_with_increased_size(proof);
+    let is_valid = verify_allocate_stack_with_increased_size(proof);
 
     println!("output: {}", output);
     println!("valid: {}", is_valid);

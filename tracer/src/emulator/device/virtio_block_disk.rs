@@ -453,7 +453,7 @@ impl VirtioBlockDisk {
         (self.get_base_avail_address() + 4 + queue_size * 2).div_ceil(align) * align
     }
 
-    // @TODO: Follow the virtio block specification more propertly.
+    // @TODO: Follow the virtio block specification more properly.
     fn handle_disk_access(&mut self, memory: &mut MemoryWrapper) {
         let base_desc_address = self.get_base_desc_address();
         let base_avail_address = self.get_base_avail_address();

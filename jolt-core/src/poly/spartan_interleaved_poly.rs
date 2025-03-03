@@ -449,7 +449,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     }
 
     /// All subsequent rounds of the first Spartan sumcheck.
-    pub fn subseqeunt_sumcheck_round<ProofTranscript: Transcript>(
+    pub fn subsequent_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut SplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
