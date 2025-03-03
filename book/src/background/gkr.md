@@ -7,7 +7,7 @@ $\widetilde{\text{add}}_i(j, a, b)$ evaluates to 1 if the $j$-th gate of the $i$
 
 $\widetilde{\text{mult}}_i(j, a, b)$ evaluates to 1 if the $j$-th gate of the $i$-th layer is a multiplication gate whose inputs are the $a$'th and $b$'th gates at the preceding layer. 
 
-The sumcheck protocol is applied to the following:
+The sum-check protocol is applied to the following:
 $$
 \widetilde{V}_i(z) = \sum_{(p,\omega_1,\omega_2) \in \{0,1\}^{s_i+2s_{i+1}}} f_{i,z}(p,\omega_1,\omega_2),
 $$
@@ -23,7 +23,7 @@ $$
 
 (See [the eq-polynomial page](https://jolt.a16zcrypto.com/background/eq-polynomial.html) for details.)
 
-Lasso and Jolt currently use the variant of GKR described in [Thaler13](https://eprint.iacr.org/2013/351.pdf), which is optimized for the far simpler case of a binary tree of multiplication gates. This simplifies each sumcheck to:
+Lasso and Jolt currently use the variant of GKR described in [Thaler13](https://eprint.iacr.org/2013/351.pdf), which is optimized for the far simpler case of a binary tree of multiplication gates. This simplifies each sum-check to:
 $$
 \widetilde{V}_i(z) = \sum_{p \in \{0,1\}^{s_i}} g^{(i)}_z(p),
 $$
