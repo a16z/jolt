@@ -8,7 +8,7 @@ Running
 
 You can produce a lean file in the ZkLean source directory by cloning XXX and running the following command from the root of the Jolt repo:
 ```sh
-cargo run -p zklean-extractor -- -f $PATH_TO_ZKLEAN_REPO/src/ZkLean/SubtableMles.lean
+cargo run --release -p zklean-extractor -- -f $PATH_TO_ZKLEAN_REPO/src/ZkLean/SubtableMles.lean
 ```
 
 Testing

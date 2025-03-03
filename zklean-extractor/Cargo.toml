@@ -10,14 +10,19 @@ homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
+[lib]
+proc-macro = true
+
 [dependencies]
 ark-std = { version = "0.4.0" }
-ark-serialize = { version = "0.4.2", default-features = false, features = [
-    "derive",
-] }
+ark-serialize = { version = "0.4.2", default-features = false, features = ["derive"] }
 binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
 clap = { version = "4.3.10", features = ["derive"] }
 rand_core = { version = "0.6.4", default-features = false }
+
+syn = {version = "1.0", features = ["full"]}
+quote = "1.0"
+proc-macro2 = "1.0"
 
 jolt-core = { path = "../jolt-core" }
 

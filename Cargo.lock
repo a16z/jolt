@@ -4616,6 +4616,9 @@ dependencies = [
  "binius_field",
  "clap",
  "jolt-core",
+ "proc-macro2",
  "proptest",
+ "quote",
  "rand_core 0.6.4",
+ "syn 1.0.109",
 ]

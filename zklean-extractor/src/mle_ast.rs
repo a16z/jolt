@@ -54,9 +54,9 @@ impl<const NUM_NODES: usize> MleAst<NUM_NODES> {
         Self { nodes, root }
     }
 
-    /// Append the nodes of `other` onto the array of nodes in `self`. The root of `self` will be
-    /// the root the appended copy of `other` (the right tree). Return the indices of the left and
-    /// right trees in the node array of `self`.
+    /// Append the nodes of `other` onto the array of nodes in `self`. The root of `self` (the left
+    /// tree) will be the root the appended copy of `other` (the right tree). Return the indices of
+    /// the left and right trees in the node array of `self`.
     fn concatenate(&mut self, other: Self) -> (usize, usize) {
         let shift = self.root+1;
         for i in 0..=other.root {
@@ -403,54 +403,36 @@ impl<const NUM_NODES: usize> JoltField for MleAst<NUM_NODES> {
     }
 }
 
+/// Evaluate the computation represented by the AST over another [`JoltField`], starting at
+/// `root`, and using the variable assignments in `vars`.
 #[cfg(test)]
-mod test {
-    use super::*;
-    use crate::util::ZkLeanReprField;
-    use crate::util::test::{Evaluatable, make_subtable_test_module};
-    use binius_field::BinaryField128b;
-    use jolt_core::field::binius::BiniusField;
-    use proptest::prelude::*;
-
-    type ReferenceField = BiniusField<BinaryField128b>;
-    type TestField = MleAst<2048>;
-
-    /// Evaluate the computation represented by the AST over another [`JoltField`], starting at
-    /// `root`, and using the variable assignments in `vars`.
-    fn evaluate_helper<F: JoltField>(
-        vars: &[F],
-        nodes: &[Option<MleAstNode>],
-        root: usize,
-    ) -> F {
-        match nodes[root] {
-            Some(MleAstNode::Scalar(f)) => F::from_u64(f),
-            Some(MleAstNode::Var(_, var)) =>
-                vars[var], // TODO: handle multiple registers?
-            Some(MleAstNode::Neg(next_root)) =>
-                -evaluate_helper(vars, nodes, root - next_root),
-            Some(MleAstNode::Inv(next_root)) =>
-                evaluate_helper(vars, nodes, root - next_root).inverse().expect("division by 0"),
-            Some(MleAstNode::Add(lhs_root, rhs_root)) =>
-                evaluate_helper(vars, nodes, root - lhs_root) + evaluate_helper(vars, nodes, root - rhs_root),
-            Some(MleAstNode::Mul(lhs_root, rhs_root)) =>
-                evaluate_helper(vars, nodes, root - lhs_root) * evaluate_helper(vars, nodes, root - rhs_root),
-            Some(MleAstNode::Sub(lhs_root, rhs_root)) =>
-                evaluate_helper(vars, nodes, root - lhs_root) - evaluate_helper(vars, nodes, root - rhs_root),
-            Some(MleAstNode::Div(lhs_root, rhs_root)) =>
-                evaluate_helper(vars, nodes, root - lhs_root) / evaluate_helper(vars, nodes, root - rhs_root),
-            None => panic!("unreachable")
-        }
+fn evaluate_helper<F: JoltField>(
+    vars: &[F],
+    nodes: &[Option<MleAstNode>],
+    root: usize,
+) -> F {
+    match nodes[root] {
+        Some(MleAstNode::Scalar(f)) => F::from_u64(f as u64), // TODO: handle negative scalars?
+        Some(MleAstNode::Var(_, var)) => vars[var], // TODO: handle multiple registers?
+        Some(MleAstNode::Neg(next_root)) =>
+            -evaluate_helper(vars, nodes, root - next_root),
+        Some(MleAstNode::Inv(next_root)) =>
+            evaluate_helper(vars, nodes, root - next_root).inverse().expect("division by 0"),
+        Some(MleAstNode::Add(lhs_root, rhs_root)) =>
+            evaluate_helper(vars, nodes, root - lhs_root) + evaluate_helper(vars, nodes, root - rhs_root),
+        Some(MleAstNode::Mul(lhs_root, rhs_root)) =>
+            evaluate_helper(vars, nodes, root - lhs_root) * evaluate_helper(vars, nodes, root - rhs_root),
+        Some(MleAstNode::Sub(lhs_root, rhs_root)) =>
+            evaluate_helper(vars, nodes, root - lhs_root) - evaluate_helper(vars, nodes, root - rhs_root),
+        Some(MleAstNode::Div(lhs_root, rhs_root)) =>
+            evaluate_helper(vars, nodes, root - lhs_root) / evaluate_helper(vars, nodes, root - rhs_root),
+        None => panic!("unreachable")
     }
+}
 
-    impl<const NUM_NODES: usize> Evaluatable for MleAst<NUM_NODES> {
-        fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
-            evaluate_helper(vars, &self.nodes, self.root)
-        }
-
-        fn x_register(size: usize) -> Vec<Self> {
-            Self::register('x', size)
-        }
+#[cfg(test)]
+impl<const NUM_NODES: usize> crate::util::Evaluatable for MleAst<NUM_NODES> {
+    fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
+        evaluate_helper(vars, &self.nodes, self.root)
     }
-
-    make_subtable_test_module!(TestField, ReferenceField);
 }
