@@ -21,6 +21,7 @@ mod test {
     type Fq = ark_bn254::Fq;
     type ProofTranscript = PoseidonTranscript<Fr, Fq>;
     type Pcs = HyperKZG<ark_bn254::Bn254, ProofTranscript>;
+
     #[test]
     fn test_hyperkzg() {
         let vars = 5;

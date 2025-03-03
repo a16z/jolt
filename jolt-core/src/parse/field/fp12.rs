@@ -7,8 +7,6 @@ mod tests {
 
     use ark_bn254::{Fq, Fq12, Fq2, Fq6};
     use ark_ff::{CyclotomicMultSubgroup, Field, UniformRand};
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
 
@@ -23,8 +21,7 @@ mod tests {
 
     #[test]
     fn Fp12Add() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq12::rand(&mut rng);
         let op2 = Fq12::rand(&mut rng);
         let actual_result = op1 + op2;
@@ -42,8 +39,7 @@ mod tests {
 
     #[test]
     fn Fp12mul() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq12::rand(&mut rng);
         let op2 = Fq12::rand(&mut rng);
         let actual_result = op1 * op2;
@@ -61,8 +57,7 @@ mod tests {
 
     #[test]
     fn Fp12inv() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq12::rand(&mut rng);
         let actual_result = op1.inverse().unwrap();
 
@@ -78,8 +73,7 @@ mod tests {
 
     #[test]
     fn Fp12mulbyfp() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq::rand(&mut rng);
         let op2 = Fq12::rand(&mut rng);
 
@@ -101,7 +95,7 @@ mod tests {
     // failing
     #[test]
     fn Fp12square() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let op1 = Fq12::rand(&mut rng);
 
         let input = json!(

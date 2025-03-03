@@ -1,13 +1,13 @@
 use super::*;
 use crate::parse::jolt::to_limbs;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::spartan::spartan_memory_checking::{R1CSConstructor, SpartanProof};
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::thread::drop_in_background_thread;
 use crate::{poly::commitment::hyrax::HyraxScheme, utils::poseidon_transcript::PoseidonTranscript};
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
-use itertools::Itertools;
 use serde_json::json;
 
 type Fr = ark_grumpkin::Fr;
@@ -21,7 +21,7 @@ pub fn from_limbs<F: PrimeField, K: PrimeField>(limbs: Vec<F>) -> K {
     let limb0_bits = limbs[0].into_bigint().to_bits_le();
     let limb1_bits = limbs[1].into_bigint().to_bits_le();
     let limb2_bits = limbs[2].into_bigint().to_bits_le();
-    
+
     K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&limb0_bits).to_bytes_le())
         + K::from(2u8).pow([(125) as u64, 0, 0, 0])
             * K::from_le_bytes_mod_order(&BigInt::<4>::from_bits_le(&limb1_bits).to_bytes_le())
@@ -198,18 +198,18 @@ pub(crate) fn spartan_hyrax(
     verify_postponed_eval(pub_io, inner_num_rounds);
 }
 
-// #[test]
-// fn test_final_eval() {
-//     use std::env;
-//     let binding = env::current_dir().unwrap().join("src/parse/requirements");
-//     let output_dir = binding.to_str().unwrap();
-//     let witness_file_path = format!("{}/{}_witness.json", output_dir, "spartan_hyrax").to_string();
+#[test]
+fn test_final_eval() {
+    use std::env;
+    let binding = env::current_dir().unwrap().join("src/parse/requirements");
+    let output_dir = binding.to_str().unwrap();
+    let witness_file_path = format!("{}/{}_witness.json", output_dir, "spartan_hyrax").to_string();
 
-//     let z = read_witness::<Fr>(&witness_file_path);
-//     let pub_io = z[0..1 + 1 + 3 * 24 + 1718 - 1 + 40].to_vec();
+    let z = read_witness::<Fr>(&witness_file_path);
+    let pub_io = z[0..1 + 1 + 3 * 24 + 1718 - 1 + 40].to_vec();
 
-//     verify_postponed_eval(pub_io, 24);
-// }
+    verify_postponed_eval(pub_io, 24);
+}
 
 pub(crate) fn verify_postponed_eval(z: Vec<Fr>, l: usize) {
     let postponed_eval = &z[2..3 * l + 2];
@@ -242,39 +242,15 @@ pub(crate) fn verify_postponed_eval(z: Vec<Fr>, l: usize) {
     pub_io.resize(pad_length, Fr::ZERO);
 
     let required_pt = pt[pt.len() - log_pad_length..].to_vec();
-    let evals = evals(required_pt);
 
-    let mut computed_eval = inner_product(pub_io, evals);
+    let mut computed_eval = DensePolynomial::new(pub_io).evaluate(&required_pt);
+
     computed_eval *= pt[0..pt.len() - log_pad_length]
         .iter()
         .map(|r| Fr::ONE - r)
         .product::<Fr>();
 
     assert_eq!(eval, computed_eval);
-}
-
-fn evals(r: Vec<Fr>) -> Vec<Fr> {
-    let ell = r.len();
-    let pow_2 = 1 << ell;
-
-    let mut evals: Vec<Fr> = vec![Fr::from(1); pow_2];
-    let mut size = 1;
-    for j in 0..ell {
-        // in each iteration, we double the size of chis
-        size *= 2;
-        for i in (0..size).rev().step_by(2) {
-            // copy each element from the prior iteration twice
-            let scalar = evals[i / 2];
-            evals[i] = scalar * r[j];
-            evals[i - 1] = scalar - evals[i];
-        }
-    }
-    evals
-}
-
-fn inner_product(a: Vec<Fr>, b: Vec<Fr>) -> Fr {
-    assert_eq!(a.len(), b.len());
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
 // // SPDX-License-Identifier: MIT

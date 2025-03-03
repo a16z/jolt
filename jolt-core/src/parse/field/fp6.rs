@@ -1,16 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use ark_bn254::{Fq2, Fq6};
-    use ark_ff::{Field, UniformRand};
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
-    use serde_json::json;
-    use std::env;
-
     use crate::{
         parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse},
         spartan::spartan_memory_checking::R1CSConstructor,
     };
+    use ark_bn254::{Fq2, Fq6};
+    use ark_ff::{Field, UniformRand};
+    use serde_json::json;
+    use std::env;
+
     impl Parse for Fq6 {
         fn format(&self) -> serde_json::Value {
             json!({
@@ -20,10 +18,10 @@ mod tests {
             })
         }
     }
+
     #[test]
     fn Fp6Add() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq6::rand(&mut rng);
         let op2 = Fq6::rand(&mut rng);
         let actual_result = op1 + op2;
@@ -38,10 +36,10 @@ mod tests {
         let circom_template = "Fp6add";
         verify(input, package_name, circom_template, actual_result);
     }
+
     #[test]
     fn Fp6Sub() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq6::rand(&mut rng);
         let op2 = Fq6::rand(&mut rng);
         let actual_result = op1 - op2;
@@ -59,8 +57,7 @@ mod tests {
 
     #[test]
     fn Fp6Neg() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq6::rand(&mut rng);
         let actual_result = -op1;
 
@@ -76,8 +73,7 @@ mod tests {
 
     #[test]
     fn Fp6mul() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq6::rand(&mut rng);
         let op2 = Fq6::rand(&mut rng);
         let actual_result = op1 * op2;
@@ -95,8 +91,7 @@ mod tests {
 
     #[test]
     fn Fp6inv() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq6::rand(&mut rng);
         let actual_result = op1.inverse().unwrap();
 

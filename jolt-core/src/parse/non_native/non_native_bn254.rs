@@ -1,13 +1,5 @@
 #[cfg(test)]
 mod test {
-    use std::env;
-
-    use ark_ff::UniformRand;
-    use ark_std::rand::Rng;
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
-    use serde_json::json;
-
     use crate::{
         parse::{
             generate_circuit_and_witness, get_path, read_witness, spartan2::from_limbs, write_json,
@@ -15,22 +7,25 @@ mod test {
         },
         spartan::spartan_memory_checking::R1CSConstructor,
     };
-    type Fr = ark_bn254::Fr;
-    type Fq = ark_bn254::Fq;
-    const PACKAGE_NAME: &str = "non_native_over_bn_base";
+    use ark_ff::UniformRand;
+    use ark_std::rand::Rng;
+    use serde_json::json;
+    use std::env;
+    type Fr = ark_grumpkin::Fr;
+    type Fq = ark_grumpkin::Fq;
+    const PACKAGE_NAME: &str = "non_native_over_bn_scalar";
 
     #[test]
     fn NonNativeAdd() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fr::rand(&mut rng);
         let op2 = Fr::rand(&mut rng);
         let actual_result = op1 + op2;
 
         let input = json!(
         {
-            "op1": op1.format_non_native(),
-            "op2": op2.format_non_native(),
+            "op1": op1.format(),
+            "op2": op2.format(),
         }
         );
         let circom_template = "NonNativeAdd";
@@ -39,16 +34,15 @@ mod test {
 
     #[test]
     fn NonNativeSub() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fr::rand(&mut rng);
         let op2 = Fr::rand(&mut rng);
         let actual_result = op1 - op2;
 
         let input = json!(
         {
-            "op1": op1.format_non_native(),
-            "op2": op2.format_non_native(),
+            "op1": op1.format(),
+            "op2": op2.format(),
         }
         );
         let circom_template = "NonNativeSub";
@@ -57,16 +51,15 @@ mod test {
 
     #[test]
     fn NonNativeMul() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fr::rand(&mut rng);
         let op2 = Fr::rand(&mut rng);
         let actual_result = op1 * op2;
 
         let input = json!(
         {
-            "op1": op1.format_non_native(),
-            "op2": op2.format_non_native(),
+            "op1": op1.format(),
+            "op2": op2.format(),
         }
         );
         let circom_template = "NonNativeMul";
@@ -75,8 +68,7 @@ mod test {
 
     #[test]
     fn NonNativeModulo() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let mut a = vec![Fq::from(0u8); 3];
         for i in 0..3 {
             a[i] = Fq::from(rng.gen_range(0..(1u128 << 100)));
@@ -99,8 +91,7 @@ mod test {
 
     #[test]
     fn NonNativeEquality() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let mut a = vec![Fq::from(0u8); 3];
         for i in 0..3 {
             a[i] = Fq::from(rng.gen_range(0..(1u128 << 100)));
@@ -114,7 +105,7 @@ mod test {
                         a[0].to_string(), a[1].to_string(), a[2].to_string()
                     ]
                 },
-                "op2": reduced_a.format_non_native(),
+                "op2": reduced_a.format(),
             }
         );
 
@@ -131,7 +122,7 @@ mod test {
         let file_name = format!("{}/{}.circom", "fields/non_native", PACKAGE_NAME);
         let file_path = package_path.join(file_name);
 
-        let prime = "grumpkin";
+        let prime = "bn128";
 
         generate_circuit_and_witness(
             &file_path,
@@ -152,11 +143,7 @@ mod test {
         let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
 
-    fn verify(
-        input: serde_json::Value,
-        circom_template: &str,
-        actual_result: Fr,
-    ) {
+    fn verify(input: serde_json::Value, circom_template: &str, actual_result: Fr) {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
         let package_path = get_path();
@@ -165,7 +152,7 @@ mod test {
         let file_name = format!("{}/{}.circom", "fields/non_native", PACKAGE_NAME);
         let file_path = package_path.join(file_name);
 
-        let prime = "grumpkin";
+        let prime = "bn128";
 
         generate_circuit_and_witness(
             &file_path,

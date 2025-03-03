@@ -1,2 +1,2 @@
-mod non_native_over_bn_base;
-mod non_native_over_bn_scalar;
+mod non_native_bn254;
+mod non_native_grumpkin;
