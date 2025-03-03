@@ -148,12 +148,12 @@ mod test {
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
-        let z = read_witness::<ark_bn254::Fq>(&witness_file_path.to_string());
+        let z = read_witness::<Fq>(&witness_file_path.to_string());
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
 
         //To Check Az.Bz = C.z
-        let _ = R1CSConstructor::<ark_bn254::Fq>::construct(Some(&constraint_path), Some(&z), 0);
+        let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
 
     fn verify(
@@ -183,12 +183,12 @@ mod test {
 
         // // Read the witness.json file
         let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
-        let z = read_witness::<ark_bn254::Fq>(&witness_file_path.to_string());
+        let z = read_witness::<Fq>(&witness_file_path.to_string());
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
         let expected_result: Fr = from_limbs(vec![z[1], z[2], z[3]]);
         assert_eq!(expected_result, actual_result, "assertion failed");
         //To Check Az.Bz = C.z
-        let _ = R1CSConstructor::<ark_bn254::Fq>::construct(Some(&constraint_path), Some(&z), 0);
+        let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
 }
