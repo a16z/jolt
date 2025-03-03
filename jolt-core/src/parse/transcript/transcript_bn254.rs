@@ -1,12 +1,6 @@
 #[cfg(test)]
 mod tests {
     const LEN: usize = 7;
-    use ark_bn254::{Fq, Fr, G1Affine, G1Projective};
-    use ark_ff::{PrimeField, UniformRand};
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
-    use serde_json::{json, Value};
-    use std::env;
 
     use crate::{
         field::JoltField,
@@ -17,18 +11,10 @@ mod tests {
         spartan::spartan_memory_checking::R1CSConstructor,
         utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript},
     };
-
-    #[test]
-    fn all() {
-        new();
-        append_scalar();
-        append_scalars();
-        append_point();
-        append_points();
-        challenge_scalar();
-        challenge_vector();
-        challenge_powers();
-    }
+    use ark_bn254::{Fq, Fr, G1Affine, G1Projective};
+    use ark_ff::{PrimeField, UniformRand};
+    use serde_json::{json, Value};
+    use std::env;
 
     #[test]
     fn new() {
@@ -52,7 +38,7 @@ mod tests {
 
     #[test]
     fn append_scalar() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let scalar_to_append = Fr::rand(&mut rng);
@@ -78,7 +64,7 @@ mod tests {
 
     #[test]
     fn append_point() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let point_to_append = G1Affine::rand(&mut rng);
@@ -107,7 +93,7 @@ mod tests {
 
     #[test]
     fn append_points() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let mut points_to_append = Vec::new();
@@ -152,7 +138,7 @@ mod tests {
 
     #[test]
     fn append_scalars() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let mut scalars_to_append = Vec::new();

@@ -164,7 +164,6 @@ impl<F: JoltField> R1CSConstructor<F> {
                         }
                     }
                 }
-                println!("Matrix reading done");
 
                 let num_vars = size_z - num_inputs - 1 - append_zeroes;
                 let num_poly_vars_x = num_cons.next_power_of_two().log_2();

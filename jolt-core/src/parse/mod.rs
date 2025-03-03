@@ -11,12 +11,14 @@ use std::{
 
 mod commit;
 mod field;
+mod groups;
 mod jolt;
+mod non_native;
 mod pcs;
+mod poseidon;
 mod spartan1;
 mod spartan2;
 mod sum_check;
-mod poseidon;
 mod transcript;
 #[cfg(test)]
 mod test {

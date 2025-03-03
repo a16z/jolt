@@ -5,8 +5,6 @@ mod test {
     use ark_bn254::{Fq, Fq2, Fr};
     use ark_ff::{Field, PrimeField};
     use ark_std::UniformRand;
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
     impl Parse for Fq2 {
@@ -19,8 +17,7 @@ mod test {
     }
     #[test]
     fn Fp2Add() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq2::rand(&mut rng);
         let op2 = Fq2::rand(&mut rng);
         let actual_result = op1 + op2;
@@ -37,8 +34,7 @@ mod test {
     }
     #[test]
     fn Fp2Sub() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq2::rand(&mut rng);
         let op2 = Fq2::rand(&mut rng);
         let actual_result = op1 - op2;
@@ -56,8 +52,7 @@ mod test {
 
     #[test]
     fn Fp2mul() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq2::rand(&mut rng);
         let op2 = Fq2::rand(&mut rng);
         let actual_result = op1 * op2;
@@ -75,8 +70,7 @@ mod test {
 
     #[test]
     fn Fp2muladd() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq2::rand(&mut rng);
         let op2 = Fq2::rand(&mut rng);
         let op3 = Fq2::rand(&mut rng);
@@ -96,8 +90,7 @@ mod test {
 
     #[test]
     fn Fp2mulbyfp() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq::rand(&mut rng);
         let op2 = Fq2::rand(&mut rng);
         let actual_result = op2.mul_by_base_prime_field(&op1);
@@ -115,8 +108,7 @@ mod test {
 
     #[test]
     fn Fp2inv() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fq2::rand(&mut rng);
         let actual_result = op1.inverse().unwrap();
 
@@ -132,8 +124,7 @@ mod test {
 
     #[test]
     fn Fp2exp() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-
+        let mut rng = ark_std::test_rng();
         let op1 = Fr::rand(&mut rng);
         let op2 = Fq2::rand(&mut rng);
         let actual_result = op2.pow(op1.into_bigint());

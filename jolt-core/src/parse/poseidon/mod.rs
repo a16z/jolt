@@ -2,24 +2,28 @@
 mod tests {
     const STATE_WIDTH: usize = 5;
 
+    use crate::{
+        field::JoltField,
+        parse::{generate_circuit_and_witness, get_path, read_witness, write_json},
+        spartan::spartan_memory_checking::R1CSConstructor,
+    };
     use ark_bn254::{Fq, Fr};
-    use ark_crypto_primitives::sponge::{poseidon::{get_poseidon_parameters, PoseidonDefaultConfigEntry, PoseidonSponge}, CryptographicSponge};
+    use ark_crypto_primitives::sponge::{
+        poseidon::{get_poseidon_parameters, PoseidonDefaultConfigEntry, PoseidonSponge},
+        CryptographicSponge,
+    };
     use ark_ff::{PrimeField, UniformRand};
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
 
-    use crate::{field::JoltField, parse::{generate_circuit_and_witness, get_path, read_witness, write_json}, spartan::spartan_memory_checking::R1CSConstructor};
-    
     #[test]
-    fn poseidon_bn_base(){
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+    fn poseidon_bn_base() {
+        let mut rng = ark_std::test_rng();
         let mut initial_state: Vec<Fq> = Vec::new();
-        for _ in 0..STATE_WIDTH{
+        for _ in 0..STATE_WIDTH {
             initial_state.push(Fq::rand(&mut rng));
         }
-        
+
         let params =
             get_poseidon_parameters::<Fq>(4, PoseidonDefaultConfigEntry::new(4, 5, 8, 56, 0))
                 .unwrap();
@@ -43,17 +47,24 @@ mod tests {
         let circom_template = "permute";
         let flag = 2;
         let prime = "grumpkin";
-        verify(input, package_name, circom_template, actual_result, flag, prime);
+        verify(
+            input,
+            package_name,
+            circom_template,
+            actual_result,
+            flag,
+            prime,
+        );
     }
 
     #[test]
-    fn poseidon_bn_scalar(){
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+    fn poseidon_bn_scalar() {
+        let mut rng = ark_std::test_rng();
         let mut initial_state: Vec<Fr> = Vec::new();
-        for _ in 0..STATE_WIDTH{
+        for _ in 0..STATE_WIDTH {
             initial_state.push(Fr::rand(&mut rng));
         }
-        
+
         let params =
             get_poseidon_parameters::<Fr>(4, PoseidonDefaultConfigEntry::new(4, 5, 8, 56, 0))
                 .unwrap();
@@ -78,7 +89,14 @@ mod tests {
         let circom_template = "permute";
         let flag = 1;
         let prime = "bn128";
-        verify(input, package_name, circom_template, actual_result, flag, prime);
+        verify(
+            input,
+            package_name,
+            circom_template,
+            actual_result,
+            flag,
+            prime,
+        );
     }
 
     fn verify<F: PrimeField + JoltField>(
@@ -87,7 +105,7 @@ mod tests {
         circom_template: &str,
         actual_result: Vec<F>,
         flag: usize,
-        prime: &str
+        prime: &str,
     ) {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
@@ -114,11 +132,15 @@ mod tests {
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
         let mut expected_result = Vec::new();
 
-        for i in 0..STATE_WIDTH{
+        for i in 0..STATE_WIDTH {
             expected_result.push(z[i + 1].clone());
         }
-        for i in 0..STATE_WIDTH{
-            assert_eq!(expected_result[i].into_bigint(), actual_result[i].into_bigint(), "assertion failed");
+        for i in 0..STATE_WIDTH {
+            assert_eq!(
+                expected_result[i].into_bigint(),
+                actual_result[i].into_bigint(),
+                "assertion failed"
+            );
         }
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<F>::construct(Some(&constraint_path), Some(&z), 0);
