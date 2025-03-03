@@ -2,6 +2,7 @@ use std::ops::Index;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::utils::math::Math;
+use crate::utils::split_bits;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{field::JoltField, utils};
 use ark_serialize::{
@@ -179,6 +180,41 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             *a += r * (*b - *a);
                         });
                 }
+                BindingOrder::InterleavedHighToLow => {
+                    if self.num_vars % 2 == 0 {
+                        // x variable being bound, bind high variable
+                        let (left, right) = self.bound_coeffs.split_at_mut(n);
+                        left.iter_mut()
+                            .zip(right.iter())
+                            .filter(|(a, b)| a != b)
+                            .for_each(|(a, b)| {
+                                *a += r * (*b - *a);
+                            });
+                    } else {
+                        // y variable being bound
+                        // There are `self.num_vars / 2` unbound x variables left
+                        // and `self.num_vars / 2 + 1` unbound y variables left.
+                        let mut new_coeffs = unsafe_allocate_zero_vec(n);
+                        new_coeffs
+                            .iter_mut()
+                            .enumerate()
+                            .for_each(|(i, new_coeff)| {
+                                let (x_bits, y_bits) = split_bits(i, self.num_vars / 2);
+                                let low_index = (x_bits << (self.num_vars / 2 + 1)) | y_bits;
+                                let high_index = (x_bits << (self.num_vars / 2 + 1))
+                                    | (1 << (self.num_vars / 2))
+                                    | y_bits;
+                                if self.bound_coeffs[low_index] == self.bound_coeffs[high_index] {
+                                    *new_coeff = self.bound_coeffs[low_index];
+                                } else {
+                                    *new_coeff = self.bound_coeffs[low_index]
+                                        + r * (self.bound_coeffs[high_index]
+                                            - self.bound_coeffs[low_index]);
+                                }
+                            });
+                        self.bound_coeffs = new_coeffs;
+                    }
+                }
             }
         } else {
             let r_r2 = r * F::montgomery_r2().unwrap_or(F::one());
@@ -196,7 +232,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                         })
                         .collect();
                 }
-                BindingOrder::HighToLow => {
+                BindingOrder::HighToLow | BindingOrder::InterleavedHighToLow => {
+                    assert!(
+                        order == BindingOrder::HighToLow || self.num_vars % 2 == 0,
+                        "If binding order is InterleavedHighToLow, first bind should be of an x variable"
+                    );
                     let (left, right) = self.coeffs.split_at(n);
                     self.bound_coeffs = left
                         .iter()
@@ -224,14 +264,17 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 BindingOrder::LowToHigh => {
                     // TODO(moodlezoup): Use `binding_scratch_space` trick
                     let mut new_coeffs = unsafe_allocate_zero_vec(n);
-                    for i in 0..n {
-                        if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
-                            new_coeffs[i] = self.bound_coeffs[2 * i];
-                        } else {
-                            new_coeffs[i] = self.bound_coeffs[2 * i]
-                                + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
-                        }
-                    }
+                    new_coeffs
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(i, new_coeff)| {
+                            if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
+                                *new_coeff = self.bound_coeffs[2 * i];
+                            } else {
+                                *new_coeff = self.bound_coeffs[2 * i]
+                                    + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
+                            }
+                        });
                     self.bound_coeffs = new_coeffs;
                 }
                 BindingOrder::HighToLow => {
@@ -242,6 +285,41 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                         .for_each(|(a, b)| {
                             *a += r * (*b - *a);
                         });
+                }
+                BindingOrder::InterleavedHighToLow => {
+                    if self.num_vars % 2 == 0 {
+                        // x variable being bound, bind high variable
+                        let (left, right) = self.bound_coeffs.split_at_mut(n);
+                        left.par_iter_mut()
+                            .zip(right.par_iter())
+                            .filter(|(a, b)| a != b)
+                            .for_each(|(a, b)| {
+                                *a += r * (*b - *a);
+                            });
+                    } else {
+                        // y variable being bound
+                        // There are `self.num_vars / 2` unbound x variables left
+                        // and `self.num_vars / 2 + 1` unbound y variables left.
+                        let mut new_coeffs = unsafe_allocate_zero_vec(n);
+                        new_coeffs
+                            .par_iter_mut()
+                            .enumerate()
+                            .for_each(|(i, new_coeff)| {
+                                let (x_bits, y_bits) = split_bits(i, self.num_vars / 2);
+                                let low_index = (x_bits << (self.num_vars / 2 + 1)) | y_bits;
+                                let high_index = (x_bits << (self.num_vars / 2 + 1))
+                                    | (1 << (self.num_vars / 2))
+                                    | y_bits;
+                                if self.bound_coeffs[low_index] == self.bound_coeffs[high_index] {
+                                    *new_coeff = self.bound_coeffs[low_index];
+                                } else {
+                                    *new_coeff = self.bound_coeffs[low_index]
+                                        + r * (self.bound_coeffs[high_index]
+                                            - self.bound_coeffs[low_index]);
+                                }
+                            });
+                        self.bound_coeffs = new_coeffs;
+                    }
                 }
             }
         } else {
@@ -261,7 +339,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                         })
                         .collect();
                 }
-                BindingOrder::HighToLow => {
+                BindingOrder::HighToLow | BindingOrder::InterleavedHighToLow => {
+                    assert!(
+                        order == BindingOrder::HighToLow || self.num_vars % 2 == 0,
+                        "If binding order is InterleavedHighToLow, first bind should be of an x variable"
+                    );
                     let (left, right) = self.coeffs.split_at(n);
                     self.bound_coeffs = left
                         .par_iter()

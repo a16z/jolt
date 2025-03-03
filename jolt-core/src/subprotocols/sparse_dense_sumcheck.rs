@@ -63,6 +63,12 @@ impl<'data, F: JoltField> IntoParallelIterator for &'data ExpandingTable<F> {
     }
 }
 
+impl<'data, F: JoltField> ParallelSlice<F> for &'data ExpandingTable<F> {
+    fn as_parallel_slice(&self) -> &[F] {
+        self.values[..self.len].as_parallel_slice()
+    }
+}
+
 struct BinarySumTree<F: JoltField> {
     layers: Vec<Vec<F>>,
 }
@@ -205,22 +211,129 @@ pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
             }
             1 => {
                 let (q_layer, z_layer) = if j % 2 == 0 {
-                    (&Q_tree[round + 1], &Z_tree[round + 1])
-                } else {
                     (&Q_tree[round + 2], &Z_tree[round + 2])
+                } else {
+                    (&Q_tree[round + 1], &Z_tree[round + 1])
                 };
 
-                debug_assert_eq!(q_layer.len(), z_layer.len());
-                debug_assert_eq!(2 * v.len, q_layer.len());
-                if j % 2 == 0 {
-                    debug_assert_eq!(2 * x.len, q_layer.len());
-                    debug_assert_eq!(2 * w.len, q_layer.len());
-                } else {
-                    debug_assert_eq!(4 * x.len, q_layer.len());
-                    debug_assert_eq!(4 * w.len, q_layer.len());
-                }
+                let q_inner_products: [F; 4] = v
+                    .par_chunks(if j % 2 == 0 { 1 } else { 2 })
+                    .zip_eq(x.par_iter())
+                    .zip_eq(q_layer.par_chunks(4))
+                    .map(|((v_b, x_b), q_b)| {
+                        let v_x = if j % 2 == 0 {
+                            let v_x = v_b[0] * x_b;
+                            [v_x, v_x]
+                        } else {
+                            [v_b[0] * x_b, v_b[1] * x_b]
+                        };
+                        [
+                            v_x[0] * q_b[0],
+                            v_x[0] * q_b[1],
+                            v_x[1] * q_b[2],
+                            v_x[1] * q_b[3],
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); 4],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                                running[3] + new[3],
+                            ]
+                        },
+                    );
 
-                todo!()
+                let z_inner_products: ([F; 4], [F; 4]) = v
+                    .par_chunks(if j % 2 == 0 { 1 } else { 2 })
+                    .zip_eq(w.par_iter())
+                    .zip_eq(z_layer.par_chunks(4))
+                    .map(|((v_b, w_b), z_b)| {
+                        let v_b = if j % 2 == 0 {
+                            [v_b[0], v_b[0]]
+                        } else {
+                            [v_b[0], v_b[1]]
+                        };
+                        let v_z = [
+                            v_b[0] * z_b[0],
+                            v_b[0] * z_b[1],
+                            v_b[1] * z_b[2],
+                            v_b[1] * z_b[3],
+                        ];
+                        let v_z_w = [v_z[0] * w_b, v_z[1] * w_b, v_z[2] * w_b, v_z[3] * w_b];
+                        (v_z, v_z_w)
+                    })
+                    .reduce(
+                        || ([F::zero(); 4], [F::zero(); 4]),
+                        |running, new| {
+                            (
+                                [
+                                    running.0[0] + new.0[0],
+                                    running.0[1] + new.0[1],
+                                    running.0[2] + new.0[2],
+                                    running.0[3] + new.0[3],
+                                ],
+                                [
+                                    running.1[0] + new.1[0],
+                                    running.1[1] + new.1[1],
+                                    running.1[2] + new.1[2],
+                                    running.1[3] + new.1[3],
+                                ],
+                            )
+                        },
+                    );
+
+                let mut univariate_poly_evals = [F::zero(), F::zero()];
+                let r_prev = if j == 0 { None } else { Some(r[j - 1]) };
+                // Expression (52), c = 0
+                univariate_poly_evals[0] +=
+                    Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(0))
+                        * q_inner_products[0];
+                univariate_poly_evals[0] +=
+                    Self::default().multiplicative_update(j, F::zero(), 1, r_prev, Some(0))
+                        * q_inner_products[1];
+                // Expression (53), c = 0
+                univariate_poly_evals[0] += z_inner_products.1[0]
+                    + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(0))
+                        * z_inner_products.0[0];
+                univariate_poly_evals[0] += z_inner_products.1[1]
+                    + Self::default().additive_update(j, F::zero(), 1, r_prev, Some(0))
+                        * z_inner_products.0[1];
+
+                // Expression (52), c = 2
+                univariate_poly_evals[1] += chi_2[0]
+                    * Self::default().multiplicative_update(j, two, 0, r_prev, Some(0))
+                    * q_inner_products[0];
+                univariate_poly_evals[1] += chi_2[0]
+                    * Self::default().multiplicative_update(j, two, 0, r_prev, Some(1))
+                    * q_inner_products[1];
+                univariate_poly_evals[1] += chi_2[1]
+                    * Self::default().multiplicative_update(j, two, 1, r_prev, Some(0))
+                    * q_inner_products[2];
+                univariate_poly_evals[1] += chi_2[1]
+                    * Self::default().multiplicative_update(j, two, 1, r_prev, Some(1))
+                    * q_inner_products[3];
+                // Expression (53), c = 2
+                univariate_poly_evals[1] += chi_2[0]
+                    * (z_inner_products.1[0]
+                        + Self::default().additive_update(j, two, 0, r_prev, Some(0))
+                            * z_inner_products.0[0]);
+                univariate_poly_evals[1] += chi_2[0]
+                    * (z_inner_products.1[1]
+                        + Self::default().additive_update(j, two, 0, r_prev, Some(1))
+                            * z_inner_products.0[1]);
+                univariate_poly_evals[1] += chi_2[1]
+                    * (z_inner_products.1[2]
+                        + Self::default().additive_update(j, two, 1, r_prev, Some(0))
+                            * z_inner_products.0[2]);
+                univariate_poly_evals[1] += chi_2[1]
+                    * (z_inner_products.1[3]
+                        + Self::default().additive_update(j, two, 1, r_prev, Some(1))
+                            * z_inner_products.0[3]);
+
+                univariate_poly_evals
             }
             _ => unimplemented!("gamma > 1 not supported"),
         }
@@ -379,7 +492,7 @@ pub fn prove_single_instruction<
         MultilinearPolynomial::from(I::default().materialize());
     #[cfg(test)]
     let mut eq_ra_test: MultilinearPolynomial<F> = {
-        let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(TREE_WIDTH.pow(4));
+        let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(val_test.len());
         for (j, k) in lookup_indices.iter().enumerate() {
             eq_ra[*k as usize] += eq_r_prime[j];
         }
@@ -536,8 +649,8 @@ pub fn prove_single_instruction<
 
             #[cfg(test)]
             {
-                eq_ra_test.bind_parallel(r_j, BindingOrder::HighToLow);
-                val_test.bind_parallel(r_j, BindingOrder::HighToLow);
+                eq_ra_test.bind_parallel(r_j, BindingOrder::InterleavedHighToLow);
+                val_test.bind_parallel(r_j, BindingOrder::InterleavedHighToLow);
             }
 
             j += 1;
@@ -629,8 +742,8 @@ pub fn prove_single_instruction<
         let univariate_poly_evals: [F; 2] = (0..eq_ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let eq_ra_evals = eq_ra.sumcheck_evals(i, 2, BindingOrder::HighToLow);
-                let val_evals = val.sumcheck_evals(i, 2, BindingOrder::HighToLow);
+                let eq_ra_evals = eq_ra.sumcheck_evals(i, 2, BindingOrder::InterleavedHighToLow);
+                let val_evals = val.sumcheck_evals(i, 2, BindingOrder::InterleavedHighToLow);
 
                 [eq_ra_evals[0] * val_evals[0], eq_ra_evals[1] * val_evals[1]]
             })
@@ -662,8 +775,8 @@ pub fn prove_single_instruction<
 
         // Bind polynomials
         rayon::join(
-            || eq_ra.bind_parallel(r_j, BindingOrder::HighToLow),
-            || val.bind_parallel(r_j, BindingOrder::HighToLow),
+            || eq_ra.bind_parallel(r_j, BindingOrder::InterleavedHighToLow),
+            || val.bind_parallel(r_j, BindingOrder::InterleavedHighToLow),
         );
 
         I::update_v_table(&mut v, &r, j);
@@ -803,7 +916,7 @@ pub fn verify_single_instruction<
 mod tests {
     use super::*;
     use crate::{
-        jolt::instruction::{add::ADDInstruction, mulhu::MULHUInstruction},
+        jolt::instruction::{add::ADDInstruction, and::ANDInstruction, mulhu::MULHUInstruction},
         utils::transcript::KeccakTranscript,
     };
     use ark_bn254::Fr;
@@ -817,12 +930,17 @@ mod tests {
         const GAMMA: usize = 0;
     }
 
+    impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<8> {
+        const GAMMA: usize = 1;
+    }
+
+    const WORD_SIZE: usize = 8;
+    const K: usize = 1 << 16;
+    const T: usize = 1 << 8;
+    const TREE_WIDTH: usize = 1 << 4;
+
     #[test]
     fn test_mulhu() {
-        const WORD_SIZE: usize = 8;
-        const K: usize = 1 << 16;
-        const T: usize = 1 << 8;
-
         let mut rng = StdRng::seed_from_u64(12345);
 
         let instructions: Vec<_> = (0..T)
@@ -832,7 +950,6 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        const TREE_WIDTH: usize = 1 << 4;
         let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
             &instructions,
             r_cycle,
@@ -860,10 +977,6 @@ mod tests {
 
     #[test]
     fn test_add() {
-        const WORD_SIZE: usize = 8;
-        const K: usize = 1 << 16;
-        const T: usize = 1 << 8;
-
         let mut rng = StdRng::seed_from_u64(12345);
 
         let instructions: Vec<_> = (0..T)
@@ -873,7 +986,6 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
-        const TREE_WIDTH: usize = 1 << 4;
         let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
             &instructions,
             r_cycle,
@@ -884,6 +996,42 @@ mod tests {
         verifier_transcript.compare_to(prover_transcript);
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
         let verification_result = verify_single_instruction::<_, ADDInstruction<WORD_SIZE>, _>(
+            proof,
+            K,
+            T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn test_and() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        let instructions: Vec<_> = (0..T)
+            .map(|_| ANDInstruction::<WORD_SIZE>::default().random(&mut rng))
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
+            &instructions,
+            r_cycle,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let verification_result = verify_single_instruction::<_, ANDInstruction<WORD_SIZE>, _>(
             proof,
             K,
             T,

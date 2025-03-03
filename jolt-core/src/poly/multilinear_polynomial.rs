@@ -1,4 +1,4 @@
-use crate::utils::math::Math;
+use crate::utils::{math::Math, split_bits};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -32,6 +32,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
+    InterleavedHighToLow,
 }
 
 impl<F: JoltField> Default for MultilinearPolynomial<F> {
@@ -449,10 +450,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind")]
     fn bind(&mut self, r: F, order: BindingOrder) {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => match order {
-                BindingOrder::LowToHigh => poly.bound_poly_var_bot(&r),
-                BindingOrder::HighToLow => poly.bound_poly_var_top(&r),
-            },
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
@@ -464,10 +462,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => match order {
-                BindingOrder::LowToHigh => poly.bound_poly_var_bot_01_optimized(&r),
-                BindingOrder::HighToLow => poly.bound_poly_var_top_zero_optimized(&r),
-            },
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
@@ -600,9 +595,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![F::zero(); degree];
         match order {
             BindingOrder::HighToLow => {
-                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(index);
                 if degree == 1 {
                     return evals;
@@ -613,10 +609,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     eval += m;
                     evals[i] = eval;
                 }
-                evals
             }
             BindingOrder::LowToHigh => {
-                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(2 * index);
                 if degree == 1 {
                     return evals;
@@ -627,9 +621,41 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     eval += m;
                     evals[i] = eval;
                 }
-                evals
             }
-        }
+            BindingOrder::InterleavedHighToLow => {
+                let num_vars = self.get_num_vars();
+                if num_vars % 2 == 0 {
+                    // x variable, same as HighToLow case
+                    evals[0] = self.get_bound_coeff(index);
+                    if degree == 1 {
+                        return evals;
+                    }
+                    let mut eval = self.get_bound_coeff(index + self.len() / 2);
+                    let m = eval - evals[0];
+                    for i in 1..degree {
+                        eval += m;
+                        evals[i] = eval;
+                    }
+                } else {
+                    // y variable
+                    let (x_bits, y_bits) = split_bits(index, num_vars / 2);
+                    let low_index = (x_bits << (num_vars / 2 + 1)) | y_bits;
+                    let high_index =
+                        (x_bits << (num_vars / 2 + 1)) | (1 << (num_vars / 2)) | y_bits;
+                    evals[0] = self.get_bound_coeff(low_index);
+                    if degree == 1 {
+                        return evals;
+                    }
+                    let mut eval = self.get_bound_coeff(high_index);
+                    let m = eval - evals[0];
+                    for i in 1..degree {
+                        eval += m;
+                        evals[i] = eval;
+                    }
+                }
+            }
+        };
+        evals
     }
 }
 

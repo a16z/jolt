@@ -58,12 +58,47 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
+    // m_\ell(r_j, j, b_j)
+    fn multiplicative_update<F: JoltField>(
+        &self,
+        j: usize,
+        r_j: F,
+        b_j: u8,
+        r_prev: Option<F>,
+        b_next: Option<u8>,
+    ) -> F {
+        F::one()
+    }
+
+    // a_\ell(r_j, j, b_j)
+    fn additive_update<F: JoltField>(
+        &self,
+        j: usize,
+        r_j: F,
+        b_j: u8,
+        r_prev: Option<F>,
+        b_next: Option<u8>,
+    ) -> F {
+        let shift = F::from_u32(1 << (WORD_SIZE - 1 - j));
+        if j % 2 == 0 {
+            // Update x_{j/2} to r_j
+            let x = F::from_u8(b_j);
+            let y = F::from_u8(b_next.unwrap());
+            shift * (r_j - x) * y
         } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+            // Update y_{j/2} to r_j
+            let x = r_prev.unwrap();
+            let y = F::from_u8(b_j);
+            shift * x * (r_j - y)
         }
     }
 

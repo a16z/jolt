@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
-use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
+use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, split_bits};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
@@ -9,6 +9,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
+
+use super::multilinear_polynomial::BindingOrder;
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
@@ -60,6 +62,90 @@ impl<F: JoltField> DensePolynomial<F> {
 
     pub fn is_bound(&self) -> bool {
         self.len != self.Z.len()
+    }
+
+    pub fn bind(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top(&r),
+            BindingOrder::InterleavedHighToLow => {
+                let n = self.len() / 2;
+                if self.num_vars % 2 == 0 {
+                    // x variable being bound, bind high variable
+                    let (left, right) = self.Z.split_at_mut(n);
+                    left.iter_mut()
+                        .zip(right.iter())
+                        .filter(|(a, b)| a != b)
+                        .for_each(|(a, b)| {
+                            *a += r * (*b - *a);
+                        });
+                } else {
+                    // y variable being bound
+                    // There are `self.num_vars / 2` unbound x variables left
+                    // and `self.num_vars / 2 + 1` unbound y variables left.
+                    let mut new_coeffs = unsafe_allocate_zero_vec(n);
+                    new_coeffs
+                        .iter_mut()
+                        .enumerate()
+                        .for_each(|(i, new_coeff)| {
+                            let (x_bits, y_bits) = split_bits(i, self.num_vars / 2);
+                            let low_index = (x_bits << (self.num_vars / 2 + 1)) | y_bits;
+                            let high_index = (x_bits << (self.num_vars / 2 + 1))
+                                | (1 << (self.num_vars / 2))
+                                | y_bits;
+                            if self.Z[low_index] == self.Z[high_index] {
+                                *new_coeff = self.Z[low_index];
+                            } else {
+                                *new_coeff = self.Z[low_index]
+                                    + r * (self.Z[high_index] - self.Z[low_index]);
+                            }
+                        });
+                    self.Z = new_coeffs;
+                }
+            }
+        }
+    }
+
+    pub fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top_zero_optimized(&r),
+            BindingOrder::InterleavedHighToLow => {
+                let n = self.len() / 2;
+                if self.num_vars % 2 == 0 {
+                    // x variable being bound, bind high variable
+                    let (left, right) = self.Z.split_at_mut(n);
+                    left.par_iter_mut()
+                        .zip(right.par_iter())
+                        .filter(|(a, b)| a != b)
+                        .for_each(|(a, b)| {
+                            *a += r * (*b - *a);
+                        });
+                } else {
+                    // y variable being bound
+                    // There are `self.num_vars / 2` unbound x variables left
+                    // and `self.num_vars / 2 + 1` unbound y variables left.
+                    let mut new_coeffs = unsafe_allocate_zero_vec(n);
+                    new_coeffs
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(i, new_coeff)| {
+                            let (x_bits, y_bits) = split_bits(i, self.num_vars / 2);
+                            let low_index = (x_bits << (self.num_vars / 2 + 1)) | y_bits;
+                            let high_index = (x_bits << (self.num_vars / 2 + 1))
+                                | (1 << (self.num_vars / 2))
+                                | y_bits;
+                            if self.Z[low_index] == self.Z[high_index] {
+                                *new_coeff = self.Z[low_index];
+                            } else {
+                                *new_coeff = self.Z[low_index]
+                                    + r * (self.Z[high_index] - self.Z[low_index]);
+                            }
+                        });
+                    self.Z = new_coeffs;
+                }
+            }
+        }
     }
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
