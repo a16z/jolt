@@ -164,6 +164,7 @@ impl <F: JoltField> EqPlusOnePolynomial<F> {
     }   
 
 
+    #[tracing::instrument(skip_all, "EqPlusOnePolynomial::evals")]
     pub fn evals(r: &[F]) -> Vec<F> {
         let ell = r.len(); 
         let mut eq_evals: Vec<F> = vec![F::one(); ell.pow2()];

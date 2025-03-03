@@ -191,9 +191,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         row_count.next_power_of_two().log_2()
     }
 
-    /// Evaluates A(r_x, y) + r_rlc * B(r_x, y) + r_rlc^2 * C(r_x, y) where r_x = r_constr || r_step for all y.
+    /// (Prover) Evaluates RLC over A, B, C of: [A(r_x, y_var || r_x_step), A_cross(..)] for all y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_mle_rlc")]
-    pub fn evaluate_r1cs_mle_rlc(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
+    pub fn evaluate_matrix_mle_partial(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
         assert_eq!(
             r_constr.len(),
             (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2()
@@ -204,16 +204,14 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let first_non_uniform_row = self.uniform_r1cs.num_rows;
         let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
 
-        // Computation strategy
-        // 1. Compute the RLC of the repeated terms in A, B, C, and the constant column
-        // 2. Expand this RLC to the full column y by multiplying by eq(rx_step, step_index) for each step
-        // 3. Add the non uniform constraint rows
-
+        // Computation strategy: 
+        // 1. Compute A(r_x, y_var || r_x_step) for each y_var by iterating over terms in uniform (small per-step) matrix
+        // 2. Incorporate just the constant values from non-uniform constraints here
         let compute_repeated =
             |constraints: &SparseConstraints<F>, non_uni_constants: Option<Vec<F>>| -> Vec<F> {
-                // evals: [inputs, aux ... 1, ...] where ... indicates padding to next power of 2
+                // evals structure: [inputs, aux ... 1, cross_inputs, cross_aux ...] where ... indicates padding to next power of 2
                 let mut evals =
-                    unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 4); // *4 to accommodate cross-step constraints 
+                    unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 4); // *4 instead of *2 to accommodate cross-step constraints 
                 for (row, col, val) in constraints.vars.iter() {
                     evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
                 }
@@ -224,8 +222,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
 
                 if let Some(non_uni_constants) = non_uni_constants {
                     for (i, non_uni_constant) in non_uni_constants.iter().enumerate() {
-                        // The matrix values are present even in the last step. 
-                        // It's the role of the evaluation of the z mle to ignore the last step. 
                         evals[constant_column] +=
                             eq_rx_constr[first_non_uniform_row + i] * non_uni_constant;
                     }
@@ -247,7 +243,8 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
             .collect::<Vec<F>>();
 
-        // Handle non-uniform constraints
+        // 3. Add non-constant variables from non-uniform constraints here, 
+        // depending on which type of variables (current step or next) they involve.
         let update_non_uni = |rlc: &mut Vec<F>,
                               offset: &SparseEqualityItem<F>,
                               non_uni_constraint_index: usize,
@@ -255,92 +252,64 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             for (col, is_offset, coeff) in offset.offset_vars.iter() {
                 let offset = if *is_offset { 1 } else { 0 };
                 let col = *col + offset * constant_column * 2; 
-
-                // The matrix values are present even in the last step. 
-                // It's the role of the evaluation of the z mle to ignore the last step. 
                 rlc[col] += mul_0_1_optimized(&r, coeff)
                     * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index];
             }
         };
 
-        {
-            let span = tracing::span!(tracing::Level::INFO, "update_non_uniform");
-            let _guard = span.enter();
-            for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
-                update_non_uni(&mut sm_rlc, &constraint.eq, i, F::one());
-                update_non_uni(&mut sm_rlc, &constraint.condition, i, r_rlc);
-            }
+        for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
+            update_non_uni(&mut sm_rlc, &constraint.eq, i, F::one());
+            update_non_uni(&mut sm_rlc, &constraint.condition, i, r_rlc);
         }
 
         sm_rlc
     }
 
-    /// Evaluates the full expanded witness vector at 'r' using evaluations of segments.
+    /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_z_mle")]
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F], with_const: bool) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2()); 
 
-        // Z can be computed in two halves, [Variables, (constant) 1, 0 , ...] indexed by the first bit.
+        // Variables vector is [vars, ..., 1, ...] where ... denotes padding to power of 2
+        let num_vars = self.num_vars_uniform_padded();
+        let var_bits = num_vars.log_2();
+        let var_and_const_bits = var_bits + 1;
+
         let r_const = r[0];
-        let r_rest = &r[1..];
-
-        // Don't need the last log2(num_steps) bits, they've been evaluated already.
-        let var_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
-        let r_var = &r_rest[..var_bits];
-        let r_x_step = &r_rest[var_bits..];
+        let r_var = &r[1..var_bits+1];
         
-        let eq_last_step = EqPolynomial::new(r_x_step.to_vec()).evaluate(&vec![F::one(); r_x_step.len()]);
-
-        let r_var_eq = EqPolynomial::evals(r_var);
+        let eq_ry_var = EqPolynomial::evals(r_var);
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
-            .map(|var_index| r_var_eq[var_index] * segment_evals[var_index])
+            .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();
 
-        // If r_const = 1, only the constant position (with all other index bits are 0) has a non-zero value
-        let var_and_const_bits: usize = var_bits + 1;
-        let eq_consts = EqPolynomial::new(r[..var_and_const_bits].to_vec());
-        let mut eq_const = eq_consts.evaluate(&index_to_field_bitvector(
-            1 << (var_and_const_bits - 1),
-            var_and_const_bits,
-        ));
+        let eq_const = EqPolynomial::new(r[..var_and_const_bits].to_vec())
+            .evaluate(
+                &index_to_field_bitvector(1 << (var_and_const_bits - 1), var_and_const_bits)
+            );
+
         let const_coeff = if with_const { F::one() } else { F::zero() };
 
-        ((F::one() - r_const) * eval_variables) + eq_const * const_coeff // * (F::one() - eq_last_step)
+        ((F::one() - r_const) * eval_variables) + eq_const * const_coeff 
     }
 
  
     /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_matrix_mles")]
-    pub fn evaluate_r1cs_matrix_mles(&self, r: &[F], r_choice: &F) -> (F, F, F) {
-        let total_rows_bits = self.num_rows_total().log_2();
-        let total_cols_bits = self.num_cols_total().log_2();
-        let steps_bits: usize = self.num_steps.log_2();
+    pub fn evaluate_matrix_mle_full(&self, rx_constr: &[F], rx_step: &[F], ry_var: &[F], r_non_uni: &F) -> (F, F, F) {
         let constraint_rows_bits = (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2();
-        let uniform_cols_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
-        assert_eq!(r.len(), total_rows_bits + total_cols_bits);
-        assert_eq!(total_rows_bits - steps_bits, constraint_rows_bits);
+        let num_vars_bits = self.num_vars_uniform_padded().log_2();
 
-        // Deconstruct 'r' into representitive bits
-        let (r_row, r_col) = r.split_at(total_rows_bits); 
+        let eq_rx_constr = EqPolynomial::evals(rx_constr);
+        let eq_ry_var = EqPolynomial::evals(ry_var);
 
-        // let (r_row_constr, r_row_step) = r_row.split_at(constraint_rows_bits);
-        let (r_row_step, r_row_constr) = r_row.split_at(r_row.len()-constraint_rows_bits);
-
-        let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1);
-
-        // assert_eq!(r_row_step.len(), r_col_step.len());
-        assert_eq!(r_row_step, r_col_step);
-
-        let eq_rx_constr = EqPolynomial::evals(r_row_constr);
-        let eq_ry_var = EqPolynomial::evals(r_col_var);
-
-        // Crush: 
         let constant_column = index_to_field_bitvector(
             self.num_cols_total() / 2 / self.num_steps,
-            uniform_cols_bits + 1,
+            num_vars_bits + 1,
         );
-        let col_eq_constant = EqPolynomial::new(r_col_var.to_vec()).evaluate(&constant_column);
+
+        let col_eq_constant = EqPolynomial::new(ry_var.to_vec()).evaluate(&constant_column);
 
         let compute_uniform_matrix_mle = |constraints: &SparseConstraints<F>| -> F {
             let mut full_mle_evaluation: F = constraints
@@ -385,7 +354,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             let non_uni_constraint_index =
                 index_to_field_bitvector(self.uniform_r1cs.num_rows + i, constraint_rows_bits);
             let row_constr_eq_non_uni =
-                EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
+                EqPolynomial::new(rx_constr.to_vec()).evaluate(&non_uni_constraint_index);
 
             assert_eq!(
                 row_constr_eq_non_uni,
@@ -401,8 +370,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             |uni_mle: &mut F, non_uni_constants: Option<Vec<F>>| {
                 if let Some(non_uni_constants) = non_uni_constants {
                     for (i, non_uni_constant) in non_uni_constants.iter().enumerate() {
-                        // The matrix values are present even in the last step. 
-                        // It's the role of the evaluation of the z mle to ignore the last step. 
                         let first_non_uniform_row = self.uniform_r1cs.num_rows;
                         *uni_mle += eq_rx_constr[first_non_uniform_row + i] * non_uni_constant * col_eq_constant;
                     }
@@ -413,11 +380,11 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         compute_non_uni_constants(&mut a_mle, Some(eq_constants));
         compute_non_uni_constants(&mut b_mle, Some(condition_constants));
 
-        a_mle = (F::one() - r_choice) * a_mle 
-            + *r_choice * non_uni_a_mle;
-        b_mle = (F::one() - r_choice) * b_mle 
-            + *r_choice * non_uni_b_mle;
-        c_mle = (F::one() - r_choice) * c_mle; 
+        a_mle = (F::one() - r_non_uni) * a_mle 
+            + *r_non_uni * non_uni_a_mle;
+        b_mle = (F::one() - r_non_uni) * b_mle 
+            + *r_non_uni * non_uni_b_mle;
+        c_mle = (F::one() - r_non_uni) * c_mle; 
 
         (a_mle, b_mle, c_mle)
     }
