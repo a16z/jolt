@@ -195,7 +195,7 @@ pub(crate) fn spartan_hyrax(
     let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 20);
 
     let z = read_witness::<Fr>(&witness_file_path);
-    let pub_io = z[0..1 + 1 + 3 * inner_num_rounds + pub_io_len - 1 + 40].to_vec();
+    let pub_io = z[0..1 + 1 + 3 * inner_num_rounds + pub_io_len - 1 + 40 + 3].to_vec();
     verify_postponed_eval(pub_io, inner_num_rounds);
 }
 
@@ -207,14 +207,14 @@ fn test_final_eval() {
     let witness_file_path = format!("{}/{}_witness.json", output_dir, "spartan_hyrax").to_string();
 
     let z = read_witness::<Fr>(&witness_file_path);
-    let pub_io = z[0..1 + 1 + 3 * 24 + 1718 - 1 + 40].to_vec();
+    let pub_io = z[0..1 + 1 + 3 * 24 + 1718 - 1 + 40 + 3].to_vec();
 
     verify_postponed_eval(pub_io, 24);
 }
 
 pub(crate) fn verify_postponed_eval(z: Vec<Fr>, l: usize) {
     let postponed_eval = &z[2..3 * l + 2];
-    let vec_to_eval = &z[3 * l + 2..];
+    let vec_to_eval = &z[3 * l + 2.. z.len() - 3];
 
     let compressed_postponed_eval: Vec<Fr> = postponed_eval
         .chunks(3)
