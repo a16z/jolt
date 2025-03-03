@@ -9,10 +9,8 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme,
-    dense_mlpoly::DensePolynomial,
-    eq_poly::EqPolynomial,
-    unipoly::UniPoly,
+    commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial,
+    eq_poly::EqPolynomial, unipoly::UniPoly,
 };
 use crate::{
     field::{JoltField, OptimizedMul},

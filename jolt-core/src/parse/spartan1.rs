@@ -209,7 +209,7 @@ pub(crate) fn spartan_hkzg(
             })
         }
     }
-
+    
 
     let circom_template = "Combine";
     let prime = "grumpkin";
@@ -303,7 +303,6 @@ pub(crate) fn spartan_hkzg(
         output_dir,
     );
 }
-
 
 impl Parse for SumcheckInstanceProof<Fr, PoseidonTranscript<ark_bn254::Fr, ark_bn254::Fq>> {
     fn format(&self) -> serde_json::Value {

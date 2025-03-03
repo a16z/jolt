@@ -77,7 +77,7 @@ mod tests {
             circom_template,
             [vars, degree].to_vec(),
             prime,
-            None
+            None,
         );
 
         // // Read the witness.json file
@@ -92,40 +92,7 @@ mod tests {
             final_evals[0],
             "assertion failed"
         );
+
         let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
-
-    // fn verify(
-    //     input: serde_json::Value,
-    //     package_name: &str,
-    //     circom_template: &str,
-    //     actual_result: Fq12,
-    // ) {
-
-    //     // let expected_result = Fq12::new(Fq6::new(Fq2::new(z[1], z[2]), Fq2::new(z[3], z[4]), Fq2::new(z[5], z[6])), Fq6::new(Fq2::new(z[7], z[8]), Fq2::new(z[9], z[10]), Fq2::new(z[11], z[12])));
-
-    //     // assert_eq!(expected_result, actual_result, "assertion failed");
-    //     // // To Check Az.Bz = C.z
-    //     // let _ = R1CSConstructor::<ark_bn254::Fq>::construct(Some(&constraint_path), Some(&z), 0);
-    // }
-
-    // impl Parse for SumcheckInstanceProof<Fr, ProofTranscript> {
-    //     fn format(&self) -> serde_json::Value {
-    //         let uni_polys: Vec<serde_json::Value> =
-    //             self.uni_polys.iter().map(|poly| poly.format()).collect();
-    //         json!({
-    //             "uni_polys": uni_polys,
-    //         })
-    //     }
-    //     fn format_non_native(&self) -> serde_json::Value {
-    //         let uni_polys: Vec<serde_json::Value> = self
-    //             .uni_polys
-    //             .iter()
-    //             .map(|poly| poly.format_non_native())
-    //             .collect();
-    //         json!({
-    //             "uni_polys": uni_polys,
-    //         })
-    //     }
-    // }
 }
