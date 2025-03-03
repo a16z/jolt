@@ -1,17 +1,25 @@
 #[cfg(test)]
 mod tests {
     const LEN: usize = 7;
-    use std::env;
-    use ark_bn254::{Fr, Fq, G1Affine, G1Projective};
+    use ark_bn254::{Fq, Fr, G1Affine, G1Projective};
     use ark_ff::{PrimeField, UniformRand};
     use rand_chacha::ChaCha8Rng;
     use rand_core::SeedableRng;
     use serde_json::{json, Value};
+    use std::env;
 
-    use crate::{field::JoltField, parse::{generate_circuit_and_witness, get_path, read_witness, spartan2::from_limbs, write_json, Parse}, spartan::spartan_memory_checking::R1CSConstructor, utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript}};
+    use crate::{
+        field::JoltField,
+        parse::{
+            generate_circuit_and_witness, get_path, read_witness, spartan2::from_limbs, write_json,
+            Parse,
+        },
+        spartan::spartan_memory_checking::R1CSConstructor,
+        utils::{poseidon_transcript::PoseidonTranscript, transcript::Transcript},
+    };
 
     #[test]
-    fn all(){
+    fn all() {
         new();
         append_scalar();
         append_scalars();
@@ -23,10 +31,10 @@ mod tests {
     }
 
     #[test]
-    fn new(){
+    fn new() {
         let label = b"Jolt transcript";
         let t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(label);
-        
+
         let label_scalar = ark_bn254::Fq::from_le_bytes_mod_order(label);
 
         let input = json!(
@@ -40,11 +48,10 @@ mod tests {
 
         let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds)];
         verify(input, package_name, circom_template, actual_results);
-
     }
 
     #[test]
-    fn append_scalar(){
+    fn append_scalar() {
         let mut rng = ChaCha8Rng::from_seed([2; 32]);
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
@@ -70,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn append_point(){
+    fn append_point() {
         let mut rng = ChaCha8Rng::from_seed([2; 32]);
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
@@ -80,7 +87,7 @@ mod tests {
             {
                 "point":{
                     "x": point_to_append.x.to_string(),
-                    "y": point_to_append.y.to_string()                
+                    "y": point_to_append.y.to_string()
                 },
                 "transcript": {
                     "state": t.state.state[1].to_string(),
@@ -99,19 +106,24 @@ mod tests {
     }
 
     #[test]
-    fn append_points(){
+    fn append_points() {
         let mut rng = ChaCha8Rng::from_seed([2; 32]);
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let mut points_to_append = Vec::new();
-        for _ in 0..LEN{
+        for _ in 0..LEN {
             points_to_append.push(G1Affine::rand(&mut rng));
-        };
+        }
 
-        let points_str = points_to_append.iter().map(|pt: &G1Affine| json!({
-            "x": pt.x.to_string(),
-            "y": pt.y.to_string()
-        })).collect::<Vec<serde_json::Value>>();
+        let points_str = points_to_append
+            .iter()
+            .map(|pt: &G1Affine| {
+                json!({
+                    "x": pt.x.to_string(),
+                    "y": pt.y.to_string()
+                })
+            })
+            .collect::<Vec<serde_json::Value>>();
 
         let input = json!(
             {
@@ -126,7 +138,12 @@ mod tests {
         let package_name = "bn254_transcript";
         let circom_template = "AppendPoints";
 
-        t.append_points(&points_to_append.iter().map(|pt| G1Projective::from(*pt)).collect::<Vec<G1Projective>>());
+        t.append_points(
+            &points_to_append
+                .iter()
+                .map(|pt| G1Projective::from(*pt))
+                .collect::<Vec<G1Projective>>(),
+        );
 
         let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds)];
 
@@ -134,17 +151,20 @@ mod tests {
     }
 
     #[test]
-    fn append_scalars(){
+    fn append_scalars() {
         let mut rng = ChaCha8Rng::from_seed([2; 32]);
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let mut scalars_to_append = Vec::new();
 
-        for _ in 0..LEN{
+        for _ in 0..LEN {
             scalars_to_append.push(Fr::rand(&mut rng));
         }
 
-        let scalars_str = scalars_to_append.iter().map(|x: &Fr| x.format_non_native()).collect::<Vec<Value>>();
+        let scalars_str = scalars_to_append
+            .iter()
+            .map(|x: &Fr| x.format_non_native())
+            .collect::<Vec<Value>>();
 
         let input = json!(
             {
@@ -165,9 +185,8 @@ mod tests {
         verify(input, package_name, circom_template, actual_results);
     }
 
-
     #[test]
-    fn challenge_scalar(){
+    fn challenge_scalar() {
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let input = json!(
@@ -186,11 +205,17 @@ mod tests {
 
         let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds)];
 
-        verify_for_challenges(input, package_name, circom_template, actual_results, vec![rust_challenge]);
+        verify_for_challenges(
+            input,
+            package_name,
+            circom_template,
+            actual_results,
+            vec![rust_challenge],
+        );
     }
 
     #[test]
-    fn challenge_vector(){
+    fn challenge_vector() {
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let input = json!(
@@ -209,11 +234,17 @@ mod tests {
 
         let actual_results = [vec![t.state.state[1], Fq::from(t.n_rounds)]].concat();
 
-        verify_for_challenges(input, package_name, circom_template, actual_results, rust_challenges);
+        verify_for_challenges(
+            input,
+            package_name,
+            circom_template,
+            actual_results,
+            rust_challenges,
+        );
     }
 
     #[test]
-    fn challenge_powers(){
+    fn challenge_powers() {
         let mut t = <PoseidonTranscript<Fr, Fq> as Transcript>::new(b"label");
 
         let input = json!(
@@ -232,7 +263,13 @@ mod tests {
 
         let actual_results = vec![t.state.state[1], Fq::from(t.n_rounds)];
 
-        verify_for_challenges(input, package_name, circom_template, actual_results, rust_challenges);
+        verify_for_challenges(
+            input,
+            package_name,
+            circom_template,
+            actual_results,
+            rust_challenges,
+        );
     }
 
     fn verify<F: JoltField + PrimeField>(
@@ -253,7 +290,12 @@ mod tests {
 
         let mut params = Vec::new();
 
-        if circom_template == "AppendScalars" || circom_template == "AppendPoints" || circom_template == "AppendBytes" || circom_template == "ChallengeVector" || circom_template ==  "ChallengeScalarPowers" {
+        if circom_template == "AppendScalars"
+            || circom_template == "AppendPoints"
+            || circom_template == "AppendBytes"
+            || circom_template == "ChallengeVector"
+            || circom_template == "ChallengeScalarPowers"
+        {
             params.push(LEN);
         }
 
@@ -283,7 +325,7 @@ mod tests {
             assert_eq!(actual_results[2], F::from(z[3]));
         }
         if circom_template == "ChallengeVector" || circom_template == "ChallengeScalarPowers" {
-            for i in 0..LEN{
+            for i in 0..LEN {
                 assert_eq!(actual_results[2 + i], F::from(z[3 + i]));
             }
         }
@@ -291,7 +333,6 @@ mod tests {
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<F>::construct(Some(&constraint_path), Some(&z), 0);
     }
-
 
     fn verify_for_challenges(
         input: serde_json::Value,
@@ -312,7 +353,12 @@ mod tests {
 
         let mut params = Vec::new();
 
-        if circom_template == "AppendScalars" || circom_template == "AppendPoints" || circom_template == "AppendBytes" || circom_template == "ChallengeVector" || circom_template ==  "ChallengeScalarPowers" {
+        if circom_template == "AppendScalars"
+            || circom_template == "AppendPoints"
+            || circom_template == "AppendBytes"
+            || circom_template == "ChallengeVector"
+            || circom_template == "ChallengeScalarPowers"
+        {
             params.push(LEN);
         }
 
@@ -342,14 +388,16 @@ mod tests {
             assert_eq!(challenges[0], from_limbs([z[3], z[4], z[5]].to_vec()));
         }
         if circom_template == "ChallengeVector" || circom_template == "ChallengeScalarPowers" {
-            for i in 0..LEN{
-                assert_eq!(challenges[i], from_limbs([z[3+ 3 * i], z[4 + 3 * i], z[5 + 3 * i]].to_vec()), "failing at {i}");
+            for i in 0..LEN {
+                assert_eq!(
+                    challenges[i],
+                    from_limbs([z[3 + 3 * i], z[4 + 3 * i], z[5 + 3 * i]].to_vec()),
+                    "failing at {i}"
+                );
             }
         }
-
 
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
-    
 }
