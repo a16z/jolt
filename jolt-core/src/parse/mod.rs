@@ -16,6 +16,8 @@ mod pcs;
 mod spartan1;
 mod spartan2;
 mod sum_check;
+mod poseidon;
+mod transcript;
 #[cfg(test)]
 mod test {
     use crate::{
