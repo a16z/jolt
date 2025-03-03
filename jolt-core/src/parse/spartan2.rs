@@ -38,6 +38,7 @@ impl Parse for Fr {
     }
 }
 
+
 struct PostponedEval {
     pub point: Vec<Fq>,
     pub eval: Fq,
