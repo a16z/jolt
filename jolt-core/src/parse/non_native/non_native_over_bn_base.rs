@@ -17,6 +17,7 @@ mod test {
     };
     type Fr = ark_bn254::Fr;
     type Fq = ark_bn254::Fq;
+    const PACKAGE_NAME: &str = "non_native_over_bn_base";
 
     #[test]
     fn NonNativeAdd() {
@@ -32,9 +33,8 @@ mod test {
             "op2": op2.format_non_native(),
         }
         );
-        let package_name = "non_native_over_bn_base";
         let circom_template = "NonNativeAdd";
-        verify(input, package_name, circom_template, actual_result);
+        verify(input, circom_template, actual_result);
     }
 
     #[test]
@@ -51,9 +51,8 @@ mod test {
             "op2": op2.format_non_native(),
         }
         );
-        let package_name = "non_native_over_bn_base";
         let circom_template = "NonNativeSub";
-        verify(input, package_name, circom_template, actual_result);
+        verify(input, circom_template, actual_result);
     }
 
     #[test]
@@ -70,9 +69,8 @@ mod test {
             "op2": op2.format_non_native(),
         }
         );
-        let package_name = "non_native_over_bn_base";
         let circom_template = "NonNativeMul";
-        verify(input, package_name, circom_template, actual_result);
+        verify(input, circom_template, actual_result);
     }
 
     #[test]
@@ -95,9 +93,8 @@ mod test {
         }
 
         );
-        let package_name = "non_native_over_bn_base";
         let circom_template = "NonNativeModulo";
-        verify(input, package_name, circom_template, actual_result);
+        verify(input, circom_template, actual_result);
     }
 
     #[test]
@@ -121,18 +118,17 @@ mod test {
             }
         );
 
-        let package_name = "non_native_over_bn_base";
         let circom_template = "NonNativeEquality";
-        verify_equality(input, package_name, circom_template);
+        verify_equality(input, circom_template);
     }
 
-    fn verify_equality(input: serde_json::Value, package_name: &str, circom_template: &str) {
+    fn verify_equality(input: serde_json::Value, circom_template: &str) {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
         let package_path = get_path();
-        write_json(&input, output_dir, package_name);
+        write_json(&input, output_dir, PACKAGE_NAME);
 
-        let file_name = format!("{}/{}.circom", "fields/non_native", package_name);
+        let file_name = format!("{}/{}.circom", "fields/non_native", PACKAGE_NAME);
         let file_path = package_path.join(file_name);
 
         let prime = "grumpkin";
@@ -147,10 +143,10 @@ mod test {
         );
 
         // // Read the witness.json file
-        let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
+        let witness_file_path = format!("{}/{}_witness.json", output_dir, PACKAGE_NAME);
         let z = read_witness::<Fq>(&witness_file_path.to_string());
         let constraint_path =
-            format!("{}/{}_constraints.json", output_dir, package_name).to_string();
+            format!("{}/{}_constraints.json", output_dir, PACKAGE_NAME).to_string();
 
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
@@ -158,16 +154,15 @@ mod test {
 
     fn verify(
         input: serde_json::Value,
-        package_name: &str,
         circom_template: &str,
         actual_result: Fr,
     ) {
         let binding = env::current_dir().unwrap().join("src/parse/requirements");
         let output_dir = binding.to_str().unwrap();
         let package_path = get_path();
-        write_json(&input, output_dir, package_name);
+        write_json(&input, output_dir, PACKAGE_NAME);
 
-        let file_name = format!("{}/{}.circom", "fields/non_native", package_name);
+        let file_name = format!("{}/{}.circom", "fields/non_native", PACKAGE_NAME);
         let file_path = package_path.join(file_name);
 
         let prime = "grumpkin";
@@ -182,10 +177,10 @@ mod test {
         );
 
         // // Read the witness.json file
-        let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
+        let witness_file_path = format!("{}/{}_witness.json", output_dir, PACKAGE_NAME);
         let z = read_witness::<Fq>(&witness_file_path.to_string());
         let constraint_path =
-            format!("{}/{}_constraints.json", output_dir, package_name).to_string();
+            format!("{}/{}_constraints.json", output_dir, PACKAGE_NAME).to_string();
         let expected_result: Fr = from_limbs(vec![z[1], z[2], z[3]]);
         assert_eq!(expected_result, actual_result, "assertion failed");
         //To Check Az.Bz = C.z
