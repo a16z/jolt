@@ -116,12 +116,3 @@ template Fp2exp() {
 
     out <== results[n][0];
 }
-
-// component main = Fp2add();
-// component main = Fp2inv();
-
-// component main = Fp2exp();
-
-// component main = Fp2mul();
-
-// component main = Fp2mulbyfp();

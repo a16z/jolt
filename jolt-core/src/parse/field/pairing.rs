@@ -3,8 +3,6 @@ mod tests {
     use ark_bn254::{Bn254, Fq12, Fq2, Fq6, G1Projective, G2Projective};
     use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
     use ark_ff::UniformRand;
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
 
@@ -15,7 +13,7 @@ mod tests {
 
     #[test]
     fn pairing() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let P = G1Projective::rand(&mut rng).into_affine().into_group();
         let Q = G2Projective::rand(&mut rng).into_affine().into_group();
         let actual_result = Bn254::pairing(P, Q).0;
