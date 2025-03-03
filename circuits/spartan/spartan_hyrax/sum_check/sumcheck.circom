@@ -44,8 +44,8 @@ template NonNativeSumCheck(rounds, degree) {
  
        claim[i + 1] <== eval_at_r[i].eval;
     } 
-      finalClaim <== claim[rounds] ;
-      up_transcript <== int_transcript[rounds];
+    finalClaim <== claim[rounds] ;
+    up_transcript <== int_transcript[rounds];
 }
  
  

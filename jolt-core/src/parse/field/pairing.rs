@@ -1,13 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use ark_bn254::{Bn254, Fq12, Fq2, Fq6, G1Projective, G2Projective};
     use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
     use ark_ff::UniformRand;
     use rand_chacha::ChaCha8Rng;
     use rand_core::SeedableRng;
     use serde_json::json;
+    use std::env;
 
     use crate::{
         parse::{generate_circuit_and_witness, get_path, read_witness, write_json},
