@@ -2,21 +2,20 @@
 mod test {
     use crate::parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse};
     use crate::spartan::spartan_memory_checking::R1CSConstructor;
-    use ark_ec::{ short_weierstrass::Projective, AffineRepr, CurveGroup};
+    use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
     use ark_ff::{AdditiveGroup, Field};
+    use ark_grumpkin::{Fq, Fr, GrumpkinConfig, Projective as GrumpkinProjective};
     use ark_std::UniformRand;
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
-    use ark_grumpkin::{Fq, Fr, GrumpkinConfig, Projective as GrumpkinProjective};
     use std::ops::Mul;
-
 
     #[test]
     fn g1_double() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-        let op: Projective<GrumpkinConfig> = GrumpkinProjective::rand(&mut rng).into_affine().into_group();
+        let mut rng = ark_std::test_rng();
+        let op: Projective<GrumpkinConfig> = GrumpkinProjective::rand(&mut rng)
+            .into_affine()
+            .into_group();
         let actual_out = op.double();
         let input = json!({
             "op1": {
@@ -27,15 +26,23 @@ mod test {
         });
         let package_name = "grumpkin_g1";
         let circom_template = "G1Double";
-        verify(input, package_name, circom_template, actual_out.into_affine().into_group());
-  
+        verify(
+            input,
+            package_name,
+            circom_template,
+            actual_out.into_affine().into_group(),
+        );
     }
 
     #[test]
     fn g1_add() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-        let op1 = GrumpkinProjective::rand(&mut rng).into_affine().into_group();
-        let op2 = GrumpkinProjective::rand(&mut rng).into_affine().into_group();
+        let mut rng = ark_std::test_rng();
+        let op1 = GrumpkinProjective::rand(&mut rng)
+            .into_affine()
+            .into_group();
+        let op2 = GrumpkinProjective::rand(&mut rng)
+            .into_affine()
+            .into_group();
         let sum = op1 + op2;
         let input = json!(
         {
@@ -53,17 +60,23 @@ mod test {
         );
         let package_name = "grumpkin_g1";
         let circom_template = "G1Add";
-         verify(input, package_name, circom_template, sum.into_affine().into_group());
+        verify(
+            input,
+            package_name,
+            circom_template,
+            sum.into_affine().into_group(),
+        );
     }
 
-
     #[test]
-    fn g1_mul(){
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
-        let point = GrumpkinProjective::rand(&mut rng).into_affine().into_group();
+    fn g1_mul() {
+        let mut rng = ark_std::test_rng();
+        let point = GrumpkinProjective::rand(&mut rng)
+            .into_affine()
+            .into_group();
         let scalar = Fr::rand(&mut rng);
         let prod = point.mul(scalar);
-         let input = json!(
+        let input = json!(
         {
             "op1": {
                 "x": point.x.to_string(),
@@ -104,35 +117,32 @@ mod test {
         );
 
         // Read the witness.json file
-         let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
-         let z = read_witness::<Fq>(&witness_file_path.to_string());
+        let witness_file_path = format!("{}/{}_witness.json", output_dir, package_name);
+        let z = read_witness::<Fq>(&witness_file_path.to_string());
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
-            let computed_result : GrumpkinProjective;
-            if z[3] == Fq::ZERO{
-                computed_result = GrumpkinProjective {
-                    x: Fq::ZERO,
-                    y: Fq::ZERO,
-                    z: Fq::ONE,
-                }.into_affine()
-                .into_group();
-    
-            } else{
-                computed_result = GrumpkinProjective {
-                    x: z[1]/z[3],
-                    y: z[2]/z[3],
-                    z: Fq::ONE,
-                }
-                .into_affine()
-                .into_group();
+        let computed_result: GrumpkinProjective;
+        if z[3] == Fq::ZERO {
+            computed_result = GrumpkinProjective {
+                x: Fq::ZERO,
+                y: Fq::ZERO,
+                z: Fq::ONE,
             }
+            .into_affine()
+            .into_group();
+        } else {
+            computed_result = GrumpkinProjective {
+                x: z[1] / z[3],
+                y: z[2] / z[3],
+                z: Fq::ONE,
+            }
+            .into_affine()
+            .into_group();
+        }
 
-         assert_eq!(actual_result, computed_result, "assertion failed");
+        assert_eq!(actual_result, computed_result, "assertion failed");
 
         //To Check Az.Bz = C.z
         let _ = R1CSConstructor::<Fq>::construct(Some(&constraint_path), Some(&z), 0);
     }
-
-
-    
 }

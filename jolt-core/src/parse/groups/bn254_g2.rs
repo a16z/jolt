@@ -1,3 +1,4 @@
+#[cfg(test)]
 mod tests {
     use crate::{
         parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse},
@@ -6,16 +7,13 @@ mod tests {
     use ark_bn254::{g2::Config, Fq, Fq2, Fr, G2Projective};
     use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
     use ark_ff::{AdditiveGroup, Field, UniformRand};
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
     use std::ops::Mul;
 
-
     #[test]
     fn g2_double() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let op = G2Projective::rand(&mut rng);
 
         let actual_out = op.double();
@@ -49,7 +47,7 @@ mod tests {
 
     #[test]
     fn g2_add() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let op1 = G2Projective::rand(&mut rng);
         let op2 = G2Projective::rand(&mut rng);
 
@@ -96,7 +94,7 @@ mod tests {
 
     #[test]
     fn g2_mul() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let point = G2Projective::rand(&mut rng).into_affine().into_group();
         let scalar = Fr::rand(&mut rng);
         let prod = point.mul(scalar);

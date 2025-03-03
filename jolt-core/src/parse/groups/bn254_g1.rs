@@ -1,21 +1,19 @@
-
+#[cfg(test)]
 mod tests {
     use crate::{
         parse::{generate_circuit_and_witness, get_path, read_witness, write_json, Parse},
         spartan::spartan_memory_checking::R1CSConstructor,
     };
-    use ark_bn254::{g1::Config, Fr,Fq ,G1Projective};
-    use ark_ec::{ short_weierstrass::Projective, AffineRepr, CurveGroup};
+    use ark_bn254::{g1::Config, Fq, Fr, G1Projective};
+    use ark_ec::{short_weierstrass::Projective, AffineRepr, CurveGroup};
     use ark_ff::{AdditiveGroup, Field, UniformRand};
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
     use serde_json::json;
     use std::env;
     use std::ops::Mul;
 
     #[test]
     fn g1_double() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let op = G1Projective::rand(&mut rng);
 
         let actual_out = op.double();
@@ -33,12 +31,17 @@ mod tests {
         let package_name = "bn254_g1";
         let circom_template = "G1Double";
 
-        verify(input, package_name, circom_template, actual_out.into_affine().into_group());
+        verify(
+            input,
+            package_name,
+            circom_template,
+            actual_out.into_affine().into_group(),
+        );
     }
 
     #[test]
     fn g1_add() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let op1 = G1Projective::rand(&mut rng);
         let op2 = G1Projective::rand(&mut rng);
 
@@ -63,13 +66,17 @@ mod tests {
         let package_name = "bn254_g1";
         let circom_template = "G1Add";
 
-        verify(input, package_name, circom_template, actual_out.into_affine().into_group());
+        verify(
+            input,
+            package_name,
+            circom_template,
+            actual_out.into_affine().into_group(),
+        );
     }
-
 
     #[test]
     fn g1_mul() {
-        let mut rng = ChaCha8Rng::from_seed([2; 32]);
+        let mut rng = ark_std::test_rng();
         let point = G1Projective::rand(&mut rng).into_affine().into_group();
         let scalar = Fr::rand(&mut rng);
         let prod = point.mul(scalar);
@@ -85,9 +92,13 @@ mod tests {
         );
         let package_name = "bn254_g1";
         let circom_template = "G1Mul";
-        verify(input, package_name, circom_template, prod.into_affine().into_group());
+        verify(
+            input,
+            package_name,
+            circom_template,
+            prod.into_affine().into_group(),
+        );
     }
-
 
     fn verify(
         input: serde_json::Value,
@@ -121,26 +132,24 @@ mod tests {
         let constraint_path =
             format!("{}/{}_constraints.json", output_dir, package_name).to_string();
 
-
-        let computed_result : G1Projective;
-        if z[3] == Fq::ZERO{
+        let computed_result: G1Projective;
+        if z[3] == Fq::ZERO {
             computed_result = G1Projective {
                 x: Fq::ZERO,
                 y: Fq::ZERO,
                 z: Fq::ONE,
-            }.into_affine()
+            }
+            .into_affine()
             .into_group();
-
-        } else{
+        } else {
             computed_result = G1Projective {
-                x: z[1]/z[3],
-                y: z[2]/z[3],
+                x: z[1] / z[3],
+                y: z[2] / z[3],
                 z: Fq::ONE,
             }
             .into_affine()
             .into_group();
         }
-
 
         assert_eq!(actual_result, computed_result, "assertion failed");
         // To Check Az.Bz = C.z
