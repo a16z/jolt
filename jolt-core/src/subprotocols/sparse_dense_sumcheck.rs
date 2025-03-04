@@ -1,7 +1,7 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::instruction::{mulhu::MULHUInstruction, JoltInstruction},
+    jolt::instruction::{and::ANDInstruction, mulhu::MULHUInstruction, JoltInstruction},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -113,7 +113,6 @@ impl<F: JoltField> Index<usize> for BinarySumTree<F> {
 }
 
 pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
-    const GAMMA: usize;
     // const ETA: usize
 
     #[tracing::instrument(skip_all, name = "SparseDenseSumcheck::compute_prover_message")]
@@ -130,276 +129,193 @@ pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
         let two = F::from_u8(2);
         let chi_2 = [F::one() - two, two];
 
-        match Self::GAMMA {
-            0 => {
-                let q_layer = &Q_tree[round + 1];
-                let z_layer = &Z_tree[round + 1];
+        let (q_layer, z_layer) = if j % 2 == 0 {
+            (&Q_tree[round + 2], &Z_tree[round + 2])
+        } else {
+            (&Q_tree[round + 1], &Z_tree[round + 1])
+        };
 
-                let q_inner_products: [F; 2] = (v, x)
-                    .into_par_iter()
-                    .enumerate()
-                    .map(|(b, (v, x))| {
-                        // Element of v ◦ x
-                        let v_x = *v * x;
-                        // Contribution to <v ◦ x, q_even>
-                        let q_v_x_even = v_x * q_layer[2 * b];
-                        let q_v_x_odd = v_x * q_layer[2 * b + 1];
-
-                        [q_v_x_even, q_v_x_odd]
-                    })
-                    .reduce(
-                        || [F::zero(); 2],
-                        |running, new| [running[0] + new[0], running[1] + new[1]],
-                    );
-
-                let z_inner_products: [F; 4] = (v, w)
-                    .into_par_iter()
-                    .enumerate()
-                    .map(|(b, (v_b, w_b))| {
-                        // Contribution to <v, z_even>
-                        let z_v_even = z_layer[2 * b] * v_b;
-                        // Contribution to <v, z_odd>
-                        let z_v_odd = z_layer[2 * b + 1] * v_b;
-                        // Contribution to <v ◦ w, z_even>
-                        let z_v_w_even = z_v_even * w_b;
-                        // Contribution to <v ◦ w, z_odd>
-                        let z_v_w_odd = z_v_odd * w_b;
-
-                        [z_v_even, z_v_odd, z_v_w_even, z_v_w_odd]
-                    })
-                    .reduce(
-                        || [F::zero(); 4],
-                        |running, new| {
-                            [
-                                running[0] + new[0],
-                                running[1] + new[1],
-                                running[2] + new[2],
-                                running[3] + new[3],
-                            ]
-                        },
-                    );
-
-                let mut univariate_poly_evals = [F::zero(), F::zero()];
-
-                // Expression (52), c = 0
-                univariate_poly_evals[0] +=
-                    Self::default().multiplicative_update(j, F::zero(), 0, None, None)
-                        * q_inner_products[0];
-                // Expression (53), c = 0
-                univariate_poly_evals[0] += z_inner_products[2]
-                    + Self::default().additive_update(j, F::zero(), 0, None, None)
-                        * z_inner_products[0];
-
-                // Expression (52), c = 2
-                univariate_poly_evals[1] += chi_2[0]
-                    * Self::default().multiplicative_update(j, two, 0, None, None)
-                    * q_inner_products[0];
-                univariate_poly_evals[1] += chi_2[1]
-                    * Self::default().multiplicative_update(j, two, 1, None, None)
-                    * q_inner_products[1];
-                // Expression (53), c = 2
-                univariate_poly_evals[1] += chi_2[0]
-                    * (z_inner_products[2]
-                        + Self::default().additive_update(j, two, 0, None, None)
-                            * z_inner_products[0]);
-                univariate_poly_evals[1] += chi_2[1]
-                    * (z_inner_products[3]
-                        + Self::default().additive_update(j, two, 1, None, None)
-                            * z_inner_products[1]);
-
-                univariate_poly_evals
-            }
-            1 => {
-                let (q_layer, z_layer) = if j % 2 == 0 {
-                    (&Q_tree[round + 2], &Z_tree[round + 2])
-                } else {
-                    (&Q_tree[round + 1], &Z_tree[round + 1])
-                };
-
-                let q_inner_products: [F; 4] = v
-                    .par_chunks(if j % 2 == 0 { 1 } else { 2 })
-                    .zip_eq(x.par_chunks(if j % 2 == 0 { 1 } else { 4 }))
-                    .zip_eq(q_layer.par_chunks(4))
-                    .map(|((v_b, x_b), q_b)| {
-                        if j % 2 == 0 {
-                            let v_x = v_b[0] * x_b[0];
-                            [v_x * q_b[0], v_x * q_b[1], v_x * q_b[2], v_x * q_b[3]]
-                        } else {
-                            [
-                                v_b[0] * x_b[0] * q_b[0],
-                                v_b[0] * x_b[1] * q_b[1],
-                                v_b[1] * x_b[2] * q_b[2],
-                                v_b[1] * x_b[3] * q_b[3],
-                            ]
-                        }
-                    })
-                    .reduce(
-                        || [F::zero(); 4],
-                        |running, new| {
-                            [
-                                running[0] + new[0],
-                                running[1] + new[1],
-                                running[2] + new[2],
-                                running[3] + new[3],
-                            ]
-                        },
-                    );
-
-                let z_inner_products: ([F; 4], [F; 4]) = v
-                    .par_chunks(if j % 2 == 0 { 1 } else { 2 })
-                    .zip_eq(w.par_chunks(if j % 2 == 0 { 1 } else { 4 }))
-                    .zip_eq(z_layer.par_chunks(4))
-                    .map(|((v_b, w_b), z_b)| {
-                        if j % 2 == 0 {
-                            let v_z = [
-                                v_b[0] * z_b[0],
-                                v_b[0] * z_b[1],
-                                v_b[0] * z_b[2],
-                                v_b[0] * z_b[3],
-                            ];
-                            let v_z_w = [
-                                v_z[0] * w_b[0],
-                                v_z[1] * w_b[0],
-                                v_z[2] * w_b[0],
-                                v_z[3] * w_b[0],
-                            ];
-                            (v_z, v_z_w)
-                        } else {
-                            let v_z = [
-                                v_b[0] * z_b[0],
-                                v_b[0] * z_b[1],
-                                v_b[1] * z_b[2],
-                                v_b[1] * z_b[3],
-                            ];
-                            let v_z_w = [
-                                v_z[0] * w_b[0],
-                                v_z[1] * w_b[1],
-                                v_z[2] * w_b[2],
-                                v_z[3] * w_b[3],
-                            ];
-                            (v_z, v_z_w)
-                        }
-                    })
-                    .reduce(
-                        || ([F::zero(); 4], [F::zero(); 4]),
-                        |running, new| {
-                            (
-                                [
-                                    running.0[0] + new.0[0],
-                                    running.0[1] + new.0[1],
-                                    running.0[2] + new.0[2],
-                                    running.0[3] + new.0[3],
-                                ],
-                                [
-                                    running.1[0] + new.1[0],
-                                    running.1[1] + new.1[1],
-                                    running.1[2] + new.1[2],
-                                    running.1[3] + new.1[3],
-                                ],
-                            )
-                        },
-                    );
-
-                let mut univariate_poly_evals = [F::zero(), F::zero()];
-                let r_prev = if j == 0 { None } else { Some(r[j - 1]) };
+        let q_inner_products: [F; 4] = v
+            .par_chunks(if j % 2 == 0 { 1 } else { 2 })
+            .zip_eq(x.par_chunks(if j % 2 == 0 { 1 } else { 4 }))
+            .zip_eq(q_layer.par_chunks(4))
+            .map(|((v_b, x_b), q_b)| {
                 if j % 2 == 0 {
-                    // Expression (52), c = 0
-                    univariate_poly_evals[0] +=
-                        Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(0))
-                            * q_inner_products[0];
-                    univariate_poly_evals[0] +=
-                        Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(1))
-                            * q_inner_products[1];
-                    // Expression (53), c = 0
-                    univariate_poly_evals[0] += z_inner_products.1[0]
-                        + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(0))
-                            * z_inner_products.0[0];
-                    univariate_poly_evals[0] += z_inner_products.1[1]
-                        + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(1))
-                            * z_inner_products.0[1];
-
-                    // Expression (52), c = 2
-                    univariate_poly_evals[1] += chi_2[0]
-                        * Self::default().multiplicative_update(j, two, 0, r_prev, Some(0))
-                        * q_inner_products[0];
-                    univariate_poly_evals[1] += chi_2[0]
-                        * Self::default().multiplicative_update(j, two, 0, r_prev, Some(1))
-                        * q_inner_products[1];
-                    univariate_poly_evals[1] += chi_2[1]
-                        * Self::default().multiplicative_update(j, two, 1, r_prev, Some(0))
-                        * q_inner_products[2];
-                    univariate_poly_evals[1] += chi_2[1]
-                        * Self::default().multiplicative_update(j, two, 1, r_prev, Some(1))
-                        * q_inner_products[3];
-                    // Expression (53), c = 2
-                    univariate_poly_evals[1] += chi_2[0]
-                        * (z_inner_products.1[0]
-                            + Self::default().additive_update(j, two, 0, r_prev, Some(0))
-                                * z_inner_products.0[0]);
-                    univariate_poly_evals[1] += chi_2[0]
-                        * (z_inner_products.1[1]
-                            + Self::default().additive_update(j, two, 0, r_prev, Some(1))
-                                * z_inner_products.0[1]);
-                    univariate_poly_evals[1] += chi_2[1]
-                        * (z_inner_products.1[2]
-                            + Self::default().additive_update(j, two, 1, r_prev, Some(0))
-                                * z_inner_products.0[2]);
-                    univariate_poly_evals[1] += chi_2[1]
-                        * (z_inner_products.1[3]
-                            + Self::default().additive_update(j, two, 1, r_prev, Some(1))
-                                * z_inner_products.0[3]);
+                    let v_x = v_b[0] * x_b[0];
+                    [v_x * q_b[0], v_x * q_b[1], v_x * q_b[2], v_x * q_b[3]]
                 } else {
-                    // Expression (52), c = 0
-                    univariate_poly_evals[0] +=
-                        Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(0))
-                            * q_inner_products[0];
-                    univariate_poly_evals[0] +=
-                        Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(1))
-                            * q_inner_products[2];
-                    // Expression (53), c = 0
-                    univariate_poly_evals[0] += z_inner_products.1[0]
-                        + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(0))
-                            * z_inner_products.0[0];
-                    univariate_poly_evals[0] += z_inner_products.1[2]
-                        + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(1))
-                            * z_inner_products.0[2];
-
-                    // Expression (52), c = 2
-                    univariate_poly_evals[1] += chi_2[0]
-                        * Self::default().multiplicative_update(j, two, 0, r_prev, Some(0))
-                        * q_inner_products[0];
-                    univariate_poly_evals[1] += chi_2[0]
-                        * Self::default().multiplicative_update(j, two, 0, r_prev, Some(1))
-                        * q_inner_products[2];
-                    univariate_poly_evals[1] += chi_2[1]
-                        * Self::default().multiplicative_update(j, two, 1, r_prev, Some(0))
-                        * q_inner_products[1];
-                    univariate_poly_evals[1] += chi_2[1]
-                        * Self::default().multiplicative_update(j, two, 1, r_prev, Some(1))
-                        * q_inner_products[3];
-                    // Expression (53), c = 2
-                    univariate_poly_evals[1] += chi_2[0]
-                        * (z_inner_products.1[0]
-                            + Self::default().additive_update(j, two, 0, r_prev, Some(0))
-                                * z_inner_products.0[0]);
-                    univariate_poly_evals[1] += chi_2[0]
-                        * (z_inner_products.1[2]
-                            + Self::default().additive_update(j, two, 0, r_prev, Some(1))
-                                * z_inner_products.0[2]);
-                    univariate_poly_evals[1] += chi_2[1]
-                        * (z_inner_products.1[1]
-                            + Self::default().additive_update(j, two, 1, r_prev, Some(0))
-                                * z_inner_products.0[1]);
-                    univariate_poly_evals[1] += chi_2[1]
-                        * (z_inner_products.1[3]
-                            + Self::default().additive_update(j, two, 1, r_prev, Some(1))
-                                * z_inner_products.0[3]);
+                    [
+                        v_b[0] * x_b[0] * q_b[0],
+                        v_b[0] * x_b[1] * q_b[1],
+                        v_b[1] * x_b[2] * q_b[2],
+                        v_b[1] * x_b[3] * q_b[3],
+                    ]
                 }
+            })
+            .reduce(
+                || [F::zero(); 4],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                        running[3] + new[3],
+                    ]
+                },
+            );
 
-                univariate_poly_evals
-            }
-            _ => unimplemented!("gamma > 1 not supported"),
+        let z_inner_products: ([F; 4], [F; 4]) = v
+            .par_chunks(if j % 2 == 0 { 1 } else { 2 })
+            .zip_eq(w.par_chunks(if j % 2 == 0 { 1 } else { 4 }))
+            .zip_eq(z_layer.par_chunks(4))
+            .map(|((v_b, w_b), z_b)| {
+                if j % 2 == 0 {
+                    let v_z = [
+                        v_b[0] * z_b[0],
+                        v_b[0] * z_b[1],
+                        v_b[0] * z_b[2],
+                        v_b[0] * z_b[3],
+                    ];
+                    let v_z_w = [
+                        v_z[0] * w_b[0],
+                        v_z[1] * w_b[0],
+                        v_z[2] * w_b[0],
+                        v_z[3] * w_b[0],
+                    ];
+                    (v_z, v_z_w)
+                } else {
+                    let v_z = [
+                        v_b[0] * z_b[0],
+                        v_b[0] * z_b[1],
+                        v_b[1] * z_b[2],
+                        v_b[1] * z_b[3],
+                    ];
+                    let v_z_w = [
+                        v_z[0] * w_b[0],
+                        v_z[1] * w_b[1],
+                        v_z[2] * w_b[2],
+                        v_z[3] * w_b[3],
+                    ];
+                    (v_z, v_z_w)
+                }
+            })
+            .reduce(
+                || ([F::zero(); 4], [F::zero(); 4]),
+                |running, new| {
+                    (
+                        [
+                            running.0[0] + new.0[0],
+                            running.0[1] + new.0[1],
+                            running.0[2] + new.0[2],
+                            running.0[3] + new.0[3],
+                        ],
+                        [
+                            running.1[0] + new.1[0],
+                            running.1[1] + new.1[1],
+                            running.1[2] + new.1[2],
+                            running.1[3] + new.1[3],
+                        ],
+                    )
+                },
+            );
+
+        let mut univariate_poly_evals = [F::zero(), F::zero()];
+        let r_prev = if j == 0 { None } else { Some(r[j - 1]) };
+        if j % 2 == 0 {
+            // Expression (52), c = 0
+            univariate_poly_evals[0] +=
+                Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(0))
+                    * q_inner_products[0];
+            univariate_poly_evals[0] +=
+                Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(1))
+                    * q_inner_products[1];
+            // Expression (53), c = 0
+            univariate_poly_evals[0] += z_inner_products.1[0]
+                + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(0))
+                    * z_inner_products.0[0];
+            univariate_poly_evals[0] += z_inner_products.1[1]
+                + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(1))
+                    * z_inner_products.0[1];
+
+            // Expression (52), c = 2
+            univariate_poly_evals[1] += chi_2[0]
+                * Self::default().multiplicative_update(j, two, 0, r_prev, Some(0))
+                * q_inner_products[0];
+            univariate_poly_evals[1] += chi_2[0]
+                * Self::default().multiplicative_update(j, two, 0, r_prev, Some(1))
+                * q_inner_products[1];
+            univariate_poly_evals[1] += chi_2[1]
+                * Self::default().multiplicative_update(j, two, 1, r_prev, Some(0))
+                * q_inner_products[2];
+            univariate_poly_evals[1] += chi_2[1]
+                * Self::default().multiplicative_update(j, two, 1, r_prev, Some(1))
+                * q_inner_products[3];
+            // Expression (53), c = 2
+            univariate_poly_evals[1] += chi_2[0]
+                * (z_inner_products.1[0]
+                    + Self::default().additive_update(j, two, 0, r_prev, Some(0))
+                        * z_inner_products.0[0]);
+            univariate_poly_evals[1] += chi_2[0]
+                * (z_inner_products.1[1]
+                    + Self::default().additive_update(j, two, 0, r_prev, Some(1))
+                        * z_inner_products.0[1]);
+            univariate_poly_evals[1] += chi_2[1]
+                * (z_inner_products.1[2]
+                    + Self::default().additive_update(j, two, 1, r_prev, Some(0))
+                        * z_inner_products.0[2]);
+            univariate_poly_evals[1] += chi_2[1]
+                * (z_inner_products.1[3]
+                    + Self::default().additive_update(j, two, 1, r_prev, Some(1))
+                        * z_inner_products.0[3]);
+        } else {
+            // Expression (52), c = 0
+            univariate_poly_evals[0] +=
+                Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(0))
+                    * q_inner_products[0];
+            univariate_poly_evals[0] +=
+                Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(1))
+                    * q_inner_products[2];
+            // Expression (53), c = 0
+            univariate_poly_evals[0] += z_inner_products.1[0]
+                + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(0))
+                    * z_inner_products.0[0];
+            univariate_poly_evals[0] += z_inner_products.1[2]
+                + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(1))
+                    * z_inner_products.0[2];
+
+            // Expression (52), c = 2
+            univariate_poly_evals[1] += chi_2[0]
+                * Self::default().multiplicative_update(j, two, 0, r_prev, Some(0))
+                * q_inner_products[0];
+            univariate_poly_evals[1] += chi_2[0]
+                * Self::default().multiplicative_update(j, two, 0, r_prev, Some(1))
+                * q_inner_products[2];
+            univariate_poly_evals[1] += chi_2[1]
+                * Self::default().multiplicative_update(j, two, 1, r_prev, Some(0))
+                * q_inner_products[1];
+            univariate_poly_evals[1] += chi_2[1]
+                * Self::default().multiplicative_update(j, two, 1, r_prev, Some(1))
+                * q_inner_products[3];
+            // Expression (53), c = 2
+            univariate_poly_evals[1] += chi_2[0]
+                * (z_inner_products.1[0]
+                    + Self::default().additive_update(j, two, 0, r_prev, Some(0))
+                        * z_inner_products.0[0]);
+            univariate_poly_evals[1] += chi_2[0]
+                * (z_inner_products.1[2]
+                    + Self::default().additive_update(j, two, 0, r_prev, Some(1))
+                        * z_inner_products.0[2]);
+            univariate_poly_evals[1] += chi_2[1]
+                * (z_inner_products.1[1]
+                    + Self::default().additive_update(j, two, 1, r_prev, Some(0))
+                        * z_inner_products.0[1]);
+            univariate_poly_evals[1] += chi_2[1]
+                * (z_inner_products.1[3]
+                    + Self::default().additive_update(j, two, 1, r_prev, Some(1))
+                        * z_inner_products.0[3]);
         }
+
+        univariate_poly_evals
     }
 
     #[tracing::instrument(skip_all, name = "SparseDenseSumcheck::update_tables")]
@@ -412,102 +328,74 @@ pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
     ) {
         Self::update_v_table(v, r, j);
 
-        match Self::GAMMA {
-            0 => {
-                x.values
-                    .par_iter()
-                    .zip(x.scratch_space.par_chunks_mut(2))
-                    .for_each(|(&x_i, dest)| {
-                        dest[0] =
-                            x_i * Self::default().multiplicative_update(j, r[j], 0, None, None);
-                        dest[1] =
-                            x_i * Self::default().multiplicative_update(j, r[j], 1, None, None);
-                    });
-                std::mem::swap(&mut x.values, &mut x.scratch_space);
-                x.len *= 2;
+        if j % 2 == 0 {
+            x.values
+                .par_iter()
+                .zip(x.scratch_space.par_chunks_mut(4))
+                .for_each(|(&x_i, dest)| {
+                    for (b_j, b_next) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                        dest[2 * b_j + b_next] = x_i
+                            * Self::default().multiplicative_update(
+                                j,
+                                r[j],
+                                b_j as u8,
+                                None,
+                                Some(b_next as u8),
+                            );
+                    }
+                });
+            std::mem::swap(&mut x.values, &mut x.scratch_space);
+            x.len *= 4;
 
-                w.values
-                    .par_iter()
-                    .zip(w.scratch_space.par_chunks_mut(2))
-                    .for_each(|(&w_i, dest)| {
-                        dest[0] = w_i + Self::default().additive_update(j, r[j], 0, None, None);
-                        dest[1] = w_i + Self::default().additive_update(j, r[j], 1, None, None);
-                    });
-                std::mem::swap(&mut w.values, &mut w.scratch_space);
-                w.len *= 2;
-            }
-            1 => {
-                if j % 2 == 0 {
-                    x.values
-                        .par_iter()
-                        .zip(x.scratch_space.par_chunks_mut(4))
-                        .for_each(|(&x_i, dest)| {
-                            for (b_j, b_next) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-                                dest[2 * b_j + b_next] = x_i
-                                    * Self::default().multiplicative_update(
-                                        j,
-                                        r[j],
-                                        b_j as u8,
-                                        None,
-                                        Some(b_next as u8),
-                                    );
-                            }
-                        });
-                    std::mem::swap(&mut x.values, &mut x.scratch_space);
-                    x.len *= 4;
+            w.values
+                .par_iter()
+                .zip(w.scratch_space.par_chunks_mut(4))
+                .for_each(|(&w_i, dest)| {
+                    for (b_j, b_next) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                        dest[2 * b_j + b_next] = w_i
+                            + Self::default().additive_update(
+                                j,
+                                r[j],
+                                b_j as u8,
+                                None,
+                                Some(b_next as u8),
+                            );
+                    }
+                });
+            std::mem::swap(&mut w.values, &mut w.scratch_space);
+            w.len *= 4;
+        } else {
+            x.values
+                .par_iter()
+                .zip(x.scratch_space.par_iter_mut())
+                .enumerate()
+                .for_each(|(index, (&x_i, dest))| {
+                    *dest = x_i
+                        * Self::default().multiplicative_update(
+                            j,
+                            r[j],
+                            (index % 2) as u8,
+                            Some(r[j - 1]),
+                            None,
+                        );
+                });
+            std::mem::swap(&mut x.values, &mut x.scratch_space);
 
-                    w.values
-                        .par_iter()
-                        .zip(w.scratch_space.par_chunks_mut(4))
-                        .for_each(|(&w_i, dest)| {
-                            for (b_j, b_next) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-                                dest[2 * b_j + b_next] = w_i
-                                    + Self::default().additive_update(
-                                        j,
-                                        r[j],
-                                        b_j as u8,
-                                        None,
-                                        Some(b_next as u8),
-                                    );
-                            }
-                        });
-                    std::mem::swap(&mut w.values, &mut w.scratch_space);
-                    w.len *= 4;
-                } else {
-                    x.values
-                        .par_iter()
-                        .zip(x.scratch_space.par_iter_mut())
-                        .enumerate()
-                        .for_each(|(index, (&x_i, dest))| {
-                            *dest = x_i
-                                * Self::default().multiplicative_update(
-                                    j,
-                                    r[j],
-                                    (index % 2) as u8,
-                                    Some(r[j - 1]),
-                                    None,
-                                );
-                        });
-                    std::mem::swap(&mut x.values, &mut x.scratch_space);
-
-                    w.values
-                        .par_iter()
-                        .zip(w.scratch_space.par_iter_mut())
-                        .enumerate()
-                        .for_each(|(index, (&w_i, dest))| {
-                            *dest = w_i
-                                + Self::default().additive_update(
-                                    j,
-                                    r[j],
-                                    (index % 2) as u8,
-                                    Some(r[j - 1]),
-                                    None,
-                                );
-                        });
-                    std::mem::swap(&mut w.values, &mut w.scratch_space);
-                }
-            }
-            _ => unimplemented!("gamma > 1 not supported"),
+            w.values
+                .par_iter()
+                .zip(w.scratch_space.par_iter_mut())
+                .enumerate()
+                .for_each(|(index, (&w_i, dest))| {
+                    *dest = w_i
+                        + Self::default().additive_update(
+                            j,
+                            r[j],
+                            (index % 2) as u8,
+                            Some(r[j - 1]),
+                            None,
+                        );
+                });
+            std::mem::swap(&mut w.values, &mut w.scratch_space);
         }
     }
 
@@ -526,9 +414,8 @@ pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
     }
 }
 
-impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<32> {
-    const GAMMA: usize = 0;
-}
+impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<32> {}
+impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<32> {}
 
 pub fn prove_single_instruction<
     const TREE_WIDTH: usize,
@@ -1025,17 +912,9 @@ mod tests {
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, SeedableRng};
 
-    impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<8> {
-        const GAMMA: usize = 0;
-    }
-
-    impl<F: JoltField> SparseDenseSumcheck<F> for ADDInstruction<8> {
-        const GAMMA: usize = 0;
-    }
-
-    impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<8> {
-        const GAMMA: usize = 1;
-    }
+    impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<8> {}
+    impl<F: JoltField> SparseDenseSumcheck<F> for ADDInstruction<8> {}
+    impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<8> {}
 
     const WORD_SIZE: usize = 8;
     const K: usize = 1 << 16;
