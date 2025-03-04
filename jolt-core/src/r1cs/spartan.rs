@@ -266,8 +266,8 @@ where
         assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
 
         let mut shift_sumcheck_polys = vec![
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(bind_z_ry_var)),
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(eq_plus_one_rx_step)),
+            MultilinearPolynomial::from(bind_z_ry_var),
+            MultilinearPolynomial::from(eq_plus_one_rx_step),
         ];
 
         let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)

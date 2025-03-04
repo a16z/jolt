@@ -101,33 +101,6 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 }
 
-/* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
-That is, it ignores the case where x is all 1s, outputting 0.
-Assumes x and y are provided big-endian. */
-pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
-    let one = F::one();
-
-    /* If y+1 = x, then the two bit vectors are of the following form.
-        Let k be the longest suffix of 1s in x.
-        In y, those k bits are 0.
-        Then, the next bit in x is 0 and the next bit in y is 1.
-        The remaining higher bits are the same in x and y.
-    */
-    (0..l)
-        .into_par_iter()
-        .map(|k| {
-            let lower_bits_product = (0..k)
-                .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
-                .product::<F>();
-            let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
-            let higher_bits_product = ((k + 1)..l)
-                .map(|i| x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i]))
-                .product::<F>();
-            lower_bits_product * kth_bit_product * higher_bits_product
-        })
-        .sum()
-}
-
 impl<F: JoltField> EqPlusOnePolynomial<F> {
     pub fn new(x: Vec<F>) -> Self {
         EqPlusOnePolynomial { x }
