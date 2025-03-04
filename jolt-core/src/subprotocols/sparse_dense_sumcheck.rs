@@ -507,12 +507,6 @@ pub fn prove_single_instruction<
         || BinarySumTree::new(log_m + 1),
     );
 
-    let address_variable_binding_order = if I::GAMMA == 0 {
-        BindingOrder::HighToLow
-    } else {
-        BindingOrder::InterleavedHighToLow
-    };
-
     for phase in 0..3 {
         let span = tracing::span!(tracing::Level::INFO, "sparse-dense phase");
         let _guard = span.enter();
@@ -622,17 +616,6 @@ pub fn prove_single_instruction<
             let span = tracing::span!(tracing::Level::INFO, "sparse-dense sumcheck round");
             let _guard = span.enter();
 
-            #[cfg(test)]
-            {
-                let expected: F = (0..val_test.len())
-                    .map(|k| eq_ra_test.get_bound_coeff(k) * val_test.get_bound_coeff(k))
-                    .sum();
-                assert_eq!(
-                    expected, previous_claim,
-                    "Sumcheck sanity check failed in phase {phase} round {round}"
-                );
-            }
-
             let univariate_poly_evals =
                 I::compute_prover_message(round, &Q_tree, &Z_tree, &r, j, &v, &x, &w);
 
@@ -641,10 +624,8 @@ pub fn prove_single_instruction<
                 let expected: [F; 2] = (0..val_test.len() / 2)
                     .into_par_iter()
                     .map(|i| {
-                        let eq_ra_evals =
-                            eq_ra_test.sumcheck_evals(i, 2, address_variable_binding_order);
-                        let val_evals =
-                            val_test.sumcheck_evals(i, 2, address_variable_binding_order);
+                        let eq_ra_evals = eq_ra_test.sumcheck_evals(i, 2, BindingOrder::HighToLow);
+                        let val_evals = val_test.sumcheck_evals(i, 2, BindingOrder::HighToLow);
 
                         [eq_ra_evals[0] * val_evals[0], eq_ra_evals[1] * val_evals[1]]
                     })
@@ -654,7 +635,7 @@ pub fn prove_single_instruction<
                     );
                 assert_eq!(
                     expected, univariate_poly_evals,
-                    "phase {phase} round {round}"
+                    "Sumcheck sanity check failed in phase {phase} round {round}"
                 );
             }
 
@@ -677,8 +658,8 @@ pub fn prove_single_instruction<
 
             #[cfg(test)]
             {
-                eq_ra_test.bind_parallel(r_j, address_variable_binding_order);
-                val_test.bind_parallel(r_j, address_variable_binding_order);
+                eq_ra_test.bind_parallel(r_j, BindingOrder::HighToLow);
+                val_test.bind_parallel(r_j, BindingOrder::HighToLow);
             }
 
             j += 1;
@@ -770,8 +751,8 @@ pub fn prove_single_instruction<
         let univariate_poly_evals: [F; 2] = (0..eq_ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let eq_ra_evals = eq_ra.sumcheck_evals(i, 2, address_variable_binding_order);
-                let val_evals = val.sumcheck_evals(i, 2, address_variable_binding_order);
+                let eq_ra_evals = eq_ra.sumcheck_evals(i, 2, BindingOrder::HighToLow);
+                let val_evals = val.sumcheck_evals(i, 2, BindingOrder::HighToLow);
 
                 [eq_ra_evals[0] * val_evals[0], eq_ra_evals[1] * val_evals[1]]
             })

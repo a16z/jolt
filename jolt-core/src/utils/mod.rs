@@ -183,9 +183,69 @@ pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
     r_i
 }
 
+pub fn uninterleave_bits(val: u64) -> (u32, u32) {
+    // Isolate even and odd bits.
+    let mut even_bits = val & 0x5555_5555_5555_5555;
+    let mut odd_bits = (val >> 1) & 0x5555_5555_5555_5555;
+
+    // Compact the bits into the lower part of `even_bits`
+    even_bits = (even_bits | (even_bits >> 1)) & 0x3333_3333_3333_3333;
+    even_bits = (even_bits | (even_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
+    even_bits = (even_bits | (even_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
+    even_bits = (even_bits | (even_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
+    even_bits = (even_bits | (even_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
+
+    // And do the same for `odd_bits`
+    odd_bits = (odd_bits | (odd_bits >> 1)) & 0x3333_3333_3333_3333;
+    odd_bits = (odd_bits | (odd_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
+    odd_bits = (odd_bits | (odd_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
+    odd_bits = (odd_bits | (odd_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
+    odd_bits = (odd_bits | (odd_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
+
+    (even_bits as u32, odd_bits as u32)
+}
+
+pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
+    // Insert zeros between each bit of `even_bits`
+    let mut even_bits = even_bits as u64;
+    even_bits = (even_bits | (even_bits << 16)) & 0x0000_FFFF_0000_FFFF;
+    even_bits = (even_bits | (even_bits << 8)) & 0x00FF_00FF_00FF_00FF;
+    even_bits = (even_bits | (even_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    even_bits = (even_bits | (even_bits << 2)) & 0x3333_3333_3333_3333;
+    even_bits = (even_bits | (even_bits << 1)) & 0x5555_5555_5555_5555;
+
+    // And do the same for `odd_bits`
+    let mut odd_bits = odd_bits as u64;
+    odd_bits = (odd_bits | (odd_bits << 16)) & 0x0000_FFFF_0000_FFFF;
+    odd_bits = (odd_bits | (odd_bits << 8)) & 0x00FF_00FF_00FF_00FF;
+    odd_bits = (odd_bits | (odd_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    odd_bits = (odd_bits | (odd_bits << 2)) & 0x3333_3333_3333_3333;
+    odd_bits = (odd_bits | (odd_bits << 1)) & 0x5555_5555_5555_5555;
+
+    even_bits | (odd_bits << 1)
+}
+
 #[cfg(test)]
 mod tests {
+    use rand_core::RngCore;
+
     use super::*;
+
+    #[test]
+    fn interleave_uninterleave_bits() {
+        let mut rng = test_rng();
+        for _ in 0..1000 {
+            let val = rng.next_u64();
+            let (even, odd) = uninterleave_bits(val);
+            assert_eq!(val, interleave_bits(even, odd));
+        }
+
+        for _ in 0..1000 {
+            let even = rng.next_u32();
+            let odd = rng.next_u32();
+            assert_eq!((even, odd), uninterleave_bits(interleave_bits(even, odd)));
+        }
+    }
 
     #[test]
     fn split() {
