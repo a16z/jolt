@@ -301,8 +301,8 @@ where
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
-                1 << 20,
-                1 << 20,
+                1 << 22,
+                1 << 22,
                 1 << 22,
             );
 

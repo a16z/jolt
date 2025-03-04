@@ -26,6 +26,8 @@ impl Tracer {
             register_state: RegisterState::default(),
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
     }
 
