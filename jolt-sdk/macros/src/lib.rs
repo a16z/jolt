@@ -59,11 +59,13 @@ impl MacroBuilder {
     }
 
     fn build(&mut self) -> TokenStream {
-        let build_fn = self.make_build_fn();
+        let build_prover_fn = self.make_build_prover_fn();
+        let build_verifier_fn = self.make_build_verifier_fn();
         let execute_fn = self.make_execute_function();
         let analyze_fn = self.make_analyze_function();
         let compile_fn = self.make_compile_func();
-        let preprocess_fn = self.make_preprocess_func();
+        let preprocess_prover_fn = self.make_preprocess_prover_func();
+        let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let prove_fn = self.make_prove_func();
 
         let main_fn = if let Some(func) = self.get_func_selector() {
@@ -77,20 +79,22 @@ impl MacroBuilder {
         };
 
         quote! {
-            #build_fn
+            #build_prover_fn
+            #build_verifier_fn
             #execute_fn
             #analyze_fn
             #compile_fn
-            #preprocess_fn
+            #preprocess_prover_fn
+            #preprocess_verifier_fn
             #prove_fn
             #main_fn
         }
         .into()
     }
 
-    fn make_build_fn(&self) -> TokenStream2 {
+    fn make_build_prover_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let build_fn_name = Ident::new(&format!("build_{}", fn_name), fn_name.span());
+        let build_prover_fn_name = Ident::new(&format!("build_prover_{}", fn_name), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
 
         let input_names = self.func_args.iter().map(|(name, _)| name);
@@ -101,19 +105,14 @@ impl MacroBuilder {
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #build_fn_name(
+            pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
                 preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
-            ) -> (
-                impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send,
-                impl Fn(jolt::JoltHyperKZGProof) -> bool + Sync + Send
-            ) {
+            ) -> impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send
+            {
                 #imports
                 let program = std::sync::Arc::new(program);
                 let preprocessing = std::sync::Arc::new(preprocessing);
-
-                let program_cp = program.clone();
-                let preprocessing_cp = preprocessing.clone();
 
                 let prove_closure = move |#inputs| {
                     let program = (*program).clone();
@@ -121,14 +120,32 @@ impl MacroBuilder {
                     #prove_fn_name(program, preprocessing, #(#input_names),*)
                 };
 
+                prove_closure
+            }
+        }
+    }
+
+    fn make_build_verifier_fn(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let build_verifier_fn_name = Ident::new(&format!("build_verifier_{}", fn_name), fn_name.span());
+
+        let imports = self.make_imports();
+
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #build_verifier_fn_name(
+                preprocessing: jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
+            ) -> impl Fn(jolt::JoltHyperKZGProof) -> bool + Sync + Send
+            {
+                #imports
+                let preprocessing = std::sync::Arc::new(preprocessing);
 
                 let verify_closure = move |proof: jolt::JoltHyperKZGProof| {
-                    let program = (*program_cp).clone();
-                    let preprocessing = (*preprocessing_cp).clone();
+                    let preprocessing = (*preprocessing).clone();
                     RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments, None).is_ok()
                 };
 
-                (prove_closure, verify_closure)
+                verify_closure
             }
         }
     }
@@ -205,17 +222,51 @@ impl MacroBuilder {
         }
     }
 
-    fn make_preprocess_func(&self) -> TokenStream2 {
+    fn make_preprocess_prover_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
-        let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
+        let preprocess_prover_fn_name = Ident::new(&format!("preprocess_prover_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_fn_name(program: &jolt::host::Program)
+            pub fn #preprocess_prover_fn_name(program: &jolt::host::Program)
+                -> jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
+            {
+                #imports
+
+                let (bytecode, memory_init) = program.decode();
+                let memory_layout = MemoryLayout::new(#max_input_size, #max_output_size);
+
+                // TODO(moodlezoup): Feed in size parameters via macro
+                let preprocessing: JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript> =
+                    RV32IJoltVM::preprocess(
+                        bytecode,
+                        memory_layout,
+                        memory_init,
+                        1 << 20,
+                        1 << 20,
+                        1 << 24
+                    );
+
+                preprocessing
+            }
+        }
+    }
+
+    fn make_preprocess_verifier_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let imports = self.make_imports();
+
+        let fn_name = self.get_func_name();
+        let preprocess_verifier_fn_name = Ident::new(&format!("preprocess_verifier_{}", fn_name), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #preprocess_verifier_fn_name(program: &jolt::host::Program)
                 -> jolt::JoltPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
             {
                 #imports
