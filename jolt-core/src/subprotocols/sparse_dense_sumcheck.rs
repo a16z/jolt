@@ -909,7 +909,9 @@ pub fn verify_single_instruction<
 mod tests {
     use super::*;
     use crate::{
-        jolt::instruction::{add::ADDInstruction, and::ANDInstruction, mulhu::MULHUInstruction},
+        jolt::instruction::{
+            add::ADDInstruction, and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction,
+        },
         utils::transcript::KeccakTranscript,
     };
     use ark_bn254::Fr;
@@ -918,6 +920,7 @@ mod tests {
     impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<8> {}
     impl<F: JoltField> SparseDenseSumcheck<F> for ADDInstruction<8> {}
     impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<8> {}
+    impl<F: JoltField> SparseDenseSumcheck<F> for ORInstruction<8> {}
 
     const WORD_SIZE: usize = 8;
     const K: usize = 1 << 16;
@@ -1017,6 +1020,42 @@ mod tests {
         verifier_transcript.compare_to(prover_transcript);
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
         let verification_result = verify_single_instruction::<_, ANDInstruction<WORD_SIZE>, _>(
+            proof,
+            K,
+            T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn test_or() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        let instructions: Vec<_> = (0..T)
+            .map(|_| ORInstruction::<WORD_SIZE>::default().random(&mut rng))
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
+            &instructions,
+            r_cycle,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let verification_result = verify_single_instruction::<_, ORInstruction<WORD_SIZE>, _>(
             proof,
             K,
             T,
