@@ -5,7 +5,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -200,62 +199,9 @@ where
             .par_iter()
             .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
             .for_each(|(poly, (eval, eval_shifted))| {
-                let result = match poly {
-                    MultilinearPolynomial::LargeScalars(poly) => poly
-                        .Z
-                        .par_iter()
-                        .zip(eq_rx_step.par_iter())
-                        .zip(eq_plus_one_rx_step.par_iter())
-                        .map(|((coeff, eq), eq_plus_one)| (*coeff * eq, *coeff * eq_plus_one))
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1)),
-                    MultilinearPolynomial::U8Scalars(poly) => poly
-                        .coeffs
-                        .par_iter()
-                        .zip(eq_rx_step_r2.par_iter())
-                        .zip(eq_plus_one_rx_step_r2.par_iter())
-                        .map(|((coeff, eq), eq_plus_one)| {
-                            (coeff.field_mul(*eq), coeff.field_mul(*eq_plus_one))
-                        })
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1)),
-                    MultilinearPolynomial::U16Scalars(poly) => poly
-                        .coeffs
-                        .par_iter()
-                        .zip(eq_rx_step_r2.par_iter())
-                        .zip(eq_plus_one_rx_step_r2.par_iter())
-                        .map(|((coeff, eq), eq_plus_one)| {
-                            (coeff.field_mul(*eq), coeff.field_mul(*eq_plus_one))
-                        })
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1)),
-                    MultilinearPolynomial::U32Scalars(poly) => poly
-                        .coeffs
-                        .par_iter()
-                        .zip(eq_rx_step_r2.par_iter())
-                        .zip(eq_plus_one_rx_step_r2.par_iter())
-                        .map(|((coeff, eq), eq_plus_one)| {
-                            (coeff.field_mul(*eq), coeff.field_mul(*eq_plus_one))
-                        })
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1)),
-                    MultilinearPolynomial::U64Scalars(poly) => poly
-                        .coeffs
-                        .par_iter()
-                        .zip(eq_rx_step_r2.par_iter())
-                        .zip(eq_plus_one_rx_step_r2.par_iter())
-                        .map(|((coeff, eq), eq_plus_one)| {
-                            (coeff.field_mul(*eq), coeff.field_mul(*eq_plus_one))
-                        })
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1)),
-                    MultilinearPolynomial::I64Scalars(poly) => poly
-                        .coeffs
-                        .par_iter()
-                        .zip(eq_rx_step_r2.par_iter())
-                        .zip(eq_plus_one_rx_step_r2.par_iter())
-                        .map(|((coeff, eq), eq_plus_one)| {
-                            (coeff.field_mul(*eq), coeff.field_mul(*eq_plus_one))
-                        })
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1)),
-                };
-
-                (*eval, *eval_shifted) = (result.0, result.1);
+                *eval = poly.dot_product(Some(&eq_rx_step), Some(&eq_rx_step_r2));
+                *eval_shifted =
+                    poly.dot_product(Some(&eq_plus_one_rx_step), Some(&eq_plus_one_rx_step_r2));
             });
 
         bind_z[num_vars_padded] = F::one();
@@ -309,24 +255,7 @@ where
                 flattened_polys
                     .iter()
                     .enumerate()
-                    .map(|(i, poly)| match poly {
-                        MultilinearPolynomial::LargeScalars(poly) => poly.Z[t] * eq_ry_var[i],
-                        MultilinearPolynomial::U8Scalars(poly) => {
-                            poly.coeffs[t].field_mul(eq_ry_var_r2[i])
-                        }
-                        MultilinearPolynomial::U16Scalars(poly) => {
-                            poly.coeffs[t].field_mul(eq_ry_var_r2[i])
-                        }
-                        MultilinearPolynomial::U32Scalars(poly) => {
-                            poly.coeffs[t].field_mul(eq_ry_var_r2[i])
-                        }
-                        MultilinearPolynomial::U64Scalars(poly) => {
-                            poly.coeffs[t].field_mul(eq_ry_var_r2[i])
-                        }
-                        MultilinearPolynomial::I64Scalars(poly) => {
-                            poly.coeffs[t].field_mul(eq_ry_var_r2[i])
-                        }
-                    })
+                    .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
                     .sum()
             })
             .collect_into_vec(&mut bind_z_ry_var);
