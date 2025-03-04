@@ -119,7 +119,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             assert_eq!(&sum, claim, "Sumcheck claim is wrong");
         }
 
-
         for _round in 0..num_rounds {
             // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
             // for points {0, ..., |g(x)|}

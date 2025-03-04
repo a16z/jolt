@@ -128,7 +128,7 @@ pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
         .sum()
 }
 
-impl <F: JoltField> EqPlusOnePolynomial<F> {
+impl<F: JoltField> EqPlusOnePolynomial<F> {
     pub fn new(x: Vec<F>) -> Self {
         EqPlusOnePolynomial { x }
     }
@@ -137,8 +137,8 @@ impl <F: JoltField> EqPlusOnePolynomial<F> {
     That is, it ignores the case where x is all 1s, outputting 0.
     Assumes x and y are provided big-endian. */
     pub fn evaluate(&self, y: &[F]) -> F {
-        let l = self.x.len(); 
-        let x = &self.x; 
+        let l = self.x.len();
+        let x = &self.x;
         assert!(y.len() == l);
         let one = F::from_u64(1_u64);
 
@@ -156,17 +156,18 @@ impl <F: JoltField> EqPlusOnePolynomial<F> {
                     .product::<F>();
                 let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
                 let higher_bits_product = ((k + 1)..l)
-                    .map(|i| x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i]))
+                    .map(|i| {
+                        x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
+                    })
                     .product::<F>();
                 lower_bits_product * kth_bit_product * higher_bits_product
             })
             .sum()
-    }   
-
+    }
 
     #[tracing::instrument(skip_all, "EqPlusOnePolynomial::evals")]
     pub fn evals(r: &[F]) -> Vec<F> {
-        let ell = r.len(); 
+        let ell = r.len();
         let mut eq_evals: Vec<F> = vec![F::one(); ell.pow2()];
         let mut eq_plus_one_evals: Vec<F> = vec![F::zero(); ell.pow2()];
 
@@ -179,28 +180,35 @@ impl <F: JoltField> EqPlusOnePolynomial<F> {
 
             let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
 
-            selected.par_chunks_mut(2).enumerate().for_each(|(_j, chunk)| {
-                let (x, y) = chunk.split_at_mut(1);
-                let x = &mut x[0];
-                let y = &mut y[0];
-                **y = **x * r[i - 1];
-                **x *= (F::one() - r[i - 1]);
-            });
+            selected
+                .par_chunks_mut(2)
+                .enumerate()
+                .for_each(|(_j, chunk)| {
+                    let (x, y) = chunk.split_at_mut(1);
+                    let x = &mut x[0];
+                    let y = &mut y[0];
+                    **y = **x * r[i - 1];
+                    **x *= (F::one() - r[i - 1]);
+                });
         };
 
-        for i in 0..ell { // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
+        for i in 0..ell {
+            // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
             eq_evals_helper(&mut eq_evals, r, i);
 
-            let step = 1 << (ell - i); 
+            let step = 1 << (ell - i);
             let half_step = step / 2;
 
-            let r_lower_product = (F::one()-r[i]) * 
-                r.iter().skip(i + 1).copied().product::<F>();
+            let r_lower_product = (F::one() - r[i]) * r.iter().skip(i + 1).copied().product::<F>();
 
-            eq_plus_one_evals.par_iter_mut().enumerate().skip(half_step).step_by(step).for_each(|(index, v)| {
-                *v = eq_evals[index-half_step] * r_lower_product;
-            });
-
+            eq_plus_one_evals
+                .par_iter_mut()
+                .enumerate()
+                .skip(half_step)
+                .step_by(step)
+                .for_each(|(index, v)| {
+                    *v = eq_evals[index - half_step] * r_lower_product;
+                });
         }
         eq_plus_one_evals
     }
