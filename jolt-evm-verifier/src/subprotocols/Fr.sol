@@ -47,8 +47,12 @@ library FrLib {
             mstore(add(free, 0xa0), MODULUS)
             let success := staticcall(gas(), 0x05, free, 0xc0, 0x00, 0x20)
             if iszero(success) {
-                // TODO: meaningful error
-                revert(0, 0)
+                // Revert with a meaningful error message for modular inversion failure
+                mstore(0x00, 0x08c379a0)  // Error selector
+                mstore(0x04, 0x20)        // String offset
+                mstore(0x24, 27)          // String length
+                mstore(0x44, "Modular inversion operation failed")
+                revert(0, 0x64)
             }
             result := mload(0x00)
         }
@@ -81,7 +85,34 @@ library FrLib {
         return Fr.wrap(result);
     }
 
-    // TODO: Montgomery's batch inversion trick
+    // Montgomery's batch inversion trick implementation
+    function batchInvert(Fr[] memory values) internal view returns (Fr[] memory) {
+        uint256 n = values.length;
+        if (n == 0) return new Fr[](0);
+        if (n == 1) return [invert(values[0])];
+
+        Fr[] memory products = new Fr[](n);
+        products[0] = values[0];
+        
+        // Compute partial products
+        for (uint256 i = 1; i < n; i++) {
+            products[i] = products[i-1] * values[i];
+        }
+
+        // Invert the final product
+        Fr running = invert(products[n-1]);
+        Fr[] memory results = new Fr[](n);
+
+        // Unwind the products
+        for (uint256 i = n-1; i > 0; i--) {
+            results[i] = running * products[i-1];
+            running = running * values[i];
+        }
+        results[0] = running;
+
+        return results;
+    }
+
     function div(Fr numerator, Fr denominator) internal view returns (Fr) {
         return numerator * invert(denominator);
     }
