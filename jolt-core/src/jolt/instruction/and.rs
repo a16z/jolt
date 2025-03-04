@@ -43,8 +43,8 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
     }
 
     fn materialize_entry(&self, index: u64) -> u64 {
-        let x = (index >> WORD_SIZE) % WORD_SIZE as u64;
-        let y = index % WORD_SIZE as u64;
+        let x = (index >> WORD_SIZE) % (1u64 << WORD_SIZE) as u64;
+        let y = index % (1u64 << WORD_SIZE) as u64;
         x & y
     }
 
@@ -88,7 +88,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
         r_prev: Option<F>,
         b_next: Option<u8>,
     ) -> F {
-        let shift = F::from_u32(1 << (WORD_SIZE - 1 - j));
+        let shift = F::from_u32(1 << (WORD_SIZE - 1 - (j / 2)));
         if j % 2 == 0 {
             // Update x_{j/2} to r_j
             let x = F::from_u8(b_j);
@@ -119,12 +119,84 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, One, Zero};
+    use itertools::Itertools;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        field::JoltField, jolt::instruction::JoltInstruction, jolt_instruction_test,
+        utils::index_to_field_bitvector,
+    };
 
     use super::ANDInstruction;
+
+    #[test]
+    fn and_mle_small() {
+        const WORD_SIZE: usize = 8;
+        let materialized = ANDInstruction::<WORD_SIZE>::default().materialize();
+        for (i, entry) in materialized.iter().enumerate() {
+            assert_eq!(
+                Fr::from_u64(*entry),
+                ANDInstruction::<WORD_SIZE>::default()
+                    .evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
+                "MLE did not match materialized table at index {i}",
+            );
+        }
+    }
+
+    #[test]
+    fn and_mle_large() {
+        let mut rng = test_rng();
+        const WORD_SIZE: usize = 32;
+
+        for _ in 0..1000 {
+            let index = rng.next_u64();
+            assert_eq!(
+                Fr::from_u64(ANDInstruction::<WORD_SIZE>::default().materialize_entry(index)),
+                ANDInstruction::<WORD_SIZE>::default()
+                    .evaluate_mle(&index_to_field_bitvector(index, 64)),
+                "MLE did not match materialized table at index {index}",
+            );
+        }
+    }
+
+    #[test]
+    fn and_update_functions() {
+        let mut rng = test_rng();
+        const WORD_SIZE: usize = 32;
+        let and = ANDInstruction::<WORD_SIZE>::default();
+
+        for _ in 0..1000 {
+            let index = rng.next_u64();
+            let mut t_parameters: Vec<Fr> = index_to_field_bitvector(index, 2 * WORD_SIZE);
+            let mut round = 0;
+            let mut r_prev = None;
+
+            for j in (0..WORD_SIZE).interleave(WORD_SIZE..2 * WORD_SIZE) {
+                let r_j = Fr::random(&mut rng);
+                let b_j = if t_parameters[j].is_zero() { 0 } else { 1 };
+
+                let b_next = if j == 2 * WORD_SIZE - 1 {
+                    None
+                } else if j < WORD_SIZE {
+                    Some(t_parameters[j + WORD_SIZE].to_u64().unwrap() as u8)
+                } else {
+                    Some(t_parameters[j - WORD_SIZE + 1].to_u64().unwrap() as u8)
+                };
+
+                let actual = and.multiplicative_update(round, r_j, b_j, r_prev, b_next)
+                    * and.evaluate_mle(&t_parameters)
+                    + and.additive_update(round, r_j, b_j, r_prev, b_next);
+
+                t_parameters[j] = r_j;
+                r_prev = Some(r_j);
+                let expected = and.evaluate_mle(&t_parameters);
+
+                assert_eq!(actual, expected);
+                round += 1;
+            }
+        }
+    }
 
     #[test]
     fn and_instruction_32_e2e() {

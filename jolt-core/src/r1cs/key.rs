@@ -335,7 +335,8 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let eq_rx_constr = EqPolynomial::evals(r_row_constr);
         let eq_ry_var = EqPolynomial::evals(r_col_var);
 
-        let constant_column = index_to_field_bitvector(self.num_cols_total() / 2, total_cols_bits);
+        let constant_column =
+            index_to_field_bitvector((self.num_cols_total() / 2) as u64, total_cols_bits);
         let col_eq_constant = EqPolynomial::new(r_col.to_vec()).evaluate(&constant_column);
 
         let compute_uniform_matrix_mle = |constraints: &SparseConstraints<F>| -> F {
@@ -386,8 +387,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             let non_uni_a = compute_non_uniform(&constraint.eq);
             let non_uni_b = compute_non_uniform(&constraint.condition);
 
-            let non_uni_constraint_index =
-                index_to_field_bitvector(self.uniform_r1cs.num_rows + i, constraint_rows_bits);
+            let non_uni_constraint_index = index_to_field_bitvector(
+                (self.uniform_r1cs.num_rows + i) as u64,
+                constraint_rows_bits,
+            );
             let row_constr_eq_non_uni =
                 EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
 

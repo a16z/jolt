@@ -137,34 +137,6 @@ mod test {
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
-    fn mulhu_materialize() {
-        for (i, entry) in MULHUInstruction::<8>::default()
-            .materialize()
-            .iter()
-            .enumerate()
-        {
-            assert_eq!(
-                *entry,
-                MULHUInstruction::<8>::default().materialize_entry(i as u64)
-            );
-        }
-    }
-
-    #[test]
-    fn mulhu_index_entry() {
-        for (i, entry) in MULHUInstruction::<8>::default()
-            .materialize()
-            .iter()
-            .enumerate()
-        {
-            assert_eq!(
-                *entry,
-                MULHUInstruction::<8>::default().materialize_entry(i as u64)
-            );
-        }
-    }
-
-    #[test]
     fn mulhu_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;

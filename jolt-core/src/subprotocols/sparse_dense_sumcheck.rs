@@ -292,14 +292,14 @@ pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
                     Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(0))
                         * q_inner_products[0];
                 univariate_poly_evals[0] +=
-                    Self::default().multiplicative_update(j, F::zero(), 1, r_prev, Some(0))
+                    Self::default().multiplicative_update(j, F::zero(), 0, r_prev, Some(1))
                         * q_inner_products[1];
                 // Expression (53), c = 0
                 univariate_poly_evals[0] += z_inner_products.1[0]
                     + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(0))
                         * z_inner_products.0[0];
                 univariate_poly_evals[0] += z_inner_products.1[1]
-                    + Self::default().additive_update(j, F::zero(), 1, r_prev, Some(0))
+                    + Self::default().additive_update(j, F::zero(), 0, r_prev, Some(1))
                         * z_inner_products.0[1];
 
                 // Expression (52), c = 2
@@ -507,6 +507,12 @@ pub fn prove_single_instruction<
         || BinarySumTree::new(log_m + 1),
     );
 
+    let address_variable_binding_order = if I::GAMMA == 0 {
+        BindingOrder::HighToLow
+    } else {
+        BindingOrder::InterleavedHighToLow
+    };
+
     for phase in 0..3 {
         let span = tracing::span!(tracing::Level::INFO, "sparse-dense phase");
         let _guard = span.enter();
@@ -630,6 +636,28 @@ pub fn prove_single_instruction<
             let univariate_poly_evals =
                 I::compute_prover_message(round, &Q_tree, &Z_tree, &r, j, &v, &x, &w);
 
+            #[cfg(test)]
+            {
+                let expected: [F; 2] = (0..val_test.len() / 2)
+                    .into_par_iter()
+                    .map(|i| {
+                        let eq_ra_evals =
+                            eq_ra_test.sumcheck_evals(i, 2, address_variable_binding_order);
+                        let val_evals =
+                            val_test.sumcheck_evals(i, 2, address_variable_binding_order);
+
+                        [eq_ra_evals[0] * val_evals[0], eq_ra_evals[1] * val_evals[1]]
+                    })
+                    .reduce(
+                        || [F::zero(); 2],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    );
+                assert_eq!(
+                    expected, univariate_poly_evals,
+                    "phase {phase} round {round}"
+                );
+            }
+
             let univariate_poly = UniPoly::from_evals(&[
                 univariate_poly_evals[0],
                 previous_claim - univariate_poly_evals[0],
@@ -649,8 +677,8 @@ pub fn prove_single_instruction<
 
             #[cfg(test)]
             {
-                eq_ra_test.bind_parallel(r_j, BindingOrder::InterleavedHighToLow);
-                val_test.bind_parallel(r_j, BindingOrder::InterleavedHighToLow);
+                eq_ra_test.bind_parallel(r_j, address_variable_binding_order);
+                val_test.bind_parallel(r_j, address_variable_binding_order);
             }
 
             j += 1;
@@ -742,8 +770,8 @@ pub fn prove_single_instruction<
         let univariate_poly_evals: [F; 2] = (0..eq_ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let eq_ra_evals = eq_ra.sumcheck_evals(i, 2, BindingOrder::InterleavedHighToLow);
-                let val_evals = val.sumcheck_evals(i, 2, BindingOrder::InterleavedHighToLow);
+                let eq_ra_evals = eq_ra.sumcheck_evals(i, 2, address_variable_binding_order);
+                let val_evals = val.sumcheck_evals(i, 2, address_variable_binding_order);
 
                 [eq_ra_evals[0] * val_evals[0], eq_ra_evals[1] * val_evals[1]]
             })
@@ -775,8 +803,8 @@ pub fn prove_single_instruction<
 
         // Bind polynomials
         rayon::join(
-            || eq_ra.bind_parallel(r_j, BindingOrder::InterleavedHighToLow),
-            || val.bind_parallel(r_j, BindingOrder::InterleavedHighToLow),
+            || eq_ra.bind_parallel(r_j, BindingOrder::HighToLow),
+            || val.bind_parallel(r_j, BindingOrder::HighToLow),
         );
 
         I::update_v_table(&mut v, &r, j);

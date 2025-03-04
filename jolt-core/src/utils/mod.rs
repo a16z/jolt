@@ -90,8 +90,8 @@ macro_rules! join_conditional {
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: JoltField>(value: usize, bits: usize) -> Vec<F> {
-    assert!(value < 1 << bits);
+pub fn index_to_field_bitvector<F: JoltField>(value: u64, bits: usize) -> Vec<F> {
+    assert!((value as u128) < 1 << bits);
 
     let mut bitvector: Vec<F> = Vec::with_capacity(bits);
 
