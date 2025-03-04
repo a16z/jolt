@@ -8,8 +8,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::multilinear_polynomial::PolynomialBinding;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -32,7 +30,6 @@ use crate::{
 
 use super::builder::CombinedUniformBuilder;
 use super::inputs::ConstraintInput;
-use super::key::Coeff;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -416,7 +413,7 @@ where
         let y_prime = [ry_var.clone(), rx_step.to_owned()].concat();
         let eval_z = key.evaluate_z_mle(&self.claimed_witness_evals, &y_prime, true);
 
-        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(&rx_constr, &rx_step, &ry_var, &r_non_uni);
+        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, rx_step, &ry_var, &r_non_uni);
 
         let left_expected = eval_a
             + inner_sumcheck_RLC * eval_b

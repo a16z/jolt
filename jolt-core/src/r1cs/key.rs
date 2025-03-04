@@ -5,7 +5,7 @@ use sha3::Sha3_256;
 
 use crate::{
     field::JoltField,
-    poly::eq_poly::{EqPolynomial, EqPlusOnePolynomial},
+    poly::eq_poly::EqPolynomial,
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
 

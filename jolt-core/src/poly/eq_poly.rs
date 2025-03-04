@@ -184,7 +184,7 @@ impl <F: JoltField> EqPlusOnePolynomial<F> {
                 let x = &mut x[0];
                 let y = &mut y[0];
                 **y = **x * r[i - 1];
-                **x = **x * (F::one() - r[i - 1]);
+                **x *= (F::one() - r[i - 1]);
             });
         };
 
@@ -195,7 +195,7 @@ impl <F: JoltField> EqPlusOnePolynomial<F> {
             let half_step = step / 2;
 
             let r_lower_product = (F::one()-r[i]) * 
-                r.iter().skip(i + 1).map(|&x| x).product::<F>();
+                r.iter().skip(i + 1).copied().product::<F>();
 
             eq_plus_one_evals.par_iter_mut().enumerate().skip(half_step).step_by(step).for_each(|(index, v)| {
                 *v = eq_evals[index-half_step] * r_lower_product;
