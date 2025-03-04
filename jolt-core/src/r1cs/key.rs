@@ -14,8 +14,6 @@ use sha3::Digest;
 
 use crate::utils::math::Math;
 
-use rayon::prelude::*;
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanKey<const C: usize, I: ConstraintInput, F: JoltField> {
     _inputs: PhantomData<I>,
