@@ -230,6 +230,45 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
     }
 }
 
+impl<F: JoltField> MulAssign<&Self> for UniPoly<F> {
+    fn mul_assign(&mut self, rhs: &Self) {
+        if self.is_zero() || rhs.is_zero() {
+            self.coeffs.clear();
+            return;
+        }
+
+        let n = self.degree() + rhs.degree() + 1;
+        let mut result = vec![F::zero(); n];
+
+        if n > 32 {
+            result.par_iter_mut().enumerate().for_each(|(k, res)| {
+                for i in 0..=k.min(self.degree()) {
+                    if k - i <= rhs.degree() {
+                        *res += self.coeffs[i] * rhs.coeffs[k - i];
+                    }
+                }
+            });
+        } else {
+            for (i, self_coeff) in self.coeffs.iter().enumerate() {
+                for (j, other_coeff) in rhs.coeffs.iter().enumerate() {
+                    result[i + j] += *self_coeff * *other_coeff;
+                }
+            }
+        }
+
+        self.coeffs = result;
+    }
+}
+
+impl<F: JoltField> Mul<&Self> for UniPoly<F> {
+    type Output = Self;
+
+    fn mul(mut self, rhs: &Self) -> Self {
+        self *= rhs;
+        self
+    }
+}
+
 impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
