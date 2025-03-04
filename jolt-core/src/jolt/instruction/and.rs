@@ -119,7 +119,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
 mod test {
     use ark_bn254::Fr;
     use ark_std::{test_rng, Zero};
-    use itertools::Itertools;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
