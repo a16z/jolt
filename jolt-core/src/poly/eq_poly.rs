@@ -166,36 +166,26 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, "EqPlusOnePolynomial::evals")]
-    pub fn evals(r: &[F]) -> Vec<F> {
+    pub fn evals(r: &[F], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
         let ell = r.len();
-        let mut eq_evals: Vec<F> = vec![F::one(); ell.pow2()];
-        let mut eq_plus_one_evals: Vec<F> = vec![F::zero(); ell.pow2()];
+        let mut eq_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
+        eq_evals[0] = scaling_factor.unwrap_or(F::one());
+        let mut eq_plus_one_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
 
+        // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
         let eq_evals_helper = |eq_evals: &mut Vec<F>, r: &[F], i: usize| {
-            if i == 0 {
-                return;
-            }
-            let ell = r.len();
+            debug_assert!(i != 0);
             let step = 1 << (ell - i); // step = (full / size)/2
 
             let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
 
-            selected
-                .par_chunks_mut(2)
-                .enumerate()
-                .for_each(|(_j, chunk)| {
-                    let (x, y) = chunk.split_at_mut(1);
-                    let x = &mut x[0];
-                    let y = &mut y[0];
-                    **y = **x * r[i - 1];
-                    **x *= F::one() - r[i - 1];
-                });
+            selected.par_chunks_mut(2).for_each(|chunk| {
+                *chunk[1] = *chunk[0] * r[i - 1];
+                *chunk[0] -= *chunk[1];
+            });
         };
 
         for i in 0..ell {
-            // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
-            eq_evals_helper(&mut eq_evals, r, i);
-
             let step = 1 << (ell - i);
             let half_step = step / 2;
 
@@ -209,7 +199,10 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                 .for_each(|(index, v)| {
                     *v = eq_evals[index - half_step] * r_lower_product;
                 });
+
+            eq_evals_helper(&mut eq_evals, r, i + 1);
         }
-        eq_plus_one_evals
+
+        (eq_evals, eq_plus_one_evals)
     }
 }
