@@ -188,7 +188,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                     let x = &mut x[0];
                     let y = &mut y[0];
                     **y = **x * r[i - 1];
-                    **x *= (F::one() - r[i - 1]);
+                    **x *= F::one() - r[i - 1];
                 });
         };
 

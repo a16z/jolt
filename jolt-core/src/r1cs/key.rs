@@ -298,7 +298,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
     pub fn evaluate_matrix_mle_full(
         &self,
         rx_constr: &[F],
-        rx_step: &[F],
         ry_var: &[F],
         r_non_uni: &F,
     ) -> (F, F, F) {

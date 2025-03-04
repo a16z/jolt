@@ -1,6 +1,3 @@
-#![allow(clippy::len_without_is_empty)]
-
-use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::{span, Level};
 
@@ -33,6 +30,8 @@ use crate::{
 
 use super::builder::CombinedUniformBuilder;
 use super::inputs::ConstraintInput;
+
+use rayon::prelude::*;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -125,7 +124,6 @@ where
             .collect();
 
         let num_rounds_x = key.num_rows_bits();
-        let num_rounds_y = key.num_cols_total().log_2();
 
         /* Sumcheck 1: Outer sumcheck */
 
@@ -167,7 +165,6 @@ where
         let num_steps_padded = constraint_builder.uniform_repeat().next_power_of_two();
         let num_steps_bits = num_steps_padded.ilog2() as usize;
         let num_vars_padded = key.num_vars_uniform_padded().next_power_of_two();
-        let num_constr_bits = constraint_builder.padded_rows_per_step().ilog2() as usize;
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = claim_Az
@@ -190,34 +187,32 @@ where
             inner_sumcheck_RLC,
         ));
 
-        let mut bind_z: Vec<F> = vec![];
-        let mut bind_shift_z: Vec<F> = vec![];
-
         // Binding z and z_shift polynomials at point rx_step
-        let span = span!(Level::INFO, "evals_calculation_combined");
-        {
-            let _guard = span.enter();
+        let span = span!(Level::INFO, "binding_z_and_shift_z");
+        let _guard = span.enter();
 
-            bind_z = vec![F::zero(); num_vars_padded * 2];
-            bind_shift_z = vec![F::zero(); num_vars_padded * 2];
+        let mut bind_z = vec![F::zero(); num_vars_padded * 2];
+        let mut bind_shift_z = vec![F::zero(); num_vars_padded * 2];
 
-            flattened_polys
-                .par_iter()
-                .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
-                .for_each(|(poly, (eval, eval_shifted))| {
-                    let result = (0..poly.original_len())
-                        .into_par_iter()
-                        .map(|t| {
-                            let coeff = poly.get_coeff(t);
-                            (coeff * eq_rx_step[t], coeff * eq_plus_one_rx_step[t])
-                        })
-                        .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1));
+        flattened_polys
+            .par_iter()
+            .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
+            .for_each(|(poly, (eval, eval_shifted))| {
+                let result = (0..poly.original_len())
+                    .into_par_iter()
+                    .map(|t| {
+                        let coeff = poly.get_coeff(t);
+                        (coeff * eq_rx_step[t], coeff * eq_plus_one_rx_step[t])
+                    })
+                    .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1));
 
-                    (*eval, *eval_shifted) = (result.0, result.1);
-                });
+                (*eval, *eval_shifted) = (result.0, result.1);
+            });
 
-            bind_z[num_vars_padded] = F::one();
-        }
+        bind_z[num_vars_padded] = F::one();
+
+        drop(_guard);
+        drop(span);
 
         let poly_z =
             DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
@@ -257,19 +252,19 @@ where
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps_padded);
 
         let span = span!(Level::INFO, "bind_z_ry_var");
-        {
-            let _enter = span.enter();
-            bind_z_ry_var = (0..constraint_builder.uniform_repeat())
-                .into_par_iter()
-                .map(|t| {
-                    flattened_polys
-                        .iter()
-                        .enumerate()
-                        .map(|(i, poly)| poly.get_coeff(t) * eq_ry_var[i])
-                        .sum()
-                })
-                .collect();
-        }
+        let _guard = span.enter();
+        (0..constraint_builder.uniform_repeat())
+            .into_par_iter()
+            .map(|t| {
+                flattened_polys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, poly)| poly.get_coeff(t) * eq_ry_var[i])
+                    .sum()
+            })
+            .collect_into_vec(&mut bind_z_ry_var);
+        drop(_guard);
+        drop(span);
 
         let num_rounds_shift_sumcheck = num_steps_bits;
         assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
@@ -290,7 +285,7 @@ where
             })
             .reduce(|| F::zero(), |acc, x| acc + x);
 
-        let (shift_sumcheck_proof, shift_sumcheck_r, shift_sumcheck_claims) =
+        let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
                 &shift_sumcheck_claim,
                 num_rounds_shift_sumcheck,
@@ -299,6 +294,7 @@ where
                 2,
                 transcript,
             );
+
         drop_in_background_thread(shift_sumcheck_polys);
 
         /* Inner sumcheck evaluations: evaluate z on rx_step
@@ -359,7 +355,6 @@ where
         ProofTranscript: Transcript,
     {
         let num_rounds_x = key.num_rows_total().log_2();
-        let num_rounds_y = key.num_cols_total().log_2();
 
         /* Sumcheck 1: Outer sumcheck
          */
@@ -404,7 +399,6 @@ where
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        let n_constraint_bits_uniform = key.uniform_r1cs.num_rows.next_power_of_two().log_2();
         let num_steps_bits = key.num_steps.log_2();
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
@@ -415,8 +409,7 @@ where
         let y_prime = [ry_var.clone(), rx_step.to_owned()].concat();
         let eval_z = key.evaluate_z_mle(&self.claimed_witness_evals, &y_prime, true);
 
-        let (eval_a, eval_b, eval_c) =
-            key.evaluate_matrix_mle_full(rx_constr, rx_step, &ry_var, &r_non_uni);
+        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_non_uni);
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;
