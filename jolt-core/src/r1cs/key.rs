@@ -260,8 +260,16 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
     }
 
     /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
-    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals")]
-    pub fn evaluate_z_mle_with_segment_evals(&self, segment_evals: &[F], r: &[F], with_const: bool) -> F {
+    #[tracing::instrument(
+        skip_all,
+        name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals"
+    )]
+    pub fn evaluate_z_mle_with_segment_evals(
+        &self,
+        segment_evals: &[F],
+        r: &[F],
+        with_const: bool,
+    ) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.num_vars_uniform_padded().log_2() + 1);
 
@@ -271,9 +279,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let var_and_const_bits = var_bits + 1;
 
         let r_const = r[0];
-        let r_var= &r[1..var_bits + 1];
+        let r_var = &r[1..var_bits + 1];
 
-        let eq_ry_var= EqPolynomial::evals(r_var);
+        let eq_ry_var = EqPolynomial::evals(r_var);
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();

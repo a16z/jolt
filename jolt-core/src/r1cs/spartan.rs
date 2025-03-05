@@ -249,7 +249,7 @@ where
         let span = span!(Level::INFO, "bind_z_ry_var");
         let _guard = span.enter();
         let num_steps_unpadded = constraint_builder.uniform_repeat();
-        (0..num_steps_unpadded) // unpadded number of steps is sufficient 
+        (0..num_steps_unpadded) // unpadded number of steps is sufficient
             .into_par_iter()
             .map(|t| {
                 flattened_polys
@@ -381,11 +381,11 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-            - claim is an RLC of claims_Az, Bz, Cz
-            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                                + A_shift(..) * z_shift(..)
-            - verifying it involves computing each term with randomness ry_var 
-         */
+           - claim is an RLC of claims_Az, Bz, Cz
+           where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
+                               + A_shift(..) * z_shift(..)
+           - verifying it involves computing each term with randomness ry_var
+        */
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + inner_sumcheck_RLC * self.outer_sumcheck_claims.1
@@ -403,7 +403,8 @@ where
 
         let r_non_uni = inner_sumcheck_r[0];
         let ry_var = inner_sumcheck_r[1..].to_vec();
-        let eval_z = key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
+        let eval_z =
+            key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
         let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_non_uni);
 
