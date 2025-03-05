@@ -34,7 +34,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertHalfwordAlignmentInstruct
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(
-            Box::new(LowBitSubtable::<F, 0>::new()),
+            Box::new(LowBitSubtable::<F>::new()),
             SubtableIndices::from(C - 1),
         )]
     }

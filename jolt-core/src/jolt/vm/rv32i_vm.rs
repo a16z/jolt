@@ -157,8 +157,7 @@ subtable_enum!(
   LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
   RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
   DIV_BY_ZERO: DivByZeroSubtable<F>,
-  LSB: LowBitSubtable<F, 0>,
-  SECOND_LEAST_SIGNIFICANT_BIT: LowBitSubtable<F, 1>
+  LSB: LowBitSubtable<F>
 );
 
 // ==================== JOLT ====================
