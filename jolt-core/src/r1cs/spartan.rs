@@ -157,14 +157,13 @@ where
             where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
                                 + A_shift(..) * z_shift(..)
             and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
-            A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-            z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
+            - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
+            - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
         */
 
-        // TODO(arasuarun): clean up these variables
-        let num_steps_padded = constraint_builder.uniform_repeat().next_power_of_two();
-        let num_steps_bits = num_steps_padded.ilog2() as usize;
-        let num_vars_padded = key.num_vars_uniform_padded().next_power_of_two();
+        let num_steps = key.num_steps;
+        let num_steps_bits = num_steps.ilog2() as usize;
+        let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = claim_Az
@@ -192,8 +191,8 @@ where
         let span = span!(Level::INFO, "binding_z_and_shift_z");
         let _guard = span.enter();
 
-        let mut bind_z = vec![F::zero(); num_vars_padded * 2];
-        let mut bind_shift_z = vec![F::zero(); num_vars_padded * 2];
+        let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
+        let mut bind_shift_z = vec![F::zero(); num_vars_uniform * 2];
 
         flattened_polys
             .par_iter()
@@ -204,7 +203,7 @@ where
                     poly.dot_product(Some(&eq_plus_one_rx_step), Some(&eq_plus_one_rx_step_r2));
             });
 
-        bind_z[num_vars_padded] = F::one();
+        bind_z[num_vars_uniform] = F::one();
 
         drop(_guard);
         drop(span);
@@ -237,19 +236,20 @@ where
 
         drop_in_background_thread(polys);
 
-        /*  Sumcheck 3: the shift sumcheck
-            sumcheck claim: z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
+        /*  Sumcheck 3: Shift sumcheck
+            sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
         */
 
         let ry_var = inner_sumcheck_r[1..].to_vec();
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
 
-        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps_padded);
+        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
 
         let span = span!(Level::INFO, "bind_z_ry_var");
         let _guard = span.enter();
-        (0..constraint_builder.uniform_repeat())
+        let num_steps_unpadded = constraint_builder.uniform_repeat();
+        (0..num_steps_unpadded) // unpadded number of steps is sufficient 
             .into_par_iter()
             .map(|t| {
                 flattened_polys
@@ -293,8 +293,7 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
-        /* Inner sumcheck evaluations: evaluate z on rx_step
-         */
+        // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
 
@@ -306,8 +305,7 @@ where
             transcript,
         );
 
-        /* Shift sumcheck evaluations: evaluate z on ry_var
-         */
+        // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
 
@@ -383,6 +381,10 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
+            - claim is an RLC of claims_Az, Bz, Cz
+            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
+                                + A_shift(..) * z_shift(..)
+            - verifying it involves computing each term with randomness ry_var 
          */
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
@@ -401,9 +403,7 @@ where
 
         let r_non_uni = inner_sumcheck_r[0];
         let ry_var = inner_sumcheck_r[1..].to_vec();
-
-        let y_prime = [ry_var.clone(), rx_step.to_owned()].concat();
-        let eval_z = key.evaluate_z_mle(&self.claimed_witness_evals, &y_prime, true);
+        let eval_z = key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
         let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_non_uni);
 
@@ -419,7 +419,8 @@ where
 
         /* Sumcheck 3: Shift sumcheck
             - claim = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
-            - so verifying it involves checking that claim = z(ry_var || r_t) * eq_plus_one(rx_step, r_t)
+            - verifying it involves checking that claim = z(ry_var || r_t) * eq_plus_one(rx_step, r_t)
+            where r_t = shift_sumcheck_r
         */
 
         let num_rounds_shift_sumcheck = num_steps_bits;
@@ -433,11 +434,9 @@ where
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        let ry_shift_sumcheck = [ry_var, shift_sumcheck_r.to_owned()].concat();
-
-        let eval_z_shift_sumcheck = key.evaluate_z_mle(
+        let eval_z_shift_sumcheck = key.evaluate_z_mle_with_segment_evals(
             &self.shift_sumcheck_witness_evals,
-            &ry_shift_sumcheck,
+            &ry_var,
             false,
         );
         let eq_plus_one_shift_sumcheck =

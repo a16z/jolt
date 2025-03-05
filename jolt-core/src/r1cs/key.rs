@@ -155,10 +155,6 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         }
     }
 
-    fn full_z_len(&self) -> usize {
-        2 * self.num_steps * self.uniform_r1cs.num_vars.next_power_of_two()
-    }
-
     pub fn num_vars_uniform_padded(&self) -> usize {
         self.uniform_r1cs.num_vars.next_power_of_two()
     }
@@ -189,7 +185,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         row_count.next_power_of_two().log_2()
     }
 
-    /// (Prover) Evaluates RLC over A, B, C of: [A(r_x, y_var || r_x_step), A_cross(..)] for all y_var
+    /// (Prover) Evaluates RLC over A, B, C of: [A(r_x, y_var || r_x_step), A_shift(..)] for all y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_mle_rlc")]
     pub fn evaluate_matrix_mle_partial(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
         assert_eq!(
@@ -264,10 +260,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
     }
 
     /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
-    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_z_mle")]
-    pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F], with_const: bool) -> F {
+    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals")]
+    pub fn evaluate_z_mle_with_segment_evals(&self, segment_evals: &[F], r: &[F], with_const: bool) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
-        assert_eq!(r.len(), self.full_z_len().log_2());
+        assert_eq!(r.len(), self.num_vars_uniform_padded().log_2() + 1);
 
         // Variables vector is [vars, ..., 1, ...] where ... denotes padding to power of 2
         let num_vars = self.num_vars_uniform_padded();
@@ -275,9 +271,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let var_and_const_bits = var_bits + 1;
 
         let r_const = r[0];
-        let r_var = &r[1..var_bits + 1];
+        let r_var= &r[1..var_bits + 1];
 
-        let eq_ry_var = EqPolynomial::evals(r_var);
+        let eq_ry_var= EqPolynomial::evals(r_var);
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();
@@ -291,8 +287,8 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         ((F::one() - r_const) * eval_variables) + eq_const * const_coeff
     }
 
-    /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
-    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_matrix_mles")]
+    /// (Verifier) Evaluates uniform and non-uniform matrix MLEs with all variables fixed.
+    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_matrix_mle_full")]
     pub fn evaluate_matrix_mle_full(
         &self,
         rx_constr: &[F],
