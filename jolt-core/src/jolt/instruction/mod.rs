@@ -223,7 +223,7 @@ pub mod sra;
 pub mod srl;
 pub mod sub;
 pub mod virtual_advice;
-pub mod virtual_assert_aligned_memory_access;
+pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_signed_remainder;

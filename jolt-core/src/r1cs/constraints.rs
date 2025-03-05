@@ -8,7 +8,7 @@ use crate::{
             add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
             mulu::MULUInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction,
             sub::SUBInstruction,
-            virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction,
+            virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
             virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
         },
         vm::rv32i_vm::RV32I,
@@ -119,14 +119,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let packed_query =
             R1CSBuilder::<C, F, JoltR1CSInputs>::pack_be(query_chunks.clone(), LOG_M);
 
-        // For the `AssertAlignedMemoryAccessInstruction` lookups, we add the `rs1` and `imm` values
+        // For the `AssertHalfwordAlignmentInstruction` lookups, we add the `rs1` and `imm` values
         // to obtain the memory address being accessed.
         let add_operands = JoltR1CSInputs::InstructionFlags(ADDInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(
-                AssertAlignedMemoryAccessInstruction::<32, 2>::default().into(),
-            )
-            + JoltR1CSInputs::InstructionFlags(
-                AssertAlignedMemoryAccessInstruction::<32, 4>::default().into(),
+                AssertHalfwordAlignmentInstruction::<32>::default().into(),
             );
         cs.constrain_eq_conditional(add_operands, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
