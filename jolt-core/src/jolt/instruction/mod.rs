@@ -20,14 +20,14 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
         todo!();
     }
 
-    // \tilde{t}_\ell(y)
-    fn decomposed_values(&self) -> Vec<u64> {
-        todo!();
+    fn eta(&self) -> usize {
+        todo!()
     }
 
     // m_\ell(r_j, j, b_j)
     fn multiplicative_update<F: JoltField>(
         &self,
+        l: usize,
         j: usize,
         r_j: F,
         b_j: u8,
@@ -40,6 +40,7 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     // a_\ell(r_j, j, b_j)
     fn additive_update<F: JoltField>(
         &self,
+        l: usize,
         j: usize,
         r_j: F,
         b_j: u8,
@@ -51,14 +52,22 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
 
     #[cfg(test)]
     fn materialize(&self) -> Vec<u64> {
-        todo!()
+        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
     }
 
     fn materialize_entry(&self, index: u64) -> u64 {
+        (0..self.eta()).map(|l| self.subtable_entry(l, index)).sum()
+    }
+
+    fn subtable_entry(&self, l: usize, index: u64) -> u64 {
         todo!()
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        (0..self.eta()).map(|l| self.subtable_mle(l, r)).sum()
+    }
+
+    fn subtable_mle<F: JoltField>(&self, l: usize, r: &[F]) -> F {
         todo!()
     }
 

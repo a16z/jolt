@@ -37,13 +37,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    #[cfg(test)]
-    fn materialize(&self) -> Vec<u64> {
-        assert_eq!(WORD_SIZE, 8);
-        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
+    fn eta(&self) -> usize {
+        1
     }
 
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn subtable_entry(&self, _: usize, index: u64) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x & y) as u64
     }
@@ -70,6 +68,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
     // m_\ell(r_j, j, b_j)
     fn multiplicative_update<F: JoltField>(
         &self,
+        l: usize,
         j: usize,
         r_j: F,
         b_j: u8,
@@ -82,6 +81,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
     // a_\ell(r_j, j, b_j)
     fn additive_update<F: JoltField>(
         &self,
+        l: usize,
         j: usize,
         r_j: F,
         b_j: u8,
@@ -102,7 +102,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn subtable_mle<F: JoltField>(&self, _: usize, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
 
         let mut result = F::zero();
@@ -179,9 +179,13 @@ mod test {
                     Some(t_parameters[j + 1].to_u64().unwrap() as u8)
                 };
 
-                let actual = and.multiplicative_update(j, r_j, b_j, r_prev, b_next)
-                    * and.evaluate_mle(&t_parameters)
-                    + and.additive_update(j, r_j, b_j, r_prev, b_next);
+                let actual: Fr = (0..and.eta())
+                    .map(|l| {
+                        and.multiplicative_update(l, j, r_j, b_j, r_prev, b_next)
+                            * and.subtable_mle(l, &t_parameters)
+                            + and.additive_update(l, j, r_j, b_j, r_prev, b_next)
+                    })
+                    .sum();
 
                 t_parameters[j] = r_j;
                 r_prev = Some(r_j);

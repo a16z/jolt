@@ -43,13 +43,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
         multiply_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
-    #[cfg(test)]
-    fn materialize(&self) -> Vec<u64> {
-        assert_eq!(WORD_SIZE, 8);
-        (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
+    fn eta(&self) -> usize {
+        1
     }
 
-    fn materialize_entry(&self, index: u64) -> u64 {
+    fn subtable_entry(&self, _: usize, index: u64) -> u64 {
         index >> WORD_SIZE
     }
 
@@ -86,6 +84,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
     // m_\ell(r_j, j, b_j)
     fn multiplicative_update<F: JoltField>(
         &self,
+        l: usize,
         j: usize,
         r_j: F,
         b_j: u8,
@@ -98,6 +97,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
     // a_\ell(r_j, j, b_j)
     fn additive_update<F: JoltField>(
         &self,
+        l: usize,
         j: usize,
         r_j: F,
         b_j: u8,
@@ -117,7 +117,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn subtable_mle<F: JoltField>(&self, _: usize, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
         let mut result = F::zero();
         for i in 0..WORD_SIZE {
