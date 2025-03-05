@@ -220,7 +220,7 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
+jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
