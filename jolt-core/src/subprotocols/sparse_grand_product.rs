@@ -406,7 +406,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 // This is similar to the if case of `DenseInterleavedPolynomial::compute_cubic`
                 coalesced_flags
                     .par_chunks(2)
-                    .zip(coalesced_fingerpints.par_chunks(2))
+                    .zip(coalesced_fingerprints.par_chunks(2))
                     .zip(eq_poly.E2.last().unwrap().par_chunks(2))
                     .map(|((flags, fingerprints), eq_chunk)| {
                         let eq_evals = {
@@ -446,12 +446,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 let E2_current = eq_poly.E2.last().unwrap();
                 let flag_chunk_size = coalesced_flags.len().next_power_of_two() / E2_current.len();
                 let fingerprint_chunk_size =
-                    coalesced_fingerpints.len().next_power_of_two() / E2_current.len();
+                    coalesced_fingerprints.len().next_power_of_two() / E2_current.len();
 
                 E2_current
                     .par_iter()
                     .zip(coalesced_flags.par_chunks(flag_chunk_size))
-                    .zip(coalesced_fingerpints.par_chunks(fingerprint_chunk_size))
+                    .zip(coalesced_fingerprints.par_chunks(fingerprint_chunk_size))
                     .map(|((E2_eval, flag_x2), fingerprint_x2)| {
                         let mut inner_sum = (F::zero(), F::zero());
                         for ((E1_evals, flag_chunk), fingerprint_chunk) in E1_evals
@@ -861,7 +861,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         previous_round_claim: F,
     ) -> UniPoly<F> {
         if let Some(coalesced_flags) = &self.coalesced_flags {
-            let coalesced_fingerpints = self.coalesced_fingerprints.as_ref().unwrap();
+            let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
             let cubic_evals = if eq_poly.E1_len == 1 {
                 // 1. Flags/fingerprints are coalesced, and E1 is fully bound
