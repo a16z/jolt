@@ -214,6 +214,41 @@ impl<F: JoltField> UniPoly<F> {
     pub fn shift_coefficients(&mut self, rhs: &F) {
         self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
     }
+
+    /// This function computes a cubic polynomial s(X), given the following conditions:
+    /// - s(X) = l(X) * t(X), where l(X) is linear and t(X) is quadratic,
+    /// - l(X) = a + bX is given by l(0) = a and l(\infty) = b,
+    /// - t(X) = c + dX + eX^2 is given by t(0) = c and t(\infty) = e (but d is missing),
+    /// - s(0) + s(1) = hint,
+    ///
+    /// This is used in the optimized sum-check evaluation with split eq polynomial.
+    pub fn from_linear_times_quadratic_with_hint(
+        linear_coeffs: [F; 2],
+        quadratic_coeff_0: F,
+        quadratic_coeff_2: F,
+        hint: F,
+    ) -> Self {
+        let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
+
+        let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
+
+        // Compute the linear coefficient of the quadratic polynomial from the hint
+        // Given that s(0) + s(1) = hint, we can rewrite this as:
+        // a * c + (a + b) * (c + d + e) = hint, which means we can solve for d as:
+        // d = (hint - a * c) / (a + b) - c - e
+        let quadratic_coeff_1 =
+            (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
+
+        // Now derive the coefficients of the cubic polynomial from the evaluations
+        // We have s(X) = (a + bX) * (c + dX + eX^2) = ac + (ad + bc)X + (ae + bd)X^2 + beX^3
+        let coeffs = [
+            cubic_coeff_0,
+            linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
+            linear_coeffs[0] * quadratic_coeff_2 + linear_coeffs[1] * quadratic_coeff_1,
+            linear_coeffs[1] * quadratic_coeff_2,
+        ];
+        Self::from_coeff(coeffs.to_vec())
+    }
 }
 
 impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {

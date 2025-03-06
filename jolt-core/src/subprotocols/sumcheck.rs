@@ -7,7 +7,7 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::split_eq_poly::{OldSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
@@ -20,6 +20,10 @@ use std::marker::PhantomData;
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
 }
+
+// pub trait GeneralizedBindable<F: JoltField>: Sync {
+//     fn bind(&mut self, r: F, );
+// }
 
 /// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
@@ -192,7 +196,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                     .first_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
             } else {
                 az_bz_cz_poly
-                    .subseqeunt_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+                    .subsequent_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
             }
         }
 

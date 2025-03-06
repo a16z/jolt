@@ -1,6 +1,8 @@
 use super::{
-    dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial,
-    split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
+    dense_interleaved_poly::DenseInterleavedPolynomial,
+    dense_mlpoly::DensePolynomial,
+    split_eq_poly::{OldSplitEqPolynomial, SplitEqPolynomial},
+    unipoly::UniPoly,
 };
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -459,6 +461,264 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+        let quadratic_evals = if eq_poly.current_index < eq_poly.get_num_vars() / 2 {
+            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
+            // would without the Dao-Thaler optimization, using the standard linear-time
+            // sumcheck algorithm with optimizations for sparsity.
+
+            let eq_evals: Vec<(F, F)> = eq_poly
+                .E2
+                .last()
+                .unwrap()
+                .par_chunks(2)
+                .take(self.dense_len / 4)
+                .map(|eq_chunk| {
+                    let eval_point_0 = eq_chunk[0];
+                    let eval_point_infty = eq_chunk[1] - eq_chunk[0];
+                    (eval_point_0, eval_point_infty)
+                })
+                .collect();
+            // This is what Σ eq(r, x) * left(x) * right(x) would be if
+            // `left` and `right` were both all ones.
+            let eq_eval_sums: (F, F) = eq_evals
+                .par_iter()
+                .fold(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                )
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+            // Now we compute the deltas, correcting `eq_eval_sums` for the
+            // elements of `left` and `right` that aren't ones.
+            let deltas: (F, F) = self
+                .coeffs
+                .par_iter()
+                .flat_map(|segment| {
+                    segment
+                        .par_chunk_by(|x, y| x.index / 4 == y.index / 4)
+                        .map(|sparse_block| {
+                            let block_index = sparse_block[0].index / 4;
+                            let mut block = [F::one(); 4];
+                            for coeff in sparse_block {
+                                block[coeff.index % 4] = coeff.value;
+                            }
+
+                            let left_eval_0 = block[0];
+                            let left_eval_infty = block[2] - left_eval_0;
+                            let right_eval_0 = block[1];
+                            let right_eval_infty = block[3] - right_eval_0;
+
+                            let eq_evals = eq_evals[block_index];
+                            (
+                                eq_evals.0.mul_0_optimized(
+                                    left_eval_0.mul_1_optimized(right_eval_0) - F::one(),
+                                ),
+                                eq_evals.1 * (left_eval_infty * right_eval_infty - F::one()),
+                            )
+                        })
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+
+            (eq_eval_sums.0 + deltas.0, eq_eval_sums.1 + deltas.1)
+        } else {
+            // This is a more complicated version of the `else` case in
+            // `DenseInterleavedPolynomial::compute_cubic`. Read that one first.
+
+            // We start by computing the E1 evals:
+            // (1 - j) * E1[0, x1] + j * E1[1, x1]
+            let E1_evals: Vec<(F, F)> = eq_poly
+                .E1
+                .last()
+                .unwrap()
+                .par_chunks(2)
+                .map(|E1_chunk| {
+                    let eval_point_0 = E1_chunk[0];
+                    let eval_point_infty = E1_chunk[1] - E1_chunk[0];
+                    (eval_point_0, eval_point_infty)
+                })
+                .collect();
+            // Now compute \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1])
+            let E1_eval_sums: (F, F) = E1_evals
+                .par_iter()
+                .fold(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                )
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+
+            let num_x1_bits = eq_poly.get_num_vars() / 2 - eq_poly.current_index;
+            let x1_bitmask = (1 << num_x1_bits) - 1;
+
+            // Iterate over the non-one coefficients and compute the deltas (relative to
+            // what the cubic would be if all the coefficients were ones).
+            let deltas = self
+                .coeffs
+                .par_iter()
+                .flat_map(|segment| {
+                    segment
+                        .par_chunk_by(|a, b| {
+                            // Group by x2
+                            let a_x2 = (a.index / 4) >> num_x1_bits;
+                            let b_x2 = (b.index / 4) >> num_x1_bits;
+                            a_x2 == b_x2
+                        })
+                        .map(|chunk| {
+                            let mut inner_sum = (F::zero(), F::zero());
+                            for sparse_block in chunk.chunk_by(|x, y| x.index / 4 == y.index / 4) {
+                                let block_index = sparse_block[0].index / 4;
+                                let mut block = [F::one(); 4];
+                                for coeff in sparse_block {
+                                    block[coeff.index % 4] = coeff.value;
+                                }
+
+                                let left_eval_0 = block[0];
+                                let left_eval_infty = block[2] - left_eval_0;
+                                let right_eval_0 = block[1];
+                                let right_eval_infty = block[3] - right_eval_0;
+
+                                let x1 = block_index & x1_bitmask;
+                                let delta = (
+                                    E1_evals[x1].0.mul_0_optimized(
+                                        left_eval_0.mul_1_optimized(right_eval_0) - F::one(),
+                                    ),
+                                    E1_evals[x1].1
+                                        * (left_eval_infty * right_eval_infty - F::one()),
+                                );
+                                inner_sum.0 += delta.0;
+                                inner_sum.1 += delta.1;
+                            }
+
+                            let x2 = (chunk[0].index / 4) >> num_x1_bits;
+                            (
+                                eq_poly.E2.last().unwrap()[x2] * inner_sum.0,
+                                eq_poly.E2.last().unwrap()[x2] * inner_sum.1,
+                            )
+                        })
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+
+            // The cubic evals assuming all the coefficients are ones is affected by the
+            // `dense_len`, since we implicitly 0-pad the `dense_len` to a power of 2.
+            //
+            // As a refresher, the cubic evals we're computing are:
+            //
+            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            let evals_assuming_all_ones = if self.dense_len.is_power_of_two() {
+                // If `dense_len` is a power of 2, there is no 0-padding.
+                //
+                // So we have:
+                // \sum_x2 (E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
+                //   = \sum_x2 (E2[x2] * \sum_x1 E1_evals[x1])
+                //   = (\sum_x2 E2[x2]) * (\sum_x1 E1_evals[x1])
+                //   = 1 * E1_eval_sums
+                E1_eval_sums
+            } else {
+                let E2_current = eq_poly.E2.last().unwrap();
+                let chunk_size = self.dense_len.next_power_of_two() / E2_current.len();
+                let num_all_one_chunks = self.dense_len / chunk_size;
+                let E2_sum: F = E2_current[..num_all_one_chunks].iter().sum();
+                if self.dense_len % chunk_size == 0 {
+                    // If `dense_len` isn't a power of 2 but evenly divides `chunk_size`,
+                    // that means that for the last values of x2, we have:
+                    //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
+                    // due to the 0-padding.
+                    //
+                    // This makes the entire inner sum 0 for those values of x2.
+                    // So we can simply sum over E2 for the _other_ values of x2, and
+                    // multiply by `E1_eval_sums`.
+                    (E2_sum * E1_eval_sums.0, E2_sum * E1_eval_sums.1)
+                } else {
+                    // If `dense_len` isn't a power of 2 and doesn't divide `chunk_size`,
+                    // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
+                    // followed by (chunk_size - self.dense_len % chunk_size) zeros,
+                    // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
+                    //
+                    // This handles this last chunk:
+                    let last_chunk_evals = E1_evals[..(self.dense_len % chunk_size) / 4]
+                        .par_iter()
+                        .fold(
+                            || (F::zero(), F::zero()),
+                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                        )
+                        .reduce(
+                            || (F::zero(), F::zero()),
+                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                        );
+                    (
+                        E2_sum * E1_eval_sums.0
+                            + E2_current[num_all_one_chunks] * last_chunk_evals.0,
+                        E2_sum * E1_eval_sums.1
+                            + E2_current[num_all_one_chunks] * last_chunk_evals.1,
+                    )
+                }
+            };
+
+            (
+                evals_assuming_all_ones.0 + deltas.0,
+                evals_assuming_all_ones.1 + deltas.1,
+            )
+        };
+
+        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index];
+
+        let cubic = UniPoly::from_linear_times_quadratic_with_hint(
+            // The coefficients of \prod_{j < i} eq(w[..j], r[..j]) * eq(w_i, X)
+            [
+                eq_poly.current_scalar - scalar_times_w_i,
+                scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+            ],
+            quadratic_evals.0,
+            quadratic_evals.1,
+            previous_round_claim,
+        );
+
+        #[cfg(test)]
+        {
+            let dense = DenseInterleavedPolynomial::new(self.coalesce());
+            let dense_cubic = BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
+                &dense,
+                eq_poly,
+                previous_round_claim,
+            );
+            assert_eq!(cubic, dense_cubic);
+        }
+
+        cubic
+    }
+
+    fn final_claims(&self) -> (F, F) {
+        assert_eq!(self.dense_len, 2);
+        let dense = self.to_dense();
+        (dense[0], dense[1])
+    }
+}
+
+impl<F: JoltField> SparseInterleavedPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic_alt")]
+    pub fn compute_cubic_alt<ProofTranscript: Transcript>(
+        &self,
+        eq_poly: &OldSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
+        if let Some(coalesced) = &self.coalesced {
+            return DenseInterleavedPolynomial::<F>::compute_cubic_alt(
+                coalesced,
+                eq_poly,
+                previous_round_claim,
+            );
+        }
+
         let cubic_evals = if eq_poly.E1_len == 1 {
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
             // would without the Dao-Thaler optimization, using the standard linear-time
@@ -706,7 +966,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         #[cfg(test)]
         {
             let dense = DenseInterleavedPolynomial::new(self.coalesce());
-            let dense_cubic = BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
+            let dense_cubic = DenseInterleavedPolynomial::<F>::compute_cubic_alt(
                 &dense,
                 eq_poly,
                 previous_round_claim,
@@ -715,12 +975,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         }
 
         cubic
-    }
-
-    fn final_claims(&self) -> (F, F) {
-        assert_eq!(self.dense_len, 2);
-        let dense = self.to_dense();
-        (dense[0], dense[1])
     }
 }
 

@@ -5,7 +5,24 @@ use super::dense_mlpoly::DensePolynomial;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
 #[derive(Debug, Clone, PartialEq)]
+/// A struct holding the equality polynomial evaluations for use in sum-check,
+/// when incorporating both the Gruen and Dao-Thaler optimizations.
+///
+/// In this optimization, for the `i`th round of sum-check, we want the quantities:
+///
+/// - `current_index = i`
+/// - `current_scalar = \prod_{j < i} eq(w[..j],r[..j])`
+/// - If `i < n/2`, then `E1.last().unwrap() = [eq(w[(i + 1)..n/2], x) for all x in {0, 1}^{n/2 - i - 1}]`; else `E1` is empty
+/// - `E2.last().unwrap() = [eq(w[max(i, n/2)..n], x) for all x in {0, 1}^{n - max(i, n/2)}]`
 pub struct SplitEqPolynomial<F> {
+    pub(crate) current_index: usize,
+    pub(crate) current_scalar: F,
+    pub(crate) w: Vec<F>,
+    pub(crate) E1: Vec<Vec<F>>,
+    pub(crate) E2: Vec<Vec<F>>,
+}
+
+pub struct OldSplitEqPolynomial<F> {
     num_vars: usize,
     pub(crate) E1: Vec<F>,
     pub(crate) E1_len: usize,
@@ -15,6 +32,55 @@ pub struct SplitEqPolynomial<F> {
 
 impl<F: JoltField> SplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "SplitEqPolynomial::new")]
+    pub fn new(w: &[F]) -> Self {
+        let m = w.len() / 2;
+        let (_, wprime) = w.split_first().unwrap();
+        let (w2, w1) = wprime.split_at(m);
+        let (E2, E1) = rayon::join(
+            || EqPolynomial::evals_cached(w2),
+            || EqPolynomial::evals_cached(w1),
+        );
+        Self {
+            current_index: 0,
+            current_scalar: F::one(),
+            w: w.to_vec(),
+            E1,
+            E2,
+        }
+    }
+
+    pub fn get_num_vars(&self) -> usize {
+        self.w.len()
+    }
+
+    pub fn len(&self) -> usize {
+        1 << (self.get_num_vars() - self.current_index + 1)
+    }
+
+    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
+    pub fn bind(&mut self, r: F) {
+        // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
+        self.current_scalar *= F::one() - self.w[self.current_index] - r
+            + self.w[self.current_index] * r
+            + self.w[self.current_index] * r;
+        // pop the last vector from `E1` or `E2` (since we don't need it anymore)
+        if self.current_index < self.w.len() / 2 {
+            self.E1.pop();
+        } else {
+            self.E2.pop();
+        }
+        // increment `current_index`
+        self.current_index += 1;
+    }
+
+    #[cfg(test)]
+    pub fn merge(&self) -> DensePolynomial<F> {
+        DensePolynomial::new(EqPolynomial::evals(&self.w[self.current_index..]))
+    }
+}
+
+impl<F: JoltField> OldSplitEqPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "OldSplitEqPolynomial::new")]
     pub fn new(w: &[F]) -> Self {
         let m = w.len() / 2;
         let (w2, w1) = w.split_at(m);
@@ -42,7 +108,7 @@ impl<F: JoltField> SplitEqPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "SplitEqPolynomial::bind")]
+    #[tracing::instrument(skip_all, name = "OldSplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         if self.E1_len == 1 {
             // E_1 is already completely bound, so we bind E_2
