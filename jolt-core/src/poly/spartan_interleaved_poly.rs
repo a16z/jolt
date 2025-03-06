@@ -952,8 +952,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     }
 
     /// All subsequent rounds of the first Spartan sumcheck.
-    /// This is the old implementation without Gruen's optimization
-    pub fn subsequent_sumcheck_round_old<ProofTranscript: Transcript>(
+    pub fn subsequent_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut SplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,

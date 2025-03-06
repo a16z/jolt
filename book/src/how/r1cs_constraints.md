@@ -44,7 +44,7 @@ the preprocessed bytecode in Jolt.
     1. `ConcatLookupQueryChunks`: Indicates whether the instruction performs a concat-type lookup.
     1. `Virtual`: 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
     1. `Assert`: 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
-    1. `DoNotUpdatePC`: Used in virtual sequences; the program counter should be the same for the full seqeuence.
+    1. `DoNotUpdatePC`: Used in virtual sequences; the program counter should be the same for the full sequence.
 * Instruction flags: these are the unary bits used to indicate instruction is executed at a given step.
 There are as many per step as the number of unique instruction lookup tables in Jolt.
 

@@ -242,7 +242,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcri
     }
 }
 
-/// Jolt's R1CS constraint inputs are typically represneted as an enum.
+/// Jolt's R1CS constraint inputs are typically represented as an enum.
 /// This trait serves two main purposes:
 /// - Defines a canonical ordering over inputs (and thus indices for each input).
 ///   This is needed for sumcheck.

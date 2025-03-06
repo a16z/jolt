@@ -55,6 +55,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
@@ -77,6 +79,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let (word_loaded, word_stored) = match trace_row.memory_state.unwrap() {
@@ -118,6 +122,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
                 value: word_loaded,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let bit_shift = SLLInstruction::<WORD_SIZE>(ram_address, 3).lookup_entry();
@@ -138,6 +144,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         // Technically such a LUI instruction isn't valid RISC-V, since the lower
@@ -160,6 +168,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let shifted_mask = SLLInstruction::<WORD_SIZE>(byte_mask as u64, bit_shift).lookup_entry();
@@ -186,6 +196,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let shifted_value = SLLInstruction::<WORD_SIZE>(value, bit_shift).lookup_entry();
@@ -206,6 +218,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         // The next three instructions (XOR, AND, XOR) splices the byte into
@@ -230,6 +244,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let masked = ANDInstruction::<WORD_SIZE>(word_xor_halfword, shifted_mask).lookup_entry();
@@ -250,6 +266,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let result = XORInstruction::<WORD_SIZE>(word_loaded, masked).lookup_entry();
@@ -271,6 +289,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -294,6 +314,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
                 post_value: result,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
@@ -317,6 +339,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
                 post_value: 0,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
         Self::virtual_trace(dummy_trace_row)
             .into_iter()
@@ -384,6 +408,8 @@ mod test {
                     post_value: word_after,
                 }),
                 advice_value: None,
+                precompile_input: None,
+                precompile_output_address: None,
             };
 
             let trace = SBInstruction::<32>::virtual_trace(sb_trace_row);
