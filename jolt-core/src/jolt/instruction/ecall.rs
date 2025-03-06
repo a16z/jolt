@@ -22,30 +22,13 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
         assert_eq!(trace_row.instruction.opcode, RV32IM::ECALL);
         // Ecall source registers
         let r_t0 = trace_row.instruction.rs1;
-        // Virtual registers used in sequence
-        let v_0 = Some(virtual_register_index(0));
-        let v_ao0: Option<u64> = Some(virtual_register_index(1));
-        let v_ao1: Option<u64> = Some(virtual_register_index(2));
-        let v_ao2: Option<u64> = Some(virtual_register_index(3));
-        let v_ao3: Option<u64> = Some(virtual_register_index(4));
-        let v_ao4: Option<u64> = Some(virtual_register_index(5));
-        let v_ao5: Option<u64> = Some(virtual_register_index(6));
-        let v_ao6: Option<u64> = Some(virtual_register_index(7));
-        let v_ao7: Option<u64> = Some(virtual_register_index(8));
-        let v_ao8: Option<u64> = Some(virtual_register_index(9));
-        let v_ao9: Option<u64> = Some(virtual_register_index(10));
-        let v_ao10: Option<u64> = Some(virtual_register_index(11));
-        let v_ao11: Option<u64> = Some(virtual_register_index(12));
-        let v_ao12: Option<u64> = Some(virtual_register_index(13));
-        let v_ao13: Option<u64> = Some(virtual_register_index(14));
-        let v_ao14: Option<u64> = Some(virtual_register_index(15));
-        let v_ao15: Option<u64> = Some(virtual_register_index(16));
 
         let mut virtual_trace = vec![];
 
         // Precompile input is in the memory region reserved for the precompile input.
         let precompile_input = trace_row.precompile_input.unwrap();
         let precompile_output: [u32; 16] = Precompile::from_u64(trace_row.register_state.rs1_val.unwrap()).unwrap().execute(precompile_input);
+        let precompile_output_address = trace_row.precompile_output_address.unwrap();
 
         let  ao0 = ADVICEInstruction::<WORD_SIZE>(precompile_output[0]).lookup_entry();
         virtual_trace.push(RVTraceRow {
@@ -54,17 +37,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao0,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao0),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[0]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao1 = ADVICEInstruction::<WORD_SIZE>(precompile_output[1]).lookup_entry();
@@ -74,17 +63,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao1,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao1),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[1]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 1_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[1] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao2 = ADVICEInstruction::<WORD_SIZE>(precompile_output[2]).lookup_entry();
@@ -94,17 +89,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao2,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao2),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[2]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 2_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao3 = ADVICEInstruction::<WORD_SIZE>(precompile_output[3]).lookup_entry();
@@ -114,17 +115,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao3,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao3),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[3]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 3_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[3] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao4 = ADVICEInstruction::<WORD_SIZE>(precompile_output[4]).lookup_entry();
@@ -134,7 +141,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao4,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
@@ -143,8 +150,14 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 rs2_val: None,
                 rd_post_val: Some(ao4),
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[4]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 4_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao5 = ADVICEInstruction::<WORD_SIZE>(precompile_output[5]).lookup_entry();
@@ -154,17 +167,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao5,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao5),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[5]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + + 5_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao6 = ADVICEInstruction::<WORD_SIZE>(precompile_output[6]).lookup_entry();
@@ -174,17 +193,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao6,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao6),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[6]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 6_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao7 = ADVICEInstruction::<WORD_SIZE>(precompile_output[7]).lookup_entry();
@@ -201,10 +226,16 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao7),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[7]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 7_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao8 = ADVICEInstruction::<WORD_SIZE>(precompile_output[8]).lookup_entry();
@@ -214,17 +245,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao8,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao8),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[8]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 8_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao9 = ADVICEInstruction::<WORD_SIZE>(precompile_output[9]).lookup_entry();
@@ -234,17 +271,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao9,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao9),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[9]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 9_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[0] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao10 = ADVICEInstruction::<WORD_SIZE>(precompile_output[10]).lookup_entry();
@@ -254,17 +297,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao10,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao10),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[10]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 10_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[10] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao11 = ADVICEInstruction::<WORD_SIZE>(precompile_output[11]).lookup_entry();
@@ -274,17 +323,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao11,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao11),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[11]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 11_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[11] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao12 = ADVICEInstruction::<WORD_SIZE>(precompile_output[12]).lookup_entry();
@@ -294,17 +349,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao12,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao12),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[12]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 12_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[12] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao13 = ADVICEInstruction::<WORD_SIZE>(precompile_output[13]).lookup_entry();
@@ -314,17 +375,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao13,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao13),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[13]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 13_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[13] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao14 = ADVICEInstruction::<WORD_SIZE>(precompile_output[14]).lookup_entry();
@@ -334,17 +401,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao14,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao14),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[14]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 14_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[14] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let  ao15 = ADVICEInstruction::<WORD_SIZE>(precompile_output[15]).lookup_entry();
@@ -354,17 +427,23 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_ao15,
+                rd: None,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: None,
                 rs2_val: None,
-                rd_post_val: Some(ao15),
+                rd_post_val: None,
             },
-            memory_state: None,
-            advice_value: Some(precompile_output[15]),
+            memory_state: Some(MemoryState::Write {
+                address: precompile_output_address + 15_u64,
+                pre_value: 0_64,
+                post_value: precompile_output[15] as u64,
+            }),
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let precompile_instruction = PRECOMPILEInstruction::<WORD_SIZE>(trace_row.register_state.rs1_val.unwrap()).lookup_entry();
@@ -385,8 +464,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for EcallInstruction<WOR
             },
             memory_state: None,
             advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
+            precompile_input: Some(precompile_input),
+            precompile_output_address: Some(precompile_output_address),
         });
 
         virtual_trace
