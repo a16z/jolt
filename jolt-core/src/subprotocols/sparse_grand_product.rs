@@ -855,7 +855,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 }
 
 impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
-    fn compute_cubic_alt<ProofTranscript: Transcript>(
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic_alt")]
+    pub fn compute_cubic_alt<ProofTranscript: Transcript>(
         &self,
         eq_poly: &OldSplitEqPolynomial<F>,
         previous_round_claim: F,
