@@ -19,7 +19,7 @@ pub struct UniformSpartanKey<const C: usize, I: ConstraintInput, F: JoltField> {
     _inputs: PhantomData<I>,
     pub uniform_r1cs: UniformR1CS<F>,
 
-    pub offset_eq_r1cs: NonUniformR1CS<F>,
+    pub offset_eq_r1cs: CrossStepR1CS<F>,
 
     /// Number of constraints across all steps padded to nearest power of 2
     pub num_cons_total: usize,
@@ -68,16 +68,16 @@ pub struct UniformR1CS<F: JoltField> {
     pub num_rows: usize,
 }
 
-/// NonUniformR1CSConstraint only supports a single additional equality constraint. 'a' holds the equality (something minus something),
+/// CrossStepR1CSConstraint only supports a single additional equality constraint. 'a' holds the equality (something minus something),
 /// 'b' holds the condition. 'a' * 'b' == 0. Each SparseEqualityItem stores a uniform_column (pointing to a variable) and an offset
 /// suggesting which other step to point to.
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct NonUniformR1CSConstraint<F: JoltField> {
+pub struct CrossStepR1CSConstraint<F: JoltField> {
     pub eq: SparseEqualityItem<F>,
     pub condition: SparseEqualityItem<F>,
 }
 
-impl<F: JoltField> NonUniformR1CSConstraint<F> {
+impl<F: JoltField> CrossStepR1CSConstraint<F> {
     pub fn new(eq: SparseEqualityItem<F>, condition: SparseEqualityItem<F>) -> Self {
         Self { eq, condition }
     }
@@ -90,13 +90,13 @@ impl<F: JoltField> NonUniformR1CSConstraint<F> {
     }
 }
 
-/// NonUniformR1CS stores a vector of NonUniformR1CSConstraint
+/// CrossStepR1CS stores a vector of CrossStepR1CSConstraint
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct NonUniformR1CS<F: JoltField> {
-    pub constraints: Vec<NonUniformR1CSConstraint<F>>,
+pub struct CrossStepR1CS<F: JoltField> {
+    pub constraints: Vec<CrossStepR1CSConstraint<F>>,
 }
 
-impl<F: JoltField> NonUniformR1CS<F> {
+impl<F: JoltField> CrossStepR1CS<F> {
     /// Returns a tuple of (eq_constants, condition_constants)
     fn constants(&self) -> (Vec<F>, Vec<F>) {
         let mut eq_constants = Vec::with_capacity(self.constraints.len());
@@ -406,7 +406,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
     }
 
     /// Returns the digest of the r1cs shape
-    fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &NonUniformR1CS<F>, num_steps: usize) -> F {
+    fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &CrossStepR1CS<F>, num_steps: usize) -> F {
         let mut hash_bytes = Vec::new();
         uniform_r1cs.serialize_compressed(&mut hash_bytes).unwrap();
         let mut offset_eq_bytes = Vec::new();
