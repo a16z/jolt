@@ -32,6 +32,7 @@ impl<F: JoltField> UniPoly<F> {
         UniPoly { coeffs }
     }
 
+    /// Interpolate a polynomial from its evaluations at the points 0, 1, 2, ..., n-1.
     pub fn from_evals(evals: &[F]) -> Self {
         UniPoly {
             coeffs: Self::vandermonde_interpolation(evals),
@@ -454,5 +455,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_from_linear_times_quadratic_with_hint() {
+        // polynomial is s(x) = (x + 1) * (x^2 + 2x + 3) = x^3 + 3x^2 + 5x + 3
+        // hint = s(0) + s(1) = 3 + (1 + 3 + 5 + 3) = 15
+        let linear_coeffs = [Fr::from_u64(1u64), Fr::from_u64(1u64)];
+        let quadratic_coeff_0 = Fr::from_u64(3u64);
+        let quadratic_coeff_2 = Fr::from_u64(1u64);
+        let true_poly = UniPoly::from_coeff(vec![
+            Fr::from_u64(3u64),
+            Fr::from_u64(5u64),
+            Fr::from_u64(3u64),
+            Fr::from_u64(1u64),
+        ]);
+        let hint = Fr::from_u64(15u64);
+        let poly = UniPoly::from_linear_times_quadratic_with_hint(
+            linear_coeffs,
+            quadratic_coeff_0,
+            quadratic_coeff_2,
+            hint,
+        );
+        assert_eq!(poly.coeffs, true_poly.coeffs);
     }
 }

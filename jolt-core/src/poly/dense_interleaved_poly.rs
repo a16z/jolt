@@ -2,9 +2,12 @@ use crate::{
     field::JoltField,
     subprotocols::{
         grand_product::BatchedGrandProductLayer,
-        sumcheck::{BatchedCubicSumcheck, Bindable},
+        sumcheck::{BatchedCubicSumcheck, Bindable, SumcheckInstanceProof},
     },
-    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::{
+        thread::unsafe_allocate_zero_vec,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 use rayon::{prelude::*, slice::Chunks};
 
@@ -12,7 +15,7 @@ use rayon::{prelude::*, slice::Chunks};
 use super::dense_mlpoly::DensePolynomial;
 use super::{
     split_eq_poly::{OldSplitEqPolynomial, SplitEqPolynomial},
-    unipoly::UniPoly,
+    unipoly::{CompressedUniPoly, UniPoly},
 };
 
 /// Represents a single layer of a grand product circuit.
@@ -198,7 +201,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     }
 
     /// We want to compute the evaluations of the following univariate cubic polynomial at
-    /// points {0, 1, 2, 3}:
+    /// points `x in {0, 1, \infty}`:
     ///     Σ eq(r, x) * left(x) * right(x)
     /// where the inner summation is over all but the "least significant bit" of the multilinear
     /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
@@ -221,20 +224,17 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         // https://eprint.iacr.org/2024/1210.pdf
 
         // From that paper, we have the equation: s_i(X) = eq(r_i, X) * t_i(X)
-        // We will compute the evaluations at zero and infinity of t_i(X).
-        // (where "evaluation at infinity" is just the quadratic coefficient of t_i(X))
-        let quadratic_evals = if eq_poly.current_index < eq_poly.get_num_vars() / 2 {
-            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
-            // would without the Dao-Thaler optimization, using the standard linear-time
-            // sumcheck algorithm.
+        // We will compute the evaluations at zero and infinity of t_i(X), which recall (when `i=0`) is:
+        // `t_0(X) = \sum_x2 E2[x2] * (\sum_x1 E1[x1] * \prod_k ((1 - X) * P_k(0 || x1 || x2) + X * P_k(1 || x1 || x2)))`
+        // (here "evaluation at infinity" is just the quadratic coefficient of t_i(X))
+
+        let start_quadratic_evals_time = std::time::Instant::now();
+        let quadratic_evals = if eq_poly.E1_len() == 1 {
+            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as
+            // \sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(r || 0 || x2) + j * P_k(r || 1 || x2))
             self.par_chunks(4)
-                .zip(eq_poly.E2.last().unwrap().par_chunks(2))
+                .zip(eq_poly.E2_current())
                 .map(|(layer_chunk, eq_chunk)| {
-                    let eq_evals = {
-                        let eval_point_0 = eq_chunk[0];
-                        let eval_point_infty = eq_chunk[1] - eq_chunk[0];
-                        (eval_point_0, eval_point_infty)
-                    };
                     let left = (
                         *layer_chunk.first().unwrap_or(&F::zero()),
                         *layer_chunk.get(2).unwrap_or(&F::zero()),
@@ -248,8 +248,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     let right_eval_infty = right.1 - right.0;
 
                     (
-                        eq_evals.0 * left.0 * right.0,
-                        eq_evals.1 * left_eval_infty * right_eval_infty,
+                        *eq_chunk * left.0 * right.0,
+                        *eq_chunk * left_eval_infty * right_eval_infty,
                     )
                 })
                 .reduce(
@@ -263,39 +263,35 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             // Note, however, that we reverse the inner/outer summation compared to the
             // description in the paper. I.e. instead of:
             //
-            // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * (\sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            // \sum_x1 E1[x1] * (\sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
             //
             // we do:
             //
-            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            // \sum_x2 E2[x2] * (\sum_x1 E1[x1] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
             //
             // because it has better memory locality.
+            // (note also that we are doing the binding in the opposite order, i.e. the correct formula should be P_k(x2 || x1 || 0))
 
-            // We start by computing the E1 evals:
-            // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly
-                .E1
-                .last()
-                .unwrap()
-                .par_chunks(2)
-                .map(|E1_chunk| {
-                    let eval_point_0 = E1_chunk[0];
-                    let eval_point_infty = E1_chunk[1] - E1_chunk[0];
-                    (eval_point_0, eval_point_infty)
-                })
-                .collect();
+            let start_E1_evals_time = std::time::Instant::now();
+            let E1_evals: Vec<_> = eq_poly.E1_current().to_vec();
+            let end_E1_evals_time = std::time::Instant::now();
+            println!(
+                "Time taken for fetching E1 evals: {:?}",
+                end_E1_evals_time.duration_since(start_E1_evals_time)
+            );
+            assert!(E1_evals.len() > 1);
 
-            let chunk_size =
-                (self.len.next_power_of_two() / eq_poly.E2.last().unwrap().len()).max(1);
-            eq_poly
-                .E2
-                .last()
-                .unwrap()
+            let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len()).max(1);
+
+            let start_E2_evals_time = std::time::Instant::now();
+
+            let evals = eq_poly
+                .E2_current()
                 .par_iter()
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E2_eval, P_x2)| {
                     // The for-loop below corresponds to the inner sum:
-                    // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
+                    // \sum_x1 E1[x1] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
                     let mut inner_sum = (F::zero(), F::zero());
                     for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
                         let left = (
@@ -309,8 +305,8 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         let left_eval_infty = left.1 - left.0;
                         let right_eval_infty = right.1 - right.0;
 
-                        inner_sum.0 += E1_evals.0 * left.0 * right.0;
-                        inner_sum.1 += E1_evals.1 * left_eval_infty * right_eval_infty;
+                        inner_sum.0 += *E1_evals * left.0 * right.0;
+                        inner_sum.1 += *E1_evals * left_eval_infty * right_eval_infty;
                     }
 
                     // Multiply the inner sum by E2[x2]
@@ -319,13 +315,25 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .reduce(
                     || (F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
-                )
+                );
+            let end_E2_evals_time = std::time::Instant::now();
+            println!(
+                "Time taken for computing E2 evals: {:?}",
+                end_E2_evals_time.duration_since(start_E2_evals_time)
+            );
+            evals
         };
+        let end_quadratic_evals_time = std::time::Instant::now();
+        println!(
+            "Time taken for computing quadratic evals: {:?}",
+            end_quadratic_evals_time.duration_since(start_quadratic_evals_time)
+        );
 
-        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index];
+        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
 
-        UniPoly::from_linear_times_quadratic_with_hint(
-            // The coefficients of \prod_{j < i} eq(w[..j], r[..j]) * eq(w_i, X)
+        let start_cubic_poly_time = std::time::Instant::now();
+        let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
+            // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
             [
                 eq_poly.current_scalar - scalar_times_w_i,
                 scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
@@ -333,7 +341,25 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             quadratic_evals.0,
             quadratic_evals.1,
             previous_round_claim,
-        )
+        );
+        let end_cubic_poly_time = std::time::Instant::now();
+        println!(
+            "Time taken for creating cubic poly from linear and quadratic terms: {:?}",
+            end_cubic_poly_time.duration_since(start_cubic_poly_time)
+        );
+
+        // println!("cubic_evals_0: {:?}", cubic_poly.evaluate(&F::zero()));
+        // println!("cubic_evals_1: {:?}", cubic_poly.evaluate(&F::one()));
+        // println!(
+        //     "cubic_evals_2: {:?}",
+        //     cubic_poly.evaluate(&F::from_u64(2u64))
+        // );
+        // println!(
+        //     "cubic_evals_3: {:?}",
+        //     cubic_poly.evaluate(&F::from_u64(3u64))
+        // );
+
+        cubic_poly
     }
 
     fn final_claims(&self) -> (F, F) {
@@ -355,6 +381,9 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
     ) -> UniPoly<F> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+
+        let start_cubic_evals_time = std::time::Instant::now();
+
         let cubic_evals = if eq_poly.E1_len == 1 {
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
             // would without the Dao-Thaler optimization, using the standard linear-time
@@ -414,6 +443,7 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
 
             // We start by computing the E1 evals:
             // (1 - j) * E1[0, x1] + j * E1[1, x1]
+            let start_E1_evals_time = std::time::Instant::now();
             let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
                 .par_chunks(2)
                 .map(|E1_chunk| {
@@ -424,9 +454,16 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
+            let end_E1_evals_time = std::time::Instant::now();
+            println!(
+                "Time taken for computing E1 evals for old: {:?}",
+                end_E1_evals_time.duration_since(start_E1_evals_time)
+            );
 
             let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
-            eq_poly.E2[..eq_poly.E2_len]
+
+            let start_E2_evals_time = std::time::Instant::now();
+            let evals = eq_poly.E2[..eq_poly.E2_len]
                 .par_iter()
                 .zip(self.par_chunks(chunk_size))
                 .map(|(E2_eval, P_x2)| {
@@ -466,8 +503,20 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
                 .reduce(
                     || (F::zero(), F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
+                );
+            let end_E2_evals_time = std::time::Instant::now();
+            println!(
+                "Time taken for computing E2 evals for old: {:?}",
+                end_E2_evals_time.duration_since(start_E2_evals_time)
+            );
+            evals
         };
+
+        let end_cubic_evals_time = std::time::Instant::now();
+        println!(
+            "Time taken for computing cubic evals for old: {:?}",
+            end_cubic_evals_time.duration_since(start_cubic_evals_time)
+        );
 
         let cubic_evals = [
             cubic_evals.0,
@@ -475,16 +524,91 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
             cubic_evals.1,
             cubic_evals.2,
         ];
-        UniPoly::from_evals(&cubic_evals)
+        let start_cubic_poly_time = std::time::Instant::now();
+        // println!("cubic_evals_old: {:?}", cubic_evals);
+        let cubic_poly = UniPoly::from_evals(&cubic_evals);
+        let end_cubic_poly_time = std::time::Instant::now();
+        println!(
+            "Time taken for creating cubic poly from evals: {:?}",
+            end_cubic_poly_time.duration_since(start_cubic_poly_time)
+        );
+        cubic_poly
+    }
+
+    pub fn prove_sumcheck_alt<ProofTranscript: Transcript>(
+        &mut self,
+        eq_poly: &mut OldSplitEqPolynomial<F>,
+        claim: &F,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F)) {
+        let num_rounds = eq_poly.get_num_vars();
+
+        let mut previous_claim = *claim;
+        let mut r: Vec<F> = Vec::new();
+        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+        for i in 0..num_rounds {
+            println!("Starting sumcheck round {}", i);
+            // #[cfg(test)]
+            // self.sumcheck_sanity_check(eq_poly, previous_claim);
+
+            let start_cubic_poly_time = std::time::Instant::now();
+
+            let cubic_poly = self.compute_cubic_alt(eq_poly, previous_claim);
+
+            let end_cubic_poly_time = std::time::Instant::now();
+            println!(
+                "Time taken for computing cubic poly in total for old method: {:?}",
+                end_cubic_poly_time.duration_since(start_cubic_poly_time)
+            );
+
+            let compressed_poly = cubic_poly.compress();
+            // append the prover's message to the transcript
+            compressed_poly.append_to_transcript(transcript);
+            // derive the verifier's challenge for the next round
+            let r_j = transcript.challenge_scalar();
+
+            r.push(r_j);
+            // bind polynomials to verifier's challenge
+            self.bind(r_j);
+
+            let start_bind_time = std::time::Instant::now();
+            eq_poly.bind(r_j);
+            let bind_time = std::time::Instant::now();
+            println!(
+                "Time taken for binding old eq poly: {:?}",
+                bind_time.duration_since(start_bind_time)
+            );
+
+            previous_claim = cubic_poly.evaluate(&r_j);
+            cubic_polys.push(compressed_poly);
+        }
+
+        // #[cfg(test)]
+        // self.sumcheck_sanity_check(eq_poly, previous_claim);
+
+        debug_assert_eq!(eq_poly.len(), 1);
+
+        (
+            SumcheckInstanceProof::new(cubic_polys),
+            r,
+            // self.final_claims(),
+            (F::zero(), F::zero()),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::split_eq_poly::{OldSplitEqPolynomial, SplitEqPolynomial};
+    use crate::subprotocols::sumcheck::BatchedCubicSumcheck;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
+    use std::thread::sleep;
+    use std::time::Instant;
 
     #[test]
     fn interleave_uninterleave() {
@@ -566,7 +690,147 @@ mod tests {
     }
 
     #[test]
+    fn run_sumcheck() {
+        let mut rng = test_rng();
+        for log_size in [8] {
+            let size = 1 << (log_size + 1);
+            let values: Vec<_> = (0..size).map(|_| Fr::rand(&mut rng)).collect();
+            let mut poly = DenseInterleavedPolynomial::new(values);
+
+            let w: Vec<_> = (0..log_size).map(|_| Fr::rand(&mut rng)).collect();
+
+            let mut old_eq_poly = OldSplitEqPolynomial::new(&w);
+
+            let mut eq_poly = SplitEqPolynomial::new(&w);
+
+            let (left, right) = poly.uninterleave();
+            let merged_eq = eq_poly.merge();
+
+            // Claim for the 0-th round
+            let previous_round_claim: Fr = left
+                .iter()
+                .zip(right.iter())
+                .zip(merged_eq.evals_ref().iter())
+                .map(|((l, r), eq)| *eq * l * r)
+                .sum();
+
+            let mut transcript = KeccakTranscript::new(b"cubic");
+
+            let _cubic_sumcheck = BatchedCubicSumcheck::<Fr, KeccakTranscript>::prove_sumcheck(
+                &mut poly,
+                &previous_round_claim,
+                &mut eq_poly,
+                &mut transcript,
+            );
+
+            let _cubic_sumcheck_alt = DenseInterleavedPolynomial::<Fr>::prove_sumcheck_alt(
+                &mut poly,
+                &mut old_eq_poly,
+                &previous_round_claim,
+                &mut transcript,
+            );
+        }
+    }
+
+    #[test]
     fn compute_cubic_compare() {
-        todo!()
+        let mut rng = test_rng();
+
+        // Create test data with various sizes
+        for log_size in [15, 17, 19] {
+            let size = 1 << (log_size + 1);
+            // Create a random polynomial
+            let values: Vec<_> = (0..size).map(|_| Fr::rand(&mut rng)).collect();
+            let mut poly = DenseInterleavedPolynomial::new(values);
+
+            // Create random challenges for both EQ polynomial types
+            let w: Vec<_> = (0..log_size).map(|_| Fr::rand(&mut rng)).collect();
+
+            // Create both types of EQ polynomials
+            let mut eq_poly = SplitEqPolynomial::new(&w);
+            let mut old_eq_poly = OldSplitEqPolynomial::new(&w);
+
+            let (left, right) = poly.uninterleave();
+            let merged_eq = eq_poly.merge();
+            // Claim for the 0-th round
+            let mut previous_round_claim: Fr = left
+                .iter()
+                .zip(right.iter())
+                .zip(merged_eq.evals_ref().iter())
+                .map(|((l, r), eq)| *eq * l * r)
+                .sum();
+
+            // Time the methods
+            let start = Instant::now();
+
+            // Compute using both methods
+            let cubic_result = BatchedCubicSumcheck::<Fr, KeccakTranscript>::compute_cubic(
+                &poly,
+                &eq_poly,
+                previous_round_claim,
+            );
+
+            let end_first = Instant::now();
+            println!(
+                "Time taken for the new method: {:?}",
+                end_first.duration_since(start)
+            );
+
+            let cubic_alt_result = poly.compute_cubic_alt(&old_eq_poly, previous_round_claim);
+
+            let end_second = Instant::now();
+            println!(
+                "Time taken for old method: {:?}",
+                end_second.duration_since(end_first)
+            );
+
+            // Compare the results
+            assert_eq!(
+                cubic_result, cubic_alt_result,
+                "compute_cubic and compute_cubic_alt produced different results for size {}",
+                size
+            );
+
+            // Also test after binding
+            if size > 4 {
+                let r_bind = Fr::rand(&mut rng);
+                poly.bind(r_bind);
+
+                let start_bound = Instant::now();
+
+                previous_round_claim = cubic_result.evaluate(&r_bind);
+
+                eq_poly.bind(r_bind);
+                let bound_cubic_result =
+                    BatchedCubicSumcheck::<Fr, KeccakTranscript>::compute_cubic(
+                        &poly,
+                        &eq_poly,
+                        previous_round_claim,
+                    );
+
+                let end_first_bound = Instant::now();
+                println!(
+                    "Time taken for new method to bind and prove next: {:?}",
+                    end_first_bound.duration_since(start_bound)
+                );
+
+                old_eq_poly.bind(r_bind);
+                let bound_cubic_alt_result =
+                    poly.compute_cubic_alt(&old_eq_poly, previous_round_claim);
+
+                let end_second_bound = Instant::now();
+                println!(
+                    "Time taken for old method after binding: {:?}",
+                    end_second_bound.duration_since(end_first_bound)
+                );
+
+                assert_eq!(
+                    bound_cubic_result,
+                    bound_cubic_alt_result,
+                    "After binding, compute_cubic and compute_cubic_alt produced different results for size {}",
+                    size
+                );
+            }
+        }
     }
 }

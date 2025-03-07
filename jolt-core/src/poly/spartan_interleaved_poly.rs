@@ -250,21 +250,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
-        // We start by computing the E1 evals:
-        // (1 - j) * E1[0, x1] + j * E1[1, x1]
-        let E1_evals: Vec<_> = eq_poly
-            .E1
-            .last()
-            .unwrap()
-            .par_chunks(2)
-            .map(|E1_chunk| {
-                let eval_point_0 = E1_chunk[0];
-                let eval_point_infty = E1_chunk[1] - E1_chunk[0];
-                (eval_point_0, eval_point_infty)
-            })
-            .collect();
-
-        let num_x1_bits = eq_poly.E1.last().unwrap().len().log_2() - 1;
+        let num_x1_bits = eq_poly.E1_len();
         let x1_bitmask = (1 << num_x1_bits) - 1;
 
         let evals: (F, F) = chunks
@@ -276,17 +262,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 let mut inner_sums = (F::zero(), F::zero());
                 let mut prev_x2 = 0;
 
-                let E2_current = eq_poly.E2.last().unwrap();
-
                 for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = sparse_block[0].index / 6;
                     let x1 = block_index & x1_bitmask;
-                    let E1_evals = E1_evals[x1];
+                    let E1_eval = eq_poly.E1_current()[x1];
                     let x2 = block_index >> num_x1_bits;
 
                     if x2 != prev_x2 {
-                        eval_point_0 += E2_current[prev_x2] * inner_sums.0;
-                        eval_point_infty += E2_current[prev_x2] * inner_sums.1;
+                        eval_point_0 += eq_poly.E2_current()[prev_x2] * inner_sums.0;
+                        eval_point_infty += eq_poly.E2_current()[prev_x2] * inner_sums.1;
 
                         inner_sums = (F::zero(), F::zero());
                         prev_x2 = x2;
@@ -302,13 +286,13 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     let cz_eval_infty = block[5] - block[2];
 
                     // TODO(moodlezoup): optimize
-                    inner_sums.0 += E1_evals.0 * F::from_i128(block[0] * block[1] - block[2]);
+                    inner_sums.0 += E1_eval * F::from_i128(block[0] * block[1] - block[2]);
                     inner_sums.1 +=
-                        E1_evals.1 * F::from_i128(az_eval_infty * bz_eval_infty - cz_eval_infty);
+                        E1_eval * F::from_i128(az_eval_infty * bz_eval_infty - cz_eval_infty);
                 }
 
-                eval_point_0 += E2_current[prev_x2] * inner_sums.0;
-                eval_point_infty += E2_current[prev_x2] * inner_sums.1;
+                eval_point_0 += eq_poly.E2_current()[prev_x2] * inner_sums.0;
+                eval_point_infty += eq_poly.E2_current()[prev_x2] * inner_sums.1;
 
                 (eval_point_0, eval_point_infty)
             })
@@ -470,19 +454,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
-        let cubic_poly: UniPoly<F> = if eq_poly.current_index < eq_poly.w.len() / 2 {
-            let eq_evals: Vec<(F, F)> = eq_poly
-                .E2
-                .last()
-                .unwrap()
-                .par_chunks(2)
-                .map(|eq_chunk| {
-                    let eval_point_0 = eq_chunk[0];
-                    let eval_point_infty = eq_chunk[1] - eq_chunk[0];
-                    (eval_point_0, eval_point_infty)
-                })
-                .collect();
-
+        let cubic_poly: UniPoly<F> = if eq_poly.E1_len() == 1 {
             let evals: (F, F) = chunks
                 .par_iter()
                 .flat_map_iter(|chunk| {
@@ -499,13 +471,12 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             let bz_eval_infty = block[4] - block[1];
                             let cz_eval_infty = block[5] - block[2];
 
-                            let eq_evals = eq_evals[block_index];
+                            let eq_eval = eq_poly.E2_current()[block_index];
 
                             (
-                                eq_evals
-                                    .0
+                                eq_eval
                                     .mul_0_optimized(block[0].mul_0_optimized(block[1]) - block[2]),
-                                eq_evals.1.mul_0_optimized(
+                                eq_eval.mul_0_optimized(
                                     az_eval_infty.mul_0_optimized(bz_eval_infty) - cz_eval_infty,
                                 ),
                             )
@@ -529,21 +500,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 *claim,
             )
         } else {
-            // We start by computing the E1 evals:
-            // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<(F, F)> = eq_poly
-                .E1
-                .last()
-                .unwrap()
-                .par_chunks(2)
-                .map(|E1_chunk| {
-                    let eval_point_0 = E1_chunk[0];
-                    let eval_point_infty = E1_chunk[1] - E1_chunk[0];
-                    (eval_point_0, eval_point_infty)
-                })
-                .collect();
-
-            let num_x1_bits = eq_poly.E1.last().unwrap().len().log_2() - 1;
+            let num_x1_bits = eq_poly.E1_len();
             let x1_bitmask = (1 << num_x1_bits) - 1;
 
             let evals: (F, F) = chunks
@@ -555,12 +512,12 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     let mut inner_sums = (F::zero(), F::zero());
                     let mut prev_x2 = 0;
 
-                    let E2_current = eq_poly.E2.last().unwrap();
+                    let E2_current = eq_poly.E2_current();
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                         let block_index = sparse_block[0].index / 6;
                         let x1 = block_index & x1_bitmask;
-                        let E1_evals = E1_evals[x1];
+                        let E1_eval = eq_poly.E1_current()[x1];
                         let x2 = block_index >> num_x1_bits;
 
                         if x2 != prev_x2 {
@@ -580,10 +537,9 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let bz_eval_infty = block[4] - block[1];
                         let cz_eval_infty = block[5] - block[2];
 
-                        inner_sums.0 += E1_evals
-                            .0
-                            .mul_0_optimized(block[0].mul_0_optimized(block[1]) - block[2]);
-                        inner_sums.1 += E1_evals.1.mul_0_optimized(
+                        inner_sums.0 +=
+                            E1_eval.mul_0_optimized(block[0].mul_0_optimized(block[1]) - block[2]);
+                        inner_sums.1 += E1_eval.mul_0_optimized(
                             az_eval_infty.mul_0_optimized(bz_eval_infty) - cz_eval_infty,
                         );
                     }

@@ -110,15 +110,15 @@ fn main() {
 
     benchmark_dense_interleaved::<Fr>(&mut criterion, 20);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 21);
-    benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
+    // benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
-    benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
+    // benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
     // benchmark_dense_interleaved::<Fr>(&mut criterion, 25);
 
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
-    benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 21, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 20, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 20, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 64, 21, 0.1);
+    // benchmark_sparse_interleaved::<Fr>(&mut criterion, 128, 21, 0.1);
 
     criterion.final_summary();
 }
