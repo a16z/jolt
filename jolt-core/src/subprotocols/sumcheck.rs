@@ -51,17 +51,10 @@ where
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for i in 0..num_rounds {
-            // #[cfg(test)]
-            // self.sumcheck_sanity_check(eq_poly, previous_claim);
-            println!("Starting sumcheck round {}", i);
+            #[cfg(test)]
+            self.sumcheck_sanity_check(eq_poly, previous_claim);
 
-            let start_cubic_poly_time = std::time::Instant::now();
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
-            let end_cubic_poly_time = std::time::Instant::now();
-            println!(
-                "Time taken for computing cubic poly: {:?}",
-                end_cubic_poly_time.duration_since(start_cubic_poly_time)
-            );
 
             let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
@@ -73,20 +66,14 @@ where
             // bind polynomials to verifier's challenge
             self.bind(r_j);
 
-            let start_bind_time = std::time::Instant::now();
             eq_poly.bind(r_j);
-            let end_bind_time = std::time::Instant::now();
-            println!(
-                "Time taken for binding new eq poly: {:?}",
-                end_bind_time.duration_since(start_bind_time)
-            );
 
             previous_claim = cubic_poly.evaluate(&r_j);
             cubic_polys.push(compressed_poly);
         }
 
-        // #[cfg(test)]
-        // self.sumcheck_sanity_check(eq_poly, previous_claim);
+        #[cfg(test)]
+        self.sumcheck_sanity_check(eq_poly, previous_claim);
 
         debug_assert_eq!(eq_poly.len(), 1);
 
