@@ -179,6 +179,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.97"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+
+[[package]]
 name = "ark-bn254"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -195,7 +201,7 @@ version = "0.4.2"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize/field-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
 dependencies = [
  "ark-ff 0.4.2",
- "ark-poly",
+ "ark-poly 0.4.2 (git+https://github.com/a16z/arkworks-algebra?branch=optimize/field-from-u64)",
  "ark-serialize 0.4.2",
  "ark-std 0.4.0",
  "derivative",
@@ -285,6 +291,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "ark-poly"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d320bfc44ee185d899ccbadfa8bc31aab923ce1558716e1997a1e74057fe86bf"
+dependencies = [
+ "ark-ff 0.4.2",
+ "ark-serialize 0.4.2",
+ "ark-std 0.4.0",
+ "derivative",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -1556,9 +1575,11 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "anyhow",
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.4.2",
+ "ark-poly 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.4.2",
  "ark-std 0.4.0",
  "bincode",
@@ -1566,6 +1587,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "common",
+ "digest 0.10.7",
  "dirs",
  "enum_dispatch",
  "eyre",
@@ -1580,6 +1602,7 @@ dependencies = [
  "rand 0.7.3",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rand_distr",
  "rayon",
  "reqwest",
  "serde",
@@ -2180,6 +2203,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.15",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]
