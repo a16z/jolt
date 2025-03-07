@@ -1,6 +1,8 @@
 use super::{
-    dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial,
-    split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
+    dense_interleaved_poly::DenseInterleavedPolynomial,
+    dense_mlpoly::DensePolynomial,
+    split_eq_poly::{OldSplitEqPolynomial, SplitEqPolynomial},
+    unipoly::UniPoly,
 };
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -432,7 +434,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
-    ///     Σ eq(r, x) * left(x) * right(x)
+    ///     Σ eq(w, x) * left(x) * right(x)
     /// where the inner summation is over all but the "least significant bit" of the multilinear
     /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
     ///
@@ -457,8 +459,218 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             );
         }
 
-        // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
-        // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+        // We use the Gruen's and Dao-Thaler's optimization for the EQ polynomial This means that we
+        // will write `s(X) = eq(w[..i],r[..i]) * eq(w[i], X) * t(X)`, where `t(X) = \sum_{x2}
+        // E2[x2] * \sum_{x1} E1[x1] * \prod_k ((1 - X) * P_k(r[..i] || 0 || x1 || x2) + X *
+        // P_k(r[..i] || 1 || x1 || x2))` We will compute `t(0)` and `t(\infty)`, which corresponds
+        // to its constant and quadratic coefficients
+        let quadratic_evals = if eq_poly.E1_len() == 1 {
+            // If `eq_poly.E1` has been fully bound, we compute the quadratic polynomial as we
+            // would without the Dao-Thaler optimization, using the standard linear-time
+            // sumcheck algorithm with optimizations for sparsity.
+
+            // This is what Σ eq(r, x) * left(x) * right(x) = Σ E2[x] would be if
+            // `left` and `right` were both all ones.
+            let E2_eval_sum: F = eq_poly.E2_current().par_iter().sum();
+
+            // Now we compute the deltas, correcting `eq_eval_sums` for the
+            // elements of `left` and `right` that aren't ones.
+            let deltas: (F, F) = self
+                .coeffs
+                .par_iter()
+                .flat_map(|segment| {
+                    segment
+                        .par_chunk_by(|x, y| x.index / 4 == y.index / 4)
+                        .map(|sparse_block| {
+                            let block_index = sparse_block[0].index / 4;
+                            let mut block = [F::one(); 4];
+                            for coeff in sparse_block {
+                                block[coeff.index % 4] = coeff.value;
+                            }
+
+                            let left_eval_0 = block[0];
+                            let left_eval_infty = block[2] - left_eval_0;
+                            let right_eval_0 = block[1];
+                            let right_eval_infty = block[3] - right_eval_0;
+
+                            // E2[x]
+                            let eq_evals = eq_poly.E2_current()[block_index];
+                            (
+                                eq_evals.mul_0_optimized(
+                                    left_eval_0.mul_1_optimized(right_eval_0) - F::one(),
+                                ),
+                                eq_evals * (left_eval_infty * right_eval_infty - F::one()),
+                            )
+                        })
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+
+            (E2_eval_sum + deltas.0, E2_eval_sum + deltas.1)
+        } else {
+            // This is a more complicated version of the `else` case in
+            // `DenseInterleavedPolynomial::compute_cubic`. Read that one first.
+
+            // We start by computing `\sum_x1 E1[x1]`
+            let E1_eval_sum: F = eq_poly.E1_current().par_iter().sum();
+
+            // We iterate over the number of bits in `x1`
+            let num_x1_bits = eq_poly.E1_len().log_2();
+            let x1_bitmask = (1 << num_x1_bits) - 1;
+
+            // Iterate over the non-one coefficients and compute the deltas (relative to
+            // what the cubic would be if all the coefficients were ones).
+            let deltas = self
+                .coeffs
+                .par_iter()
+                .flat_map(|segment| {
+                    segment
+                        .par_chunk_by(|a, b| {
+                            // Group by x2
+                            let a_x2 = (a.index / 4) >> num_x1_bits;
+                            let b_x2 = (b.index / 4) >> num_x1_bits;
+                            a_x2 == b_x2
+                        })
+                        .map(|chunk| {
+                            let mut inner_sum = (F::zero(), F::zero());
+                            for sparse_block in chunk.chunk_by(|x, y| x.index / 4 == y.index / 4) {
+                                let block_index = sparse_block[0].index / 4;
+                                let mut block = [F::one(); 4];
+                                for coeff in sparse_block {
+                                    block[coeff.index % 4] = coeff.value;
+                                }
+
+                                let left_eval_0 = block[0];
+                                let left_eval_infty = block[2] - left_eval_0;
+                                let right_eval_0 = block[1];
+                                let right_eval_infty = block[3] - right_eval_0;
+
+                                let x1 = block_index & x1_bitmask;
+                                let eq_eval = eq_poly.E1_current()[x1];
+                                let delta = (
+                                    eq_eval.mul_0_optimized(
+                                        left_eval_0.mul_1_optimized(right_eval_0) - F::one(),
+                                    ),
+                                    eq_eval * (left_eval_infty * right_eval_infty - F::one()),
+                                );
+                                inner_sum.0 += delta.0;
+                                inner_sum.1 += delta.1;
+                            }
+
+                            let x2 = (chunk[0].index / 4) >> num_x1_bits;
+                            (
+                                eq_poly.E2_current()[x2] * inner_sum.0,
+                                eq_poly.E2_current()[x2] * inner_sum.1,
+                            )
+                        })
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+
+            // The cubic evals assuming all the coefficients are ones is affected by the
+            // `dense_len`, since we implicitly 0-pad the `dense_len` to a power of 2.
+            //
+            // As a refresher, the cubic evals we're computing are:
+            //
+            // \sum_x2 E2[x2] * (\sum_x1 E1[x1] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            let evals_assuming_all_ones = if self.dense_len.is_power_of_two() {
+                // If `dense_len` is a power of 2, there is no 0-padding.
+                //
+                // So we have:
+                // \sum_x2 (E2[x2] * \sum_x1 E1[x1])
+                //   = \sum_x2 (E2[x2] * \sum_x1 E1_evals[x1])
+                //   = (\sum_x2 E2[x2]) * (\sum_x1 E1_evals[x1])
+                //   = 1 * E1_eval_sum
+                E1_eval_sum
+            } else {
+                let chunk_size = self.dense_len.next_power_of_two() / eq_poly.E2_len();
+                let num_all_one_chunks = self.dense_len / chunk_size;
+                let E2_sum: F = eq_poly.E2_current()[..num_all_one_chunks].iter().sum();
+                if self.dense_len % chunk_size == 0 {
+                    // If `dense_len` isn't a power of 2 but evenly divides `chunk_size`,
+                    // that means that for the last values of x2, we have:
+                    //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
+                    // due to the 0-padding.
+                    //
+                    // This makes the entire inner sum 0 for those values of x2.
+                    // So we can simply sum over E2 for the _other_ values of x2, and
+                    // multiply by `E1_eval_sum`.
+                    E2_sum * E1_eval_sum
+                } else {
+                    // If `dense_len` isn't a power of 2 and doesn't divide `chunk_size`,
+                    // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
+                    // followed by (chunk_size - self.dense_len % chunk_size) zeros,
+                    // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
+                    //
+                    // This handles this last chunk:
+                    let last_chunk_evals: F = eq_poly.E1_current()
+                        [..(self.dense_len % chunk_size) / 4]
+                        .par_iter()
+                        .sum();
+                    E2_sum * E1_eval_sum
+                        + eq_poly.E2_current()[num_all_one_chunks] * last_chunk_evals
+                }
+            };
+
+            (
+                evals_assuming_all_ones + deltas.0,
+                evals_assuming_all_ones + deltas.1,
+            )
+        };
+
+        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+
+        let cubic = UniPoly::from_linear_times_quadratic_with_hint(
+            // The coefficients of \prod_{j < i} eq(w[..j], r[..j]) * eq(w_i, X)
+            [
+                eq_poly.current_scalar - scalar_times_w_i,
+                scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+            ],
+            quadratic_evals.0,
+            quadratic_evals.1,
+            previous_round_claim,
+        );
+
+        #[cfg(test)]
+        {
+            let dense = DenseInterleavedPolynomial::new(self.coalesce());
+            let dense_cubic = BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
+                &dense,
+                eq_poly,
+                previous_round_claim,
+            );
+            assert_eq!(cubic, dense_cubic);
+        }
+
+        cubic
+    }
+
+    fn final_claims(&self) -> (F, F) {
+        assert_eq!(self.dense_len, 2);
+        let dense = self.to_dense();
+        (dense[0], dense[1])
+    }
+}
+
+impl<F: JoltField> SparseInterleavedPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic_alt")]
+    pub fn compute_cubic_alt<ProofTranscript: Transcript>(
+        &self,
+        eq_poly: &OldSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
+        if let Some(coalesced) = &self.coalesced {
+            return DenseInterleavedPolynomial::<F>::compute_cubic_alt(
+                coalesced,
+                eq_poly,
+                previous_round_claim,
+            );
+        }
+
         let cubic_evals = if eq_poly.E1_len == 1 {
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
             // would without the Dao-Thaler optimization, using the standard linear-time
@@ -706,7 +918,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         #[cfg(test)]
         {
             let dense = DenseInterleavedPolynomial::new(self.coalesce());
-            let dense_cubic = BatchedCubicSumcheck::<F, ProofTranscript>::compute_cubic(
+            let dense_cubic = DenseInterleavedPolynomial::<F>::compute_cubic_alt(
                 &dense,
                 eq_poly,
                 previous_round_claim,
@@ -715,12 +927,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         }
 
         cubic
-    }
-
-    fn final_claims(&self) -> (F, F) {
-        assert_eq!(self.dense_len, 2);
-        let dense = self.to_dense();
-        (dense[0], dense[1])
     }
 }
 
@@ -746,6 +952,8 @@ mod tests {
     use crate::utils::math::Math;
 
     use super::*;
+    use crate::subprotocols::sumcheck::BatchedCubicSumcheck;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_std::{rand::Rng, test_rng, One};
     use itertools::Itertools;
@@ -859,6 +1067,46 @@ mod tests {
                     SparseInterleavedPolynomial::interleave(&left, &right, batch_size)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn compute_cubic() {
+        let mut rng = test_rng();
+        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+        const DENSITY: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+        const BATCH_SIZE: [usize; 5] = [2, 4, 6, 8, 10];
+        for ((num_vars, density), batch_size) in NUM_VARS
+            .into_iter()
+            .cartesian_product(DENSITY.into_iter())
+            .cartesian_product(BATCH_SIZE.into_iter())
+        {
+            let coeffs = (0..batch_size)
+                .map(|batch_index| {
+                    let mut coeffs: Vec<SparseCoefficient<Fr>> = vec![];
+                    for i in 0..(1 << num_vars) {
+                        if rng.gen_bool(density) {
+                            coeffs.push(
+                                (batch_index * (1 << num_vars) + i, Fr::random(&mut rng)).into(),
+                            )
+                        }
+                    }
+                    coeffs
+                })
+                .collect();
+            let interleaved = SparseInterleavedPolynomial::new(coeffs, batch_size << num_vars);
+
+            let w = (0..num_vars).map(|_| Fr::random(&mut rng)).collect_vec();
+
+            let eq_poly = SplitEqPolynomial::new(&w);
+
+            let previous_round_claim = Fr::random(&mut rng);
+
+            let _cubic = BatchedCubicSumcheck::<Fr, KeccakTranscript>::compute_cubic(
+                &interleaved,
+                &eq_poly,
+                previous_round_claim,
+            );
         }
     }
 }

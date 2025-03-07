@@ -21,6 +21,10 @@ pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
 }
 
+// pub trait GeneralizedBindable<F: JoltField>: Sync {
+//     fn bind(&mut self, r: F, );
+// }
+
 /// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
 where
@@ -46,11 +50,12 @@ where
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for _ in 0..num_rounds {
+        for i in 0..num_rounds {
             #[cfg(test)]
             self.sumcheck_sanity_check(eq_poly, previous_claim);
 
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
+
             let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
@@ -60,6 +65,7 @@ where
             r.push(r_j);
             // bind polynomials to verifier's challenge
             self.bind(r_j);
+
             eq_poly.bind(r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
