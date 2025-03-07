@@ -406,7 +406,8 @@ where
         let eval_z =
             key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
-        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_is_cross_step);
+        let (eval_a, eval_b, eval_c) =
+            key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_is_cross_step);
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;

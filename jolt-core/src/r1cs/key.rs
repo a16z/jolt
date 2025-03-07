@@ -240,9 +240,9 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         // 3. Add non-constant variables from cross-step constraints here,
         // depending on which type of variables (current step or next) they involve.
         let update_cross_step = |rlc: &mut Vec<F>,
-                              offset: &SparseEqualityItem<F>,
-                              cross_step_constraint_index: usize,
-                              r: F| {
+                                 offset: &SparseEqualityItem<F>,
+                                 cross_step_constraint_index: usize,
+                                 r: F| {
             for (col, is_offset, coeff) in offset.offset_vars.iter() {
                 let offset = if *is_offset { 1 } else { 0 };
                 let col = *col + offset * constant_column * 2;
@@ -343,16 +343,18 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let mut cross_step_a_mle = F::zero();
         let mut cross_step_b_mle = F::zero();
 
-        let compute_cross_step =
-            |uni_mle: &mut F, cross_step_mle: &mut F, cross_step: &SparseEqualityItem<F>, eq_rx: F| {
-                for (col, offset, coeff) in &cross_step.offset_vars {
-                    if !offset {
-                        *uni_mle += *coeff * eq_ry_var[*col] * eq_rx;
-                    } else {
-                        *cross_step_mle += *coeff * eq_ry_var[*col] * eq_rx;
-                    }
+        let compute_cross_step = |uni_mle: &mut F,
+                                  cross_step_mle: &mut F,
+                                  cross_step: &SparseEqualityItem<F>,
+                                  eq_rx: F| {
+            for (col, offset, coeff) in &cross_step.offset_vars {
+                if !offset {
+                    *uni_mle += *coeff * eq_ry_var[*col] * eq_rx;
+                } else {
+                    *cross_step_mle += *coeff * eq_ry_var[*col] * eq_rx;
                 }
-            };
+            }
+        };
 
         for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
             let cross_step_constraint_index =
@@ -380,16 +382,17 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         }
 
         // Need to handle constants because they're defined separately in the cross-step constraints
-        let compute_cross_step_constants = |uni_mle: &mut F, cross_step_constants: Option<Vec<F>>| {
-            if let Some(cross_step_constants) = cross_step_constants {
-                for (i, cross_step_constant) in cross_step_constants.iter().enumerate() {
-                    let first_cross_step_row = self.uniform_r1cs.num_rows;
-                    *uni_mle += eq_rx_constr[first_cross_step_row + i]
-                        * cross_step_constant
-                        * col_eq_constant;
+        let compute_cross_step_constants =
+            |uni_mle: &mut F, cross_step_constants: Option<Vec<F>>| {
+                if let Some(cross_step_constants) = cross_step_constants {
+                    for (i, cross_step_constant) in cross_step_constants.iter().enumerate() {
+                        let first_cross_step_row = self.uniform_r1cs.num_rows;
+                        *uni_mle += eq_rx_constr[first_cross_step_row + i]
+                            * cross_step_constant
+                            * col_eq_constant;
+                    }
                 }
-            }
-        };
+            };
 
         let (eq_constants, condition_constants) = self.offset_eq_r1cs.constants();
         compute_cross_step_constants(&mut a_mle, Some(eq_constants));
