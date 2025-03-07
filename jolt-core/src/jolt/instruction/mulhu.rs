@@ -134,7 +134,14 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use super::MULHUInstruction;
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
+        jolt::instruction::JoltInstruction, jolt_instruction_test,
+    };
+
+    instruction_mle_test_small!(mulhu_mle_small, MULHUInstruction<8>);
+    instruction_mle_test_large!(mulhu_mle_large, MULHUInstruction<32>);
+    instruction_update_function_test!(mulhu_update_fn, MULHUInstruction<32>);
 
     #[test]
     fn mulhu_instruction_32_e2e() {

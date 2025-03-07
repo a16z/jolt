@@ -185,44 +185,44 @@ pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
 
 pub fn uninterleave_bits(val: u64) -> (u32, u32) {
     // Isolate even and odd bits.
-    let mut even_bits = val & 0x5555_5555_5555_5555;
-    let mut odd_bits = (val >> 1) & 0x5555_5555_5555_5555;
+    let mut x_bits = (val >> 1) & 0x5555_5555_5555_5555;
+    let mut y_bits = val & 0x5555_5555_5555_5555;
 
-    // Compact the bits into the lower part of `even_bits`
-    even_bits = (even_bits | (even_bits >> 1)) & 0x3333_3333_3333_3333;
-    even_bits = (even_bits | (even_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
-    even_bits = (even_bits | (even_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
-    even_bits = (even_bits | (even_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
-    even_bits = (even_bits | (even_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
+    // Compact the bits into the lower part of `x_bits`
+    x_bits = (x_bits | (x_bits >> 1)) & 0x3333_3333_3333_3333;
+    x_bits = (x_bits | (x_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
+    x_bits = (x_bits | (x_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
+    x_bits = (x_bits | (x_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
+    x_bits = (x_bits | (x_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
 
-    // And do the same for `odd_bits`
-    odd_bits = (odd_bits | (odd_bits >> 1)) & 0x3333_3333_3333_3333;
-    odd_bits = (odd_bits | (odd_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
-    odd_bits = (odd_bits | (odd_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
-    odd_bits = (odd_bits | (odd_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
-    odd_bits = (odd_bits | (odd_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
+    // And do the same for `y_bits`
+    y_bits = (y_bits | (y_bits >> 1)) & 0x3333_3333_3333_3333;
+    y_bits = (y_bits | (y_bits >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
+    y_bits = (y_bits | (y_bits >> 4)) & 0x00FF_00FF_00FF_00FF;
+    y_bits = (y_bits | (y_bits >> 8)) & 0x0000_FFFF_0000_FFFF;
+    y_bits = (y_bits | (y_bits >> 16)) & 0x0000_0000_FFFF_FFFF;
 
-    (even_bits as u32, odd_bits as u32)
+    (x_bits as u32, y_bits as u32)
 }
 
 pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
-    // Insert zeros between each bit of `even_bits`
-    let mut even_bits = even_bits as u64;
-    even_bits = (even_bits | (even_bits << 16)) & 0x0000_FFFF_0000_FFFF;
-    even_bits = (even_bits | (even_bits << 8)) & 0x00FF_00FF_00FF_00FF;
-    even_bits = (even_bits | (even_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
-    even_bits = (even_bits | (even_bits << 2)) & 0x3333_3333_3333_3333;
-    even_bits = (even_bits | (even_bits << 1)) & 0x5555_5555_5555_5555;
+    // Insert zeros between each bit of `x_bits`
+    let mut x_bits = even_bits as u64;
+    x_bits = (x_bits | (x_bits << 16)) & 0x0000_FFFF_0000_FFFF;
+    x_bits = (x_bits | (x_bits << 8)) & 0x00FF_00FF_00FF_00FF;
+    x_bits = (x_bits | (x_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    x_bits = (x_bits | (x_bits << 2)) & 0x3333_3333_3333_3333;
+    x_bits = (x_bits | (x_bits << 1)) & 0x5555_5555_5555_5555;
 
-    // And do the same for `odd_bits`
-    let mut odd_bits = odd_bits as u64;
-    odd_bits = (odd_bits | (odd_bits << 16)) & 0x0000_FFFF_0000_FFFF;
-    odd_bits = (odd_bits | (odd_bits << 8)) & 0x00FF_00FF_00FF_00FF;
-    odd_bits = (odd_bits | (odd_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
-    odd_bits = (odd_bits | (odd_bits << 2)) & 0x3333_3333_3333_3333;
-    odd_bits = (odd_bits | (odd_bits << 1)) & 0x5555_5555_5555_5555;
+    // And do the same for `y_bits`
+    let mut y_bits = odd_bits as u64;
+    y_bits = (y_bits | (y_bits << 16)) & 0x0000_FFFF_0000_FFFF;
+    y_bits = (y_bits | (y_bits << 8)) & 0x00FF_00FF_00FF_00FF;
+    y_bits = (y_bits | (y_bits << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    y_bits = (y_bits | (y_bits << 2)) & 0x3333_3333_3333_3333;
+    y_bits = (y_bits | (y_bits << 1)) & 0x5555_5555_5555_5555;
 
-    even_bits | (odd_bits << 1)
+    (x_bits << 1) | y_bits
 }
 
 #[cfg(test)]

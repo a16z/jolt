@@ -136,7 +136,14 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use super::ADDInstruction;
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
+        jolt::instruction::JoltInstruction, jolt_instruction_test,
+    };
+
+    instruction_mle_test_small!(add_mle_small, ADDInstruction<8>);
+    instruction_mle_test_large!(add_mle_large, ADDInstruction<32>);
+    instruction_update_function_test!(add_update_fn, ADDInstruction<32>);
 
     #[test]
     fn add_instruction_32_e2e() {

@@ -116,3 +116,91 @@ macro_rules! jolt_virtual_sequence_test {
         }
     };
 }
+
+#[macro_export]
+macro_rules! instruction_mle_test_small {
+    ($test_name:ident, $instruction_type:ty) => {
+        #[test]
+        fn $test_name() {
+            use crate::{field::JoltField, utils::index_to_field_bitvector};
+
+            let materialized = <$instruction_type>::default().materialize();
+            for (i, entry) in materialized.iter().enumerate() {
+                assert_eq!(
+                    Fr::from_u64(*entry),
+                    <$instruction_type>::default()
+                        .evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
+                    "MLE did not match materialized table at index {i}",
+                );
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! instruction_mle_test_large {
+    ($test_name:ident, $instruction_type:ty) => {
+        #[test]
+        fn $test_name() {
+            use crate::{field::JoltField, utils::index_to_field_bitvector};
+
+            let mut rng = test_rng();
+
+            for _ in 0..1000 {
+                let index = rng.next_u64();
+                assert_eq!(
+                    Fr::from_u64(<$instruction_type>::default().materialize_entry(index)),
+                    <$instruction_type>::default()
+                        .evaluate_mle(&index_to_field_bitvector(index, 64)),
+                    "MLE did not match materialized table at index {index}",
+                );
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! instruction_update_function_test {
+    ($test_name:ident, $instruction_type:ty) => {
+        #[test]
+        fn $test_name() {
+            use crate::{field::JoltField, utils::index_to_field_bitvector};
+            use ark_std::{test_rng, Zero};
+
+            let mut rng = test_rng();
+            let instr = <$instruction_type>::default();
+            const WORD_SIZE: usize = 32;
+
+            for _ in 0..1000 {
+                let index = rng.next_u64();
+                let mut t_parameters: Vec<Fr> = index_to_field_bitvector(index, 2 * WORD_SIZE);
+                let mut r_prev = None;
+
+                for j in 0..2 * WORD_SIZE {
+                    let r_j = Fr::random(&mut rng);
+                    let b_j = if t_parameters[j].is_zero() { 0 } else { 1 };
+
+                    let b_next = if j == 2 * WORD_SIZE - 1 {
+                        None
+                    } else {
+                        Some(t_parameters[j + 1].to_u64().unwrap() as u8)
+                    };
+
+                    let actual: Fr = (0..instr.eta())
+                        .map(|l| {
+                            instr.multiplicative_update(l, j, r_j, b_j, r_prev, b_next)
+                                * instr.subtable_mle(l, &t_parameters)
+                                + instr.additive_update(l, j, r_j, b_j, r_prev, b_next)
+                        })
+                        .sum();
+
+                    t_parameters[j] = r_j;
+                    r_prev = Some(r_j);
+                    let expected = instr.evaluate_mle(&t_parameters);
+
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    };
+}

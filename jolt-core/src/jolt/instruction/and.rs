@@ -122,79 +122,15 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        field::JoltField, jolt::instruction::JoltInstruction, jolt_instruction_test,
-        utils::index_to_field_bitvector,
+        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
+        jolt::instruction::JoltInstruction, jolt_instruction_test,
     };
 
     use super::ANDInstruction;
 
-    #[test]
-    fn and_mle_small() {
-        const WORD_SIZE: usize = 8;
-        let materialized = ANDInstruction::<WORD_SIZE>::default().materialize();
-        for (i, entry) in materialized.iter().enumerate() {
-            assert_eq!(
-                Fr::from_u64(*entry),
-                ANDInstruction::<WORD_SIZE>::default()
-                    .evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
-                "MLE did not match materialized table at index {i}",
-            );
-        }
-    }
-
-    #[test]
-    fn and_mle_large() {
-        let mut rng = test_rng();
-        const WORD_SIZE: usize = 32;
-
-        for _ in 0..1000 {
-            let index = rng.next_u64();
-            assert_eq!(
-                Fr::from_u64(ANDInstruction::<WORD_SIZE>::default().materialize_entry(index)),
-                ANDInstruction::<WORD_SIZE>::default()
-                    .evaluate_mle(&index_to_field_bitvector(index, 64)),
-                "MLE did not match materialized table at index {index}",
-            );
-        }
-    }
-
-    #[test]
-    fn and_update_functions() {
-        let mut rng = test_rng();
-        const WORD_SIZE: usize = 32;
-        let and = ANDInstruction::<WORD_SIZE>::default();
-
-        for _ in 0..1000 {
-            let index = rng.next_u64();
-            let mut t_parameters: Vec<Fr> = index_to_field_bitvector(index, 2 * WORD_SIZE);
-            let mut r_prev = None;
-
-            for j in 0..2 * WORD_SIZE {
-                let r_j = Fr::random(&mut rng);
-                let b_j = if t_parameters[j].is_zero() { 0 } else { 1 };
-
-                let b_next = if j == 2 * WORD_SIZE - 1 {
-                    None
-                } else {
-                    Some(t_parameters[j + 1].to_u64().unwrap() as u8)
-                };
-
-                let actual: Fr = (0..and.eta())
-                    .map(|l| {
-                        and.multiplicative_update(l, j, r_j, b_j, r_prev, b_next)
-                            * and.subtable_mle(l, &t_parameters)
-                            + and.additive_update(l, j, r_j, b_j, r_prev, b_next)
-                    })
-                    .sum();
-
-                t_parameters[j] = r_j;
-                r_prev = Some(r_j);
-                let expected = and.evaluate_mle(&t_parameters);
-
-                assert_eq!(actual, expected);
-            }
-        }
-    }
+    instruction_mle_test_small!(and_mle_small, ANDInstruction<8>);
+    instruction_mle_test_large!(and_mle_large, ANDInstruction<32>);
+    instruction_update_function_test!(and_update_fn, ANDInstruction<32>);
 
     #[test]
     fn and_instruction_32_e2e() {
