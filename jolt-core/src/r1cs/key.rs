@@ -110,7 +110,7 @@ impl<F: JoltField> NonUniformR1CS<F> {
         (eq_constants, condition_constants)
     }
 
-    /// Unpadded number of non-uniform constraints.
+    /// Unpadded number of cross-step constraints.
     fn num_constraints(&self) -> usize {
         self.constraints.len()
     }
@@ -195,14 +195,14 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         assert_eq!(r_step.len(), self.num_steps.log_2());
 
         let eq_rx_constr = EqPolynomial::evals(r_constr);
-        let first_non_uniform_row = self.uniform_r1cs.num_rows;
+        let first_cross_step_row = self.uniform_r1cs.num_rows;
         let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
 
         // Computation strategy:
         // 1. Compute A(r_x, y_var || r_x_step) for each y_var by iterating over terms in uniform (small per-step) matrix
-        // 2. Incorporate just the constant values from non-uniform constraints here
+        // 2. Incorporate just the constant values from cross-step constraints here
         let compute_repeated =
-            |constraints: &SparseConstraints<F>, non_uni_constants: Option<Vec<F>>| -> Vec<F> {
+            |constraints: &SparseConstraints<F>, cross_step_constants: Option<Vec<F>>| -> Vec<F> {
                 // evals structure: [inputs, aux ... 1, cross_inputs, cross_aux ...] where ... indicates padding to next power of 2
                 let mut evals =
                     unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 4); // *4 instead of *2 to accommodate cross-step constraints
@@ -214,10 +214,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
                     evals[constant_column] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
                 }
 
-                if let Some(non_uni_constants) = non_uni_constants {
-                    for (i, non_uni_constant) in non_uni_constants.iter().enumerate() {
+                if let Some(cross_step_constants) = cross_step_constants {
+                    for (i, cross_step_constant) in cross_step_constants.iter().enumerate() {
                         evals[constant_column] +=
-                            eq_rx_constr[first_non_uniform_row + i] * non_uni_constant;
+                            eq_rx_constr[first_cross_step_row + i] * cross_step_constant;
                     }
                 }
 
@@ -237,23 +237,23 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
             .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
             .collect::<Vec<F>>();
 
-        // 3. Add non-constant variables from non-uniform constraints here,
+        // 3. Add non-constant variables from cross-step constraints here,
         // depending on which type of variables (current step or next) they involve.
-        let update_non_uni = |rlc: &mut Vec<F>,
+        let update_cross_step = |rlc: &mut Vec<F>,
                               offset: &SparseEqualityItem<F>,
-                              non_uni_constraint_index: usize,
+                              cross_step_constraint_index: usize,
                               r: F| {
             for (col, is_offset, coeff) in offset.offset_vars.iter() {
                 let offset = if *is_offset { 1 } else { 0 };
                 let col = *col + offset * constant_column * 2;
                 rlc[col] += mul_0_1_optimized(&r, coeff)
-                    * eq_rx_constr[first_non_uniform_row + non_uni_constraint_index];
+                    * eq_rx_constr[first_cross_step_row + cross_step_constraint_index];
             }
         };
 
         for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
-            update_non_uni(&mut sm_rlc, &constraint.eq, i, F::one());
-            update_non_uni(&mut sm_rlc, &constraint.condition, i, r_rlc);
+            update_cross_step(&mut sm_rlc, &constraint.eq, i, F::one());
+            update_cross_step(&mut sm_rlc, &constraint.condition, i, r_rlc);
         }
 
         sm_rlc
@@ -295,13 +295,13 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         ((F::one() - r_const) * eval_variables) + eq_const * const_coeff
     }
 
-    /// (Verifier) Evaluates uniform and non-uniform matrix MLEs with all variables fixed.
+    /// (Verifier) Evaluates uniform and cross-step matrix MLEs with all variables fixed.
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_matrix_mle_full")]
     pub fn evaluate_matrix_mle_full(
         &self,
         rx_constr: &[F],
         ry_var: &[F],
-        r_non_uni: &F,
+        r_cross_step: &F,
     ) -> (F, F, F) {
         let constraint_rows_bits = (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2();
         let num_vars_bits = self.num_vars_uniform_padded().log_2();
@@ -339,65 +339,65 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let mut b_mle = compute_uniform_matrix_mle(&self.uniform_r1cs.b);
         let mut c_mle = compute_uniform_matrix_mle(&self.uniform_r1cs.c);
 
-        // Non-uniform constraints
-        let mut non_uni_a_mle = F::zero();
-        let mut non_uni_b_mle = F::zero();
+        // Cross-step constraints
+        let mut cross_step_a_mle = F::zero();
+        let mut cross_step_b_mle = F::zero();
 
-        let compute_non_uniform =
-            |uni_mle: &mut F, non_uni_mle: &mut F, non_uni: &SparseEqualityItem<F>, eq_rx: F| {
-                for (col, offset, coeff) in &non_uni.offset_vars {
+        let compute_cross_step =
+            |uni_mle: &mut F, cross_step_mle: &mut F, cross_step: &SparseEqualityItem<F>, eq_rx: F| {
+                for (col, offset, coeff) in &cross_step.offset_vars {
                     if !offset {
                         *uni_mle += *coeff * eq_ry_var[*col] * eq_rx;
                     } else {
-                        *non_uni_mle += *coeff * eq_ry_var[*col] * eq_rx;
+                        *cross_step_mle += *coeff * eq_ry_var[*col] * eq_rx;
                     }
                 }
             };
 
         for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
-            let non_uni_constraint_index =
+            let cross_step_constraint_index =
                 index_to_field_bitvector(self.uniform_r1cs.num_rows + i, constraint_rows_bits);
-            let row_constr_eq_non_uni =
-                EqPolynomial::new(rx_constr.to_vec()).evaluate(&non_uni_constraint_index);
+            let row_constr_eq_cross_step =
+                EqPolynomial::new(rx_constr.to_vec()).evaluate(&cross_step_constraint_index);
 
             assert_eq!(
-                row_constr_eq_non_uni,
+                row_constr_eq_cross_step,
                 eq_rx_constr[self.uniform_r1cs.num_rows + i]
             );
 
-            compute_non_uniform(
+            compute_cross_step(
                 &mut a_mle,
-                &mut non_uni_a_mle,
+                &mut cross_step_a_mle,
                 &constraint.eq,
-                row_constr_eq_non_uni,
+                row_constr_eq_cross_step,
             );
-            compute_non_uniform(
+            compute_cross_step(
                 &mut b_mle,
-                &mut non_uni_b_mle,
+                &mut cross_step_b_mle,
                 &constraint.condition,
-                row_constr_eq_non_uni,
+                row_constr_eq_cross_step,
             );
         }
 
-        // Need to handle constants because they're defined separately in the non-uniform constraints
-        let compute_non_uni_constants = |uni_mle: &mut F, non_uni_constants: Option<Vec<F>>| {
-            if let Some(non_uni_constants) = non_uni_constants {
-                for (i, non_uni_constant) in non_uni_constants.iter().enumerate() {
-                    let first_non_uniform_row = self.uniform_r1cs.num_rows;
-                    *uni_mle += eq_rx_constr[first_non_uniform_row + i]
-                        * non_uni_constant
+        // Need to handle constants because they're defined separately in the cross-step constraints
+        let compute_cross_step_constants = |uni_mle: &mut F, cross_step_constants: Option<Vec<F>>| {
+            if let Some(cross_step_constants) = cross_step_constants {
+                for (i, cross_step_constant) in cross_step_constants.iter().enumerate() {
+                    let first_cross_step_row = self.uniform_r1cs.num_rows;
+                    *uni_mle += eq_rx_constr[first_cross_step_row + i]
+                        * cross_step_constant
                         * col_eq_constant;
                 }
             }
         };
 
         let (eq_constants, condition_constants) = self.offset_eq_r1cs.constants();
-        compute_non_uni_constants(&mut a_mle, Some(eq_constants));
-        compute_non_uni_constants(&mut b_mle, Some(condition_constants));
+        compute_cross_step_constants(&mut a_mle, Some(eq_constants));
+        compute_cross_step_constants(&mut b_mle, Some(condition_constants));
 
-        a_mle = (F::one() - r_non_uni) * a_mle + *r_non_uni * non_uni_a_mle;
-        b_mle = (F::one() - r_non_uni) * b_mle + *r_non_uni * non_uni_b_mle;
-        c_mle = (F::one() - r_non_uni) * c_mle;
+        a_mle = (F::one() - r_cross_step) * a_mle + *r_cross_step * cross_step_a_mle;
+        b_mle = (F::one() - r_cross_step) * b_mle + *r_cross_step * cross_step_b_mle;
+        c_mle = (F::one() - r_cross_step) * c_mle;
 
         (a_mle, b_mle, c_mle)
     }

@@ -401,17 +401,17 @@ where
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
-        let r_non_uni = inner_sumcheck_r[0];
+        let r_is_cross_step = inner_sumcheck_r[0];
         let ry_var = inner_sumcheck_r[1..].to_vec();
         let eval_z =
             key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
-        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_non_uni);
+        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_is_cross_step);
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;
         let right_expected =
-            (F::one() - r_non_uni) * eval_z + r_non_uni * self.shift_sumcheck_claim;
+            (F::one() - r_is_cross_step) * eval_z + r_is_cross_step * self.shift_sumcheck_claim;
 
         let claim_inner_final_expected = left_expected * right_expected;
         if claim_inner_final != claim_inner_final_expected {

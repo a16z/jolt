@@ -34,25 +34,25 @@ pub trait R1CSConstraints<const C: usize, F: JoltField> {
     ) -> CombinedUniformBuilder<C, F, Self::Inputs> {
         let mut uniform_builder = R1CSBuilder::<C, F, Self::Inputs>::new();
         Self::uniform_constraints(&mut uniform_builder, memory_start);
-        let non_uniform_constraints = Self::non_uniform_constraints();
+        let cross_step_constraints = Self::cross_step_constraints();
 
         CombinedUniformBuilder::construct(
             uniform_builder,
             padded_trace_length,
-            non_uniform_constraints,
+            cross_step_constraints,
         )
     }
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of
     /// the execution trace.
     fn uniform_constraints(builder: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64);
-    /// Construct's Jolt's non-uniform constraints.
-    /// Non-uniform constraints are constraints whose inputs involve witness
+    /// Construct's Jolt's cross-step constraints.
+    /// Cross-step constraints are constraints whose inputs involve witness
     /// values from multiple steps of the execution trace.
-    /// Currently, all of Jolt's non-uniform constraints are of the form
+    /// Currently, all of Jolt's cross-step constraints are of the form
     ///     if condition { some constraint on steps i and i+1 }
     /// This structure is captured in `OffsetEqConstraint`.
-    fn non_uniform_constraints() -> Vec<OffsetEqConstraint>;
+    fn cross_step_constraints() -> Vec<OffsetEqConstraint>;
 }
 
 pub struct JoltRV32IMConstraints;
@@ -240,7 +240,7 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
     }
 
-    fn non_uniform_constraints() -> Vec<OffsetEqConstraint> {
+    fn cross_step_constraints() -> Vec<OffsetEqConstraint> {
         // If the next instruction's ELF address is not zero (i.e. it's
         // not padding), then check the PC update.
         let pc_constraint = OffsetEqConstraint::new(
