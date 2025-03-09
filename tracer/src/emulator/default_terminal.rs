@@ -21,9 +21,10 @@ impl Terminal for DefaultTerminal {
     }
 
     fn get_input(&mut self) -> u8 {
-        match !self.input_data.is_empty() {
-            true => self.input_data.remove(0),
-            false => 0,
+        if !self.input_data.is_empty() {
+            self.input_data.remove(0)
+        } else {
+            0
         }
     }
 
@@ -32,9 +33,10 @@ impl Terminal for DefaultTerminal {
     }
 
     fn get_output(&mut self) -> u8 {
-        match !self.output_data.is_empty() {
-            true => self.output_data.remove(0),
-            false => 0,
+        if !self.output_data.is_empty() {
+            self.output_data.remove(0)
+        } else {
+            0
         }
     }
 }
