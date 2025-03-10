@@ -1883,7 +1883,6 @@ dependencies = [
  "clap",
  "common",
  "criterion",
- "digest 0.10.7",
  "dirs",
  "enum_dispatch",
  "eyre",

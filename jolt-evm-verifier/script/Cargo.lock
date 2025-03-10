@@ -1573,7 +1573,6 @@ dependencies = [
  "bytemuck",
  "clap",
  "common",
- "digest 0.10.7",
  "dirs",
  "enum_dispatch",
  "eyre",

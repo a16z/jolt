@@ -10,12 +10,12 @@ use super::super::{
     Error,
 };
 use crate::field::JoltField;
+use crate::utils::transcript::Transcript;
 use ark_ec::{pairing::Pairing, Group};
-use ark_ff::{Field, One, PrimeField, UniformRand};
+use ark_ff::{One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, rand::Rng};
 use ark_std::{end_timer, start_timer};
-use digest::Digest;
 use std::{marker::PhantomData, ops::MulAssign};
 //TODO: Properly generalize the non-committed message approach of SIPP and MIPP to GIPA
 //TODO: Structured message is a special case of the non-committed message and does not rely on TIPA
@@ -51,12 +51,12 @@ pub type GipaWithSsm<Ip, Com, IpCom, D> =
 /// Pairing-based instantiation of GIPA with an updatable
 /// (trusted) structured reference string (SRS) to achieve
 /// logarithmic-time verification
-pub struct TipaWithSsm<Ip, LCom, IpCom, P, D> {
+pub struct TipaWithSsm<Ip, LCom, IpCom, P, Transcript> {
     _inner_product: PhantomData<Ip>,
     _left_commitment: PhantomData<LCom>,
     _inner_product_commitment: PhantomData<IpCom>,
     _pair: PhantomData<P>,
-    _digest: PhantomData<D>,
+    _transcript: PhantomData<Transcript>,
 }
 
 /// Proof of [`TipaWithSsm`]
@@ -72,10 +72,10 @@ where
     final_ck_proof: P::G2,
 }
 
-impl<Ip, LCom, IpCom, P, D> TipaWithSsm<Ip, LCom, IpCom, P, D>
+impl<Ip, LCom, IpCom, P, ProofTranscript> TipaWithSsm<Ip, LCom, IpCom, P, ProofTranscript>
 where
     P::ScalarField: JoltField,
-    D: Digest,
+    ProofTranscript: Transcript,
     P: Pairing,
     Ip: InnerProduct<
         LeftMessage = LCom::Message,
@@ -111,38 +111,27 @@ where
         h_beta_powers: &[P::G2],
         values: (&[Ip::LeftMessage], &[Ip::RightMessage]),
         ck: (&[LCom::Param], &IpCom::Param),
+        transcript: &mut ProofTranscript,
     ) -> Result<TipaWithSsmProof<P, LCom, IpCom>, Error> {
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
-        let (proof, aux) = GipaWithSsm::<Ip, LCom, IpCom, D>::prove_with_aux(
+        let (proof, aux) = GipaWithSsm::<Ip, LCom, IpCom, ProofTranscript>::prove_with_aux(
             values,
             &GipaParams::new_aux(ck.0, &vec![DummyParam {}; values.1.len()], &[ck.1.clone()]),
+            transcript,
         )?;
         end_timer!(gipa);
 
         // Prove final commitment key is wellformed
         let ck_kzg = start_timer!(|| "Prove commitment key");
         let (ck_a_final, _) = aux.final_commitment_param;
-        let transcript = aux.scalar_transcript;
-        let transcript_inverse = cfg_iter!(transcript)
+        let transcript_inverse = cfg_iter!(aux.scalar_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
         // KZG challenge point
-        let mut counter_nonce: usize = 0;
-        let c = loop {
-            let mut hash_input = Vec::new();
-            hash_input.extend_from_slice(&counter_nonce.to_be_bytes()[..]);
-            transcript
-                .first()
-                .unwrap()
-                .serialize_uncompressed(&mut hash_input)?;
-            ck_a_final.serialize_uncompressed(&mut hash_input)?;
-            if let Some(c) = LCom::Scalar::from_random_bytes(&D::digest(&hash_input)) {
-                break c;
-            };
-            counter_nonce += 1;
-        };
+        transcript.append_serializable(&ck_a_final);
+        let c = transcript.challenge_scalar();
 
         // Complete KZG proof
         let ck_a_kzg_opening = prove_commitment_key_kzg_opening(
@@ -166,13 +155,15 @@ where
         com: (&LCom::Output, &IpCom::Output),
         scalar_b: &P::ScalarField,
         proof: &TipaWithSsmProof<P, LCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
-        let (base_com, transcript) =
-            GipaWithSsm::<Ip, LCom, IpCom, D>::verify_recursive_challenge_transcript(
+        let (base_com, gipa_transcript) =
+            GipaWithSsm::<Ip, LCom, IpCom, ProofTranscript>::verify_recursive_challenge_transcript(
                 (com.0, scalar_b, com.1),
                 &proof.gipa_proof,
+                transcript,
             )?;
-        let transcript_inverse = cfg_iter!(transcript)
+        let transcript_inverse = cfg_iter!(gipa_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
@@ -180,20 +171,8 @@ where
         let ck_a_proof = &proof.final_ck_proof;
 
         // KZG challenge point
-        let mut counter_nonce: usize = 0;
-        let c = loop {
-            let mut hash_input = Vec::new();
-            hash_input.extend_from_slice(&counter_nonce.to_be_bytes()[..]);
-            transcript
-                .first()
-                .unwrap()
-                .serialize_uncompressed(&mut hash_input)?;
-            ck_a_final.serialize_uncompressed(&mut hash_input)?;
-            if let Some(c) = LCom::Scalar::from_random_bytes(&D::digest(&hash_input)) {
-                break c;
-            };
-            counter_nonce += 1;
-        };
+        transcript.append_serializable(ck_a_final);
+        let c = transcript.challenge_scalar();
 
         // Check commitment key
         let ck_a_valid = verify_commitment_key_g2_kzg_opening(
@@ -208,7 +187,7 @@ where
         // Compute final scalar
         let mut power_2_b = *scalar_b;
         let mut product_form = Vec::new();
-        for x in transcript.iter() {
+        for x in gipa_transcript.iter() {
             product_form
                 .push(<P::ScalarField>::one() + (JoltField::inverse(x).unwrap() * power_2_b));
             power_2_b *= power_2_b;
@@ -237,9 +216,10 @@ mod tests {
         },
         *,
     };
+    use crate::poly::commitment::bmmtv::tipa::Field;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use sha3::Sha3_256;
 
     type BlsAfghoG1 = AfghoCommitment<Bn254>;
     type BlsScalarField = <Bn254 as Pairing>::ScalarField;
@@ -259,7 +239,7 @@ mod tests {
     fn tipa_ssm_multiexponentiation_inner_product_test() {
         type IP = MultiexponentiationInnerProduct<BlsG1>;
         type Ipc = IdentityCommitment<BlsG1, BlsScalarField>;
-        type MultiExpTipa = TipaWithSsm<IP, BlsAfghoG1, Ipc, Bn254, Sha3_256>;
+        type MultiExpTipa = TipaWithSsm<IP, BlsAfghoG1, Ipc, Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let (srs, ck_t) = MultiExpTipa::setup(&mut rng, TEST_SIZE).unwrap();
@@ -272,16 +252,25 @@ mod tests {
         let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
         let com_t = Ipc::commit(&[ck_t.clone()], &t).unwrap();
 
-        let proof =
-            MultiExpTipa::prove_with_structured_scalar_message(&srs.h_beta_powers, (&m_a, &m_b), (&ck_a, &ck_t))
-                .unwrap();
+        let mut transcript = KeccakTranscript::new(b"TipaTest");
+
+        let proof = MultiExpTipa::prove_with_structured_scalar_message(
+            &srs.h_beta_powers,
+            (&m_a, &m_b),
+            (&ck_a, &ck_t),
+            &mut transcript,
+        )
+        .unwrap();
+
+        let mut transcript = KeccakTranscript::new(b"TipaTest");
 
         assert!(MultiExpTipa::verify_with_structured_scalar_message(
             &v_srs,
             &ck_t,
             (&com_a, &com_t),
             &b,
-            &proof
+            &proof,
+            &mut transcript,
         )
         .unwrap());
     }

@@ -2,31 +2,30 @@
 //!
 //! This is the building block of other Product Arguments like Tipa
 
+use super::{
+    commitments::Dhc, inner_products::InnerProduct, mul_helper, Error, InnerProductArgumentError,
+};
+use crate::field::JoltField;
+use crate::utils::transcript::Transcript;
 use anyhow::bail;
-use ark_ff::{Field, One};
+use ark_ff::One;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
 use ark_std::rand::Rng;
 use ark_std::{end_timer, start_timer};
-use digest::Digest;
-use std::{convert::TryInto, marker::PhantomData};
-
-use super::{
-    commitments::Dhc, inner_products::InnerProduct, mul_helper, Error, InnerProductArgumentError,
-};
-
+use std::marker::PhantomData;
 // #[cfg(feature = "rayon")]
 // use rayon::prelude::*;
 
 /// General Inner Product Argument
 ///
 /// This is basically how bullet-proofs are built
-pub struct Gipa<Ip, LCom, RCom, IpCom, D> {
+pub struct Gipa<Ip, LCom, RCom, IpCom, ProofTranscript> {
     _inner_product: PhantomData<Ip>,
     _left_commitment: PhantomData<LCom>,
     _right_commitment: PhantomData<RCom>,
     _inner_product_commitment: PhantomData<IpCom>,
-    _digest: PhantomData<D>,
+    _transcript: PhantomData<ProofTranscript>,
 }
 
 /// Proof of [`Gipa`]
@@ -109,7 +108,7 @@ where
 /// - InnerProduct::LeftMessage = LeftCommitment::Message
 /// - InnerProduct::RightMessage = RightCommitment::Message
 /// - InnerProduct::Output = InnerProductCommitment::Output
-impl<Ip, LCom, RCom, IpCom, D> Gipa<Ip, LCom, RCom, IpCom, D>
+impl<Ip, LCom, RCom, IpCom, ProofTranscript> Gipa<Ip, LCom, RCom, IpCom, ProofTranscript>
 where
     Ip: InnerProduct<
         LeftMessage = LCom::Message,
@@ -117,9 +116,11 @@ where
         Output = IpCom::Message,
     >,
     LCom: Dhc,
+    LCom::Scalar: JoltField,
     RCom: Dhc<Scalar = LCom::Scalar>,
     IpCom: Dhc<Scalar = LCom::Scalar>,
-    D: Digest,
+
+    ProofTranscript: Transcript,
 {
     /// Generate setup for all commitments and returm them
     ///
@@ -137,6 +138,7 @@ where
         values: (&[Ip::LeftMessage], &[Ip::RightMessage], &Ip::Output),
         params: &GipaParams<LCom, RCom, IpCom>,
         commitment: &GipaCommitment<LCom, RCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<GipaProof<LCom, RCom, IpCom>, Error> {
         // check if inner_product(left, right) == provided inner pairing
         if Ip::inner_product(values.0, values.1)? != values.2.clone() {
@@ -164,11 +166,7 @@ where
         }
 
         // proceed to generate the proof
-        let (proof, _) = Self::prove_with_aux(
-            (values.0, values.1),
-            params,
-            // (params.0, params.1, &[params.2.clone()]),
-        )?;
+        let (proof, _) = Self::prove_with_aux((values.0, values.1), params, transcript)?;
         Ok(proof)
     }
 
@@ -177,6 +175,7 @@ where
         params: &GipaParams<LCom, RCom, IpCom>,
         commitment: GipaCommitment<LCom, RCom, IpCom>,
         proof: &GipaProof<LCom, RCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         if params.l_params.len().count_ones() != 1 || params.l_params.len() != params.r_params.len()
         {
@@ -194,6 +193,7 @@ where
                 commitment.ip_commit,
             ),
             proof,
+            transcript,
         )?;
         // Calculate base commitment keys
         let (ck_a_base, ck_b_base) = Self::_compute_final_commitment_keys(params, &transcript)?;
@@ -209,9 +209,10 @@ where
     pub fn prove_with_aux(
         values: (&[Ip::LeftMessage], &[Ip::RightMessage]),
         params: &GipaParams<LCom, RCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(GipaProof<LCom, RCom, IpCom>, GipaAux<LCom, RCom>), Error> {
         let (msg_l, msg_r) = values;
-        Self::_prove((msg_l.to_vec(), msg_r.to_vec()), params.clone())
+        Self::_prove((msg_l.to_vec(), msg_r.to_vec()), params.clone(), transcript)
     }
 
     /// Returns vector of recursive commitments and transcripts in reverse order
@@ -253,6 +254,7 @@ where
             mut r_params,
             ip_param,
         }: GipaParams<LCom, RCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<(GipaProof<LCom, RCom, IpCom>, GipaAux<LCom, RCom>), Error> {
         let (mut msg_l, mut msg_r) = values;
         let ip_param = &[ip_param];
@@ -316,35 +318,14 @@ where
                     end_timer!(cr);
 
                     // Calculate Fiat-Shamir challenge
-                    let mut counter_nonce: usize = 0;
-                    let default_transcript = Default::default();
-                    let transcript = r_transcript.last().unwrap_or(&default_transcript);
-                    let (c, c_inv) = 'challenge: loop {
-                        let mut hash_input = Vec::new();
-                        hash_input.extend_from_slice(&counter_nonce.to_be_bytes()[..]);
-                        transcript.serialize_uncompressed(&mut hash_input)?;
-                        // add all left commitments
-                        com_l.0.serialize_uncompressed(&mut hash_input)?;
-                        com_l.1.serialize_uncompressed(&mut hash_input)?;
-                        com_l.2.serialize_uncompressed(&mut hash_input)?;
-                        // add all right commitments
-                        com_r.0.serialize_uncompressed(&mut hash_input)?;
-                        com_r.1.serialize_uncompressed(&mut hash_input)?;
-                        com_r.2.serialize_uncompressed(&mut hash_input)?;
-                        // generate scalar from digest
-                        let c: LCom::Scalar = u128::from_be_bytes(
-                            D::digest(&hash_input).as_slice()[0..16].try_into().unwrap(),
-                        )
-                        .into();
-                        // check if there's an inverse
-                        // if there's no inverse it means that we got zero
-                        if let Some(c_inv) = c.inverse() {
-                            // Optimization for multiexponentiation to rescale G2 elements with 128-bit challenge
-                            // Swap 'c' and 'c_inv' since can't control bit size of c_inv
-                            break 'challenge (c_inv, c);
-                        }
-                        counter_nonce += 1;
-                    };
+                    transcript.append_serializable(&com_l.0);
+                    transcript.append_serializable(&com_l.1);
+                    transcript.append_serializable(&com_l.2);
+                    transcript.append_serializable(&com_r.0);
+                    transcript.append_serializable(&com_r.1);
+                    transcript.append_serializable(&com_r.2);
+                    let c: <LCom as Dhc>::Scalar = transcript.challenge_scalar();
+                    let c_inv = JoltField::inverse(&c).unwrap();
 
                     // Set up values for next step of recursion
                     let rescale_ml = start_timer!(|| "Rescale ML");
@@ -408,6 +389,7 @@ where
     pub fn verify_recursive_challenge_transcript(
         com: (&LCom::Output, &RCom::Output, &IpCom::Output),
         proof: &GipaProof<LCom, RCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<
         (
             (LCom::Output, RCom::Output, IpCom::Output),
@@ -415,12 +397,17 @@ where
         ),
         Error,
     > {
-        Self::_compute_recursive_challenges((com.0.clone(), com.1.clone(), com.2.clone()), proof)
+        Self::_compute_recursive_challenges(
+            (com.0.clone(), com.1.clone(), com.2.clone()),
+            proof,
+            transcript,
+        )
     }
 
     fn _compute_recursive_challenges(
         com: (LCom::Output, RCom::Output, IpCom::Output),
         proof: &GipaProof<LCom, RCom, IpCom>,
+        transcript: &mut ProofTranscript,
     ) -> Result<
         (
             (LCom::Output, RCom::Output, IpCom::Output),
@@ -430,36 +417,22 @@ where
     > {
         let (mut com_a, mut com_b, mut com_t) = com;
         let mut r_transcript: Vec<LCom::Scalar> = Vec::new();
-        for (com_1, com_2) in proof.commitment_steps.iter().rev() {
+        for (com_l, com_r) in proof.commitment_steps.iter().rev() {
             // Fiat-Shamir challenge
-            let mut counter_nonce: usize = 0;
-            let default_transcript = Default::default();
-            let transcript = r_transcript.last().unwrap_or(&default_transcript);
-            let (c, c_inv) = 'challenge: loop {
-                let mut hash_input = Vec::new();
-                hash_input.extend_from_slice(&counter_nonce.to_be_bytes()[..]);
-                transcript.serialize_uncompressed(&mut hash_input)?;
-                com_1.0.serialize_uncompressed(&mut hash_input)?;
-                com_1.1.serialize_uncompressed(&mut hash_input)?;
-                com_1.2.serialize_uncompressed(&mut hash_input)?;
-                com_2.0.serialize_uncompressed(&mut hash_input)?;
-                com_2.1.serialize_uncompressed(&mut hash_input)?;
-                com_2.2.serialize_uncompressed(&mut hash_input)?;
-                let c: LCom::Scalar = u128::from_be_bytes(
-                    D::digest(&hash_input).as_slice()[0..16].try_into().unwrap(),
-                )
-                .into();
-                if let Some(c_inv) = c.inverse() {
-                    // Optimization for multiexponentiation to rescale G2 elements with 128-bit challenge
-                    // Swap 'c' and 'c_inv' since can't control bit size of c_inv
-                    break 'challenge (c_inv, c);
-                }
-                counter_nonce += 1;
-            };
 
-            com_a = mul_helper(&com_1.0, &c) + com_a.clone() + mul_helper(&com_2.0, &c_inv);
-            com_b = mul_helper(&com_1.1, &c) + com_b.clone() + mul_helper(&com_2.1, &c_inv);
-            com_t = mul_helper(&com_1.2, &c) + com_t.clone() + mul_helper(&com_2.2, &c_inv);
+            transcript.append_serializable(&com_l.0);
+            transcript.append_serializable(&com_l.1);
+            transcript.append_serializable(&com_l.2);
+            transcript.append_serializable(&com_r.0);
+            transcript.append_serializable(&com_r.1);
+            transcript.append_serializable(&com_r.2);
+
+            let c: <LCom as Dhc>::Scalar = transcript.challenge_scalar();
+            let c_inv: <LCom as Dhc>::Scalar = JoltField::inverse(&c).unwrap();
+
+            com_a = mul_helper(&com_l.0, &c) + com_a.clone() + mul_helper(&com_r.0, &c_inv);
+            com_b = mul_helper(&com_l.1, &c) + com_b.clone() + mul_helper(&com_r.1, &c_inv);
+            com_t = mul_helper(&com_l.2, &c) + com_t.clone() + mul_helper(&com_r.2, &c_inv);
 
             r_transcript.push(c);
         }
@@ -531,11 +504,11 @@ mod tests {
         *,
     };
     use crate::poly::commitment::bmmtv::tipa::structured_scalar_message::SsmDummyCommitment;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
     use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use sha3::Sha3_256;
 
     /// Inner pairing product commitment in G1
     type AfghoBlsG1 = AfghoCommitment<Bn254>;
@@ -548,7 +521,7 @@ mod tests {
     fn multiexponentiation_inner_product_test() {
         type IP = MultiexponentiationInnerProduct<<Bn254 as Pairing>::G1>;
         type Ipc = IdentityCommitment<<Bn254 as Pairing>::G1, <Bn254 as Pairing>::ScalarField>;
-        type MultiExpGIPA = Gipa<IP, AfghoBlsG1, DummySsm, Ipc, Sha3_256>;
+        type MultiExpGIPA = Gipa<IP, AfghoBlsG1, DummySsm, Ipc, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let params = MultiExpGIPA::setup(&mut rng, TEST_SIZE).unwrap();
@@ -568,8 +541,13 @@ mod tests {
             ip_commit,
         };
 
-        let proof = MultiExpGIPA::prove((&m_a, &m_b, &t[0]), &params, &commitment).unwrap();
+        let mut transcript = KeccakTranscript::new(b"test");
 
-        assert!(MultiExpGIPA::verify(&params, commitment, &proof,).unwrap());
+        let proof = MultiExpGIPA::prove((&m_a, &m_b, &t[0]), &params, &commitment, &mut transcript)
+            .unwrap();
+
+        let mut transcript = KeccakTranscript::new(b"test");
+
+        assert!(MultiExpGIPA::verify(&params, commitment, &proof, &mut transcript).unwrap());
     }
 }

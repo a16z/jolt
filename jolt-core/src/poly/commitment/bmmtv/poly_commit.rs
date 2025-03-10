@@ -25,8 +25,8 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::unipoly::UniPoly as UnivariatePolynomial;
+use crate::utils::transcript::Transcript;
 use ark_std::rand::Rng;
-use digest::Digest;
 
 type G1<P> = <P as Pairing>::G1;
 type ScalarField<P> = <P as Pairing>::ScalarField;
@@ -146,11 +146,9 @@ pub struct OpeningProof<P: Pairing> {
     kzg_proof: P::G1,
 }
 
-pub struct BivariatePolynomialCommitment<P: Pairing, D: Digest>(
-    PolynomialEvaluationSecondTierIpa<P, D>,
-);
+pub struct BivariatePolynomialCommitment<P: Pairing, D>(PolynomialEvaluationSecondTierIpa<P, D>);
 
-impl<P: Pairing, D: Digest> BivariatePolynomialCommitment<P, D>
+impl<P: Pairing, ProofTranscript: Transcript> BivariatePolynomialCommitment<P, ProofTranscript>
 where
     P::ScalarField: JoltField,
 {
@@ -208,6 +206,7 @@ where
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
         y_polynomial_comms: &[P::G1],
         point: &(P::ScalarField, P::ScalarField),
+        transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
         let (x, y) = point;
         let (ip_srs, kzg_srs) = srs;
@@ -242,10 +241,11 @@ where
 
         let ipa_time = start_timer!(|| "Computing IPA proof");
         let ip_proof =
-            PolynomialEvaluationSecondTierIpa::<P, D>::prove_with_structured_scalar_message(
+            PolynomialEvaluationSecondTierIpa::<P, ProofTranscript>::prove_with_structured_scalar_message(
                 &ip_srs.h_beta_powers,
                 (y_polynomial_comms, &powers_of_x),
                 (&ck_1, &DummyParam),
+                transcript,
             )?;
         end_timer!(ipa_time);
         let kzg_time = start_timer!(|| "Computing KZG opening proof");
@@ -266,15 +266,17 @@ where
         point: &(P::ScalarField, P::ScalarField),
         eval: &P::ScalarField,
         proof: &OpeningProof<P>,
+        transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         let (x, y) = point;
         let ip_proof_valid =
-            PolynomialEvaluationSecondTierIpa::<P, D>::verify_with_structured_scalar_message(
+            PolynomialEvaluationSecondTierIpa::<P, ProofTranscript>::verify_with_structured_scalar_message(
                 v_srs,
                 &DummyParam,
                 (com, &IdentityOutput(vec![proof.y_eval_comm])),
                 x,
                 &proof.ip_proof,
+                transcript,
             )?;
         let kzg_proof_valid =
             Kzg::<P>::verify(v_srs, &proof.y_eval_comm, y, eval, &proof.kzg_proof)?;
@@ -282,12 +284,12 @@ where
     }
 }
 
-pub struct UnivariatePolynomialCommitment<P: Pairing, D: Digest> {
+pub struct UnivariatePolynomialCommitment<P, D> {
     _pairing: PhantomData<P>,
     _digest: PhantomData<D>,
 }
 
-impl<P: Pairing, D: Digest> UnivariatePolynomialCommitment<P, D>
+impl<P: Pairing, ProofTranscript: Transcript> UnivariatePolynomialCommitment<P, ProofTranscript>
 where
     P::ScalarField: JoltField,
 {
@@ -330,7 +332,7 @@ where
 
     pub fn setup<R: Rng>(rng: &mut R, degree: usize) -> Result<(Srs<P>, Vec<P::G1Affine>), Error> {
         let (x_degree, y_degree) = Self::bivariate_degrees(degree);
-        BivariatePolynomialCommitment::<P, D>::setup(rng, x_degree, y_degree)
+        BivariatePolynomialCommitment::<P, ProofTranscript>::setup(rng, x_degree, y_degree)
     }
 
     pub fn commit(
@@ -338,7 +340,7 @@ where
         polynomial: &UnivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
         let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(srs);
-        BivariatePolynomialCommitment::<P, D>::commit(
+        BivariatePolynomialCommitment::<P, ProofTranscript>::commit(
             srs,
             &Self::bivariate_form(bivariate_degrees, polynomial),
         )
@@ -349,15 +351,17 @@ where
         polynomial: &UnivariatePolynomial<P::ScalarField>,
         y_polynomial_comms: &[P::G1],
         point: &P::ScalarField,
+        transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
         let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(srs);
         let y = *point;
         let x = point.pow(vec![(y_degree + 1) as u64]);
-        BivariatePolynomialCommitment::<P, D>::open(
+        BivariatePolynomialCommitment::<P, ProofTranscript>::open(
             srs,
             &Self::bivariate_form((x_degree, y_degree), polynomial),
             y_polynomial_comms,
             &(x, y),
+            transcript,
         )
     }
 
@@ -368,20 +372,28 @@ where
         point: &P::ScalarField,
         eval: &P::ScalarField,
         proof: &OpeningProof<P>,
+        transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         let (_, y_degree) = Self::bivariate_degrees(max_degree);
         let y = *point;
         let x = y.pow(vec![(y_degree + 1) as u64]);
-        BivariatePolynomialCommitment::<P, D>::verify(v_srs, com, &(x, y), eval, proof)
+        BivariatePolynomialCommitment::<P, ProofTranscript>::verify(
+            v_srs,
+            com,
+            &(x, y),
+            eval,
+            proof,
+            transcript,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use sha3::Sha3_256;
 
     const BIVARIATE_X_DEGREE: usize = 7;
     const BIVARIATE_Y_DEGREE: usize = 7;
@@ -389,8 +401,8 @@ mod tests {
     const UNIVARIATE_DEGREE: usize = 65535;
     //const UNIVARIATE_DEGREE: usize = 1048575;
 
-    type TestBivariatePolyCommitment = BivariatePolynomialCommitment<Bn254, Sha3_256>;
-    type TestUnivariatePolyCommitment = UnivariatePolynomialCommitment<Bn254, Sha3_256>;
+    type TestBivariatePolyCommitment = BivariatePolynomialCommitment<Bn254, KeccakTranscript>;
+    type TestUnivariatePolyCommitment = UnivariatePolynomialCommitment<Bn254, KeccakTranscript>;
 
     #[test]
     fn bivariate_poly_commit_test() {
@@ -414,6 +426,8 @@ mod tests {
         let (com, y_polynomial_comms) =
             TestBivariatePolyCommitment::commit(&srs, &bivariate_polynomial).unwrap();
 
+        let mut transcript = KeccakTranscript::new(b"test");
+
         // Evaluate at challenge point
         let point = (UniformRand::rand(&mut rng), UniformRand::rand(&mut rng));
         let eval_proof = TestBivariatePolyCommitment::open(
@@ -421,14 +435,23 @@ mod tests {
             &bivariate_polynomial,
             &y_polynomial_comms,
             &point,
+            &mut transcript,
         )
         .unwrap();
         let eval = bivariate_polynomial.evaluate(&point);
 
+        let mut transcript = KeccakTranscript::new(b"test");
+
         // Verify proof
-        assert!(
-            TestBivariatePolyCommitment::verify(&v_srs, &com, &point, &eval, &eval_proof).unwrap()
-        );
+        assert!(TestBivariatePolyCommitment::verify(
+            &v_srs,
+            &com,
+            &point,
+            &eval,
+            &eval_proof,
+            &mut transcript
+        )
+        .unwrap());
     }
 
     // `cargo test univariate_poly_commit_test --release --features print-trace -- --ignored --nocapture`
@@ -449,12 +472,19 @@ mod tests {
         let (com, y_polynomial_comms) =
             TestUnivariatePolyCommitment::commit(&srs, &polynomial).unwrap();
 
+        let mut transcript = KeccakTranscript::new(b"test");
         // Evaluate at challenge point
         let point = UniformRand::rand(&mut rng);
-        let eval_proof =
-            TestUnivariatePolyCommitment::open(&srs, &polynomial, &y_polynomial_comms, &point)
-                .unwrap();
+        let eval_proof = TestUnivariatePolyCommitment::open(
+            &srs,
+            &polynomial,
+            &y_polynomial_comms,
+            &point,
+            &mut transcript,
+        )
+        .unwrap();
         let eval = polynomial.evaluate(&point);
+        let mut transcript = KeccakTranscript::new(b"test");
 
         // Verify proof
         assert!(TestUnivariatePolyCommitment::verify(
@@ -463,7 +493,8 @@ mod tests {
             &com,
             &point,
             &eval,
-            &eval_proof
+            &eval_proof,
+            &mut transcript,
         )
         .unwrap());
     }
