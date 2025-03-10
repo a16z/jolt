@@ -33,10 +33,8 @@ pub struct VerifierSrs<P: Pairing> {
 
 //TODO: Change SRS to return reference iterator - requires changes to TIPA and GIPA signatures
 impl<P: Pairing> Srs<P> {
-    pub fn get_commitment_keys(&self) -> (Vec<P::G2>, Vec<P::G1>) {
-        let ck_1 = self.h_beta_powers.iter().step_by(2).cloned().collect();
-        let ck_2 = self.g_alpha_powers.iter().step_by(2).cloned().collect();
-        (ck_1, ck_2)
+    pub fn get_commitment_keys(&self) -> Vec<P::G2> {
+        self.h_beta_powers.iter().step_by(2).cloned().collect()
     }
 
     pub fn get_verifier_key(&self) -> VerifierSrs<P> {
@@ -144,6 +142,8 @@ fn polynomial_evaluation_product_form_from_transcript<F: Field>(
     product_form.iter().product()
 }
 
+/// We create a polynomial using the transcript
+/// This is why we need 2x srs for g2 we interleave it with zeroes
 fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: &F) -> Vec<F> {
     let mut coefficients = vec![F::one()];
     let mut power_2_r = *r_shift;

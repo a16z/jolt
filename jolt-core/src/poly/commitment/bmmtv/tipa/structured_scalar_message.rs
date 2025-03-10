@@ -108,7 +108,7 @@ where
     }
 
     pub fn prove_with_structured_scalar_message(
-        srs: &Srs<P>,
+        h_beta_powers: &[P::G2],
         values: (&[Ip::LeftMessage], &[Ip::RightMessage]),
         ck: (&[LCom::Param], &IpCom::Param),
     ) -> Result<TipaWithSsmProof<P, LCom, IpCom>, Error> {
@@ -146,9 +146,9 @@ where
 
         // Complete KZG proof
         let ck_a_kzg_opening = prove_commitment_key_kzg_opening(
-            &srs.h_beta_powers,
+            h_beta_powers,
             &transcript_inverse,
-            &<P::ScalarField>::one(),
+            &<P::ScalarField>::one(), // r_shift = one, why?
             &c,
         )?;
         end_timer!(ck_kzg);
@@ -209,8 +209,9 @@ where
         let mut power_2_b = *scalar_b;
         let mut product_form = Vec::new();
         for x in transcript.iter() {
-            product_form.push(<P::ScalarField>::one() + (JoltField::inverse(x).unwrap() * power_2_b));
-            power_2_b *= power_2_b.clone();
+            product_form
+                .push(<P::ScalarField>::one() + (JoltField::inverse(x).unwrap() * power_2_b));
+            power_2_b *= power_2_b;
         }
         let b_base = cfg_iter!(product_form).product::<P::ScalarField>();
 
@@ -262,7 +263,7 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let (srs, ck_t) = MultiExpTipa::setup(&mut rng, TEST_SIZE).unwrap();
-        let (ck_a, _) = srs.get_commitment_keys();
+        let ck_a = srs.get_commitment_keys();
         let v_srs = srs.get_verifier_key();
         let m_a = random_generators(&mut rng, TEST_SIZE);
         let b = BlsScalarField::rand(&mut rng);
@@ -272,7 +273,7 @@ mod tests {
         let com_t = Ipc::commit(&[ck_t.clone()], &t).unwrap();
 
         let proof =
-            MultiExpTipa::prove_with_structured_scalar_message(&srs, (&m_a, &m_b), (&ck_a, &ck_t))
+            MultiExpTipa::prove_with_structured_scalar_message(&srs.h_beta_powers, (&m_a, &m_b), (&ck_a, &ck_t))
                 .unwrap();
 
         assert!(MultiExpTipa::verify_with_structured_scalar_message(

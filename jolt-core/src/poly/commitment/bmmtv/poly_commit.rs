@@ -184,7 +184,7 @@ where
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
         let (ip_srs, kzg_srs) = srs;
-        let (ck, _) = ip_srs.get_commitment_keys();
+        let ck = ip_srs.get_commitment_keys();
         assert!(ck.len() >= bivariate_polynomial.y_polynomials.len());
 
         // Create KZG commitments to Y polynomials
@@ -211,7 +211,7 @@ where
     ) -> Result<OpeningProof<P>, Error> {
         let (x, y) = point;
         let (ip_srs, kzg_srs) = srs;
-        let (ck_1, _) = ip_srs.get_commitment_keys();
+        let ck_1 = ip_srs.get_commitment_keys();
         assert!(ck_1.len() >= bivariate_polynomial.y_polynomials.len());
 
         let precomp_time = start_timer!(|| "Computing coefficients and KZG commitment");
@@ -243,7 +243,7 @@ where
         let ipa_time = start_timer!(|| "Computing IPA proof");
         let ip_proof =
             PolynomialEvaluationSecondTierIpa::<P, D>::prove_with_structured_scalar_message(
-                ip_srs,
+                &ip_srs.h_beta_powers,
                 (y_polynomial_comms, &powers_of_x),
                 (&ck_1, &DummyParam),
             )?;

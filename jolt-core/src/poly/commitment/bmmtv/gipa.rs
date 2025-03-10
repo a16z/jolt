@@ -387,7 +387,7 @@ where
                 }
             }
         };
-        // reverse them
+        // reverse them | TODO why?
         r_transcript.reverse();
         r_commitment_steps.reverse();
 
