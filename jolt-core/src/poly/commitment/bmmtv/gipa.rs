@@ -525,63 +525,30 @@ where
 mod tests {
     use super::{
         super::commitments::{
-            afgho16::{AfghoCommitmentG1, AfghoCommitmentG2},
-            identity::IdentityCommitment,
-            pedersen::PedersenCommitment,
-            random_generators,
+            afgho16::AfghoCommitmentG1, identity::IdentityCommitment, random_generators,
         },
-        super::inner_products::{
-            InnerProduct, MultiexponentiationInnerProduct, PairingInnerProduct, ScalarInnerProduct,
-        },
+        super::inner_products::{InnerProduct, MultiexponentiationInnerProduct},
         *,
     };
+    use crate::poly::commitment::bmmtv::tipa::structured_scalar_message::SsmDummyCommitment;
     use ark_bn254::Bn254;
-    use ark_ec::pairing::{Pairing, PairingOutput};
+    use ark_ec::pairing::Pairing;
     use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use itertools::Itertools;
     use sha3::Sha3_256;
 
     /// Inner pairing product commitment in G1
     type AfghoBlsG1 = AfghoCommitmentG1<Bn254>;
-    /// Inner pairing product commitment in G2
-    type AfghoBlsG2 = AfghoCommitmentG2<Bn254>;
     /// Pedersen commitment in G1
-    type PedersenBlsG1 = PedersenCommitment<<Bn254 as Pairing>::G1>;
-    /// Pedersen commitment in G2
-    type PedersenBlsG2 = PedersenCommitment<<Bn254 as Pairing>::G2>;
+    type DummySsm = SsmDummyCommitment<<AfghoBlsG1 as Dhc>::Scalar>;
+    // IdentityCommitment<<Bn254 as Pairing>::ScalarField, <Bn254 as Pairing>::G2>;
     const TEST_SIZE: usize = 8;
-
-    #[test]
-    fn pairing_inner_product_test() {
-        type IP = PairingInnerProduct<Bn254>;
-        type Ipc = IdentityCommitment<PairingOutput<Bn254>, <Bn254 as Pairing>::ScalarField>;
-        type PairingGIPA = Gipa<IP, AfghoBlsG1, AfghoBlsG2, Ipc, Sha3_256>;
-
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let params = PairingGIPA::setup(&mut rng, TEST_SIZE).unwrap();
-        let m_a = random_generators(&mut rng, TEST_SIZE);
-        let m_b = random_generators(&mut rng, TEST_SIZE);
-        let l_commit = AfghoBlsG1::commit(&params.l_params, &m_a).unwrap();
-        let r_commit = AfghoBlsG2::commit(&params.r_params, &m_b).unwrap();
-        let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
-        let ip_commit = Ipc::commit(&[params.ip_param.clone()], &t).unwrap();
-
-        let commitment = GipaCommitment {
-            l_commit,
-            r_commit,
-            ip_commit,
-        };
-        let proof = PairingGIPA::prove((&m_a, &m_b, &t[0]), &params, &commitment).unwrap();
-
-        assert!(PairingGIPA::verify(&params, commitment, &proof).unwrap());
-    }
 
     #[test]
     fn multiexponentiation_inner_product_test() {
         type IP = MultiexponentiationInnerProduct<<Bn254 as Pairing>::G1>;
         type Ipc = IdentityCommitment<<Bn254 as Pairing>::G1, <Bn254 as Pairing>::ScalarField>;
-        type MultiExpGIPA = Gipa<IP, AfghoBlsG1, PedersenBlsG1, Ipc, Sha3_256>;
+        type MultiExpGIPA = Gipa<IP, AfghoBlsG1, DummySsm, Ipc, Sha3_256>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let params = MultiExpGIPA::setup(&mut rng, TEST_SIZE).unwrap();
@@ -591,7 +558,7 @@ mod tests {
             m_b.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
         let l_commit = AfghoBlsG1::commit(&params.l_params, &m_a).unwrap();
-        let r_commit = PedersenBlsG1::commit(&params.r_params, &m_b).unwrap();
+        let r_commit = DummySsm::commit(&params.r_params, &m_b).unwrap();
         let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
         let ip_commit = Ipc::commit(&[params.ip_param.clone()], &t).unwrap();
 
@@ -604,49 +571,5 @@ mod tests {
         let proof = MultiExpGIPA::prove((&m_a, &m_b, &t[0]), &params, &commitment).unwrap();
 
         assert!(MultiExpGIPA::verify(&params, commitment, &proof,).unwrap());
-    }
-
-    #[test]
-    fn scalar_inner_product_test() {
-        type BlsScalarField = <Bn254 as Pairing>::ScalarField;
-        type BlsScalarInnerProd = ScalarInnerProduct<BlsScalarField>;
-        type Identity = IdentityCommitment<BlsScalarField, BlsScalarField>;
-        type BulletProof =
-            Gipa<BlsScalarInnerProd, PedersenBlsG2, PedersenBlsG2, Identity, Sha3_256>;
-
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let params = BulletProof::setup(&mut rng, TEST_SIZE).unwrap();
-
-        // random m_a
-        let m_a = (0..TEST_SIZE)
-            .map(|_| BlsScalarField::rand(&mut rng))
-            .collect_vec();
-        // random m_b
-        let m_b = (0..TEST_SIZE)
-            .map(|_| BlsScalarField::rand(&mut rng))
-            .collect_vec();
-
-        // commitment of a in g2
-        let l_commit = PedersenBlsG2::commit(&params.l_params, &m_a).unwrap();
-        // commitment of b in g2
-        let r_commit = PedersenBlsG2::commit(&params.r_params, &m_b).unwrap();
-
-        // inner product of m_a and m_b
-        let t = &[BlsScalarInnerProd::inner_product(&m_a, &m_b).unwrap()];
-
-        // this simply returns the inner pairing t
-        let ip_commit = Identity::commit(&[params.ip_param.clone()], t).unwrap();
-        // same as
-        // let com_t = IdentityOutput(t);
-
-        let commitment = GipaCommitment {
-            l_commit,
-            r_commit,
-            ip_commit,
-        };
-
-        let proof = BulletProof::prove((&m_a, &m_b, &t[0]), &params, &commitment).unwrap();
-
-        assert!(BulletProof::verify(&params, commitment, &proof,).unwrap());
     }
 }

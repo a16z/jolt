@@ -12,7 +12,6 @@ use std::{
 
 pub mod afgho16;
 pub mod identity;
-pub mod pedersen;
 
 pub type Error = anyhow::Error;
 

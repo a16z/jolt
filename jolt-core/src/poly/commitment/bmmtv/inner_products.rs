@@ -2,7 +2,6 @@ use ark_ec::{
     pairing::{MillerLoopOutput, Pairing, PairingOutput},
     CurveGroup,
 };
-use ark_ff::Field;
 use ark_std::cfg_iter;
 use std::marker::PhantomData;
 
@@ -123,29 +122,5 @@ impl<G: CurveGroup> InnerProduct for MultiexponentiationInnerProduct<G> {
 
         // Can unwrap because we did the length check above
         Ok(G::msm(&G::normalize_batch(left), right).unwrap())
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct ScalarInnerProduct<F: Field> {
-    _field: PhantomData<F>,
-}
-
-impl<F: Field> InnerProduct for ScalarInnerProduct<F> {
-    type LeftMessage = F;
-    type RightMessage = F;
-    type Output = F;
-
-    fn inner_product(
-        left: &[Self::LeftMessage],
-        right: &[Self::RightMessage],
-    ) -> Result<Self::Output, InnerProductError> {
-        if left.len() != right.len() {
-            return Err(InnerProductError::MessageLengthInvalid(
-                left.len(),
-                right.len(),
-            ));
-        };
-        Ok(cfg_iter!(left).zip(right).map(|(x, y)| *x * y).sum())
     }
 }

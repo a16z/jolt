@@ -1,5 +1,5 @@
 use ark_ec::{pairing::Pairing, Group};
-use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
+use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, rand::Rng};
 use ark_std::{end_timer, start_timer};
@@ -47,86 +47,6 @@ type GipaWithSsmProof<Com, IpCom> = GipaProof<Com, SsmDummyCommitment<<Com as Dh
 // /// General Inner Product Argument with Trusted Setup
 pub type GipaWithSsm<Ip, Com, IpCom, D> =
     Gipa<Ip, Com, SsmDummyCommitment<<Com as Dhc>::Scalar>, IpCom, D>;
-
-impl<Ip, Com, IpCom, D> GipaWithSsm<Ip, Com, IpCom, D>
-where
-    D: Digest,
-    Ip: InnerProduct<
-        LeftMessage = Com::Message,
-        RightMessage = Com::Scalar,
-        Output = IpCom::Message,
-    >,
-    Com: Dhc,
-    IpCom: Dhc<Scalar = Com::Scalar>,
-    IpCom::Message: MulAssign<Com::Scalar>,
-    IpCom::Param: MulAssign<Com::Scalar>,
-    IpCom::Output: MulAssign<Com::Scalar>,
-{
-    pub fn setup_with_ssm<R: Rng>(
-        rng: &mut R,
-        size: usize,
-    ) -> Result<(Vec<Com::Param>, IpCom::Param), Error> {
-        Ok((Com::setup(rng, size)?, IpCom::setup(rng, 1)?.pop().unwrap()))
-    }
-
-    pub fn prove_with_structured_scalar_message(
-        msg: (&[Ip::LeftMessage], &[Ip::RightMessage]),
-        params: (&[Com::Param], &IpCom::Param),
-    ) -> Result<GipaWithSsmProof<Com, IpCom>, Error> {
-        let (proof, _) = Self::prove_with_aux(
-            msg,
-            &GipaParams::new_aux(
-                params.0,
-                &vec![DummyParam {}; msg.1.len()],
-                &[params.1.clone()],
-            ),
-        )?;
-        Ok(proof)
-    }
-
-    pub fn verify_with_structured_scalar_message(
-        ck: (&[Com::Param], &IpCom::Param),
-        com: (&Com::Output, &IpCom::Output),
-        scalar_b: &Com::Scalar,
-        proof: &GipaWithSsmProof<Com, IpCom>,
-    ) -> Result<bool, Error> {
-        // Calculate base commitments and recursive transcript
-        //TODO: Scalar b not included in generating challenges
-        let (base_com, transcript) = Self::verify_recursive_challenge_transcript(
-            (com.0, &Com::Scalar::zero(), com.1),
-            proof,
-        )?;
-        // Calculate base commitment keys
-        let (ck_a_base, ck_b_base) = Self::_compute_final_commitment_keys(
-            &GipaParams::new(ck.0, &vec![DummyParam {}; ck.0.len()], ck.1),
-            &transcript,
-        )?;
-        // Verify base commitment
-        let gipa_valid = Self::_verify_base_commitment(
-            (&ck_a_base, &ck_b_base, &vec![ck.1.clone()]),
-            base_com.clone(),
-            proof,
-        )?;
-
-        // Compute final scalar
-        let mut power_2_b = *scalar_b;
-        let mut product_form = Vec::new();
-        for x in transcript.iter() {
-            product_form.push(<Com::Scalar>::one() + (x.inverse().unwrap() * power_2_b));
-            power_2_b *= &power_2_b.clone();
-        }
-        let b_base = cfg_iter!(product_form).product::<Com::Scalar>();
-
-        // Verify base inner product commitment
-        let (com_a, _, com_t) = base_com;
-        let a_base = vec![proof.final_message.0.clone()];
-        let t_base = vec![Ip::inner_product(&a_base, &[b_base])?];
-        let base_valid = Com::verify(&[ck_a_base.clone()], &a_base, &com_a)?
-            && IpCom::verify(&[ck.1.clone()], &t_base, &com_t)?;
-
-        Ok(gipa_valid && base_valid)
-    }
-}
 
 /// Pairing-based instantiation of GIPA with an updatable
 /// (trusted) structured reference string (SRS) to achieve
@@ -304,23 +224,14 @@ where
     }
 }
 
-pub fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
-    let mut powers = vec![F::one()];
-    for i in 1..num {
-        powers.push(powers[i - 1] * s);
-    }
-    powers
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         super::super::{
             commitments::{
-                afgho16::AfghoCommitmentG1, identity::IdentityCommitment,
-                pedersen::PedersenCommitment, random_generators,
+                afgho16::AfghoCommitmentG1, identity::IdentityCommitment, random_generators,
             },
-            inner_products::{InnerProduct, MultiexponentiationInnerProduct, ScalarInnerProduct},
+            inner_products::{InnerProduct, MultiexponentiationInnerProduct},
         },
         *,
     };
@@ -329,11 +240,18 @@ mod tests {
     use sha3::Sha3_256;
 
     type BlsAfghoG1 = AfghoCommitmentG1<Bn254>;
-    type BlsPedersen = PedersenCommitment<<Bn254 as Pairing>::G1>;
     type BlsScalarField = <Bn254 as Pairing>::ScalarField;
     type BlsG1 = <Bn254 as Pairing>::G1;
 
     const TEST_SIZE: usize = 8;
+
+    fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
+        let mut powers = vec![F::one()];
+        for i in 1..num {
+            powers.push(powers[i - 1] * s);
+        }
+        powers
+    }
 
     #[test]
     fn tipa_ssm_multiexponentiation_inner_product_test() {
@@ -359,36 +277,6 @@ mod tests {
         assert!(MultiExpTipa::verify_with_structured_scalar_message(
             &v_srs,
             &ck_t,
-            (&com_a, &com_t),
-            &b,
-            &proof
-        )
-        .unwrap());
-    }
-
-    #[test]
-    fn gipa_ssm_scalar_inner_product_test() {
-        type BlsScalarIp = ScalarInnerProduct<BlsScalarField>;
-        type Ipc = IdentityCommitment<BlsScalarField, BlsScalarField>;
-        type ScalarGipa = GipaWithSsm<BlsScalarIp, BlsPedersen, Ipc, Sha3_256>;
-
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let (ck_a, ck_t) = ScalarGipa::setup_with_ssm(&mut rng, TEST_SIZE).unwrap();
-        let mut m_a = Vec::new();
-        for _ in 0..TEST_SIZE {
-            m_a.push(BlsScalarField::rand(&mut rng));
-        }
-        let b = BlsScalarField::rand(&mut rng);
-        let m_b = structured_scalar_power(TEST_SIZE, &b);
-        let com_a = BlsPedersen::commit(&ck_a, &m_a).unwrap();
-        let t = vec![BlsScalarIp::inner_product(&m_a, &m_b).unwrap()];
-        let com_t = Ipc::commit(&[ck_t.clone()], &t).unwrap();
-
-        let proof =
-            ScalarGipa::prove_with_structured_scalar_message((&m_a, &m_b), (&ck_a, &ck_t)).unwrap();
-
-        assert!(ScalarGipa::verify_with_structured_scalar_message(
-            (&ck_a, &ck_t),
             (&com_a, &com_t),
             &b,
             &proof
