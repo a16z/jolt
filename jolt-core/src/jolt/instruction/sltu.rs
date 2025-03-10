@@ -1,4 +1,7 @@
-use crate::field::JoltField;
+use crate::{
+    field::JoltField,
+    utils::{interleave_bits, uninterleave_bits},
+};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -55,19 +58,47 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
+    fn eta(&self) -> usize {
+        1
+    }
+
+    fn subtable_entry(&self, _: usize, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        (x < y).into()
+    }
+
+    fn to_lookup_index(&self) -> u64 {
+        interleave_bits(self.0 as u32, self.1 as u32)
+    }
+
     fn lookup_entry(&self) -> u64 {
         // This is the same for 32-bit and 64-bit word sizes
         (self.0 < self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+
+    fn subtable_mle<F: JoltField>(&self, _: usize, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+
+        // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
+        let mut result = F::zero();
+        let mut eq_term = F::one();
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            result += (F::one() - x_i) * y_i * eq_term;
+            eq_term *= F::one() - x_i - y_i + x_i * y_i + x_i * y_i;
+        }
+        result
     }
 }
 
@@ -77,9 +108,15 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
+        jolt::instruction::JoltInstruction, jolt_instruction_test,
+    };
 
     use super::SLTUInstruction;
+
+    instruction_mle_test_small!(sltu_mle_small, SLTUInstruction<8>);
+    instruction_mle_test_large!(sltu_mle_large, SLTUInstruction<32>);
 
     #[test]
     fn sltu_instruction_32_e2e() {
