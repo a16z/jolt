@@ -525,7 +525,7 @@ where
 mod tests {
     use super::{
         super::commitments::{
-            afgho16::AfghoCommitmentG1, identity::IdentityCommitment, random_generators,
+            afgho16::AfghoCommitment, identity::IdentityCommitment, random_generators,
         },
         super::inner_products::{InnerProduct, MultiexponentiationInnerProduct},
         *,
@@ -538,7 +538,7 @@ mod tests {
     use sha3::Sha3_256;
 
     /// Inner pairing product commitment in G1
-    type AfghoBlsG1 = AfghoCommitmentG1<Bn254>;
+    type AfghoBlsG1 = AfghoCommitment<Bn254>;
     /// Pedersen commitment in G1
     type DummySsm = SsmDummyCommitment<<AfghoBlsG1 as Dhc>::Scalar>;
     // IdentityCommitment<<Bn254 as Pairing>::ScalarField, <Bn254 as Pairing>::G2>;

@@ -229,7 +229,7 @@ mod tests {
     use super::{
         super::super::{
             commitments::{
-                afgho16::AfghoCommitmentG1, identity::IdentityCommitment, random_generators,
+                afgho16::AfghoCommitment, identity::IdentityCommitment, random_generators,
             },
             inner_products::{InnerProduct, MultiexponentiationInnerProduct},
         },
@@ -239,7 +239,7 @@ mod tests {
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use sha3::Sha3_256;
 
-    type BlsAfghoG1 = AfghoCommitmentG1<Bn254>;
+    type BlsAfghoG1 = AfghoCommitment<Bn254>;
     type BlsScalarField = <Bn254 as Pairing>::ScalarField;
     type BlsG1 = <Bn254 as Pairing>::G1;
 

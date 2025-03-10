@@ -12,11 +12,7 @@ pub struct AfghoCommitment<P: Pairing> {
     _pair: PhantomData<P>,
 }
 
-/// Represents an [`AfghoCommitment`] in G1
-#[derive(Clone)]
-pub struct AfghoCommitmentG1<P: Pairing>(AfghoCommitment<P>);
-
-impl<P: Pairing> Dhc for AfghoCommitmentG1<P> {
+impl<P: Pairing> Dhc for AfghoCommitment<P> {
     type Scalar = P::ScalarField;
     type Message = P::G1;
     type Param = P::G2;
@@ -40,7 +36,7 @@ mod tests {
 
     type BnG1 = <Bn254 as Pairing>::G1;
 
-    type CommitG1 = AfghoCommitmentG1<Bn254>;
+    type CommitG1 = AfghoCommitment<Bn254>;
     const TEST_SIZE: usize = 8;
 
     #[test]

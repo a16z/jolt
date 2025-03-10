@@ -17,7 +17,7 @@ use digest::Digest;
 
 use super::{
     commitments::{
-        afgho16::AfghoCommitmentG1,
+        afgho16::AfghoCommitment,
         identity::{DummyParam, IdentityCommitment, IdentityOutput},
         Dhc,
     },
@@ -35,14 +35,14 @@ type ScalarField<P> = <P as Pairing>::ScalarField;
 
 type PolynomialEvaluationSecondTierIpa<P, D> = TipaWithSsm<
     MultiexponentiationInnerProduct<G1<P>>,
-    AfghoCommitmentG1<P>,
+    AfghoCommitment<P>,
     IdentityCommitment<G1<P>, ScalarField<P>>,
     P,
     D,
 >;
 
 type PolynomialEvaluationSecondTierIpaProof<P> =
-    TipaWithSsmProof<P, AfghoCommitmentG1<P>, IdentityCommitment<G1<P>, ScalarField<P>>>;
+    TipaWithSsmProof<P, AfghoCommitment<P>, IdentityCommitment<G1<P>, ScalarField<P>>>;
 
 pub struct Kzg<P: Pairing> {
     _pairing: PhantomData<P>,
@@ -187,7 +187,7 @@ impl<P: Pairing, D: Digest> BivariatePolynomialCommitment<P, D> {
 
         // Create AFGHO commitment to Y polynomial commitments
         Ok((
-            AfghoCommitmentG1::<P>::commit(&ck, &y_polynomial_coms)?,
+            AfghoCommitment::<P>::commit(&ck, &y_polynomial_coms)?,
             y_polynomial_coms,
         ))
     }
