@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use crate::host;
 use crate::jolt::instruction::mulhu::MULHUInstruction;
+use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
@@ -8,6 +9,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
+use crate::subprotocols::sparse_dense_shout::prove_single_instruction_alt;
 use crate::subprotocols::sparse_dense_sumcheck::prove_single_instruction;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
@@ -34,6 +36,7 @@ pub enum BenchType {
     Sha2Chain,
     Shout,
     SparseDenseShout,
+    SparseDenseShoutAlt,
     Twist,
 }
 
@@ -58,6 +61,7 @@ pub fn benchmarks(
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
+            BenchType::SparseDenseShoutAlt => sparse_dense_shout_alt::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -72,6 +76,7 @@ pub fn benchmarks(
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
+            BenchType::SparseDenseShoutAlt => sparse_dense_shout_alt::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
@@ -134,7 +139,7 @@ where
     let mut rng = StdRng::seed_from_u64(12345);
 
     let instructions: Vec<_> = (0..T)
-        .map(|_| MULHUInstruction::<32>::default().random(&mut rng))
+        .map(|_| ORInstruction::<32>::default().random(&mut rng))
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
@@ -142,6 +147,44 @@ where
 
     let task = move || {
         let _ = prove_single_instruction::<TREE_WIDTH, _, _, _>(
+            &instructions,
+            r_cycle,
+            &mut prover_transcript,
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Sparse-dense shout d=4"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn sparse_dense_shout_alt<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let small_value_lookup_tables = F::compute_lookup_tables();
+    F::initialize_lookup_tables(small_value_lookup_tables);
+
+    let mut tasks = Vec::new();
+
+    const T: usize = 1 << 19;
+    const TREE_WIDTH: usize = 1 << 16;
+
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    let instructions: Vec<_> = (0..T)
+        .map(|_| ORInstruction::<32>::default().random(&mut rng))
+        .collect();
+
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    let r_cycle: Vec<F> = prover_transcript.challenge_vector(T.log_2());
+
+    let task = move || {
+        let _ = prove_single_instruction_alt::<TREE_WIDTH, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,

@@ -14,8 +14,8 @@ use super::multilinear_polynomial::BindingOrder;
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
-    num_vars: usize, // the number of variables in the multilinear polynomial
-    len: usize,
+    pub num_vars: usize, // the number of variables in the multilinear polynomial
+    pub len: usize,
     pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 

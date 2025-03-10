@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
+use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use crate::utils::{interleave_bits, uninterleave_bits};
 
@@ -115,6 +116,69 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstruction<WORD_SIZE> {
+    const NUM_PREFIXES: usize = 1;
+    const NUM_SUFFIXES: usize = 2;
+
+    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
+        debug_assert_eq!(
+            prefixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
+        );
+        debug_assert_eq!(
+            suffixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
+        );
+        prefixes[0] * suffixes[0] + suffixes[1]
+    }
+
+    fn update_prefix_checkpoint(_: usize, checkpoint: &mut F, r_x: F, r_y: F, j: usize) {
+        let shift = WORD_SIZE - 1 - j / 2;
+        *checkpoint += F::from_u32(1 << shift) * (r_x + r_y - (r_x * r_y));
+    }
+
+    fn prefix_mle(
+        _: usize,
+        checkpoint: F,
+        r_x: Option<F>,
+        c: u32,
+        b: u32,
+        b_len: usize,
+        j: usize,
+    ) -> F {
+        let mut result = checkpoint;
+        let mut shift = WORD_SIZE - 1 - j / 2;
+
+        if let Some(r_x) = r_x {
+            let y = F::from_u8(c as u8);
+            result += F::from_u32(1 << shift) * (r_x + y - (r_x * y));
+            shift -= 1;
+            let (x, y) = uninterleave_bits(b as u64);
+            result += F::from_u32((x | y) << shift);
+        } else {
+            let y_msb = b >> (b_len - 1);
+            result += F::from_u32((c + y_msb - c * y_msb) << shift);
+            shift -= 1;
+            let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
+            result += F::from_u32((x | y) << shift);
+        }
+
+        result
+    }
+
+    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32 {
+        debug_assert!(b_len % 2 == 0);
+        match l {
+            0 => 1,
+            1 => {
+                let (x, y) = uninterleave_bits(b);
+                x | y
+            }
+            _ => unimplemented!("Unexpected value l={l}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -122,11 +186,25 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
-        jolt::instruction::JoltInstruction, jolt_instruction_test,
+        field::JoltField, instruction_mle_test_large, instruction_mle_test_small,
+        instruction_update_function_test, jolt::instruction::JoltInstruction,
+        jolt_instruction_test, utils::index_to_field_bitvector,
     };
 
     use super::ORInstruction;
+
+    #[test]
+    fn or_prefix_suffix() {
+        let or = ORInstruction::<8>::default();
+        let materialized = or.materialize();
+        for (i, entry) in materialized.iter().enumerate() {
+            assert_eq!(
+                Fr::from_u64(*entry),
+                or.evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
+                "MLE did not match materialized table at index {i}",
+            );
+        }
+    }
 
     instruction_mle_test_small!(or_mle_small, ORInstruction<8>);
     instruction_mle_test_large!(or_mle_large, ORInstruction<32>);

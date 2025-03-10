@@ -1,7 +1,9 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::instruction::{and::ANDInstruction, mulhu::MULHUInstruction, JoltInstruction},
+    jolt::instruction::{
+        and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction, JoltInstruction,
+    },
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -494,6 +496,7 @@ pub trait SparseDenseSumcheck<F: JoltField>: JoltInstruction + Default {
 
 impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<32> {}
 impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<32> {}
+impl<F: JoltField> SparseDenseSumcheck<F> for ORInstruction<32> {}
 
 pub fn prove_single_instruction<
     const TREE_WIDTH: usize,

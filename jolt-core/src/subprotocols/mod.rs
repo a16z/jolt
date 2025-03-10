@@ -3,6 +3,7 @@
 pub mod grand_product;
 pub mod grand_product_quarks;
 pub mod shout;
+pub mod sparse_dense_shout;
 pub mod sparse_dense_sumcheck;
 pub mod sparse_grand_product;
 pub mod sumcheck;
