@@ -222,7 +222,7 @@ version = "0.4.2"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
 dependencies = [
  "ark-ff 0.4.2",
- "ark-poly 0.4.2 (git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64)",
+ "ark-poly",
  "ark-serialize 0.4.2",
  "ark-std 0.4.0",
  "derivative",
@@ -312,19 +312,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "ark-poly"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d320bfc44ee185d899ccbadfa8bc31aab923ce1558716e1997a1e74057fe86bf"
-dependencies = [
- "ark-ff 0.4.2",
- "ark-serialize 0.4.2",
- "ark-std 0.4.0",
- "derivative",
- "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -1888,7 +1875,6 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.4.2",
- "ark-poly 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.4.2",
  "ark-std 0.4.0",
  "bincode",

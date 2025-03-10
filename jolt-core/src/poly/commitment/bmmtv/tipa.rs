@@ -1,14 +1,14 @@
-use ark_ec::scalar_mul::fixed_base::FixedBase;
-use ark_ec::{pairing::Pairing, CurveGroup};
-use ark_ff::{Field, One, PrimeField, Zero};
-use ark_poly::polynomial::{univariate::DensePolynomial, DenseUVPolynomial};
-use ark_std::{end_timer, start_timer};
-use itertools::Itertools;
-
 use super::{
     inner_products::{InnerProduct, MultiexponentiationInnerProduct},
     Error,
 };
+use crate::field::JoltField;
+use crate::poly::unipoly::UniPoly;
+use ark_ec::scalar_mul::fixed_base::FixedBase;
+use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ff::{Field, One, PrimeField, Zero};
+use ark_std::{end_timer, start_timer};
+use itertools::Itertools;
 
 pub mod structured_scalar_message;
 
@@ -60,10 +60,12 @@ pub fn prove_commitment_key_kzg_opening<G: CurveGroup>(
     transcript: &[G::ScalarField],
     r_shift: &G::ScalarField,
     kzg_challenge: &G::ScalarField,
-) -> Result<G, Error> {
-    let ck_polynomial = DensePolynomial::from_coefficients_slice(
-        &polynomial_coefficients_from_transcript(transcript, r_shift),
-    );
+) -> Result<G, Error>
+where
+    G::ScalarField: JoltField,
+{
+    let ck_polynomial =
+        UniPoly::from_coeff(polynomial_coefficients_from_transcript(transcript, r_shift));
     assert_eq!(srs_powers.len(), ck_polynomial.coeffs.len());
 
     let eval = start_timer!(|| "polynomial eval");
@@ -72,9 +74,13 @@ pub fn prove_commitment_key_kzg_opening<G: CurveGroup>(
     end_timer!(eval);
 
     let quotient = start_timer!(|| "polynomial quotient");
-    let quotient_polynomial = &(&ck_polynomial
-        - &DensePolynomial::from_coefficients_vec(vec![ck_polynomial_c_eval]))
-        / &(DensePolynomial::from_coefficients_vec(vec![-*kzg_challenge, <G::ScalarField>::one()]));
+    let (quotient_polynomial, _remainder) = (ck_polynomial
+        - UniPoly::from_coeff(vec![ck_polynomial_c_eval]))
+    .divide_with_remainder(&UniPoly::from_coeff(vec![
+        -*kzg_challenge,
+        <G::ScalarField>::one(),
+    ]))
+    .unwrap();
     end_timer!(quotient);
 
     let mut quotient_polynomial_coeffs = quotient_polynomial.coeffs;

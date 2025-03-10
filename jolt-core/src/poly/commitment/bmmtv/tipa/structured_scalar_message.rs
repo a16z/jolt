@@ -1,11 +1,3 @@
-use ark_ec::{pairing::Pairing, Group};
-use ark_ff::{Field, One, PrimeField, UniformRand};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter, rand::Rng};
-use ark_std::{end_timer, start_timer};
-use digest::Digest;
-use std::{marker::PhantomData, ops::MulAssign};
-
 use super::super::{
     commitments::{identity::DummyParam, Dhc},
     gipa::GipaParams,
@@ -17,6 +9,14 @@ use super::super::{
     },
     Error,
 };
+use crate::field::JoltField;
+use ark_ec::{pairing::Pairing, Group};
+use ark_ff::{Field, One, PrimeField, UniformRand};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{cfg_iter, rand::Rng};
+use ark_std::{end_timer, start_timer};
+use digest::Digest;
+use std::{marker::PhantomData, ops::MulAssign};
 //TODO: Properly generalize the non-committed message approach of SIPP and MIPP to GIPA
 //TODO: Structured message is a special case of the non-committed message and does not rely on TIPA
 //TODO: Can support structured group element messages as well as structured scalar messages
@@ -74,6 +74,7 @@ where
 
 impl<Ip, LCom, IpCom, P, D> TipaWithSsm<Ip, LCom, IpCom, P, D>
 where
+    P::ScalarField: JoltField,
     D: Digest,
     P: Pairing,
     Ip: InnerProduct<
@@ -124,7 +125,7 @@ where
         let (ck_a_final, _) = aux.final_commitment_param;
         let transcript = aux.scalar_transcript;
         let transcript_inverse = cfg_iter!(transcript)
-            .map(|x| x.inverse().unwrap())
+            .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
         // KZG challenge point
@@ -172,7 +173,7 @@ where
                 &proof.gipa_proof,
             )?;
         let transcript_inverse = cfg_iter!(transcript)
-            .map(|x| x.inverse().unwrap())
+            .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
         let ck_a_final = &proof.final_ck;
@@ -208,8 +209,8 @@ where
         let mut power_2_b = *scalar_b;
         let mut product_form = Vec::new();
         for x in transcript.iter() {
-            product_form.push(<P::ScalarField>::one() + (x.inverse().unwrap() * power_2_b));
-            power_2_b *= &power_2_b.clone();
+            product_form.push(<P::ScalarField>::one() + (JoltField::inverse(x).unwrap() * power_2_b));
+            power_2_b *= power_2_b.clone();
         }
         let b_base = cfg_iter!(product_form).product::<P::ScalarField>();
 

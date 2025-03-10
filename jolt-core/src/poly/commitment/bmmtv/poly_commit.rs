@@ -5,15 +5,9 @@ use ark_ec::{
     CurveGroup,
 };
 use ark_ff::{Field, One, UniformRand, Zero};
-use ark_poly::polynomial::{
-    univariate::DensePolynomial as UnivariatePolynomial, DenseUVPolynomial, Polynomial,
-};
 
 use ark_std::{end_timer, start_timer};
 use std::marker::PhantomData;
-
-use ark_std::rand::Rng;
-use digest::Digest;
 
 use super::{
     commitments::{
@@ -29,6 +23,10 @@ use super::{
     },
     Error,
 };
+use crate::field::JoltField;
+use crate::poly::unipoly::UniPoly as UnivariatePolynomial;
+use ark_std::rand::Rng;
+use digest::Digest;
 
 type G1<P> = <P as Pairing>::G1;
 type ScalarField<P> = <P as Pairing>::ScalarField;
@@ -49,7 +47,10 @@ pub struct Kzg<P: Pairing> {
 }
 
 // Simple implementation of KZG polynomial commitment scheme
-impl<P: Pairing> Kzg<P> {
+impl<P: Pairing> Kzg<P>
+where
+    P::ScalarField: JoltField,
+{
     pub fn setup<R: Rng>(
         rng: &mut R,
         degree: usize,
@@ -90,8 +91,12 @@ impl<P: Pairing> Kzg<P> {
         assert!(powers.len() > polynomial.degree());
 
         // Trick to calculate (p(x) - p(z)) / (x - z) as p(x) / (x - z) ignoring remainder p(z)
-        let quotient_polynomial = polynomial
-            / &UnivariatePolynomial::from_coefficients_vec(vec![-*point, P::ScalarField::one()]);
+        let (quotient_polynomial, _reminder) = polynomial
+            .divide_with_remainder(&UnivariatePolynomial::from_coeff(vec![
+                -*point,
+                P::ScalarField::one(),
+            ]))
+            .unwrap();
         let mut quotient_coeffs = quotient_polynomial.coeffs.to_vec();
         quotient_coeffs.resize(powers.len(), P::ScalarField::zero());
 
@@ -115,7 +120,10 @@ pub struct BivariatePolynomial<F: Field> {
     y_polynomials: Vec<UnivariatePolynomial<F>>,
 }
 
-impl<F: Field> BivariatePolynomial<F> {
+impl<F: Field> BivariatePolynomial<F>
+where
+    F: JoltField,
+{
     pub fn evaluate(&self, point: &(F, F)) -> F {
         let (x, y) = point;
         let mut point_x_powers = vec![];
@@ -142,7 +150,10 @@ pub struct BivariatePolynomialCommitment<P: Pairing, D: Digest>(
     PolynomialEvaluationSecondTierIpa<P, D>,
 );
 
-impl<P: Pairing, D: Digest> BivariatePolynomialCommitment<P, D> {
+impl<P: Pairing, D: Digest> BivariatePolynomialCommitment<P, D>
+where
+    P::ScalarField: JoltField,
+{
     pub fn setup<R: Rng>(
         rng: &mut R,
         x_degree: usize,
@@ -208,7 +219,7 @@ impl<P: Pairing, D: Digest> BivariatePolynomialCommitment<P, D> {
         let mut cur = P::ScalarField::one();
         for _ in 0..(ck_1.len()) {
             powers_of_x.push(cur);
-            cur *= x;
+            cur *= *x;
         }
 
         let coeffs = bivariate_polynomial
@@ -238,11 +249,8 @@ impl<P: Pairing, D: Digest> BivariatePolynomialCommitment<P, D> {
             )?;
         end_timer!(ipa_time);
         let kzg_time = start_timer!(|| "Computing KZG opening proof");
-        let kzg_proof = Kzg::<P>::open(
-            kzg_srs,
-            &UnivariatePolynomial::from_coefficients_slice(&y_eval_coeffs),
-            y,
-        )?;
+        let kzg_proof =
+            Kzg::<P>::open(kzg_srs, &UnivariatePolynomial::from_coeff(y_eval_coeffs), y)?;
         end_timer!(kzg_time);
 
         Ok(OpeningProof {
@@ -279,7 +287,10 @@ pub struct UnivariatePolynomialCommitment<P: Pairing, D: Digest> {
     _digest: PhantomData<D>,
 }
 
-impl<P: Pairing, D: Digest> UnivariatePolynomialCommitment<P, D> {
+impl<P: Pairing, D: Digest> UnivariatePolynomialCommitment<P, D>
+where
+    P::ScalarField: JoltField,
+{
     fn bivariate_degrees(univariate_degree: usize) -> (usize, usize) {
         //(((univariate_degree + 1) as f64).sqrt().ceil() as usize).next_power_of_two() - 1;
         let sqrt = (((univariate_degree + 1) as f64).sqrt().ceil() as usize).next_power_of_two();
@@ -312,9 +323,7 @@ impl<P: Pairing, D: Digest> UnivariatePolynomialCommitment<P, D> {
             for _ in 0..y_degree + 1 {
                 y_polynomial_coeffs.push(Clone::clone(coeff_iter.next().unwrap()))
             }
-            y_polynomials.push(UnivariatePolynomial::from_coefficients_slice(
-                &y_polynomial_coeffs,
-            ));
+            y_polynomials.push(UnivariatePolynomial::from_coeff(y_polynomial_coeffs));
         }
         BivariatePolynomial { y_polynomials }
     }
@@ -397,9 +406,7 @@ mod tests {
             for _ in 0..BIVARIATE_Y_DEGREE + 1 {
                 y_polynomial_coeffs.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
             }
-            y_polynomials.push(UnivariatePolynomial::from_coefficients_slice(
-                &y_polynomial_coeffs,
-            ));
+            y_polynomials.push(UnivariatePolynomial::from_coeff(y_polynomial_coeffs));
         }
         let bivariate_polynomial = BivariatePolynomial { y_polynomials };
 
@@ -436,7 +443,7 @@ mod tests {
         for _ in 0..UNIVARIATE_DEGREE + 1 {
             polynomial_coeffs.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
-        let polynomial = UnivariatePolynomial::from_coefficients_slice(&polynomial_coeffs);
+        let polynomial = UnivariatePolynomial::from_coeff(polynomial_coeffs);
 
         // Commit to polynomial
         let (com, y_polynomial_comms) =
