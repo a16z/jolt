@@ -7,13 +7,14 @@ use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SRS<P: Pairing>
 where
     P::G1: Icicle,
@@ -131,7 +132,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct KZGProverKey<P: Pairing>
 where
     P::G1: Icicle,
@@ -182,7 +183,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct KZGVerifierKey<P: Pairing> {
     pub g1: P::G1Affine,
     pub g2: P::G2Affine,

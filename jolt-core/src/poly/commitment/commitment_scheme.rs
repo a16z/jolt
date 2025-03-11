@@ -11,7 +11,7 @@ use crate::{
 
 pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
-    type Setup: Clone + Sync + Send;
+    type Setup: Clone + Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type Commitment: Default
         + Debug
         + Sync

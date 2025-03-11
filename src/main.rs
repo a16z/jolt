@@ -188,6 +188,7 @@ lto = "fat"
 [dependencies]
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
+ark-serialize = "0.4.2"
 
 [features]
 icicle = ["jolt-sdk/icicle"]
@@ -201,11 +202,11 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "op
 const HOST_MAIN: &str = r#"pub fn main() {
     let program = guest::compile_fib();
 
-    let preprocess_provering = guest::preprocess_prover_fib(&program);
-    let preprocess_verifiering = guest::preprocess_verifier_fib(&program);
+    let prover_preprocessing = guest::preprocess_prover_fib(&program);
+    let verifier_preprocessing = guest::preprocess_verifier_fib(&program);
 
-    let prove_fib = guest::build_prover_fib(program, preprocess_provering);
-    let verify_fib = guest::build_verifier_fib(preprocess_verifiering);
+    let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
+    let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
     let (output, proof) = prove_fib(50);
     let is_valid = verify_fib(proof);

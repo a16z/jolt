@@ -56,7 +56,7 @@ use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
 use super::instruction::JoltInstructionSet;
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
