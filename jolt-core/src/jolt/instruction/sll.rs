@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
+use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
+use crate::utils::{interleave_bits, uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -59,6 +61,16 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        let shift = y % WORD_SIZE as u32;
+        x.checked_shl(shift).unwrap_or(0).into()
+    }
+
+    fn to_lookup_index(&self) -> u64 {
+        interleave_bits(self.0 as u32, self.1 as u32)
+    }
+
     fn lookup_entry(&self) -> u64 {
         // SLL is specified to ignore all but the last 5 (resp. 6) bits of y: https://jemu.oscc.cc/SLL
         if WORD_SIZE == 32 {
@@ -76,12 +88,84 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for SLLInstruction<WORD_SIZE> {
+    const NUM_PREFIXES: usize = WORD_SIZE * 3 / 4;
+    const NUM_SUFFIXES: usize = 1 + WORD_SIZE * 3 / 4;
+
+    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
+        debug_assert_eq!(
+            prefixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
+        );
+        debug_assert_eq!(
+            suffixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
+        );
+
+        suffixes[0]
+            + prefixes
+                .iter()
+                .zip(suffixes[1..].iter())
+                .map(|(prefix, suffix)| *prefix * suffix)
+                .sum::<F>()
+    }
+
+    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, _: F, j: usize) {
+        checkpoints[j / 2] = Some(r_x);
+    }
+
+    fn prefix_mle(
+        l: usize,
+        checkpoints: &[Option<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: u32,
+        b_len: usize,
+        j: usize,
+    ) -> F {
+        println!("{l} {r_x:?} {c} {b:b} {b_len} {j}");
+        let x_index = j / 2;
+        if l == x_index {
+            if let Some(r_x) = r_x {
+                r_x
+            } else {
+                F::from_u32(c)
+            }
+        } else if l < x_index {
+            checkpoints[l].unwrap()
         } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+            let (x, _) = uninterleave_bits(b as u64);
+            println!("x: {x:b}");
+            F::from_u32((x >> (b_len / 2)) & 1)
+        }
+    }
+
+    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32 {
+        debug_assert!(b_len % 2 == 0);
+        debug_assert!(l < <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES);
+
+        let (x, y) = uninterleave_bits(b);
+        let shift = y % WORD_SIZE as u32;
+
+        if l == 0 {
+            x << shift
+        } else {
+            let x_index = (l - 1) as u32;
+            if (WORD_SIZE as u32 - 1 - x_index + shift) > (WORD_SIZE as u32 - 1) {
+                0
+            } else {
+                1 << (WORD_SIZE as u32 - 1 - x_index + shift)
+            }
         }
     }
 }
@@ -92,9 +176,17 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt_instruction_test,
+    };
 
     use super::SLLInstruction;
+
+    #[test]
+    fn sll_prefix_suffix() {
+        prefix_suffix_test::<Fr, SLLInstruction<32>>();
+    }
 
     #[test]
     fn sll_instruction_32_e2e() {

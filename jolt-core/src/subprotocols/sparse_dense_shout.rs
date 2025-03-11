@@ -1,7 +1,7 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::instruction::{and::ANDInstruction, mulhu::MULHUInstruction, JoltInstruction},
+    jolt::instruction::JoltInstruction,
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
@@ -161,7 +161,6 @@ pub fn prove_single_instruction_alt<
     r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4]) {
-    debug_assert!(LOG_K.is_power_of_two());
     let log_m = LOG_K / 4;
     let m = log_m.pow2();
 
@@ -246,7 +245,7 @@ pub fn prove_single_instruction_alt<
 
         let suffix_len = (3 - phase) * log_m;
 
-        // Build binary trees Q_\ell for each \ell = 1, ..., \kappa
+        // Initialize suffix poly for each suffix
         let span = tracing::span!(tracing::Level::INFO, "compute instruction_index_iters");
         let _guard = span.enter();
         let instruction_index_iters: Vec<_> = (0..num_chunks)
@@ -432,7 +431,7 @@ pub fn prove_single_instruction_alt<
         .into_par_iter()
         .map(|k| {
             let suffixes: Vec<_> = (0..I::NUM_SUFFIXES)
-                .map(|l| F::from_u32(I::suffix_mle(l, k as u64, log_m)))
+                .map(|l| F::from_u32(I::suffix_mle(l, (k as u64) % (1 << log_m), log_m)))
                 .collect();
             I::combine(&prefixes, &suffixes)
         })
@@ -608,15 +607,15 @@ pub fn verify_single_instruction<
     ProofTranscript: Transcript,
 >(
     proof: SumcheckInstanceProof<F, ProofTranscript>,
-    K: usize,
-    T: usize,
+    log_K: usize,
+    log_T: usize,
     r_cycle: Vec<F>,
     rv_claim: F,
     ra_claims: [F; 4],
     transcript: &mut ProofTranscript,
 ) -> Result<(), ProofVerifyError> {
-    let (sumcheck_claim, r) = proof.verify(rv_claim, K.log_2() + T.log_2(), 5, transcript)?;
-    let (r_address, r_cycle_prime) = r.split_at(K.log_2());
+    let (sumcheck_claim, r) = proof.verify(rv_claim, log_K + log_T, 5, transcript)?;
+    let (r_address, r_cycle_prime) = r.split_at(log_K);
 
     let val_eval = I::default().evaluate_mle(r_address);
     let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(r_cycle_prime);
@@ -635,140 +634,26 @@ mod tests {
     use super::*;
     use crate::{
         jolt::instruction::{
-            and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction, sltu::SLTUInstruction,
+            and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction, sll::SLLInstruction,
+            sltu::SLTUInstruction,
         },
-        utils::{transcript::KeccakTranscript, uninterleave_bits},
+        utils::transcript::KeccakTranscript,
     };
     use ark_bn254::Fr;
     use rand::{rngs::StdRng, SeedableRng};
 
-    // impl<F: JoltField> SparseDenseSumcheck<F> for MULHUInstruction<8> {}
-    // impl<F: JoltField> SparseDenseSumcheck<F> for ADDInstruction<8> {}
-    // impl<F: JoltField> SparseDenseSumcheck<F> for ANDInstruction<8> {}
-
     const WORD_SIZE: usize = 8;
-    const K: usize = 1 << 16;
     const LOG_K: usize = 16;
-    const T: usize = 1 << 8;
+    const LOG_T: usize = 8;
+    const T: usize = 1 << LOG_T;
 
-    // #[test]
-    // fn test_mulhu() {
-    //     let mut rng = StdRng::seed_from_u64(12345);
-
-    //     let instructions: Vec<_> = (0..T)
-    //         .map(|_| MULHUInstruction::<WORD_SIZE>::default().random(&mut rng))
-    //         .collect();
-
-    //     let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-    //     let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-    //     let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
-    //         &instructions,
-    //         r_cycle,
-    //         &mut prover_transcript,
-    //     );
-
-    //     let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-    //     verifier_transcript.compare_to(prover_transcript);
-    //     let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-    //     let verification_result = verify_single_instruction::<_, MULHUInstruction<WORD_SIZE>, _>(
-    //         proof,
-    //         K,
-    //         T,
-    //         r_cycle,
-    //         rv_claim,
-    //         ra_claims,
-    //         &mut verifier_transcript,
-    //     );
-    //     assert!(
-    //         verification_result.is_ok(),
-    //         "Verification failed with error: {:?}",
-    //         verification_result.err()
-    //     );
-    // }
-
-    // #[test]
-    // fn test_add() {
-    //     let mut rng = StdRng::seed_from_u64(12345);
-
-    //     let instructions: Vec<_> = (0..T)
-    //         .map(|_| ADDInstruction::<WORD_SIZE>::default().random(&mut rng))
-    //         .collect();
-
-    //     let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-    //     let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-    //     let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
-    //         &instructions,
-    //         r_cycle,
-    //         &mut prover_transcript,
-    //     );
-
-    //     let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-    //     verifier_transcript.compare_to(prover_transcript);
-    //     let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-    //     let verification_result = verify_single_instruction::<_, ADDInstruction<WORD_SIZE>, _>(
-    //         proof,
-    //         K,
-    //         T,
-    //         r_cycle,
-    //         rv_claim,
-    //         ra_claims,
-    //         &mut verifier_transcript,
-    //     );
-    //     assert!(
-    //         verification_result.is_ok(),
-    //         "Verification failed with error: {:?}",
-    //         verification_result.err()
-    //     );
-    // }
-
-    // #[test]
-    // fn test_and() {
-    //     let mut rng = StdRng::seed_from_u64(12345);
-
-    //     let instructions: Vec<_> = (0..T)
-    //         .map(|_| ANDInstruction::<WORD_SIZE>::default().random(&mut rng))
-    //         .collect();
-
-    //     let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-    //     let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-    //     let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
-    //         &instructions,
-    //         r_cycle,
-    //         &mut prover_transcript,
-    //     );
-
-    //     let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-    //     verifier_transcript.compare_to(prover_transcript);
-    //     let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-    //     let verification_result = verify_single_instruction::<_, ANDInstruction<WORD_SIZE>, _>(
-    //         proof,
-    //         K,
-    //         T,
-    //         r_cycle,
-    //         rv_claim,
-    //         ra_claims,
-    //         &mut verifier_transcript,
-    //     );
-    //     assert!(
-    //         verification_result.is_ok(),
-    //         "Verification failed with error: {:?}",
-    //         verification_result.err()
-    //     );
-    // }
-
-    #[test]
-    fn test_or() {
+    fn test_single_instruction<I: SparseDenseSumcheckAlt<Fr>>() {
         let mut rng = StdRng::seed_from_u64(12345);
 
-        let instructions: Vec<_> = (0..T)
-            .map(|_| ORInstruction::<WORD_SIZE>::default().random(&mut rng))
-            .collect();
+        let instructions: Vec<_> = (0..T).map(|_| I::default().random(&mut rng)).collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
         let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<LOG_K, _, _, _>(
             &instructions,
@@ -778,11 +663,11 @@ mod tests {
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-        let verification_result = verify_single_instruction::<_, ORInstruction<WORD_SIZE>, _>(
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
+        let verification_result = verify_single_instruction::<_, I, _>(
             proof,
-            K,
-            T,
+            LOG_K,
+            LOG_T,
             r_cycle,
             rv_claim,
             ra_claims,
@@ -796,38 +681,17 @@ mod tests {
     }
 
     #[test]
+    fn test_or() {
+        test_single_instruction::<ORInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
     fn test_sltu() {
-        let mut rng = StdRng::seed_from_u64(12345);
+        test_single_instruction::<SLTUInstruction<WORD_SIZE>>();
+    }
 
-        let instructions: Vec<_> = (0..T)
-            .map(|_| SLTUInstruction::<WORD_SIZE>::default().random(&mut rng))
-            .collect();
-
-        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
-
-        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<LOG_K, _, _, _>(
-            &instructions,
-            r_cycle,
-            &mut prover_transcript,
-        );
-
-        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
-        verifier_transcript.compare_to(prover_transcript);
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
-        let verification_result = verify_single_instruction::<_, SLTUInstruction<WORD_SIZE>, _>(
-            proof,
-            K,
-            T,
-            r_cycle,
-            rv_claim,
-            ra_claims,
-            &mut verifier_transcript,
-        );
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
+    #[test]
+    fn test_sll() {
+        test_single_instruction::<SLLInstruction<WORD_SIZE>>();
     }
 }

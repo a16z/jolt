@@ -11,7 +11,9 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
-use crate::subprotocols::sparse_dense_shout::prove_single_instruction_alt;
+use crate::subprotocols::sparse_dense_shout::{
+    prove_single_instruction_alt, verify_single_instruction,
+};
 use crate::subprotocols::sparse_dense_sumcheck::prove_single_instruction;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
@@ -132,7 +134,9 @@ where
 
     let mut tasks = Vec::new();
 
-    const T: usize = 1 << 19;
+    const LOG_T: usize = 19;
+    const LOG_K: usize = 64;
+    const T: u64 = 1 << LOG_T;
     const TREE_WIDTH: usize = 1 << 16;
 
     let mut rng = StdRng::seed_from_u64(12345);
@@ -142,13 +146,30 @@ where
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = prover_transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
 
     let task = move || {
-        let _ = prove_single_instruction::<TREE_WIDTH, _, _, _>(
+        let (proof, rv_claim, ra_claims) = prove_single_instruction::<TREE_WIDTH, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
+        let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
+        let verification_result = verify_single_instruction::<_, ORInstruction<32>, _>(
+            proof,
+            LOG_K,
+            LOG_T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
         );
     };
 
@@ -170,23 +191,41 @@ where
 
     let mut tasks = Vec::new();
 
-    const T: usize = 1 << 19;
+    const LOG_T: usize = 19;
     const LOG_K: usize = 64;
+    const T: u64 = 1 << LOG_T;
 
     let mut rng = StdRng::seed_from_u64(12345);
 
     let instructions: Vec<_> = (0..T)
-        .map(|_| SLLInstruction::<32>::default().random(&mut rng))
+        .map(|_| ORInstruction::<32>::default().random(&mut rng))
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = prover_transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
 
     let task = move || {
-        let _ = prove_single_instruction_alt::<LOG_K, _, _, _>(
+        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<LOG_K, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
+        let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
+        let verification_result = verify_single_instruction::<_, ORInstruction<32>, _>(
+            proof,
+            LOG_K,
+            LOG_T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
         );
     };
 

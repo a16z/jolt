@@ -149,20 +149,21 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstr
         j: usize,
     ) -> F {
         let mut result = checkpoints[0].unwrap_or(F::zero());
-        let mut shift = WORD_SIZE - 1 - j / 2;
 
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
+            let shift = WORD_SIZE - 1 - j / 2;
             result += F::from_u32(1 << shift) * (r_x + y - (r_x * y));
-            shift -= 1;
             let (x, y) = uninterleave_bits(b as u64);
-            result += F::from_u32((x | y) << shift);
+            let suffix_len = WORD_SIZE - j / 2 - (b_len + 2) / 2;
+            result += F::from_u32((x | y) << suffix_len);
         } else {
             let y_msb = b >> (b_len - 1);
-            result += F::from_u32((c + y_msb - c * y_msb) << shift);
-            shift -= 1;
+            let shift = WORD_SIZE - 1 - j / 2;
+            result += F::from_u32(c + y_msb - c * y_msb) * F::from_u32(1 << shift);
             let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
-            result += F::from_u32((x | y) << shift);
+            let suffix_len = WORD_SIZE - j / 2 - (b_len + 1) / 2;
+            result += F::from_u32((x | y) << suffix_len);
         }
 
         result
@@ -189,10 +190,17 @@ mod test {
 
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
-        jolt::instruction::JoltInstruction, jolt_instruction_test,
+        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt_instruction_test,
+        subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
     };
 
     use super::ORInstruction;
+
+    #[test]
+    fn or_prefix_suffix() {
+        prefix_suffix_test::<Fr, ORInstruction<32>>();
+    }
 
     instruction_mle_test_small!(or_mle_small, ORInstruction<8>);
     instruction_mle_test_large!(or_mle_large, ORInstruction<32>);

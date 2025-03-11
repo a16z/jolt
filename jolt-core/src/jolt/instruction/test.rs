@@ -1,3 +1,6 @@
+use crate::{field::JoltField, subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt};
+use rand::{rngs::StdRng, SeedableRng};
+
 #[macro_export]
 /// Tests the consistency of an instruction's `subtables``, `to_indices`, and `combine_lookups`
 /// methods. In detail:
@@ -203,4 +206,85 @@ macro_rules! instruction_update_function_test {
             }
         }
     };
+}
+
+pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<F>>() {
+    let num_prefixes = I::NUM_PREFIXES;
+    let num_suffixes = I::NUM_SUFFIXES;
+
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    for _ in 0..1000 {
+        let mut prefix_checkpoints: Vec<Option<F>> = vec![None; num_prefixes];
+        let instr = I::default().random(&mut rng);
+        let lookup_index = instr.to_lookup_index();
+
+        println!("{instr:?} -> {lookup_index}");
+
+        let result = F::from_u64(instr.materialize_entry(lookup_index));
+
+        let mut j = 0;
+        let mut len = 64;
+        let mut r: Vec<u64> = vec![];
+        for phase in 0..3 {
+            let suffix_len = (3 - phase) * 16;
+            let suffix = lookup_index % (1 << suffix_len);
+            let suffix_evals: Vec<_> = (0..num_suffixes)
+                .map(|l| F::from_u32(I::suffix_mle(l, suffix, suffix_len)))
+                .collect();
+
+            for _ in 0..16 {
+                let r_x = if j % 2 == 1 {
+                    Some(F::from_u64(*r.last().unwrap()))
+                } else {
+                    None
+                };
+
+                let prefix_len = len - suffix_len;
+                let mut prefix = (lookup_index >> suffix_len) % (1 << prefix_len);
+                let c = prefix >> (prefix_len - 1);
+                prefix = prefix % (1 << (prefix_len - 1));
+
+                let prefix_evals: Vec<_> = (0..num_prefixes)
+                    .map(|l| {
+                        I::prefix_mle(
+                            l,
+                            &prefix_checkpoints,
+                            r_x,
+                            c as u32,
+                            prefix as u32,
+                            prefix_len - 1,
+                            j,
+                        )
+                    })
+                    .collect();
+
+                let combined = I::combine(&prefix_evals, &suffix_evals);
+                if combined != result {
+                    println!("{r:?} {c:b} {prefix:b} {suffix:b}");
+                    for (i, x) in prefix_evals.iter().enumerate() {
+                        println!("prefix_evals[{i}] = {x}");
+                    }
+                    for (i, x) in suffix_evals.iter().enumerate() {
+                        println!("suffix_evals[{i}] = {x}");
+                    }
+                }
+
+                assert_eq!(combined, result);
+                r.push((lookup_index >> (len - 1)) & 1);
+
+                if r.len() % 2 == 0 {
+                    I::update_prefix_checkpoints(
+                        &mut prefix_checkpoints,
+                        F::from_u64(r[r.len() - 2]),
+                        F::from_u64(r[r.len() - 1]),
+                        j,
+                    );
+                }
+
+                len -= 1;
+                j += 1;
+            }
+        }
+    }
 }

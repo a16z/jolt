@@ -141,7 +141,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
         c: u32,
         b: u32,
         b_len: usize,
-        j: usize,
+        _: usize,
     ) -> F {
         match l {
             0 => {
@@ -225,11 +225,17 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
-        jolt::instruction::JoltInstruction, jolt_instruction_test,
+        instruction_mle_test_large, instruction_mle_test_small,
+        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt_instruction_test,
     };
 
     use super::SLTUInstruction;
+
+    #[test]
+    fn sltu_prefix_suffix() {
+        prefix_suffix_test::<Fr, SLTUInstruction<32>>();
+    }
 
     instruction_mle_test_small!(sltu_mle_small, SLTUInstruction<8>);
     instruction_mle_test_large!(sltu_mle_large, SLTUInstruction<32>);
