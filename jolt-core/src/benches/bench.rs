@@ -2,6 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::jolt::instruction::mulhu::MULHUInstruction;
 use crate::jolt::instruction::or::ORInstruction;
+use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
@@ -172,19 +173,19 @@ where
     let mut tasks = Vec::new();
 
     const T: usize = 1 << 19;
-    const TREE_WIDTH: usize = 1 << 16;
+    const LOG_K: usize = 64;
 
     let mut rng = StdRng::seed_from_u64(12345);
 
     let instructions: Vec<_> = (0..T)
-        .map(|_| ORInstruction::<32>::default().random(&mut rng))
+        .map(|_| SLTUInstruction::<32>::default().random(&mut rng))
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
     let r_cycle: Vec<F> = prover_transcript.challenge_vector(T.log_2());
 
     let task = move || {
-        let _ = prove_single_instruction_alt::<TREE_WIDTH, _, _, _>(
+        let _ = prove_single_instruction_alt::<LOG_K, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,

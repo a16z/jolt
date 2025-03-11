@@ -132,21 +132,23 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstr
         prefixes[0] * suffixes[0] + suffixes[1]
     }
 
-    fn update_prefix_checkpoint(_: usize, checkpoint: &mut F, r_x: F, r_y: F, j: usize) {
+    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
         let shift = WORD_SIZE - 1 - j / 2;
-        *checkpoint += F::from_u32(1 << shift) * (r_x + r_y - (r_x * r_y));
+        let updated = checkpoints[0].unwrap_or(F::zero())
+            + F::from_u32(1 << shift) * (r_x + r_y - (r_x * r_y));
+        checkpoints[0] = Some(updated);
     }
 
     fn prefix_mle(
         _: usize,
-        checkpoint: F,
+        checkpoints: &[Option<F>],
         r_x: Option<F>,
         c: u32,
         b: u32,
         b_len: usize,
         j: usize,
     ) -> F {
-        let mut result = checkpoint;
+        let mut result = checkpoints[0].unwrap_or(F::zero());
         let mut shift = WORD_SIZE - 1 - j / 2;
 
         if let Some(r_x) = r_x {
@@ -186,25 +188,11 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        field::JoltField, instruction_mle_test_large, instruction_mle_test_small,
-        instruction_update_function_test, jolt::instruction::JoltInstruction,
-        jolt_instruction_test, utils::index_to_field_bitvector,
+        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
+        jolt::instruction::JoltInstruction, jolt_instruction_test,
     };
 
     use super::ORInstruction;
-
-    #[test]
-    fn or_prefix_suffix() {
-        let or = ORInstruction::<8>::default();
-        let materialized = or.materialize();
-        for (i, entry) in materialized.iter().enumerate() {
-            assert_eq!(
-                Fr::from_u64(*entry),
-                or.evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
-                "MLE did not match materialized table at index {i}",
-            );
-        }
-    }
 
     instruction_mle_test_small!(or_mle_small, ORInstruction<8>);
     instruction_mle_test_large!(or_mle_large, ORInstruction<32>);

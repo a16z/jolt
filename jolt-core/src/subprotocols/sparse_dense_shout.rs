@@ -90,10 +90,10 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
     const NUM_SUFFIXES: usize;
 
     fn combine(prefixes: &[F], suffixes: &[F]) -> F;
-    fn update_prefix_checkpoint(l: usize, checkpoint: &mut F, r_x: F, r_y: F, j: usize);
+    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize);
     fn prefix_mle(
         l: usize,
-        checkpoint: F,
+        checkpoints: &[Option<F>],
         r_x: Option<F>,
         c: u32,
         b: u32,
@@ -103,7 +103,7 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
     fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32;
 
     fn compute_prover_message(
-        prefix_checkpoints: &[F],
+        prefix_checkpoints: &[Option<F>],
         suffix_polys: &[DensePolynomial<F>],
         r: &[F],
         j: usize,
@@ -122,12 +122,12 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
                 // TODO(moodlezoup): Avoid allocations
                 let prefixes_c0: Vec<_> = (0..Self::NUM_PREFIXES)
                     .map(|l| {
-                        Self::prefix_mle(l, prefix_checkpoints[l], r_x, 0, b as u32, log_len - 1, j)
+                        Self::prefix_mle(l, prefix_checkpoints, r_x, 0, b as u32, log_len - 1, j)
                     })
                     .collect();
                 let prefixes_c2: Vec<_> = (0..Self::NUM_PREFIXES)
                     .map(|l| {
-                        Self::prefix_mle(l, prefix_checkpoints[l], r_x, 2, b as u32, log_len - 1, j)
+                        Self::prefix_mle(l, prefix_checkpoints, r_x, 2, b as u32, log_len - 1, j)
                     })
                     .collect();
                 let suffixes_left: Vec<_> = (0..Self::NUM_SUFFIXES)
@@ -190,7 +190,7 @@ pub fn prove_single_instruction_alt<
         || EqPolynomial::evals_with_r2(&r_cycle),
     );
 
-    let mut prefix_checkpoints = vec![F::zero(); I::NUM_PREFIXES];
+    let mut prefix_checkpoints: Vec<Option<F>> = vec![None; I::NUM_PREFIXES];
     let mut v = ExpandingTable::new(m);
 
     let span = tracing::span!(tracing::Level::INFO, "compute rv_claim");
@@ -347,18 +347,12 @@ pub fn prove_single_instruction_alt<
                 if r.len() % 2 == 0 {
                     let span = tracing::span!(tracing::Level::INFO, "Update prefix checkpoints");
                     let _guard = span.enter();
-                    prefix_checkpoints
-                        .par_iter_mut()
-                        .enumerate()
-                        .for_each(|(l, checkpoint)| {
-                            I::update_prefix_checkpoint(
-                                l,
-                                checkpoint,
-                                r[r.len() - 2],
-                                r[r.len() - 1],
-                                j,
-                            )
-                        });
+                    I::update_prefix_checkpoints(
+                        &mut prefix_checkpoints,
+                        r[r.len() - 2],
+                        r[r.len() - 1],
+                        j,
+                    )
                 }
             }
 
@@ -430,13 +424,17 @@ pub fn prove_single_instruction_alt<
 
     let span = tracing::span!(tracing::Level::INFO, "Materialize val");
     let _guard = span.enter();
+    let prefixes: Vec<_> = prefix_checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.unwrap())
+        .collect();
     let val: Vec<F> = (0..m)
         .into_par_iter()
         .map(|k| {
             let suffixes: Vec<_> = (0..I::NUM_SUFFIXES)
                 .map(|l| F::from_u32(I::suffix_mle(l, k as u64, log_m)))
                 .collect();
-            I::combine(&prefix_checkpoints, &suffixes)
+            I::combine(&prefixes, &suffixes)
         })
         .collect();
     let mut val = MultilinearPolynomial::from(val);
@@ -637,7 +635,7 @@ mod tests {
     use super::*;
     use crate::{
         jolt::instruction::{
-            add::ADDInstruction, and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction,
+            and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction, sltu::SLTUInstruction,
         },
         utils::{transcript::KeccakTranscript, uninterleave_bits},
     };
@@ -782,6 +780,42 @@ mod tests {
         verifier_transcript.compare_to(prover_transcript);
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
         let verification_result = verify_single_instruction::<_, ORInstruction<WORD_SIZE>, _>(
+            proof,
+            K,
+            T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn test_sltu() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        let instructions: Vec<_> = (0..T)
+            .map(|_| SLTUInstruction::<WORD_SIZE>::default().random(&mut rng))
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+
+        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<LOG_K, _, _, _>(
+            &instructions,
+            r_cycle,
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let verification_result = verify_single_instruction::<_, SLTUInstruction<WORD_SIZE>, _>(
             proof,
             K,
             T,

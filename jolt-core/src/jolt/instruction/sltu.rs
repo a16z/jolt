@@ -1,5 +1,6 @@
 use crate::{
     field::JoltField,
+    subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
     utils::{interleave_bits, uninterleave_bits},
 };
 use rand::prelude::StdRng;
@@ -99,6 +100,121 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
             eq_term *= F::one() - x_i - y_i + x_i * y_i + x_i * y_i;
         }
         result
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
+    for SLTUInstruction<WORD_SIZE>
+{
+    const NUM_PREFIXES: usize = 2;
+    const NUM_SUFFIXES: usize = 2;
+
+    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
+        debug_assert_eq!(
+            prefixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
+        );
+        debug_assert_eq!(
+            suffixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
+        );
+        prefixes[0] * suffixes[0] + prefixes[1] * suffixes[1]
+    }
+
+    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
+        debug_assert_eq!(
+            checkpoints.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
+        );
+        let lt_checkpoint = checkpoints[0].unwrap_or(F::zero());
+        let eq_checkpoint = checkpoints[1].unwrap_or(F::one());
+        let lt_updated = lt_checkpoint + eq_checkpoint * (F::one() - r_x) * r_y;
+        let eq_updated = eq_checkpoint * (r_x * r_y + (F::one() - r_x) * (F::one() - r_y));
+        checkpoints[0] = Some(lt_updated);
+        checkpoints[1] = Some(eq_updated);
+    }
+
+    fn prefix_mle(
+        l: usize,
+        checkpoints: &[Option<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: u32,
+        b_len: usize,
+        j: usize,
+    ) -> F {
+        match l {
+            0 => {
+                let mut lt = checkpoints[0].unwrap_or(F::zero());
+                let mut eq = checkpoints[1].unwrap_or(F::one());
+
+                if let Some(r_x) = r_x {
+                    let c = F::from_u32(c);
+                    lt += (F::one() - r_x) * c * eq;
+                    let (x, y) = uninterleave_bits(b as u64);
+                    if x < y {
+                        eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
+                        lt += eq;
+                    }
+                } else {
+                    let c = F::from_u32(c);
+                    let y_msb = b >> (b_len - 1);
+                    if y_msb == 1 {
+                        // lt += eq * (1 - c) * y_msb
+                        lt += eq * (F::one() - c);
+                    }
+                    let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
+                    if x < y {
+                        if y_msb == 1 {
+                            lt += eq * c;
+                        } else {
+                            lt += eq * (F::one() - c);
+                        }
+                    }
+                }
+
+                lt
+            }
+            1 => {
+                let eq = checkpoints[1].unwrap_or(F::one());
+
+                if let Some(r_x) = r_x {
+                    let (x, y) = uninterleave_bits(b as u64);
+                    if x == y {
+                        let y = F::from_u32(c);
+                        eq * (r_x * y + (F::one() - r_x) * (F::one() - y))
+                    } else {
+                        F::zero()
+                    }
+                } else {
+                    let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
+                    if x == y {
+                        let c = F::from_u32(c);
+                        let y_msb = b >> (b_len - 1);
+                        if y_msb == 1 {
+                            eq * c
+                        } else {
+                            eq * (F::one() - c)
+                        }
+                    } else {
+                        F::zero()
+                    }
+                }
+            }
+            _ => unimplemented!("Unexpected value l={l}"),
+        }
+    }
+
+    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32 {
+        debug_assert!(b_len % 2 == 0);
+        match l {
+            0 => 1,
+            1 => {
+                let (x, y) = uninterleave_bits(b);
+                (x < y).into()
+            }
+            _ => unimplemented!("Unexpected value l={l}"),
+        }
     }
 }
 
