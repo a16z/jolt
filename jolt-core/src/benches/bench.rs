@@ -2,6 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::jolt::instruction::mulhu::MULHUInstruction;
 use crate::jolt::instruction::or::ORInstruction;
+use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
@@ -45,9 +46,6 @@ pub enum BenchType {
 pub fn benchmarks(
     pcs_type: PCSType,
     bench_type: BenchType,
-    _num_cycles: Option<usize>,
-    _memory_size: Option<usize>,
-    _bytecode_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
         PCSType::Zeromorph => match bench_type {
@@ -178,7 +176,7 @@ where
     let mut rng = StdRng::seed_from_u64(12345);
 
     let instructions: Vec<_> = (0..T)
-        .map(|_| SLTUInstruction::<32>::default().random(&mut rng))
+        .map(|_| SLLInstruction::<32>::default().random(&mut rng))
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
