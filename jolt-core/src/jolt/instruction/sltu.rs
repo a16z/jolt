@@ -1,6 +1,6 @@
 use crate::{
     field::JoltField,
-    subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
+    subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
     utils::{interleave_bits, uninterleave_bits},
 };
 use rand::prelude::StdRng;
@@ -139,8 +139,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
         checkpoints: &[Option<F>],
         r_x: Option<F>,
         c: u32,
-        b: u32,
-        b_len: usize,
+        mut b: LookupBits,
         _: usize,
     ) -> F {
         match l {
@@ -151,20 +150,20 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
                 if let Some(r_x) = r_x {
                     let c = F::from_u32(c);
                     lt += (F::one() - r_x) * c * eq;
-                    let (x, y) = uninterleave_bits(b as u64);
-                    if x < y {
+                    let (x, y) = b.uninterleave();
+                    if u64::from(x) < u64::from(y) {
                         eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
                         lt += eq;
                     }
                 } else {
                     let c = F::from_u32(c);
-                    let y_msb = b >> (b_len - 1);
+                    let y_msb = b.pop_msb();
                     if y_msb == 1 {
                         // lt += eq * (1 - c) * y_msb
                         lt += eq * (F::one() - c);
                     }
-                    let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
-                    if x < y {
+                    let (x, y) = b.uninterleave();
+                    if u64::from(x) < u64::from(y) {
                         if y_msb == 1 {
                             lt += eq * c;
                         } else {
@@ -179,7 +178,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
                 let eq = checkpoints[1].unwrap_or(F::one());
 
                 if let Some(r_x) = r_x {
-                    let (x, y) = uninterleave_bits(b as u64);
+                    let (x, y) = b.uninterleave();
                     if x == y {
                         let y = F::from_u32(c);
                         eq * (r_x * y + (F::one() - r_x) * (F::one() - y))
@@ -187,10 +186,10 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
                         F::zero()
                     }
                 } else {
-                    let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
+                    let y_msb = b.pop_msb();
+                    let (x, y) = b.uninterleave();
                     if x == y {
                         let c = F::from_u32(c);
-                        let y_msb = b >> (b_len - 1);
                         if y_msb == 1 {
                             eq * c
                         } else {
@@ -205,13 +204,12 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
         }
     }
 
-    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32 {
-        debug_assert!(b_len % 2 == 0);
+    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
         match l {
             0 => 1,
             1 => {
-                let (x, y) = uninterleave_bits(b);
-                (x < y).into()
+                let (x, y) = b.uninterleave();
+                (u32::from(x) < u32::from(y)).into()
             }
             _ => unimplemented!("Unexpected value l={l}"),
         }

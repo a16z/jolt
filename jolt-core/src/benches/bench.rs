@@ -198,7 +198,7 @@ where
     let mut rng = StdRng::seed_from_u64(12345);
 
     let instructions: Vec<_> = (0..T)
-        .map(|_| ORInstruction::<32>::default().random(&mut rng))
+        .map(|_| SLLInstruction::<32>::default().random(&mut rng))
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
@@ -213,7 +213,7 @@ where
 
         let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
         let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
-        let verification_result = verify_single_instruction::<_, ORInstruction<32>, _>(
+        let verification_result = verify_single_instruction::<_, SLLInstruction<32>, _>(
             proof,
             LOG_K,
             LOG_T,

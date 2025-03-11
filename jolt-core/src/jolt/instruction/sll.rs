@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
+use crate::subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
@@ -64,7 +64,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     fn materialize_entry(&self, index: u64) -> u64 {
         let (x, y) = uninterleave_bits(index);
         let shift = y % WORD_SIZE as u32;
-        x.checked_shl(shift).unwrap_or(0).into()
+        (x << shift) as u64
     }
 
     fn to_lookup_index(&self) -> u64 {
@@ -129,42 +129,43 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for SLLInst
         checkpoints: &[Option<F>],
         r_x: Option<F>,
         c: u32,
-        b: u32,
-        b_len: usize,
+        b: LookupBits,
         j: usize,
     ) -> F {
-        println!("{l} {r_x:?} {c} {b:b} {b_len} {j}");
-        let x_index = j / 2;
-        if l == x_index {
+        let x_variables_bound = j / 2;
+        if l == x_variables_bound {
             if let Some(r_x) = r_x {
                 r_x
             } else {
                 F::from_u32(c)
             }
-        } else if l < x_index {
+        } else if l < x_variables_bound {
             checkpoints[l].unwrap()
         } else {
-            let (x, _) = uninterleave_bits(b as u64);
-            println!("x: {x:b}");
-            F::from_u32((x >> (b_len / 2)) & 1)
+            let (x, _) = b.uninterleave();
+            let index = l - x_variables_bound - 1;
+            if index >= x.len() {
+                F::zero()
+            } else {
+                F::from_u8(x.get_bit(l - x_variables_bound - 1))
+            }
         }
     }
 
-    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32 {
-        debug_assert!(b_len % 2 == 0);
+    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
         debug_assert!(l < <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES);
 
-        let (x, y) = uninterleave_bits(b);
-        let shift = y % WORD_SIZE as u32;
+        let (x, y) = b.uninterleave();
+        let shift = y % WORD_SIZE;
 
         if l == 0 {
-            x << shift
+            u32::from(x) << shift
         } else {
-            let x_index = (l - 1) as u32;
-            if (WORD_SIZE as u32 - 1 - x_index + shift) > (WORD_SIZE as u32 - 1) {
+            let x_index = l - 1;
+            if (WORD_SIZE - 1 - x_index + shift) > (WORD_SIZE - 1) {
                 0
             } else {
-                1 << (WORD_SIZE as u32 - 1 - x_index + shift)
+                1 << (WORD_SIZE - 1 - x_index + shift)
             }
         }
     }

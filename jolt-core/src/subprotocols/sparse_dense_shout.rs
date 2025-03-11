@@ -15,10 +15,11 @@ use crate::{
         math::Math,
         thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
+        uninterleave_bits,
     },
 };
 use rayon::{prelude::*, slice::Iter};
-use std::ops::Index;
+use std::{fmt::Display, ops::Index};
 
 #[derive(Clone)]
 struct ExpandingTable<F: JoltField> {
@@ -85,6 +86,110 @@ impl<'data, F: JoltField> ParallelSlice<F> for &'data ExpandingTable<F> {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LookupBits {
+    bits: u64,
+    len: usize,
+}
+
+impl LookupBits {
+    pub fn new(mut bits: u64, len: usize) -> Self {
+        debug_assert!(len <= 64);
+        if len < 64 {
+            bits = bits % (1 << len);
+        }
+        Self { bits, len }
+    }
+
+    pub fn uninterleave(&self) -> (Self, Self) {
+        let (x_bits, y_bits) = uninterleave_bits(self.bits);
+        let x = Self::new(x_bits as u64, self.len / 2);
+        let y = Self::new(y_bits as u64, self.len - x.len);
+        (x, y)
+    }
+
+    pub fn split(&self, suffix_len: usize) -> (Self, Self) {
+        let suffix_bits = self.bits % (1 << suffix_len);
+        let suffix = Self::new(suffix_bits, suffix_len);
+        let prefix_bits = self.bits >> suffix_len;
+        let prefix = Self::new(prefix_bits, self.len - suffix_len);
+        (prefix, suffix)
+    }
+
+    pub fn pop_msb(&mut self) -> u8 {
+        let msb = (self.bits >> (self.len - 1)) & 1;
+        self.bits = self.bits % (1 << (self.len - 1));
+        self.len -= 1;
+        msb as u8
+    }
+
+    pub fn get_bit(&self, index: usize) -> u8 {
+        assert!(index < self.len);
+        let bit = (self.bits >> (self.len - 1 - index)) & 1;
+        bit as u8
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl Display for LookupBits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:0width$b}", self.bits, width = self.len)
+    }
+}
+
+impl From<LookupBits> for u64 {
+    fn from(value: LookupBits) -> u64 {
+        value.bits
+    }
+}
+impl From<LookupBits> for usize {
+    fn from(value: LookupBits) -> usize {
+        value.bits.try_into().unwrap()
+    }
+}
+impl From<LookupBits> for u32 {
+    fn from(value: LookupBits) -> u32 {
+        value.bits.try_into().unwrap()
+    }
+}
+impl From<&LookupBits> for u64 {
+    fn from(value: &LookupBits) -> u64 {
+        value.bits
+    }
+}
+impl From<&LookupBits> for usize {
+    fn from(value: &LookupBits) -> usize {
+        value.bits.try_into().unwrap()
+    }
+}
+impl From<&LookupBits> for u32 {
+    fn from(value: &LookupBits) -> u32 {
+        value.bits.try_into().unwrap()
+    }
+}
+impl std::ops::Rem<usize> for &LookupBits {
+    type Output = usize;
+
+    fn rem(self, rhs: usize) -> Self::Output {
+        usize::from(self) % rhs
+    }
+}
+impl std::ops::Rem<usize> for LookupBits {
+    type Output = usize;
+
+    fn rem(self, rhs: usize) -> Self::Output {
+        usize::from(self) % rhs
+    }
+}
+impl PartialEq for LookupBits {
+    fn eq(&self, other: &Self) -> bool {
+        u64::from(self) == u64::from(other)
+    }
+}
+
 pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
     const NUM_PREFIXES: usize;
     const NUM_SUFFIXES: usize;
@@ -96,11 +201,10 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
         checkpoints: &[Option<F>],
         r_x: Option<F>,
         c: u32,
-        b: u32,
-        b_len: usize,
+        b: LookupBits,
         j: usize,
     ) -> F;
-    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32;
+    fn suffix_mle(l: usize, b: LookupBits) -> u32;
 
     fn compute_prover_message(
         prefix_checkpoints: &[Option<F>],
@@ -119,22 +223,19 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
         let (eval_0, eval_2_left, eval_2_right): (F, F, F) = (0..len / 2)
             .into_par_iter()
             .map(|b| {
+                let b = LookupBits::new(b as u64, log_len - 1);
                 // TODO(moodlezoup): Avoid allocations
                 let prefixes_c0: Vec<_> = (0..Self::NUM_PREFIXES)
-                    .map(|l| {
-                        Self::prefix_mle(l, prefix_checkpoints, r_x, 0, b as u32, log_len - 1, j)
-                    })
+                    .map(|l| Self::prefix_mle(l, prefix_checkpoints, r_x, 0, b, j))
                     .collect();
                 let prefixes_c2: Vec<_> = (0..Self::NUM_PREFIXES)
-                    .map(|l| {
-                        Self::prefix_mle(l, prefix_checkpoints, r_x, 2, b as u32, log_len - 1, j)
-                    })
+                    .map(|l| Self::prefix_mle(l, prefix_checkpoints, r_x, 2, b, j))
                     .collect();
                 let suffixes_left: Vec<_> = (0..Self::NUM_SUFFIXES)
-                    .map(|l| suffix_polys[l][b])
+                    .map(|l| suffix_polys[l][b.into()])
                     .collect();
                 let suffixes_right: Vec<_> = (0..Self::NUM_SUFFIXES)
-                    .map(|l| suffix_polys[l][b + len / 2])
+                    .map(|l| suffix_polys[l][usize::from(b) + len / 2])
                     .collect();
                 (
                     Self::combine(&prefixes_c0, &suffixes_left),
@@ -169,7 +270,7 @@ pub fn prove_single_instruction_alt<
     debug_assert_eq!(r_cycle.len(), log_T);
 
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-    let leaves_per_chunk = (m / num_chunks).max(1);
+    let chunk_size = (m / num_chunks).max(1);
 
     let num_rounds = LOG_K + log_T;
     let mut r: Vec<F> = Vec::with_capacity(num_rounds);
@@ -179,7 +280,7 @@ pub fn prove_single_instruction_alt<
     let _guard = span.enter();
     let lookup_indices: Vec<_> = instructions
         .par_iter()
-        .map(|instruction| instruction.to_lookup_index())
+        .map(|instruction| LookupBits::new(instruction.to_lookup_index(), LOG_K))
         .collect();
     drop(_guard);
     drop(span);
@@ -197,7 +298,7 @@ pub fn prove_single_instruction_alt<
     let rv_claim = lookup_indices
         .par_iter()
         .zip(u_evals.par_iter())
-        .map(|(k, u)| u.mul_u64_unchecked(I::default().materialize_entry(*k)))
+        .map(|(k, u)| u.mul_u64_unchecked(I::default().materialize_entry(k.into())))
         .sum();
     drop(_guard);
     drop(span);
@@ -211,7 +312,7 @@ pub fn prove_single_instruction_alt<
     let mut eq_ra_test: MultilinearPolynomial<F> = {
         let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(val_test.len());
         for (j, k) in lookup_indices.iter().enumerate() {
-            eq_ra[*k as usize] += eq_r_prime[j];
+            eq_ra[usize::from(k)] += eq_r_prime[j];
         }
         MultilinearPolynomial::from(eq_ra)
     };
@@ -236,7 +337,8 @@ pub fn prove_single_instruction_alt<
                 .par_iter()
                 .zip(u_evals.par_iter_mut())
                 .for_each(|(k, u)| {
-                    let k_bound = ((*k >> ((4 - phase) * log_m)) % m as u64) as usize;
+                    let (prefix, _) = k.split((4 - phase) * log_m);
+                    let k_bound: usize = prefix % m;
                     *u *= v[k_bound as usize];
                 });
             drop(_guard);
@@ -252,8 +354,9 @@ pub fn prove_single_instruction_alt<
             .into_par_iter()
             .map(|i| {
                 lookup_indices.iter().enumerate().filter_map(move |(j, k)| {
-                    let group = ((k >> suffix_len) % m as u64) / leaves_per_chunk as u64;
-                    if group == i as u64 {
+                    let (prefix, _) = k.split(suffix_len);
+                    let group = (prefix % m) / chunk_size;
+                    if group == i {
                         Some(j)
                     } else {
                         None
@@ -277,14 +380,14 @@ pub fn prove_single_instruction_alt<
                 }
                 instruction_index_iters
                     .par_iter()
-                    .zip(poly.Z.par_chunks_mut(leaves_per_chunk))
+                    .zip(poly.Z.par_chunks_mut(chunk_size))
                     .for_each(|(j_iter, evals)| {
                         j_iter.clone().for_each(|j| {
                             let k = lookup_indices[j];
                             let u = u_evals[j];
-                            let suffix_bits = k % (1 << suffix_len);
-                            let t = I::suffix_mle(l, suffix_bits, suffix_len);
-                            let index = ((k >> suffix_len) % leaves_per_chunk as u64) as usize;
+                            let (prefix, suffix) = k.split(suffix_len);
+                            let t = I::suffix_mle(l, suffix);
+                            let index = prefix % chunk_size;
                             evals[index] += u.mul_u64_unchecked(t as u64);
                         });
                     });
@@ -370,7 +473,8 @@ pub fn prove_single_instruction_alt<
         let ra_i: Vec<F> = lookup_indices
             .par_iter()
             .map(|k| {
-                let k_bound = ((k >> suffix_len) % m as u64) as usize;
+                let (prefix, _) = k.split(suffix_len);
+                let k_bound: usize = prefix % m;
                 v[k_bound as usize]
             })
             .collect();
@@ -389,8 +493,8 @@ pub fn prove_single_instruction_alt<
         .into_par_iter()
         .map(|i| {
             lookup_indices.iter().enumerate().filter_map(move |(j, k)| {
-                let group = (k % m as u64) / leaves_per_chunk as u64;
-                if group == i as u64 {
+                let group = (k % m) / chunk_size;
+                if group == i {
                     Some(j)
                 } else {
                     None
@@ -402,11 +506,11 @@ pub fn prove_single_instruction_alt<
     let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(m);
     instruction_index_iters
         .into_par_iter()
-        .zip(eq_ra.par_chunks_mut(leaves_per_chunk))
-        .for_each(|(j_iter, leaves)| {
+        .zip(eq_ra.par_chunks_mut(chunk_size))
+        .for_each(|(j_iter, chunk)| {
             j_iter.for_each(|j| {
                 let k = lookup_indices[j];
-                leaves[(k as usize) % leaves_per_chunk] +=
+                chunk[k % chunk_size] +=
                     eq_r_prime[j] * ra[0].get_coeff(j) * ra[1].get_coeff(j) * ra[2].get_coeff(j);
             });
         });
@@ -431,7 +535,7 @@ pub fn prove_single_instruction_alt<
         .into_par_iter()
         .map(|k| {
             let suffixes: Vec<_> = (0..I::NUM_SUFFIXES)
-                .map(|l| F::from_u32(I::suffix_mle(l, (k as u64) % (1 << log_m), log_m)))
+                .map(|l| F::from_u32(I::suffix_mle(l, LookupBits::new(k as u64, log_m))))
                 .collect();
             I::combine(&prefixes, &suffixes)
         })
@@ -509,8 +613,8 @@ pub fn prove_single_instruction_alt<
     let ra_i: Vec<F> = lookup_indices
         .par_iter()
         .map(|k| {
-            let k_bound = (k % m as u64) as usize;
-            v[k_bound as usize]
+            let k_bound = k % m;
+            v[k_bound]
         })
         .collect();
     ra.push(MultilinearPolynomial::from(ra_i));

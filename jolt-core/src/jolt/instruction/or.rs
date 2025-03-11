@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
+use crate::subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use crate::utils::{interleave_bits, uninterleave_bits};
 
@@ -144,8 +144,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstr
         checkpoints: &[Option<F>],
         r_x: Option<F>,
         c: u32,
-        b: u32,
-        b_len: usize,
+        mut b: LookupBits,
         j: usize,
     ) -> F {
         let mut result = checkpoints[0].unwrap_or(F::zero());
@@ -154,28 +153,24 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstr
             let y = F::from_u8(c as u8);
             let shift = WORD_SIZE - 1 - j / 2;
             result += F::from_u32(1 << shift) * (r_x + y - (r_x * y));
-            let (x, y) = uninterleave_bits(b as u64);
-            let suffix_len = WORD_SIZE - j / 2 - (b_len + 2) / 2;
-            result += F::from_u32((x | y) << suffix_len);
         } else {
-            let y_msb = b >> (b_len - 1);
+            let y_msb = b.pop_msb() as u32;
             let shift = WORD_SIZE - 1 - j / 2;
             result += F::from_u32(c + y_msb - c * y_msb) * F::from_u32(1 << shift);
-            let (x, y) = uninterleave_bits(b as u64 % (1 << (b_len - 1)));
-            let suffix_len = WORD_SIZE - j / 2 - (b_len + 1) / 2;
-            result += F::from_u32((x | y) << suffix_len);
         }
+        let (x, y) = b.uninterleave();
+        let suffix_len = WORD_SIZE - j / 2 - 1 - b.len() / 2;
+        result += F::from_u32((u32::from(x) | u32::from(y)) << suffix_len);
 
         result
     }
 
-    fn suffix_mle(l: usize, b: u64, b_len: usize) -> u32 {
-        debug_assert!(b_len % 2 == 0);
+    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
         match l {
             0 => 1,
             1 => {
-                let (x, y) = uninterleave_bits(b);
-                x | y
+                let (x, y) = b.uninterleave();
+                u32::from(x) | u32::from(y)
             }
             _ => unimplemented!("Unexpected value l={l}"),
         }
