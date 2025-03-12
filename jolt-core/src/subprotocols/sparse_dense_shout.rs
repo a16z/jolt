@@ -755,6 +755,7 @@ mod tests {
         jolt::instruction::{
             add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, mulhu::MULHUInstruction,
             or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction, sub::SUBInstruction,
+            xor::XORInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -822,6 +823,11 @@ mod tests {
     #[test]
     fn test_or() {
         test_single_instruction::<ORInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_xor() {
+        test_single_instruction::<XORInstruction<WORD_SIZE>>();
     }
 
     #[test]
