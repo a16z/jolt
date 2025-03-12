@@ -191,8 +191,9 @@ where
 
     let mut tasks = Vec::new();
 
+    const WORD_SIZE: usize = 32;
+    const LOG_K: usize = 2 * WORD_SIZE;
     const LOG_T: usize = 19;
-    const LOG_K: usize = 64;
     const T: u64 = 1 << LOG_T;
 
     let mut rng = StdRng::seed_from_u64(12345);
@@ -205,7 +206,7 @@ where
     let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
 
     let task = move || {
-        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<LOG_K, _, _, _>(
+        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<32, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,

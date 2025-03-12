@@ -1,7 +1,11 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::instruction::JoltInstruction,
+    jolt::instruction::{
+        prefixes::Prefixes,
+        suffixes::{SparseDenseSuffix, Suffixes},
+        JoltInstruction,
+    },
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
@@ -196,18 +200,15 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
     suffix_len
 }
 
-pub trait SparseDenseSuffix<const WORD_SIZE: usize, F: JoltField> {
-    fn suffix_mle(b: LookupBits) -> u32;
-}
-
-pub trait SparseDensePrefix<const WORD_SIZE: usize, F: JoltField> {
-    fn prefix_mle(checkpoints: &[Option<F>], r_x: Option<F>, c: u32, b: LookupBits, j: usize) -> F;
-    fn update_prefix_checkpoint(checkpoints: &[Option<F>], r_x: F, r_y: F, j: usize) -> Option<F>;
-}
-
-pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
+pub trait SparseDenseSumcheckAlt<const WORD_SIZE: usize, F: JoltField>:
+    JoltInstruction + Default
+{
     const NUM_PREFIXES: usize;
-    const NUM_SUFFIXES: usize;
+
+    fn prefixes() -> Vec<Prefixes> {
+        todo!()
+    }
+    fn suffixes() -> Vec<Suffixes<WORD_SIZE>>;
 
     fn combine(prefixes: &[F], suffixes: &[F]) -> F;
     fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize);
@@ -219,7 +220,6 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
         b: LookupBits,
         j: usize,
     ) -> F;
-    fn suffix_mle(l: usize, b: LookupBits) -> u32;
 
     fn compute_prover_message(
         prefix_checkpoints: &[Option<F>],
@@ -228,7 +228,6 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
         j: usize,
     ) -> [F; 2] {
         debug_assert_eq!(prefix_checkpoints.len(), Self::NUM_PREFIXES);
-        debug_assert_eq!(suffix_polys.len(), Self::NUM_SUFFIXES);
 
         let len = suffix_polys[0].len();
         let log_len = len.log_2();
@@ -246,11 +245,13 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
                 let prefixes_c2: Vec<_> = (0..Self::NUM_PREFIXES)
                     .map(|l| Self::prefix_mle(l, prefix_checkpoints, r_x, 2, b, j))
                     .collect();
-                let suffixes_left: Vec<_> = (0..Self::NUM_SUFFIXES)
-                    .map(|l| suffix_polys[l][b.into()])
+                let suffixes_left: Vec<_> = suffix_polys
+                    .iter()
+                    .map(|suffix_poly| suffix_poly[b.into()])
                     .collect();
-                let suffixes_right: Vec<_> = (0..Self::NUM_SUFFIXES)
-                    .map(|l| suffix_polys[l][usize::from(b) + len / 2])
+                let suffixes_right: Vec<_> = suffix_polys
+                    .iter()
+                    .map(|suffix_poly| suffix_poly[usize::from(b) + len / 2])
                     .collect();
                 (
                     Self::combine(&prefixes_c0, &suffixes_left),
@@ -268,16 +269,17 @@ pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
 }
 
 pub fn prove_single_instruction_alt<
-    const LOG_K: usize,
+    const WORD_SIZE: usize,
     F: JoltField,
-    I: SparseDenseSumcheckAlt<F>,
+    I: SparseDenseSumcheckAlt<WORD_SIZE, F>,
     ProofTranscript: Transcript,
 >(
     instructions: &[I],
     r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4]) {
-    let log_m = LOG_K / 4;
+    let log_K: usize = 2 * WORD_SIZE;
+    let log_m = log_K / 4;
     let m = log_m.pow2();
 
     let T = instructions.len();
@@ -287,7 +289,7 @@ pub fn prove_single_instruction_alt<
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (m / num_chunks).max(1);
 
-    let num_rounds = LOG_K + log_T;
+    let num_rounds = log_K + log_T;
     let mut r: Vec<F> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
@@ -295,7 +297,7 @@ pub fn prove_single_instruction_alt<
     let _guard = span.enter();
     let lookup_indices: Vec<_> = instructions
         .par_iter()
-        .map(|instruction| LookupBits::new(instruction.to_lookup_index(), LOG_K))
+        .map(|instruction| LookupBits::new(instruction.to_lookup_index(), log_K))
         .collect();
     drop(_guard);
     drop(span);
@@ -335,7 +337,7 @@ pub fn prove_single_instruction_alt<
     let mut j: usize = 0;
     let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
 
-    let mut suffix_polys: Vec<DensePolynomial<F>> = (0..I::NUM_SUFFIXES)
+    let mut suffix_polys: Vec<DensePolynomial<F>> = I::suffixes()
         .into_par_iter()
         .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(m)))
         .collect();
@@ -386,8 +388,8 @@ pub fn prove_single_instruction_alt<
         let _guard = span.enter();
         suffix_polys
             .par_iter_mut()
-            .enumerate()
-            .for_each(|(l, poly)| {
+            .zip(I::suffixes().par_iter())
+            .for_each(|(poly, suffix)| {
                 if phase != 0 {
                     poly.len = m;
                     poly.num_vars = poly.len.log_2();
@@ -400,9 +402,9 @@ pub fn prove_single_instruction_alt<
                         j_iter.clone().for_each(|j| {
                             let k = lookup_indices[j];
                             let u = u_evals[j];
-                            let (prefix, suffix) = k.split(suffix_len);
-                            let t = I::suffix_mle(l, suffix);
-                            let index = prefix % chunk_size;
+                            let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                            let t = suffix.suffix_mle(suffix_bits);
+                            let index = prefix_bits % chunk_size;
                             evals[index] += u.mul_u64_unchecked(t as u64);
                         });
                     });
@@ -549,8 +551,9 @@ pub fn prove_single_instruction_alt<
     let val: Vec<F> = (0..m)
         .into_par_iter()
         .map(|k| {
-            let suffixes: Vec<_> = (0..I::NUM_SUFFIXES)
-                .map(|l| F::from_u32(I::suffix_mle(l, LookupBits::new(k as u64, log_m))))
+            let suffixes: Vec<_> = I::suffixes()
+                .iter()
+                .map(|suffix| F::from_u32(suffix.suffix_mle(LookupBits::new(k as u64, log_m))))
                 .collect();
             I::combine(&prefixes, &suffixes)
         })
@@ -767,7 +770,7 @@ mod tests {
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn test_single_instruction<I: SparseDenseSumcheckAlt<Fr>>() {
+    fn test_single_instruction<I: SparseDenseSumcheckAlt<WORD_SIZE, Fr>>() {
         let mut rng = StdRng::seed_from_u64(12345);
 
         let instructions: Vec<_> = (0..T).map(|_| I::default().random(&mut rng)).collect();
@@ -775,7 +778,7 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<LOG_K, _, _, _>(
+        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<WORD_SIZE, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,

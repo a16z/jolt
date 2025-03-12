@@ -1,5 +1,6 @@
 use crate::{
     field::JoltField,
+    jolt::instruction::suffixes::{lt::LessThanSuffix, one::OneSuffix},
     subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
     utils::{interleave_bits, uninterleave_bits},
 };
@@ -7,7 +8,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::JoltInstruction;
+use super::{suffixes::Suffixes, JoltInstruction};
 use crate::{
     jolt::{
         instruction::SubtableIndices,
@@ -103,29 +104,20 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
     for SLTUInstruction<WORD_SIZE>
 {
     const NUM_PREFIXES: usize = 2;
-    const NUM_SUFFIXES: usize = 2;
 
     fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        debug_assert_eq!(
-            prefixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
-        );
-        debug_assert_eq!(
-            suffixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
-        );
         prefixes[0] * suffixes[0] + prefixes[1] * suffixes[1]
     }
 
+    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
+        vec![Suffixes::One(OneSuffix), Suffixes::LessThan(LessThanSuffix)]
+    }
+
     fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
-        debug_assert_eq!(
-            checkpoints.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
-        );
         let lt_checkpoint = checkpoints[0].unwrap_or(F::zero());
         let eq_checkpoint = checkpoints[1].unwrap_or(F::one());
         let lt_updated = lt_checkpoint + eq_checkpoint * (F::one() - r_x) * r_y;
@@ -199,17 +191,6 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
                         F::zero()
                     }
                 }
-            }
-            _ => unimplemented!("Unexpected value l={l}"),
-        }
-    }
-
-    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
-        match l {
-            0 => 1,
-            1 => {
-                let (x, y) = b.uninterleave();
-                (u32::from(x) < u32::from(y)).into()
             }
             _ => unimplemented!("Unexpected value l={l}"),
         }

@@ -1,5 +1,6 @@
 use crate::{
     field::JoltField,
+    jolt::instruction::suffixes::SparseDenseSuffix,
     subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
 };
 use rand::{rngs::StdRng, SeedableRng};
@@ -211,9 +212,8 @@ macro_rules! instruction_update_function_test {
     };
 }
 
-pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<F>>() {
+pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<32, F>>() {
     let num_prefixes = I::NUM_PREFIXES;
-    let num_suffixes = I::NUM_SUFFIXES;
 
     let mut rng = StdRng::seed_from_u64(12345);
 
@@ -230,11 +230,12 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<F>>() {
         let mut r: Vec<u8> = vec![];
         for phase in 0..3 {
             let suffix_len = (3 - phase) * 16;
-            let (mut prefix, suffix) =
+            let (mut prefix_bits, suffix_bits) =
                 LookupBits::new(lookup_index, 64 - phase * 16).split(suffix_len);
 
-            let suffix_evals: Vec<_> = (0..num_suffixes)
-                .map(|l| F::from_u32(I::suffix_mle(l, suffix)))
+            let suffix_evals: Vec<_> = I::suffixes()
+                .iter()
+                .map(|suffix| F::from_u32(suffix.suffix_mle(suffix_bits)))
                 .collect();
 
             for _ in 0..16 {
@@ -244,14 +245,14 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<F>>() {
                     None
                 };
 
-                let c = prefix.pop_msb();
+                let c = prefix_bits.pop_msb();
 
                 let prefix_evals: Vec<_> = (0..num_prefixes)
-                    .map(|l| I::prefix_mle(l, &prefix_checkpoints, r_x, c as u32, prefix, j))
+                    .map(|l| I::prefix_mle(l, &prefix_checkpoints, r_x, c as u32, prefix_bits, j))
                     .collect();
 
                 let combined = I::combine(&prefix_evals, &suffix_evals);
-                println!("{j} {prefix} {suffix}");
+                println!("{j} {prefix_bits} {suffix_bits}");
                 if combined != result {
                     for (i, x) in prefix_evals.iter().enumerate() {
                         println!("prefix_evals[{i}] = {x}");

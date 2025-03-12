@@ -2,14 +2,14 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::JoltInstruction;
+use super::{suffixes::Suffixes, JoltInstruction};
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::SubtableIndices,
+        instruction::{suffixes::eq::EqSuffix, SubtableIndices},
         subtable::{eq::EqSubtable, LassoSubtable},
     },
-    subprotocols::sparse_dense_shout::{current_suffix_len, LookupBits, SparseDenseSumcheckAlt},
+    subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
     utils::{
         instruction_utils::chunk_and_concatenate_operands, interleave_bits, uninterleave_bits,
     },
@@ -78,20 +78,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for BEQInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for BEQInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+    for BEQInstruction<WORD_SIZE>
+{
     const NUM_PREFIXES: usize = 1;
-    const NUM_SUFFIXES: usize = 1;
 
     fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        debug_assert_eq!(
-            prefixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
-        );
-        debug_assert_eq!(
-            suffixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
-        );
         prefixes[0] * suffixes[0]
+    }
+
+    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
+        vec![Suffixes::Eq(EqSuffix)]
     }
 
     fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
@@ -123,11 +120,6 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for BEQInst
             return F::zero();
         }
         result
-    }
-
-    fn suffix_mle(_: usize, b: LookupBits) -> u32 {
-        let (x, y) = b.uninterleave();
-        (x == y).into()
     }
 }
 

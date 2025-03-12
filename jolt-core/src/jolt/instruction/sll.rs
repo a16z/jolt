@@ -5,6 +5,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::suffixes::Suffixes;
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
@@ -156,20 +157,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for SLLInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+    for SLLInstruction<WORD_SIZE>
+{
     const NUM_PREFIXES: usize = WORD_SIZE * 3 / 4;
-    const NUM_SUFFIXES: usize = 1 + WORD_SIZE * 3 / 4;
 
     fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        debug_assert_eq!(
-            prefixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
-        );
-        debug_assert_eq!(
-            suffixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
-        );
-
         suffixes[0]
             + prefixes
                 .iter()
@@ -180,6 +173,10 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for SLLInst
 
     fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, _: F, j: usize) {
         checkpoints[j / 2] = Some(r_x);
+    }
+
+    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
+        todo!()
     }
 
     fn prefix_mle(
@@ -210,23 +207,23 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for SLLInst
         }
     }
 
-    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
-        debug_assert!(l < <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES);
+    // fn suffix_mle(l: usize, b: LookupBits) -> u32 {
+    //     debug_assert!(l < <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES);
 
-        let (x, y) = b.uninterleave();
-        let shift = y % WORD_SIZE;
+    //     let (x, y) = b.uninterleave();
+    //     let shift = y % WORD_SIZE;
 
-        if l == 0 {
-            u32::from(x) << shift
-        } else {
-            let x_index = l - 1;
-            if (WORD_SIZE - 1 - x_index + shift) > (WORD_SIZE - 1) {
-                0
-            } else {
-                1 << (WORD_SIZE - 1 - x_index + shift)
-            }
-        }
-    }
+    //     if l == 0 {
+    //         u32::from(x) << shift
+    //     } else {
+    //         let x_index = l - 1;
+    //         if (WORD_SIZE - 1 - x_index + shift) > (WORD_SIZE - 1) {
+    //             0
+    //         } else {
+    //             1 << (WORD_SIZE - 1 - x_index + shift)
+    //         }
+    //     }
+    // }
 }
 
 #[cfg(test)]

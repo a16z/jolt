@@ -3,8 +3,11 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::suffixes::Suffixes;
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
+use crate::jolt::instruction::suffixes::one::OneSuffix;
+use crate::jolt::instruction::suffixes::or::OrSuffix;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
 use crate::subprotocols::sparse_dense_shout::{
     current_suffix_len, LookupBits, SparseDenseSumcheckAlt,
@@ -118,20 +121,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+    for ORInstruction<WORD_SIZE>
+{
     const NUM_PREFIXES: usize = 1;
-    const NUM_SUFFIXES: usize = 2;
 
     fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        debug_assert_eq!(
-            prefixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
-        );
-        debug_assert_eq!(
-            suffixes.len(),
-            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
-        );
         prefixes[0] * suffixes[0] + suffixes[1]
+    }
+
+    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
+        vec![Suffixes::One(OneSuffix), Suffixes::Or(OrSuffix)]
     }
 
     fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
@@ -166,17 +166,6 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstr
 
         result
     }
-
-    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
-        match l {
-            0 => 1,
-            1 => {
-                let (x, y) = b.uninterleave();
-                u32::from(x) | u32::from(y)
-            }
-            _ => unimplemented!("Unexpected value l={l}"),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -189,7 +178,6 @@ mod test {
         instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
         jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
         jolt_instruction_test,
-        subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
     };
 
     use super::ORInstruction;

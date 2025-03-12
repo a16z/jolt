@@ -203,6 +203,9 @@ pub trait VirtualInstructionSequence {
     fn sequence_output(x: u64, y: u64) -> u64;
 }
 
+pub mod prefixes;
+pub mod suffixes;
+
 pub mod add;
 pub mod and;
 pub mod beq;
