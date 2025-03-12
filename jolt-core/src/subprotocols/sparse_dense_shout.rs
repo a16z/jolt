@@ -796,6 +796,16 @@ mod tests {
     }
 
     #[test]
+    fn test_and() {
+        test_single_instruction::<ANDInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_mulhu() {
+        test_single_instruction::<MULHUInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
     fn test_or() {
         test_single_instruction::<ORInstruction<WORD_SIZE>>();
     }

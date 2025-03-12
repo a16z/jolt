@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::subprotocols::sparse_dense_shout::{
+    current_suffix_len, LookupBits, SparseDenseSumcheckAlt,
+};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
 };
@@ -127,6 +130,85 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F>
+    for MULHUInstruction<WORD_SIZE>
+{
+    const NUM_PREFIXES: usize = 1;
+    const NUM_SUFFIXES: usize = 2;
+
+    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
+        debug_assert_eq!(
+            prefixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
+        );
+        debug_assert_eq!(
+            suffixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
+        );
+        prefixes[0] * suffixes[0] + suffixes[1]
+    }
+
+    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
+        if j >= WORD_SIZE {
+            return;
+        }
+        let x_shift = WORD_SIZE - j;
+        let y_shift = WORD_SIZE - j - 1;
+        let updated = checkpoints[0].unwrap_or(F::zero())
+            + F::from_u64(1 << x_shift) * r_x
+            + F::from_u64(1 << y_shift) * r_y;
+        checkpoints[0] = Some(updated);
+    }
+
+    fn prefix_mle(
+        _: usize,
+        checkpoints: &[Option<F>],
+        r_x: Option<F>,
+        c: u32,
+        mut b: LookupBits,
+        mut j: usize,
+    ) -> F {
+        let mut result = checkpoints[0].unwrap_or(F::zero());
+        if j >= WORD_SIZE {
+            return result;
+        }
+
+        if let Some(r_x) = r_x {
+            let y = F::from_u8(c as u8);
+            let x_shift = WORD_SIZE - j;
+            let y_shift = WORD_SIZE - j - 1;
+            result += F::from_u64(1 << x_shift) * r_x;
+            result += F::from_u64(1 << y_shift) * y;
+        } else {
+            let x = F::from_u8(c as u8);
+            let y_msb = b.pop_msb();
+            let x_shift = WORD_SIZE - j - 1;
+            let y_shift = WORD_SIZE - j - 2;
+            result += F::from_u64(1 << x_shift) * x;
+            result += F::from_u64(1 << y_shift) * F::from_u8(y_msb);
+        }
+
+        let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
+        if suffix_len > WORD_SIZE {
+            result += F::from_u64(u64::from(b) << (suffix_len - WORD_SIZE));
+        } else {
+            println!("j={j} b.len={}, suffix_len={suffix_len}", b.len());
+            let (b_high, _) = b.split(WORD_SIZE - suffix_len);
+            result += F::from_u64(u64::from(b_high));
+        }
+
+        result
+    }
+
+    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
+        match l {
+            0 => 1,
+            1 => (u64::from(b) >> WORD_SIZE) as u32,
+            _ => unimplemented!("Unexpected value l={l}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -136,8 +218,14 @@ mod test {
     use super::MULHUInstruction;
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
-        jolt::instruction::JoltInstruction, jolt_instruction_test,
+        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt_instruction_test,
     };
+
+    #[test]
+    fn mulhu_prefix_suffix() {
+        prefix_suffix_test::<Fr, MULHUInstruction<32>>();
+    }
 
     instruction_mle_test_small!(mulhu_mle_small, MULHUInstruction<8>);
     instruction_mle_test_large!(mulhu_mle_large, MULHUInstruction<32>);
