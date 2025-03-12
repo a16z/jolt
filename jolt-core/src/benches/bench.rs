@@ -288,11 +288,11 @@ where
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    program.set_input(input);
+    let inputs = postcard::to_stdvec(input).unwrap();
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
+        let (io_device, trace) = program.trace(&inputs);
 
         let preprocessing: crate::jolt::vm::JoltProverPreprocessing<C, F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(
@@ -350,12 +350,14 @@ where
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
-    program.set_input(&[5u8; 32]);
-    program.set_input(&1000u32);
+
+    let mut inputs = vec![];
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
+        let (io_device, trace) = program.trace(&inputs);
 
         let preprocessing: crate::jolt::vm::JoltProverPreprocessing<C, F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(
