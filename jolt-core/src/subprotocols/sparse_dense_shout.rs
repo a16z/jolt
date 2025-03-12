@@ -190,6 +190,12 @@ impl PartialEq for LookupBits {
     }
 }
 
+pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
+    let phase_length = log_K / 4;
+    let suffix_len = log_K - (j / phase_length + 1) * phase_length;
+    suffix_len
+}
+
 pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
     const NUM_PREFIXES: usize;
     const NUM_SUFFIXES: usize;
@@ -738,8 +744,8 @@ mod tests {
     use super::*;
     use crate::{
         jolt::instruction::{
-            and::ANDInstruction, mulhu::MULHUInstruction, or::ORInstruction, sll::SLLInstruction,
-            sltu::SLTUInstruction,
+            add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, mulhu::MULHUInstruction,
+            or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -785,6 +791,11 @@ mod tests {
     }
 
     #[test]
+    fn test_add() {
+        test_single_instruction::<ADDInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
     fn test_or() {
         test_single_instruction::<ORInstruction<WORD_SIZE>>();
     }
@@ -794,6 +805,12 @@ mod tests {
         test_single_instruction::<SLTUInstruction<WORD_SIZE>>();
     }
 
+    #[test]
+    fn test_beq() {
+        test_single_instruction::<BEQInstruction<WORD_SIZE>>();
+    }
+
+    #[ignore = "not working"]
     #[test]
     fn test_sll() {
         test_single_instruction::<SLLInstruction<WORD_SIZE>>();

@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -10,6 +12,7 @@ use crate::subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
+use crate::utils::math::Math;
 use crate::utils::{interleave_bits, uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -61,10 +64,65 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        // \sum_{k = 0}^{2^b - 1} eq(y, bin(k)) * (\sum_{j = 0}^{m'-1} 2^{k + j} * x_{b - j - 1}),
+        // where m = min(b, max( 0, (k + b * (CHUNK_INDEX + 1)) - WORD_SIZE))
+        // and m' = b - m
+
+        // We assume the first half is chunk(X_i) and the second half is always chunk(Y_0)
+        debug_assert!(r.len() % 2 == 0);
+
+        let log_WORD_SIZE = log2(WORD_SIZE) as usize;
+
+        let b = r.len() / 2;
+        let x: Vec<_> = r.iter().step_by(2).collect();
+        let y: Vec<_> = r.iter().skip(1).step_by(2).collect();
+
+        let mut result = F::zero();
+
+        // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
+        for k in 0..min(WORD_SIZE, 1 << b) {
+            // bit-decompose k
+            let k_bits = k
+                .get_bits(log_WORD_SIZE)
+                .iter()
+                .map(|bit| F::from_u64(*bit as u64))
+                .collect::<Vec<F>>(); // big-endian
+
+            // Compute eq(y, bin(k))
+            let mut eq_term = F::one();
+            // again, min with b is included when subtables of bit-length less than 6 are used
+            for i in 0..min(log_WORD_SIZE, b) {
+                eq_term *= k_bits[log_WORD_SIZE - 1 - i] * y[b - 1 - i]
+                    + (F::one() - k_bits[log_WORD_SIZE - 1 - i]) * (F::one() - y[b - 1 - i]);
+            }
+
+            let m = if (k + b) > WORD_SIZE {
+                min(b, (k + b) - WORD_SIZE)
+            } else {
+                0
+            };
+            let m_prime = b - m;
+
+            // Compute \sum_{j = 0}^{m'-1} 2^{k + j} * x_{b - j - 1}
+            let shift_x_by_k = (0..m_prime)
+                .enumerate()
+                .map(|(j, _)| F::from_u64(1_u64 << (j + k)) * x[b - 1 - j])
+                .fold(F::zero(), |acc, val| acc + val);
+
+            result += eq_term * shift_x_by_k;
+        }
+        result
+    }
+
     fn materialize_entry(&self, index: u64) -> u64 {
         let (x, y) = uninterleave_bits(index);
         let shift = y % WORD_SIZE as u32;
-        (x << shift) as u64
+        if WORD_SIZE != 64 {
+            ((x as u64) << shift) % (1u64 << WORD_SIZE)
+        } else {
+            (x as u64) << shift
+        }
     }
 
     fn to_lookup_index(&self) -> u64 {
@@ -178,11 +236,15 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
+        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
         jolt_instruction_test,
     };
 
     use super::SLLInstruction;
+
+    instruction_mle_test_small!(sll_mle_small, SLLInstruction<8>);
+    instruction_mle_test_large!(sll_mle_large, SLLInstruction<32>);
 
     #[test]
     fn sll_prefix_suffix() {

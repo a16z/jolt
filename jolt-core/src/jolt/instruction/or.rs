@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt};
+use crate::subprotocols::sparse_dense_shout::{
+    current_suffix_len, LookupBits, SparseDenseSumcheckAlt,
+};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use crate::utils::{interleave_bits, uninterleave_bits};
 
@@ -159,8 +161,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ORInstr
             result += F::from_u32(c + y_msb - c * y_msb) * F::from_u32(1 << shift);
         }
         let (x, y) = b.uninterleave();
-        let suffix_len = WORD_SIZE - j / 2 - 1 - b.len() / 2;
-        result += F::from_u32((u32::from(x) | u32::from(y)) << suffix_len);
+        let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
+        result += F::from_u32((u32::from(x) | u32::from(y)) << (suffix_len / 2));
 
         result
     }

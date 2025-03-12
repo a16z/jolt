@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
+use crate::subprotocols::sparse_dense_shout::{
+    current_suffix_len, LookupBits, SparseDenseSumcheckAlt,
+};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use crate::utils::{interleave_bits, uninterleave_bits};
 
@@ -115,6 +118,66 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<F> for ANDInstruction<WORD_SIZE> {
+    const NUM_PREFIXES: usize = 1;
+    const NUM_SUFFIXES: usize = 2;
+
+    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
+        debug_assert_eq!(
+            prefixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_PREFIXES
+        );
+        debug_assert_eq!(
+            suffixes.len(),
+            <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES
+        );
+        prefixes[0] * suffixes[0] + suffixes[1]
+    }
+
+    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
+        let shift = WORD_SIZE - 1 - j / 2;
+        let updated = checkpoints[0].unwrap_or(F::zero()) + F::from_u32(1 << shift) * r_x * r_y;
+        checkpoints[0] = Some(updated);
+    }
+
+    fn prefix_mle(
+        _: usize,
+        checkpoints: &[Option<F>],
+        r_x: Option<F>,
+        c: u32,
+        mut b: LookupBits,
+        j: usize,
+    ) -> F {
+        let mut result = checkpoints[0].unwrap_or(F::zero());
+
+        if let Some(r_x) = r_x {
+            let y = F::from_u8(c as u8);
+            let shift = WORD_SIZE - 1 - j / 2;
+            result += F::from_u32(1 << shift) * r_x * y;
+        } else {
+            let y_msb = b.pop_msb() as u32;
+            let shift = WORD_SIZE - 1 - j / 2;
+            result += F::from_u32(c * y_msb) * F::from_u32(1 << shift);
+        }
+        let (x, y) = b.uninterleave();
+        let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
+        result += F::from_u32((u32::from(x) & u32::from(y)) << (suffix_len / 2));
+
+        result
+    }
+
+    fn suffix_mle(l: usize, b: LookupBits) -> u32 {
+        match l {
+            0 => 1,
+            1 => {
+                let (x, y) = b.uninterleave();
+                u32::from(x) & u32::from(y)
+            }
+            _ => unimplemented!("Unexpected value l={l}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -123,10 +186,16 @@ mod test {
 
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
-        jolt::instruction::JoltInstruction, jolt_instruction_test,
+        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt_instruction_test,
     };
 
     use super::ANDInstruction;
+
+    #[test]
+    fn and_prefix_suffix() {
+        prefix_suffix_test::<Fr, ANDInstruction<32>>();
+    }
 
     instruction_mle_test_small!(and_mle_small, ANDInstruction<8>);
     instruction_mle_test_large!(and_mle_large, ANDInstruction<32>);

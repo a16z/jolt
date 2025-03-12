@@ -222,6 +222,8 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<F>>() {
         let instr = I::default().random(&mut rng);
         let lookup_index = instr.to_lookup_index();
 
+        println!("{instr:?} -> {lookup_index}");
+
         let result = F::from_u64(instr.materialize_entry(lookup_index));
 
         let mut j = 0;
@@ -249,6 +251,7 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<F>>() {
                     .collect();
 
                 let combined = I::combine(&prefix_evals, &suffix_evals);
+                println!("{j} {prefix} {suffix}");
                 if combined != result {
                     for (i, x) in prefix_evals.iter().enumerate() {
                         println!("prefix_evals[{i}] = {x}");
