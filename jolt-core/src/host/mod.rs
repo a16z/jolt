@@ -41,6 +41,8 @@ pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod toolchain;
 
+const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+
 #[derive(Clone)]
 pub struct Program {
     guest: String,
@@ -99,7 +101,7 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
-    pub fn build(&mut self) {
+    pub fn build(&mut self, target_dir: &str) {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
@@ -138,7 +140,8 @@ impl Program {
             }
 
             let target = format!(
-                "/tmp/jolt-guest-target-{}-{}",
+                "{}/{}-{}",
+                target_dir,
                 self.guest,
                 self.func.as_ref().unwrap_or(&"".to_string())
             );
@@ -182,7 +185,7 @@ impl Program {
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
-        self.build();
+        self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.clone().unwrap();
         let (raw_trace, io_device) =
             tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
@@ -220,7 +223,7 @@ impl Program {
     }
 
     pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary {
-        self.build();
+        self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let (raw_trace, _) =
             tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
