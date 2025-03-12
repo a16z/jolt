@@ -3,15 +3,12 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::suffixes::Suffixes;
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
-use crate::jolt::instruction::suffixes::one::OneSuffix;
-use crate::jolt::instruction::suffixes::or::OrSuffix;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::{
-    current_suffix_len, LookupBits, SparseDenseSumcheckAlt,
-};
+use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use crate::utils::{interleave_bits, uninterleave_bits};
 
@@ -124,47 +121,16 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
 impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
     for ORInstruction<WORD_SIZE>
 {
-    const NUM_PREFIXES: usize = 1;
-
-    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        prefixes[0] * suffixes[0] + suffixes[1]
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::Or]
     }
 
-    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
-        vec![Suffixes::One(OneSuffix), Suffixes::Or(OrSuffix)]
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::Or]
     }
 
-    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
-        let shift = WORD_SIZE - 1 - j / 2;
-        let updated = checkpoints[0].unwrap_or(F::zero())
-            + F::from_u32(1 << shift) * (r_x + r_y - (r_x * r_y));
-        checkpoints[0] = Some(updated);
-    }
-
-    fn prefix_mle(
-        _: usize,
-        checkpoints: &[Option<F>],
-        r_x: Option<F>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F {
-        let mut result = checkpoints[0].unwrap_or(F::zero());
-
-        if let Some(r_x) = r_x {
-            let y = F::from_u8(c as u8);
-            let shift = WORD_SIZE - 1 - j / 2;
-            result += F::from_u32(1 << shift) * (r_x + y - (r_x * y));
-        } else {
-            let y_msb = b.pop_msb() as u32;
-            let shift = WORD_SIZE - 1 - j / 2;
-            result += F::from_u32(c + y_msb - c * y_msb) * F::from_u32(1 << shift);
-        }
-        let (x, y) = b.uninterleave();
-        let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
-        result += F::from_u32((u32::from(x) | u32::from(y)) << (suffix_len / 2));
-
-        result
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::Or] * suffixes[Suffixes::One] + suffixes[Suffixes::Or]
     }
 }
 

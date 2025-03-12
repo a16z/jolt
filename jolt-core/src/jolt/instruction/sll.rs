@@ -5,11 +5,12 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::suffixes::Suffixes;
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt};
+use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
@@ -160,52 +161,55 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
 impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
     for SLLInstruction<WORD_SIZE>
 {
-    const NUM_PREFIXES: usize = WORD_SIZE * 3 / 4;
-
-    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        suffixes[0]
-            + prefixes
-                .iter()
-                .zip(suffixes[1..].iter())
-                .map(|(prefix, suffix)| *prefix * suffix)
-                .sum::<F>()
-    }
-
-    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, _: F, j: usize) {
-        checkpoints[j / 2] = Some(r_x);
-    }
-
-    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
+    fn prefixes() -> Vec<Prefixes> {
         todo!()
     }
 
-    fn prefix_mle(
-        l: usize,
-        checkpoints: &[Option<F>],
-        r_x: Option<F>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F {
-        let x_variables_bound = j / 2;
-        if l == x_variables_bound {
-            if let Some(r_x) = r_x {
-                r_x
-            } else {
-                F::from_u32(c)
-            }
-        } else if l < x_variables_bound {
-            checkpoints[l].unwrap()
-        } else {
-            let (x, _) = b.uninterleave();
-            let index = l - x_variables_bound - 1;
-            if index >= x.len() {
-                F::zero()
-            } else {
-                F::from_u8(x.get_bit(l - x_variables_bound - 1))
-            }
-        }
+    fn suffixes() -> Vec<Suffixes> {
+        todo!()
     }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        todo!()
+        // suffixes[0]
+        //     + prefixes
+        //         .iter()
+        //         .zip(suffixes[1..].iter())
+        //         .map(|(prefix, suffix)| *prefix * suffix)
+        //         .sum::<F>()
+    }
+
+    // fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, _: F, j: usize) {
+    //     checkpoints[j / 2] = Some(r_x);
+    // }
+
+    // fn prefix_mle(
+    //     l: usize,
+    //     checkpoints: &[PrefixCheckpoint<F>],
+    //     r_x: Option<F>,
+    //     c: u32,
+    //     b: LookupBits,
+    //     j: usize,
+    // ) -> F {
+    //     let x_variables_bound = j / 2;
+    //     if l == x_variables_bound {
+    //         if let Some(r_x) = r_x {
+    //             r_x
+    //         } else {
+    //             F::from_u32(c)
+    //         }
+    //     } else if l < x_variables_bound {
+    //         checkpoints[l].unwrap()
+    //     } else {
+    //         let (x, _) = b.uninterleave();
+    //         let index = l - x_variables_bound - 1;
+    //         if index >= x.len() {
+    //             F::zero()
+    //         } else {
+    //             F::from_u8(x.get_bit(l - x_variables_bound - 1))
+    //         }
+    //     }
+    // }
 
     // fn suffix_mle(l: usize, b: LookupBits) -> u32 {
     //     debug_assert!(l < <Self as SparseDenseSumcheckAlt<F>>::NUM_SUFFIXES);

@@ -1,9 +1,13 @@
 use crate::{
     field::JoltField,
-    jolt::instruction::suffixes::SparseDenseSuffix,
+    jolt::instruction::{
+        prefixes::{PrefixCheckpoint, Prefixes},
+        suffixes::{SuffixEval, Suffixes},
+    },
     subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
 };
 use rand::{rngs::StdRng, SeedableRng};
+use strum::{EnumCount, IntoEnumIterator};
 
 #[macro_export]
 /// Tests the consistency of an instruction's `subtables``, `to_indices`, and `combine_lookups`
@@ -213,12 +217,10 @@ macro_rules! instruction_update_function_test {
 }
 
 pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<32, F>>() {
-    let num_prefixes = I::NUM_PREFIXES;
-
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {
-        let mut prefix_checkpoints: Vec<Option<F>> = vec![None; num_prefixes];
+        let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
         let instr = I::default().random(&mut rng);
         let lookup_index = instr.to_lookup_index();
 
@@ -233,9 +235,8 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<32, F>>() {
             let (mut prefix_bits, suffix_bits) =
                 LookupBits::new(lookup_index, 64 - phase * 16).split(suffix_len);
 
-            let suffix_evals: Vec<_> = I::suffixes()
-                .iter()
-                .map(|suffix| F::from_u32(suffix.suffix_mle(suffix_bits)))
+            let suffix_evals: Vec<_> = Suffixes::iter()
+                .map(|suffix| SuffixEval::from(F::from_u32(suffix.suffix_mle::<32>(suffix_bits))))
                 .collect();
 
             for _ in 0..16 {
@@ -247,8 +248,16 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<32, F>>() {
 
                 let c = prefix_bits.pop_msb();
 
-                let prefix_evals: Vec<_> = (0..num_prefixes)
-                    .map(|l| I::prefix_mle(l, &prefix_checkpoints, r_x, c as u32, prefix_bits, j))
+                let prefix_evals: Vec<_> = Prefixes::iter()
+                    .map(|prefix| {
+                        prefix.prefix_mle::<32, F>(
+                            &prefix_checkpoints,
+                            r_x,
+                            c as u32,
+                            prefix_bits,
+                            j,
+                        )
+                    })
                     .collect();
 
                 let combined = I::combine(&prefix_evals, &suffix_evals);
@@ -266,7 +275,7 @@ pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<32, F>>() {
                 r.push(c);
 
                 if r.len() % 2 == 0 {
-                    I::update_prefix_checkpoints(
+                    Prefixes::update_checkpoints::<32, F>(
                         &mut prefix_checkpoints,
                         F::from_u8(r[r.len() - 2]),
                         F::from_u8(r[r.len() - 1]),

@@ -50,6 +50,9 @@ enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
 num-integer = "0.1.45"
+num-derive = "0.4.2"
+num = "0.4.3"
+num-traits = "0.2.19"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }

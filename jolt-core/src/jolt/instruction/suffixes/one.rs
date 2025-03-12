@@ -2,11 +2,10 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
-#[derive(Default)]
-pub struct OneSuffix;
+pub enum OneSuffix {}
 
 impl SparseDenseSuffix for OneSuffix {
-    fn suffix_mle(&self, _: LookupBits) -> u32 {
+    fn suffix_mle(_: LookupBits) -> u32 {
         1
     }
 }

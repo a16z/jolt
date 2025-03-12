@@ -3,15 +3,12 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::suffixes::Suffixes;
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
-use crate::jolt::instruction::suffixes::one::OneSuffix;
-use crate::jolt::instruction::suffixes::upper_word::UpperWordSuffix;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::{
-    current_suffix_len, LookupBits, SparseDenseSumcheckAlt,
-};
+use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
 };
@@ -136,69 +133,16 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
 impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
     for MULHUInstruction<WORD_SIZE>
 {
-    const NUM_PREFIXES: usize = 1;
-
-    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        prefixes[0] * suffixes[0] + suffixes[1]
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::UpperWord]
     }
 
-    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
-        vec![
-            Suffixes::One(OneSuffix),
-            Suffixes::UpperWord(UpperWordSuffix),
-        ]
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::UpperWord]
     }
 
-    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
-        if j >= WORD_SIZE {
-            return;
-        }
-        let x_shift = WORD_SIZE - j;
-        let y_shift = WORD_SIZE - j - 1;
-        let updated = checkpoints[0].unwrap_or(F::zero())
-            + F::from_u64(1 << x_shift) * r_x
-            + F::from_u64(1 << y_shift) * r_y;
-        checkpoints[0] = Some(updated);
-    }
-
-    fn prefix_mle(
-        _: usize,
-        checkpoints: &[Option<F>],
-        r_x: Option<F>,
-        c: u32,
-        mut b: LookupBits,
-        mut j: usize,
-    ) -> F {
-        let mut result = checkpoints[0].unwrap_or(F::zero());
-        if j >= WORD_SIZE {
-            return result;
-        }
-
-        if let Some(r_x) = r_x {
-            let y = F::from_u8(c as u8);
-            let x_shift = WORD_SIZE - j;
-            let y_shift = WORD_SIZE - j - 1;
-            result += F::from_u64(1 << x_shift) * r_x;
-            result += F::from_u64(1 << y_shift) * y;
-        } else {
-            let x = F::from_u8(c as u8);
-            let y_msb = b.pop_msb();
-            let x_shift = WORD_SIZE - j - 1;
-            let y_shift = WORD_SIZE - j - 2;
-            result += F::from_u64(1 << x_shift) * x;
-            result += F::from_u64(1 << y_shift) * F::from_u8(y_msb);
-        }
-
-        let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
-        if suffix_len > WORD_SIZE {
-            result += F::from_u64(u64::from(b) << (suffix_len - WORD_SIZE));
-        } else {
-            println!("j={j} b.len={}, suffix_len={suffix_len}", b.len());
-            let (b_high, _) = b.split(WORD_SIZE - suffix_len);
-            result += F::from_u64(u64::from(b_high));
-        }
-
-        result
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::UpperWord] * suffixes[Suffixes::One] + suffixes[Suffixes::UpperWord]
     }
 }
 

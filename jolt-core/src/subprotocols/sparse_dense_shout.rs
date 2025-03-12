@@ -2,8 +2,8 @@ use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::instruction::{
-        prefixes::Prefixes,
-        suffixes::{SparseDenseSuffix, Suffixes},
+        prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
+        suffixes::{SuffixEval, Suffixes},
         JoltInstruction,
     },
     poly::{
@@ -22,8 +22,10 @@ use crate::{
         uninterleave_bits,
     },
 };
+use num::FromPrimitive;
 use rayon::{prelude::*, slice::Iter};
 use std::{fmt::Display, ops::Index};
+use strum::{EnumCount, IntoEnumIterator};
 
 #[derive(Clone)]
 struct ExpandingTable<F: JoltField> {
@@ -203,32 +205,16 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
 pub trait SparseDenseSumcheckAlt<const WORD_SIZE: usize, F: JoltField>:
     JoltInstruction + Default
 {
-    const NUM_PREFIXES: usize;
-
-    fn prefixes() -> Vec<Prefixes> {
-        todo!()
-    }
-    fn suffixes() -> Vec<Suffixes<WORD_SIZE>>;
-
-    fn combine(prefixes: &[F], suffixes: &[F]) -> F;
-    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize);
-    fn prefix_mle(
-        l: usize,
-        checkpoints: &[Option<F>],
-        r_x: Option<F>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F;
+    fn prefixes() -> Vec<Prefixes>;
+    fn suffixes() -> Vec<Suffixes>;
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
     fn compute_prover_message(
-        prefix_checkpoints: &[Option<F>],
+        prefix_checkpoints: &[PrefixCheckpoint<F>],
         suffix_polys: &[DensePolynomial<F>],
         r: &[F],
         j: usize,
     ) -> [F; 2] {
-        debug_assert_eq!(prefix_checkpoints.len(), Self::NUM_PREFIXES);
-
         let len = suffix_polys[0].len();
         let log_len = len.log_2();
 
@@ -239,19 +225,23 @@ pub trait SparseDenseSumcheckAlt<const WORD_SIZE: usize, F: JoltField>:
             .map(|b| {
                 let b = LookupBits::new(b as u64, log_len - 1);
                 // TODO(moodlezoup): Avoid allocations
-                let prefixes_c0: Vec<_> = (0..Self::NUM_PREFIXES)
-                    .map(|l| Self::prefix_mle(l, prefix_checkpoints, r_x, 0, b, j))
+                let prefixes_c0: Vec<_> = Prefixes::iter()
+                    .map(|prefix| {
+                        prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j)
+                    })
                     .collect();
-                let prefixes_c2: Vec<_> = (0..Self::NUM_PREFIXES)
-                    .map(|l| Self::prefix_mle(l, prefix_checkpoints, r_x, 2, b, j))
+                let prefixes_c2: Vec<_> = Prefixes::iter()
+                    .map(|prefix| {
+                        prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j)
+                    })
                     .collect();
                 let suffixes_left: Vec<_> = suffix_polys
                     .iter()
-                    .map(|suffix_poly| suffix_poly[b.into()])
+                    .map(|suffix_poly| suffix_poly[b.into()].into())
                     .collect();
                 let suffixes_right: Vec<_> = suffix_polys
                     .iter()
-                    .map(|suffix_poly| suffix_poly[usize::from(b) + len / 2])
+                    .map(|suffix_poly| suffix_poly[usize::from(b) + len / 2].into())
                     .collect();
                 (
                     Self::combine(&prefixes_c0, &suffixes_left),
@@ -307,7 +297,7 @@ pub fn prove_single_instruction_alt<
         || EqPolynomial::evals_with_r2(&r_cycle),
     );
 
-    let mut prefix_checkpoints: Vec<Option<F>> = vec![None; I::NUM_PREFIXES];
+    let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
     let mut v = ExpandingTable::new(m);
 
     let span = tracing::span!(tracing::Level::INFO, "compute rv_claim");
@@ -337,7 +327,7 @@ pub fn prove_single_instruction_alt<
     let mut j: usize = 0;
     let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
 
-    let mut suffix_polys: Vec<DensePolynomial<F>> = I::suffixes()
+    let mut suffix_polys: Vec<DensePolynomial<F>> = (0..Suffixes::COUNT)
         .into_par_iter()
         .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(m)))
         .collect();
@@ -388,8 +378,8 @@ pub fn prove_single_instruction_alt<
         let _guard = span.enter();
         suffix_polys
             .par_iter_mut()
-            .zip(I::suffixes().par_iter())
-            .for_each(|(poly, suffix)| {
+            .enumerate()
+            .for_each(|(index, poly)| {
                 if phase != 0 {
                     poly.len = m;
                     poly.num_vars = poly.len.log_2();
@@ -403,7 +393,8 @@ pub fn prove_single_instruction_alt<
                             let k = lookup_indices[j];
                             let u = u_evals[j];
                             let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                            let t = suffix.suffix_mle(suffix_bits);
+                            let suffix: Suffixes = FromPrimitive::from_u8(index as u8).unwrap();
+                            let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                             let index = prefix_bits % chunk_size;
                             evals[index] += u.mul_u64_unchecked(t as u64);
                         });
@@ -466,12 +457,13 @@ pub fn prove_single_instruction_alt<
                 if r.len() % 2 == 0 {
                     let span = tracing::span!(tracing::Level::INFO, "Update prefix checkpoints");
                     let _guard = span.enter();
-                    I::update_prefix_checkpoints(
+
+                    Prefixes::update_checkpoints::<WORD_SIZE, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
                         r[r.len() - 1],
                         j,
-                    )
+                    );
                 }
             }
 
@@ -545,15 +537,17 @@ pub fn prove_single_instruction_alt<
     let span = tracing::span!(tracing::Level::INFO, "Materialize val");
     let _guard = span.enter();
     let prefixes: Vec<_> = prefix_checkpoints
-        .iter()
+        .into_iter()
         .map(|checkpoint| checkpoint.unwrap())
         .collect();
     let val: Vec<F> = (0..m)
         .into_par_iter()
         .map(|k| {
-            let suffixes: Vec<_> = I::suffixes()
-                .iter()
-                .map(|suffix| F::from_u32(suffix.suffix_mle(LookupBits::new(k as u64, log_m))))
+            let suffixes: Vec<_> = Suffixes::iter()
+                .map(|suffix| {
+                    F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(k as u64, log_m)))
+                        .into()
+                })
                 .collect();
             I::combine(&prefixes, &suffixes)
         })

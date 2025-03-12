@@ -1,14 +1,17 @@
 use crate::{
     field::JoltField,
-    jolt::instruction::suffixes::{lt::LessThanSuffix, one::OneSuffix},
-    subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
+    subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
     utils::{interleave_bits, uninterleave_bits},
 };
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::{suffixes::Suffixes, JoltInstruction};
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltInstruction,
+};
 use crate::{
     jolt::{
         instruction::SubtableIndices,
@@ -107,93 +110,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
 impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
     for SLTUInstruction<WORD_SIZE>
 {
-    const NUM_PREFIXES: usize = 2;
-
-    fn combine(prefixes: &[F], suffixes: &[F]) -> F {
-        prefixes[0] * suffixes[0] + prefixes[1] * suffixes[1]
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LessThan, Prefixes::Eq]
     }
 
-    fn suffixes() -> Vec<Suffixes<WORD_SIZE>> {
-        vec![Suffixes::One(OneSuffix), Suffixes::LessThan(LessThanSuffix)]
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LessThan]
     }
 
-    fn update_prefix_checkpoints(checkpoints: &mut [Option<F>], r_x: F, r_y: F, j: usize) {
-        let lt_checkpoint = checkpoints[0].unwrap_or(F::zero());
-        let eq_checkpoint = checkpoints[1].unwrap_or(F::one());
-        let lt_updated = lt_checkpoint + eq_checkpoint * (F::one() - r_x) * r_y;
-        let eq_updated = eq_checkpoint * (r_x * r_y + (F::one() - r_x) * (F::one() - r_y));
-        checkpoints[0] = Some(lt_updated);
-        checkpoints[1] = Some(eq_updated);
-    }
-
-    fn prefix_mle(
-        l: usize,
-        checkpoints: &[Option<F>],
-        r_x: Option<F>,
-        c: u32,
-        mut b: LookupBits,
-        _: usize,
-    ) -> F {
-        match l {
-            0 => {
-                let mut lt = checkpoints[0].unwrap_or(F::zero());
-                let mut eq = checkpoints[1].unwrap_or(F::one());
-
-                if let Some(r_x) = r_x {
-                    let c = F::from_u32(c);
-                    lt += (F::one() - r_x) * c * eq;
-                    let (x, y) = b.uninterleave();
-                    if u64::from(x) < u64::from(y) {
-                        eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
-                        lt += eq;
-                    }
-                } else {
-                    let c = F::from_u32(c);
-                    let y_msb = b.pop_msb();
-                    if y_msb == 1 {
-                        // lt += eq * (1 - c) * y_msb
-                        lt += eq * (F::one() - c);
-                    }
-                    let (x, y) = b.uninterleave();
-                    if u64::from(x) < u64::from(y) {
-                        if y_msb == 1 {
-                            lt += eq * c;
-                        } else {
-                            lt += eq * (F::one() - c);
-                        }
-                    }
-                }
-
-                lt
-            }
-            1 => {
-                let eq = checkpoints[1].unwrap_or(F::one());
-
-                if let Some(r_x) = r_x {
-                    let (x, y) = b.uninterleave();
-                    if x == y {
-                        let y = F::from_u32(c);
-                        eq * (r_x * y + (F::one() - r_x) * (F::one() - y))
-                    } else {
-                        F::zero()
-                    }
-                } else {
-                    let y_msb = b.pop_msb();
-                    let (x, y) = b.uninterleave();
-                    if x == y {
-                        let c = F::from_u32(c);
-                        if y_msb == 1 {
-                            eq * c
-                        } else {
-                            eq * (F::one() - c)
-                        }
-                    } else {
-                        F::zero()
-                    }
-                }
-            }
-            _ => unimplemented!("Unexpected value l={l}"),
-        }
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
+            + prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
     }
 }
 
