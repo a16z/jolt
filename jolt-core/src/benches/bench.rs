@@ -233,8 +233,8 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
-            RV32IJoltVM::preprocess(
+        let preprocessing: crate::jolt::vm::JoltProverPreprocessing<C, F, PCS, ProofTranscript> =
+            RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
@@ -265,7 +265,7 @@ where
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -296,8 +296,8 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
-            RV32IJoltVM::preprocess(
+        let preprocessing: crate::jolt::vm::JoltProverPreprocessing<C, F, PCS, ProofTranscript> =
+            RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
@@ -313,7 +313,7 @@ where
                 preprocessing.clone(),
             );
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
