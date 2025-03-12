@@ -200,7 +200,8 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "op
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {
-    let program = guest::compile_fib();
+    let target_dir = "/tmp/jolt-guest-targets";
+    let program = guest::compile_fib(target_dir);
 
     let prover_preprocessing = guest::preprocess_prover_fib(&program);
     let verifier_preprocessing = guest::preprocess_verifier_fib(&program);

@@ -208,14 +208,14 @@ impl MacroBuilder {
         let compile_fn_name = Ident::new(&format!("compile_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #compile_fn_name() -> jolt::host::Program {
+            pub fn #compile_fn_name(target_dir: &str) -> jolt::host::Program {
                 #imports
 
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
-                program.build();
+                program.build(target_dir);
 
                 program
             }
