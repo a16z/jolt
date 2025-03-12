@@ -196,6 +196,15 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
     suffix_len
 }
 
+pub trait SparseDenseSuffix<const WORD_SIZE: usize, F: JoltField> {
+    fn suffix_mle(b: LookupBits) -> u32;
+}
+
+pub trait SparseDensePrefix<const WORD_SIZE: usize, F: JoltField> {
+    fn prefix_mle(checkpoints: &[Option<F>], r_x: Option<F>, c: u32, b: LookupBits, j: usize) -> F;
+    fn update_prefix_checkpoint(checkpoints: &[Option<F>], r_x: F, r_y: F, j: usize) -> Option<F>;
+}
+
 pub trait SparseDenseSumcheckAlt<F: JoltField>: JoltInstruction + Default {
     const NUM_PREFIXES: usize;
     const NUM_SUFFIXES: usize;
@@ -745,7 +754,7 @@ mod tests {
     use crate::{
         jolt::instruction::{
             add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, mulhu::MULHUInstruction,
-            or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction,
+            or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction, sub::SUBInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -793,6 +802,11 @@ mod tests {
     #[test]
     fn test_add() {
         test_single_instruction::<ADDInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_sub() {
+        test_single_instruction::<SUBInstruction<WORD_SIZE>>();
     }
 
     #[test]
