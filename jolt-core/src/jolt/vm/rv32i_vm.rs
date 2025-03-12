@@ -303,7 +303,7 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(artifact_guard);
 
-        let preprocessing = RV32IJoltVM::preprocess(
+        let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
@@ -318,7 +318,7 @@ mod tests {
                 preprocessing.clone(),
             );
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -358,7 +358,7 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(guard);
 
-        let preprocessing = RV32IJoltVM::preprocess(
+        let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
@@ -377,7 +377,7 @@ mod tests {
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -395,7 +395,7 @@ mod tests {
         let (io_device, trace) = program.trace();
         drop(guard);
 
-        let preprocessing = RV32IJoltVM::preprocess(
+        let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
@@ -414,7 +414,7 @@ mod tests {
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -428,7 +428,7 @@ mod tests {
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace();
 
-        let preprocessing = RV32IJoltVM::preprocess(
+        let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
@@ -447,7 +447,7 @@ mod tests {
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -467,7 +467,7 @@ mod tests {
         io_device.outputs[0] = 0; // change the output to 0
         drop(artifact_guard);
 
-        let preprocessing = RV32IJoltVM::preprocess(
+        let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init,
@@ -485,7 +485,7 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
     }
 
     #[test]
@@ -506,7 +506,7 @@ mod tests {
         io_device.memory_layout.termination = io_device.memory_layout.input_start;
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing = RV32IJoltVM::preprocess(
+        let preprocessing = RV32IJoltVM::prover_preprocess(
             bytecode.clone(),
             memory_layout,
             memory_init,
@@ -524,6 +524,6 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
     }
 }
