@@ -15,7 +15,7 @@ use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
 use crate::utils::math::Math;
-use crate::utils::{interleave_bits, uninterleave_bits};
+use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -125,10 +125,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         } else {
             (x as u64) << shift
         }
-    }
-
-    fn to_lookup_index(&self) -> u64 {
-        interleave_bits(self.0 as u32, self.1 as u32)
     }
 
     fn lookup_entry(&self) -> u64 {

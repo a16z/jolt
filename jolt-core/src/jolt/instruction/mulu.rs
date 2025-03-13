@@ -9,11 +9,16 @@ use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
 };
+use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MULUInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for MULUInstruction<WORD_SIZE> {
+    fn to_lookup_index(&self) -> u64 {
+        self.0 * self.1
+    }
+
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -54,13 +59,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULUInstruction<WORD_SIZE> {
         }
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index % (1 << WORD_SIZE)
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -72,7 +81,15 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use super::MULUInstruction;
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt_instruction_test,
+    };
+
+    #[test]
+    fn mulu_materialize_entry() {
+        materialize_entry_test::<Fr, MULUInstruction<32>>();
+    }
 
     #[test]
     fn mulu_instruction_32_e2e() {

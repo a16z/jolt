@@ -9,6 +9,8 @@ use crate::{
 use rand::{rngs::StdRng, SeedableRng};
 use strum::{EnumCount, IntoEnumIterator};
 
+use super::JoltInstruction;
+
 #[macro_export]
 /// Tests the consistency of an instruction's `subtables``, `to_indices`, and `combine_lookups`
 /// methods. In detail:
@@ -168,6 +170,17 @@ macro_rules! instruction_mle_test_large {
             }
         }
     };
+}
+
+pub fn materialize_entry_test<F: JoltField, I: JoltInstruction + Default>() {
+    let mut rng = StdRng::seed_from_u64(12345);
+    for _ in 0..10000 {
+        let instr = I::default().random(&mut rng);
+        assert_eq!(
+            instr.lookup_entry(),
+            instr.materialize_entry(instr.to_lookup_index())
+        );
+    }
 }
 
 pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {

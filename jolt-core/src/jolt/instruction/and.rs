@@ -10,7 +10,7 @@ use crate::field::JoltField;
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
-use crate::utils::{interleave_bits, uninterleave_bits};
+use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ANDInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -43,10 +43,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for ANDInstruction<WORD_SIZE> {
     fn materialize_entry(&self, index: u64) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x & y) as u64
-    }
-
-    fn to_lookup_index(&self) -> u64 {
-        interleave_bits(self.0 as u32, self.1 as u32)
     }
 
     fn lookup_entry(&self) -> u64 {
@@ -101,7 +97,10 @@ mod test {
 
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small,
-        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt::instruction::{
+            test::{materialize_entry_test, prefix_suffix_test},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -110,6 +109,11 @@ mod test {
     #[test]
     fn and_prefix_suffix() {
         prefix_suffix_test::<Fr, ANDInstruction<32>>();
+    }
+
+    #[test]
+    fn and_materialize_entry() {
+        materialize_entry_test::<Fr, ANDInstruction<32>>();
     }
 
     instruction_mle_test_small!(and_mle_small, ANDInstruction<8>);

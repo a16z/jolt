@@ -12,6 +12,10 @@ use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 pub struct ADVICEInstruction<const WORD_SIZE: usize>(pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
+    fn to_lookup_index(&self) -> u64 {
+        self.0
+    }
+
     fn operands(&self) -> (u64, u64) {
         (self.0, 0)
     }
@@ -45,13 +49,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
         self.0
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index % (1 << WORD_SIZE)
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64),
+            64 => Self(rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -63,7 +71,15 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use super::ADVICEInstruction;
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt_instruction_test,
+    };
+
+    #[test]
+    fn advice_materialize_entry() {
+        materialize_entry_test::<Fr, ADVICEInstruction<32>>();
+    }
 
     #[test]
     fn advice_instruction_32_e2e() {

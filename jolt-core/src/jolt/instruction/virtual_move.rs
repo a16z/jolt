@@ -46,18 +46,26 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVEInstruction<WORD_SIZE> {
         chunk_operand_usize(self.0, C, log_M)
     }
 
+    fn to_lookup_index(&self) -> u64 {
+        self.0
+    }
+
     fn lookup_entry(&self) -> u64 {
         // Same for both 32-bit and 64-bit word sizes
         self.0
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index % (1 << WORD_SIZE)
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64),
+            64 => Self(rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -68,9 +76,17 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt_instruction_test,
+    };
 
     use super::MOVEInstruction;
+
+    #[test]
+    fn virtual_move_materialize_entry() {
+        materialize_entry_test::<Fr, MOVEInstruction<32>>();
+    }
 
     #[test]
     fn virtual_move_instruction_32_e2e() {

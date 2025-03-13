@@ -6,7 +6,7 @@ use super::{sltu::SLTUInstruction, JoltInstruction, SubtableIndices};
 use crate::{
     field::JoltField,
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
-    utils::instruction_utils::chunk_and_concatenate_operands,
+    utils::{instruction_utils::chunk_and_concatenate_operands, uninterleave_bits},
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -46,13 +46,23 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEUInstruction<WORD_SIZE> {
         (self.0 >= self.1).into()
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (x >= y).into(),
+            32 => (x >= y).into(),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -63,9 +73,17 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt_instruction_test,
+    };
 
     use super::BGEUInstruction;
+
+    #[test]
+    fn bgeu_materialize_entry() {
+        materialize_entry_test::<Fr, BGEUInstruction<32>>();
+    }
 
     #[test]
     fn bgeu_instruction_32_e2e() {

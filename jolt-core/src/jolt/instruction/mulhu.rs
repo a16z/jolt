@@ -17,6 +17,10 @@ use crate::utils::instruction_utils::{
 pub struct MULHUInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
+    fn to_lookup_index(&self) -> u64 {
+        self.0 * self.1
+    }
+
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -48,16 +52,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
 
     fn materialize_entry(&self, index: u64) -> u64 {
         index >> WORD_SIZE
-    }
-
-    fn to_lookup_index(&self) -> u64 {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => self.0 * self.1,
-            32 => self.0 * self.1,
-            // 64 => (self.0 as u128) + (self.1 as u128),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
     }
 
     fn lookup_entry(&self) -> u64 {
@@ -115,13 +109,21 @@ mod test {
     use super::MULHUInstruction;
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small,
-        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt::instruction::{
+            test::{materialize_entry_test, prefix_suffix_test},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
     #[test]
     fn mulhu_prefix_suffix() {
         prefix_suffix_test::<Fr, MULHUInstruction<32>>();
+    }
+
+    #[test]
+    fn mulhu_materialize_entry() {
+        materialize_entry_test::<Fr, MULHUInstruction<32>>();
     }
 
     instruction_mle_test_small!(mulhu_mle_small, MULHUInstruction<8>);

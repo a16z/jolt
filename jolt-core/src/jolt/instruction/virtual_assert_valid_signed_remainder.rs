@@ -1,4 +1,6 @@
-use crate::{field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable};
+use crate::{
+    field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable, utils::uninterleave_bits,
+};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -120,13 +122,50 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
         }
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        match WORD_SIZE {
+            8 => {
+                let (remainder, divisor) = (x as u8 as i8, y as u8 as i8);
+                let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
+
+                if is_remainder_zero || is_divisor_zero {
+                    1
+                } else {
+                    let remainder_sign = remainder >> WORD_SIZE - 1;
+                    let divisor_sign = divisor >> WORD_SIZE - 1;
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
+                }
+            }
+            32 => {
+                let (remainder, divisor) = (x as i32, y as i32);
+                let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
+
+                if is_remainder_zero || is_divisor_zero {
+                    1
+                } else {
+                    let remainder_sign = remainder >> WORD_SIZE - 1;
+                    let divisor_sign = divisor >> WORD_SIZE - 1;
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
+                }
+            }
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -137,9 +176,17 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt_instruction_test,
+    };
 
     use super::AssertValidSignedRemainderInstruction;
+
+    #[test]
+    fn assert_valid_signed_remainder_materialize_entry() {
+        materialize_entry_test::<Fr, AssertValidSignedRemainderInstruction<32>>();
+    }
 
     #[test]
     fn assert_valid_signed_remainder_instruction_32_e2e() {

@@ -117,13 +117,21 @@ mod test {
     use super::ADDInstruction;
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small,
-        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt::instruction::{
+            test::{materialize_entry_test, prefix_suffix_test},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
     #[test]
     fn add_prefix_suffix() {
         prefix_suffix_test::<Fr, ADDInstruction<32>>();
+    }
+
+    #[test]
+    fn add_materialize_entry() {
+        materialize_entry_test::<Fr, ADDInstruction<32>>();
     }
 
     instruction_mle_test_small!(add_mle_small, ADDInstruction<8>);

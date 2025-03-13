@@ -17,6 +17,12 @@ use crate::utils::instruction_utils::{
 pub struct SUBInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
+    fn to_lookup_index(&self) -> u64 {
+        let x = self.0 as u128;
+        let y = (1u128 << WORD_SIZE) - self.1 as u128;
+        (x + y) as u64
+    }
+
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -51,12 +57,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
             C,
             log_M,
         )
-    }
-
-    fn to_lookup_index(&self) -> u64 {
-        let x = self.0 as u128;
-        let y = (1u128 << WORD_SIZE) - self.1 as u128;
-        (x + y) as u64
     }
 
     fn materialize_entry(&self, index: u64) -> u64 {
@@ -117,7 +117,10 @@ mod test {
 
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small,
-        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt::instruction::{
+            test::{materialize_entry_test, prefix_suffix_test},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -126,6 +129,11 @@ mod test {
     #[test]
     fn sub_prefix_suffix() {
         prefix_suffix_test::<Fr, SUBInstruction<32>>();
+    }
+
+    #[test]
+    fn sub_materialize_entry() {
+        materialize_entry_test::<Fr, SUBInstruction<32>>();
     }
 
     instruction_mle_test_small!(sub_mle_small, SUBInstruction<8>);

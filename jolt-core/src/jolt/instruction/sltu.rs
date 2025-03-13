@@ -1,7 +1,6 @@
 use crate::{
-    field::JoltField,
-    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
-    utils::{interleave_bits, uninterleave_bits},
+    field::JoltField, subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
+    utils::uninterleave_bits,
 };
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -68,10 +67,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
         (x < y).into()
     }
 
-    fn to_lookup_index(&self) -> u64 {
-        interleave_bits(self.0 as u32, self.1 as u32)
-    }
-
     fn lookup_entry(&self) -> u64 {
         // This is the same for 32-bit and 64-bit word sizes
         (self.0 < self.1).into()
@@ -128,11 +123,19 @@ mod test {
 
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small,
-        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt::instruction::{
+            test::{materialize_entry_test, prefix_suffix_test},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
     use super::SLTUInstruction;
+
+    #[test]
+    fn sltu_materialize_entry() {
+        materialize_entry_test::<Fr, SLTUInstruction<32>>();
+    }
 
     #[test]
     fn sltu_prefix_suffix() {

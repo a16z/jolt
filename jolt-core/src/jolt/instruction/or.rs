@@ -45,10 +45,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
         (x | y) as u64
     }
 
-    fn to_lookup_index(&self) -> u64 {
-        interleave_bits(self.0 as u32, self.1 as u32)
-    }
-
     fn lookup_entry(&self) -> u64 {
         // This is the same for both 32-bit and 64-bit word sizes
         self.0 | self.1
@@ -101,7 +97,10 @@ mod test {
 
     use crate::{
         instruction_mle_test_large, instruction_mle_test_small,
-        jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
+        jolt::instruction::{
+            test::{materialize_entry_test, prefix_suffix_test},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -110,6 +109,11 @@ mod test {
     #[test]
     fn or_prefix_suffix() {
         prefix_suffix_test::<Fr, ORInstruction<32>>();
+    }
+
+    #[test]
+    fn or_materialize_entry() {
+        materialize_entry_test::<Fr, ORInstruction<32>>();
     }
 
     instruction_mle_test_small!(or_mle_small, ORInstruction<8>);

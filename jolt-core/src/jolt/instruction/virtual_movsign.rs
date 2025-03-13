@@ -64,6 +64,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
         chunk_operand_usize(self.0, C, log_M)
     }
 
+    fn to_lookup_index(&self) -> u64 {
+        self.0
+    }
+
     fn lookup_entry(&self) -> u64 {
         match WORD_SIZE {
             32 => {
@@ -84,13 +88,22 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
         }
     }
 
-    fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64())
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let sign_bit = 1 << (WORD_SIZE - 1);
+        if index & sign_bit != 0 {
+            (1 << WORD_SIZE) - 1
         } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+            0
+        }
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64),
+            64 => Self(rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -102,12 +115,20 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
-        jolt::instruction::JoltInstruction,
+        jolt::instruction::{
+            test::materialize_entry_test,
+            virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
     use super::MOVSIGNInstruction;
+
+    #[test]
+    fn virtual_movsign_materialize_entry() {
+        materialize_entry_test::<Fr, MOVSIGNInstruction<32>>();
+    }
 
     #[test]
     fn virtual_movsign_instruction_32_e2e() {
