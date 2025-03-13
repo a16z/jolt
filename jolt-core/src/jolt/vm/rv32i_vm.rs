@@ -299,6 +299,7 @@ mod tests {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
+        program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace(&inputs);
         drop(artifact_guard);
@@ -354,6 +355,7 @@ mod tests {
 
         let mut program = host::Program::new("sha3-guest");
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace(&inputs);
         drop(guard);
@@ -391,6 +393,7 @@ mod tests {
 
         let mut program = host::Program::new("sha3-guest");
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace(&inputs);
         drop(guard);
@@ -426,6 +429,7 @@ mod tests {
     fn memory_ops_e2e_hyperkzg() {
         let mut program = host::Program::new("memory-ops-guest");
         let inputs = vec![];
+        program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace(&inputs);
 
@@ -462,6 +466,7 @@ mod tests {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
+        program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
         let (mut io_device, mut trace) = program.trace(&inputs);
         trace.truncate(100);
@@ -495,6 +500,7 @@ mod tests {
         let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap(); // change input to 1 so that termination bit equal true
+        program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
         let (mut io_device, trace) = program.trace(&inputs);
         let memory_layout = io_device.memory_layout.clone();
