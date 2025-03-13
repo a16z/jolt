@@ -176,8 +176,6 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {
         let instr = I::default().random(&mut rng);
         let lookup_index = instr.to_lookup_index();
 
-        println!("{instr:?} -> {lookup_index}");
-
         let result = F::from_u64(instr.materialize_entry(lookup_index));
 
         let mut j = 0;
@@ -213,8 +211,9 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {
                     .collect();
 
                 let combined = I::combine(&prefix_evals, &suffix_evals);
-                println!("{j} {prefix_bits} {suffix_bits}");
                 if combined != result {
+                    println!("{instr:?} -> {lookup_index}");
+                    println!("{j} {prefix_bits} {suffix_bits}");
                     for (i, x) in prefix_evals.iter().enumerate() {
                         println!("prefix_evals[{i}] = {x}");
                     }

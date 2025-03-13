@@ -2,10 +2,19 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::{sltu::SLTUInstruction, JoltInstruction, SubtableIndices};
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    sltu::SLTUInstruction,
+    suffixes::SuffixEval,
+    JoltInstruction, SubtableIndices,
+};
 use crate::{
     field::JoltField,
-    jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
+    jolt::{
+        instruction::suffixes::Suffixes,
+        subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
+    },
+    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
     utils::{instruction_utils::chunk_and_concatenate_operands, uninterleave_bits},
 };
 
@@ -71,6 +80,24 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEUInstruction<WORD_SIZE> {
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for BGEUInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LessThan, Prefixes::Eq]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LessThan]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        suffixes[Suffixes::One]
+            - prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
+            - prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -81,7 +108,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -103,6 +130,11 @@ mod test {
     #[test]
     fn bgeu_mle_random() {
         instruction_mle_random_test::<Fr, BGEUInstruction<32>>();
+    }
+
+    #[test]
+    fn bgeu_prefix_suffix() {
+        prefix_suffix_test::<Fr, BGEUInstruction<32>>();
     }
 
     #[test]

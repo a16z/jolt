@@ -750,9 +750,11 @@ mod tests {
     use super::*;
     use crate::{
         jolt::instruction::{
-            add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, mulhu::MULHUInstruction,
-            or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction, sub::SUBInstruction,
-            xor::XORInstruction,
+            add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bgeu::BGEUInstruction,
+            bne::BNEInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+            mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction,
+            sub::SUBInstruction, virtual_advice::ADVICEInstruction,
+            virtual_assert_lte::ASSERTLTEInstruction, xor::XORInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -813,11 +815,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mulhu() {
-        test_single_instruction::<MULHUInstruction<WORD_SIZE>>();
-    }
-
-    #[test]
     fn test_or() {
         test_single_instruction::<ORInstruction<WORD_SIZE>>();
     }
@@ -828,13 +825,48 @@ mod tests {
     }
 
     #[test]
+    fn test_beq() {
+        test_single_instruction::<BEQInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_bgeu() {
+        test_single_instruction::<BGEUInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_bne() {
+        test_single_instruction::<BNEInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
     fn test_sltu() {
         test_single_instruction::<SLTUInstruction<WORD_SIZE>>();
     }
 
     #[test]
-    fn test_beq() {
-        test_single_instruction::<BEQInstruction<WORD_SIZE>>();
+    fn test_mul() {
+        test_single_instruction::<MULInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_mulu() {
+        test_single_instruction::<MULUInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_mulhu() {
+        test_single_instruction::<MULHUInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_advice() {
+        test_single_instruction::<ADVICEInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_assert_lte() {
+        test_single_instruction::<ASSERTLTEInstruction<WORD_SIZE>>();
     }
 
     #[ignore = "not working"]
