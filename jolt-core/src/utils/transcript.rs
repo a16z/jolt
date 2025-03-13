@@ -143,6 +143,16 @@ impl Transcript for KeccakTranscript {
         self.append_bytes(&buf);
     }
 
+    fn append_serializable<F: CanonicalSerialize>(&mut self, scalar: &F) {
+        let mut buf = vec![];
+        scalar.serialize_uncompressed(&mut buf).unwrap();
+        // Serialize uncompressed gives the scalar in LE byte order which is not
+        // a natural representation in the EVM for scalar math so we reverse
+        // to get an EVM compatible version.
+        buf = buf.into_iter().rev().collect();
+        self.append_bytes(&buf);
+    }
+
     fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]) {
         self.append_message(b"begin_append_vector");
         for item in scalars.iter() {
@@ -216,6 +226,7 @@ pub trait Transcript: Clone + Sync + Send + 'static {
     fn append_bytes(&mut self, bytes: &[u8]);
     fn append_u64(&mut self, x: u64);
     fn append_scalar<F: JoltField>(&mut self, scalar: &F);
+    fn append_serializable<F: CanonicalSerialize>(&mut self, scalar: &F);
     fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]);
     fn append_point<G: CurveGroup>(&mut self, point: &G);
     fn append_points<G: CurveGroup>(&mut self, points: &[G]);
