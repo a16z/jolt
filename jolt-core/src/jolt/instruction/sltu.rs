@@ -92,7 +92,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             result += (F::one() - x_i) * y_i * eq_term;
-            eq_term *= F::one() - x_i - y_i + x_i * y_i + x_i * y_i;
+            eq_term *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
         }
         result
     }
@@ -122,9 +122,11 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{
-            test::{materialize_entry_test, prefix_suffix_test},
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
             JoltInstruction,
         },
         jolt_instruction_test,
@@ -142,8 +144,15 @@ mod test {
         prefix_suffix_test::<Fr, SLTUInstruction<32>>();
     }
 
-    instruction_mle_test_small!(sltu_mle_small, SLTUInstruction<8>);
-    instruction_mle_test_large!(sltu_mle_large, SLTUInstruction<32>);
+    #[test]
+    fn sltu_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, SLTUInstruction<8>>();
+    }
+
+    #[test]
+    fn sltu_mle_random() {
+        instruction_mle_random_test::<Fr, SLTUInstruction<32>>();
+    }
 
     #[test]
     fn sltu_instruction_32_e2e() {

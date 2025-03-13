@@ -5,8 +5,11 @@ use crate::{
         suffixes::{SuffixEval, Suffixes},
     },
     subprotocols::sparse_dense_shout::{LookupBits, PrefixSuffixDecomposition},
+    utils::index_to_field_bitvector,
 };
+use ark_std::test_rng;
 use rand::{rngs::StdRng, SeedableRng};
+use rand_core::RngCore;
 use strum::{EnumCount, IntoEnumIterator};
 
 use super::JoltInstruction;
@@ -130,46 +133,28 @@ macro_rules! jolt_virtual_sequence_test {
     };
 }
 
-#[macro_export]
-macro_rules! instruction_mle_test_small {
-    ($test_name:ident, $instruction_type:ty) => {
-        #[test]
-        fn $test_name() {
-            use crate::{field::JoltField, utils::index_to_field_bitvector};
+pub fn instruction_mle_random_test<F: JoltField, I: JoltInstruction + Default>() {
+    let mut rng = test_rng();
 
-            let materialized = <$instruction_type>::default().materialize();
-            for (i, entry) in materialized.iter().enumerate() {
-                assert_eq!(
-                    Fr::from_u64(*entry),
-                    <$instruction_type>::default()
-                        .evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
-                    "MLE did not match materialized table at index {i}",
-                );
-            }
-        }
-    };
+    for _ in 0..1000 {
+        let index = rng.next_u64();
+        assert_eq!(
+            F::from_u64(I::default().materialize_entry(index)),
+            I::default().evaluate_mle(&index_to_field_bitvector(index, 64)),
+            "MLE did not match materialized table at index {index}",
+        );
+    }
 }
 
-#[macro_export]
-macro_rules! instruction_mle_test_large {
-    ($test_name:ident, $instruction_type:ty) => {
-        #[test]
-        fn $test_name() {
-            use crate::{field::JoltField, utils::index_to_field_bitvector};
-
-            let mut rng = test_rng();
-
-            for _ in 0..1000 {
-                let index = rng.next_u64();
-                assert_eq!(
-                    Fr::from_u64(<$instruction_type>::default().materialize_entry(index)),
-                    <$instruction_type>::default()
-                        .evaluate_mle(&index_to_field_bitvector(index, 64)),
-                    "MLE did not match materialized table at index {index}",
-                );
-            }
-        }
-    };
+pub fn instruction_mle_full_hypercube_test<F: JoltField, I: JoltInstruction + Default>() {
+    let materialized = I::default().materialize();
+    for (i, entry) in materialized.iter().enumerate() {
+        assert_eq!(
+            F::from_u64(*entry),
+            I::default().evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
+            "MLE did not match materialized table at index {i}",
+        );
+    }
 }
 
 pub fn materialize_entry_test<F: JoltField, I: JoltInstruction + Default>() {

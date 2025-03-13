@@ -74,6 +74,21 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTLTEInstruction<WORD_SIZE>
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+
+        let mut lt = F::zero();
+        let mut eq = F::one();
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            lt += (F::one() - x_i) * y_i * eq;
+            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+        }
+
+        lt + eq
+    }
 }
 
 #[cfg(test)]
@@ -83,7 +98,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -92,6 +113,16 @@ mod test {
     #[test]
     fn assert_lte_materialize_entry() {
         materialize_entry_test::<Fr, ASSERTLTEInstruction<32>>();
+    }
+
+    #[test]
+    fn assert_lte_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, ASSERTLTEInstruction<8>>();
+    }
+
+    #[test]
+    fn assert_lte_mle_random() {
+        instruction_mle_random_test::<Fr, ASSERTLTEInstruction<32>>();
     }
 
     #[test]

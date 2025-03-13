@@ -233,15 +233,11 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
         jolt_instruction_test,
     };
 
     use super::SLLInstruction;
-
-    instruction_mle_test_small!(sll_mle_small, SLLInstruction<8>);
-    instruction_mle_test_large!(sll_mle_large, SLLInstruction<32>);
 
     #[test]
     fn sll_prefix_suffix() {

@@ -104,6 +104,23 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTInstruction<WORD_SIZE> {
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        let x_sign = r[0];
+        let y_sign = r[1];
+        let eq_sign = x_sign * y_sign + (F::one() - x_sign) * (F::one() - y_sign);
+
+        let mut lt = F::zero();
+        let mut eq = F::one();
+        for i in 1..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            lt += (F::one() - x_i) * y_i * eq;
+            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+        }
+
+        x_sign * (F::one() - y_sign) + eq_sign * lt
+    }
 }
 
 #[cfg(test)]
@@ -113,7 +130,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -122,6 +145,16 @@ mod test {
     #[test]
     fn slt_materialize_entry() {
         materialize_entry_test::<Fr, SLTInstruction<32>>();
+    }
+
+    #[test]
+    fn slt_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, SLTInstruction<8>>();
+    }
+
+    #[test]
+    fn slt_mle_random() {
+        instruction_mle_random_test::<Fr, SLTInstruction<32>>();
     }
 
     #[test]

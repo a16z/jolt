@@ -9,7 +9,6 @@ use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
 };
-use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MULInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -76,6 +75,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULInstruction<WORD_SIZE> {
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        let mut result = F::zero();
+        for i in 0..WORD_SIZE {
+            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+        }
+        result
+    }
 }
 
 #[cfg(test)]
@@ -86,13 +94,29 @@ mod test {
 
     use super::MULInstruction;
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
     #[test]
     fn mul_materialize_entry() {
         materialize_entry_test::<Fr, MULInstruction<32>>();
+    }
+
+    #[test]
+    fn mul_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, MULInstruction<8>>();
+    }
+
+    #[test]
+    fn mul_mle_random() {
+        instruction_mle_random_test::<Fr, MULInstruction<32>>();
     }
 
     #[test]

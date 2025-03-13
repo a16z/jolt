@@ -85,6 +85,22 @@ impl<const WORD_SIZE: usize> JoltInstruction
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        let mut divisor_is_zero = F::one();
+        let mut lt = F::zero();
+        let mut eq = F::one();
+
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            divisor_is_zero *= F::one() - y_i;
+            lt += (F::one() - x_i) * y_i * eq;
+            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+        }
+
+        lt + divisor_is_zero
+    }
 }
 
 #[cfg(test)]
@@ -94,7 +110,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -103,6 +125,16 @@ mod test {
     #[test]
     fn assert_valid_unsigned_remainder_materialize_entry() {
         materialize_entry_test::<Fr, AssertValidUnsignedRemainderInstruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_unsigned_remainder_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, AssertValidUnsignedRemainderInstruction<8>>();
+    }
+
+    #[test]
+    fn assert_valid_unsigned_remainder_mle_random() {
+        instruction_mle_random_test::<Fr, AssertValidUnsignedRemainderInstruction<32>>();
     }
 
     #[test]

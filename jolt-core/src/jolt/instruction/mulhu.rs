@@ -108,9 +108,11 @@ mod test {
 
     use super::MULHUInstruction;
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{
-            test::{materialize_entry_test, prefix_suffix_test},
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
             JoltInstruction,
         },
         jolt_instruction_test,
@@ -126,8 +128,15 @@ mod test {
         materialize_entry_test::<Fr, MULHUInstruction<32>>();
     }
 
-    instruction_mle_test_small!(mulhu_mle_small, MULHUInstruction<8>);
-    instruction_mle_test_large!(mulhu_mle_large, MULHUInstruction<32>);
+    #[test]
+    fn mulhu_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, MULHUInstruction<8>>();
+    }
+
+    #[test]
+    fn mulhu_mle_random() {
+        instruction_mle_random_test::<Fr, MULHUInstruction<32>>();
+    }
 
     #[test]
     fn mulhu_instruction_32_e2e() {

@@ -10,7 +10,7 @@ use crate::field::JoltField;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
-use crate::utils::{interleave_bits, uninterleave_bits};
+use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ORInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -96,9 +96,11 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{
-            test::{materialize_entry_test, prefix_suffix_test},
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
             JoltInstruction,
         },
         jolt_instruction_test,
@@ -116,8 +118,15 @@ mod test {
         materialize_entry_test::<Fr, ORInstruction<32>>();
     }
 
-    instruction_mle_test_small!(or_mle_small, ORInstruction<8>);
-    instruction_mle_test_large!(or_mle_large, ORInstruction<32>);
+    #[test]
+    fn or_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, ORInstruction<8>>();
+    }
+
+    #[test]
+    fn or_mle_random() {
+        instruction_mle_random_test::<Fr, ORInstruction<32>>();
+    }
 
     #[test]
     fn or_instruction_32_e2e() {

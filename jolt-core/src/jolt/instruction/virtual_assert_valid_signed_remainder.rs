@@ -133,8 +133,8 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> WORD_SIZE - 1;
-                    let divisor_sign = divisor >> WORD_SIZE - 1;
+                    let remainder_sign = remainder >> (WORD_SIZE - 1);
+                    let divisor_sign = divisor >> (WORD_SIZE - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
@@ -148,8 +148,8 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> WORD_SIZE - 1;
-                    let divisor_sign = divisor >> WORD_SIZE - 1;
+                    let remainder_sign = remainder >> (WORD_SIZE - 1);
+                    let divisor_sign = divisor >> (WORD_SIZE - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
@@ -168,6 +168,30 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        let x_sign = r[0];
+        let y_sign = r[1];
+
+        let mut lt = F::zero();
+        let mut eq = F::one();
+        let mut remainder_is_zero = F::one() - r[0];
+        let mut divisor_is_zero = F::one() - r[1];
+
+        for i in 1..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            lt += (F::one() - x_i) * y_i * eq;
+            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            remainder_is_zero *= F::one() - x_i;
+            divisor_is_zero *= F::one() - y_i;
+        }
+
+        (F::one() - x_sign - y_sign) * lt
+            + x_sign * y_sign * (F::one() - eq)
+            + (F::one() - x_sign) * y_sign * remainder_is_zero
+            + divisor_is_zero
+    }
 }
 
 #[cfg(test)]
@@ -177,7 +201,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -186,6 +216,16 @@ mod test {
     #[test]
     fn assert_valid_signed_remainder_materialize_entry() {
         materialize_entry_test::<Fr, AssertValidSignedRemainderInstruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_signed_remainder_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, AssertValidSignedRemainderInstruction<8>>();
+    }
+
+    #[test]
+    fn assert_valid_signed_remainder_mle_random() {
+        instruction_mle_random_test::<Fr, AssertValidSignedRemainderInstruction<32>>();
     }
 
     #[test]

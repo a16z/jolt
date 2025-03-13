@@ -68,6 +68,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVEInstruction<WORD_SIZE> {
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        let mut result = F::zero();
+        for i in 0..WORD_SIZE {
+            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+        }
+        result
+    }
 }
 
 #[cfg(test)]
@@ -77,7 +86,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -86,6 +101,16 @@ mod test {
     #[test]
     fn virtual_move_materialize_entry() {
         materialize_entry_test::<Fr, MOVEInstruction<32>>();
+    }
+
+    #[test]
+    fn virtual_move_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, MOVEInstruction<8>>();
+    }
+
+    #[test]
+    fn virtual_move_mle_random() {
+        instruction_mle_random_test::<Fr, MOVEInstruction<32>>();
     }
 
     #[test]

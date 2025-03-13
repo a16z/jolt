@@ -116,9 +116,11 @@ mod test {
 
     use super::ADDInstruction;
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{
-            test::{materialize_entry_test, prefix_suffix_test},
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
             JoltInstruction,
         },
         jolt_instruction_test,
@@ -134,8 +136,15 @@ mod test {
         materialize_entry_test::<Fr, ADDInstruction<32>>();
     }
 
-    instruction_mle_test_small!(add_mle_small, ADDInstruction<8>);
-    instruction_mle_test_large!(add_mle_large, ADDInstruction<32>);
+    #[test]
+    fn add_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, ADDInstruction<8>>();
+    }
+
+    #[test]
+    fn add_mle_random() {
+        instruction_mle_random_test::<Fr, ADDInstruction<32>>();
+    }
 
     #[test]
     fn add_instruction_32_e2e() {

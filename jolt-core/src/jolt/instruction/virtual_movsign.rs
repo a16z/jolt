@@ -106,6 +106,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        // 2 ^ {WORD_SIZE - 1} * x_0
+        debug_assert!(r.len() == 2 * WORD_SIZE);
+
+        let sign_bit = r[WORD_SIZE];
+        let ones: u64 = (1 << WORD_SIZE) - 1;
+        sign_bit * F::from_u64(ones)
+    }
 }
 
 #[cfg(test)]
@@ -116,7 +125,10 @@ mod test {
 
     use crate::{
         jolt::instruction::{
-            test::materialize_entry_test,
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
             virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
             JoltInstruction,
         },
@@ -128,6 +140,16 @@ mod test {
     #[test]
     fn virtual_movsign_materialize_entry() {
         materialize_entry_test::<Fr, MOVSIGNInstruction<32>>();
+    }
+
+    #[test]
+    fn virtual_movsign_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, MOVSIGNInstruction<8>>();
+    }
+
+    #[test]
+    fn virtual_movsign_mle_random() {
+        instruction_mle_random_test::<Fr, MOVSIGNInstruction<32>>();
     }
 
     #[test]

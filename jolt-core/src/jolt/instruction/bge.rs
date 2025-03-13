@@ -81,6 +81,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEInstruction<WORD_SIZE> {
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        F::one() - SLTInstruction::<WORD_SIZE>::default().evaluate_mle(r)
+    }
 }
 
 #[cfg(test)]
@@ -90,7 +94,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -99,6 +109,16 @@ mod test {
     #[test]
     fn bge_materialize_entry() {
         materialize_entry_test::<Fr, BGEInstruction<32>>();
+    }
+
+    #[test]
+    fn bge_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, BGEInstruction<8>>();
+    }
+
+    #[test]
+    fn bge_mle_random() {
+        instruction_mle_random_test::<Fr, BGEInstruction<32>>();
     }
 
     #[test]

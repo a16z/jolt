@@ -91,6 +91,20 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        let mut divisor_is_zero = F::one();
+        let mut is_valid_div_by_zero = F::one();
+
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            divisor_is_zero *= F::one() - x_i;
+            is_valid_div_by_zero *= (F::one() - x_i) * y_i;
+        }
+
+        F::one() - divisor_is_zero + is_valid_div_by_zero
+    }
 }
 
 #[cfg(test)]
@@ -100,7 +114,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -109,6 +129,16 @@ mod test {
     #[test]
     fn assert_valid_div0_materialize_entry() {
         materialize_entry_test::<Fr, AssertValidDiv0Instruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_div0_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, AssertValidDiv0Instruction<8>>();
+    }
+
+    #[test]
+    fn assert_valid_div0_mle_random() {
+        instruction_mle_random_test::<Fr, AssertValidDiv0Instruction<32>>();
     }
 
     #[test]

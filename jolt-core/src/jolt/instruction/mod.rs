@@ -28,9 +28,7 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
 
     fn materialize_entry(&self, index: u64) -> u64;
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        todo!()
-    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
 
     fn operands(&self) -> (u64, u64);
 

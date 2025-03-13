@@ -77,6 +77,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertHalfwordAlignmentInstruct
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        let lsb = r[r.len() - 1];
+        F::one() - lsb
+    }
 }
 
 #[cfg(test)]
@@ -86,7 +91,13 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{test::materialize_entry_test, JoltInstruction},
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test,
+            },
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
@@ -95,6 +106,16 @@ mod test {
     #[test]
     fn assert_halfword_alignment_materialize_entry() {
         materialize_entry_test::<Fr, AssertHalfwordAlignmentInstruction<32>>();
+    }
+
+    #[test]
+    fn assert_halford_alignment_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, AssertHalfwordAlignmentInstruction<8>>();
+    }
+
+    #[test]
+    fn assert_halford_alignment_mle_random() {
+        instruction_mle_random_test::<Fr, AssertHalfwordAlignmentInstruction<32>>();
     }
 
     #[test]

@@ -98,9 +98,11 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{
-            test::{materialize_entry_test, prefix_suffix_test},
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
             JoltInstruction,
         },
         jolt_instruction_test,
@@ -118,8 +120,15 @@ mod test {
         materialize_entry_test::<Fr, XORInstruction<32>>();
     }
 
-    instruction_mle_test_small!(xor_mle_small, XORInstruction<8>);
-    instruction_mle_test_large!(xor_mle_large, XORInstruction<32>);
+    #[test]
+    fn xor_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, XORInstruction<8>>();
+    }
+
+    #[test]
+    fn xor_mle_random() {
+        instruction_mle_random_test::<Fr, XORInstruction<32>>();
+    }
 
     #[test]
     fn xor_instruction_32_e2e() {
