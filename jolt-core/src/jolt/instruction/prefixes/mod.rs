@@ -2,23 +2,33 @@ use std::{fmt::Display, ops::Index};
 
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 use and::AndPrefix;
+use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
+use left_is_zero::LeftOperandIsZeroPrefix;
+use left_msb::LeftMsbPrefix;
 use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 use or::OrPrefix;
 use rayon::prelude::*;
+use right_is_zero::RightOperandIsZeroPrefix;
+use right_msb::RightMsbPrefix;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
 pub mod and;
+pub mod div_by_zero;
 pub mod eq;
+pub mod left_is_zero;
+pub mod left_msb;
 pub mod lower_word;
 pub mod lt;
 pub mod or;
+pub mod right_is_zero;
+pub mod right_msb;
 pub mod upper_word;
 pub mod xor;
 
@@ -49,6 +59,11 @@ pub enum Prefixes {
     Or,
     Xor,
     LessThan,
+    LeftOperandIsZero,
+    RightOperandIsZero,
+    LeftOperandMsb,
+    RightOperandMsb,
+    DivByZero,
 }
 
 #[derive(Clone, Copy)]
@@ -103,6 +118,15 @@ impl Prefixes {
             Prefixes::Xor => XorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LeftOperandIsZero => {
+                LeftOperandIsZeroPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightOperandIsZero => {
+                RightOperandIsZeroPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftOperandMsb => LeftMsbPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::RightOperandMsb => RightMsbPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::DivByZero => DivByZeroPrefix::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -155,6 +179,21 @@ impl Prefixes {
             Prefixes::Eq => EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::LessThan => {
                 LessThanPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::LeftOperandIsZero => {
+                LeftOperandIsZeroPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightOperandIsZero => {
+                RightOperandIsZeroPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::LeftOperandMsb => {
+                LeftMsbPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightOperandMsb => {
+                RightMsbPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::DivByZero => {
+                DivByZeroPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

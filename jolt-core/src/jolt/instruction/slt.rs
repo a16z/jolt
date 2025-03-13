@@ -3,7 +3,10 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
@@ -108,18 +111,41 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTInstruction<WORD_SIZE> {
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         let x_sign = r[0];
         let y_sign = r[1];
-        let eq_sign = x_sign * y_sign + (F::one() - x_sign) * (F::one() - y_sign);
 
         let mut lt = F::zero();
         let mut eq = F::one();
-        for i in 1..WORD_SIZE {
+        for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             lt += (F::one() - x_i) * y_i * eq;
             eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
         }
 
-        x_sign * (F::one() - y_sign) + eq_sign * lt
+        x_sign - y_sign + lt
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for SLTInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![
+            Prefixes::LessThan,
+            Prefixes::Eq,
+            Prefixes::LeftOperandMsb,
+            Prefixes::RightOperandMsb,
+        ]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LessThan]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::LeftOperandMsb] * suffixes[Suffixes::One]
+            - prefixes[Prefixes::RightOperandMsb] * suffixes[Suffixes::One]
+            + prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
+            + prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
     }
 }
 
@@ -133,7 +159,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -155,6 +181,11 @@ mod test {
     #[test]
     fn slt_mle_random() {
         instruction_mle_random_test::<Fr, SLTInstruction<32>>();
+    }
+
+    #[test]
+    fn slt_prefix_suffix() {
+        prefix_suffix_test::<Fr, SLTInstruction<32>>();
     }
 
     #[test]

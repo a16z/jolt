@@ -1,10 +1,14 @@
 use std::{fmt::Display, ops::Index};
 
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
+use left_is_zero::LeftOperandIsZeroSuffix;
+use lsb::LsbSuffix;
 use lt::LessThanSuffix;
 use num_derive::FromPrimitive;
 use or::OrSuffix;
+use right_is_zero::RightOperandIsZeroSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
@@ -14,11 +18,15 @@ use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
 
 pub mod and;
+pub mod div_by_zero;
 pub mod eq;
+pub mod left_is_zero;
 pub mod lower_word;
+pub mod lsb;
 pub mod lt;
 pub mod one;
 pub mod or;
+pub mod right_is_zero;
 pub mod upper_word;
 pub mod xor;
 
@@ -37,6 +45,10 @@ pub enum Suffixes {
     LowerWord,
     LessThan,
     Eq,
+    LeftOperandIsZero,
+    RightOperandIsZero,
+    Lsb,
+    DivByZero,
 }
 
 #[derive(Clone, Copy)]
@@ -81,6 +93,10 @@ impl Suffixes {
             Suffixes::LowerWord => LowerWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LessThan => LessThanSuffix::suffix_mle(b),
             Suffixes::Eq => EqSuffix::suffix_mle(b),
+            Suffixes::LeftOperandIsZero => LeftOperandIsZeroSuffix::suffix_mle(b),
+            Suffixes::RightOperandIsZero => RightOperandIsZeroSuffix::suffix_mle(b),
+            Suffixes::Lsb => LsbSuffix::suffix_mle(b),
+            Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
         }
     }
 }

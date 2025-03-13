@@ -5,12 +5,12 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::JoltInstruction;
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
+use super::{JoltInstruction, SubtableIndices};
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
-    jolt::{
-        instruction::SubtableIndices,
-        subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
-    },
+    jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -103,6 +103,33 @@ impl<const WORD_SIZE: usize> JoltInstruction
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for AssertValidUnsignedRemainderInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![
+            Prefixes::LessThan,
+            Prefixes::Eq,
+            Prefixes::RightOperandIsZero,
+        ]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![
+            Suffixes::One,
+            Suffixes::LessThan,
+            Suffixes::RightOperandIsZero,
+        ]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        // divisor == 0 || remainder < divisor
+        prefixes[Prefixes::RightOperandIsZero] * suffixes[Suffixes::RightOperandIsZero]
+            + prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
+            + prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -113,7 +140,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -135,6 +162,11 @@ mod test {
     #[test]
     fn assert_valid_unsigned_remainder_mle_random() {
         instruction_mle_random_test::<Fr, AssertValidUnsignedRemainderInstruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_unsigned_remainder_prefix_suffix() {
+        prefix_suffix_test::<Fr, AssertValidUnsignedRemainderInstruction<32>>();
     }
 
     #[test]

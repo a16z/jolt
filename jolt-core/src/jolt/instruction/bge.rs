@@ -2,7 +2,10 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     field::JoltField,
     jolt::subtable::{
@@ -87,6 +90,30 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEInstruction<WORD_SIZE> {
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for BGEInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![
+            Prefixes::LessThan,
+            Prefixes::Eq,
+            Prefixes::LeftOperandMsb,
+            Prefixes::RightOperandMsb,
+        ]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LessThan]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        suffixes[Suffixes::One] + prefixes[Prefixes::RightOperandMsb] * suffixes[Suffixes::One]
+            - prefixes[Prefixes::LeftOperandMsb] * suffixes[Suffixes::One]
+            - prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
+            - prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -97,7 +124,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -119,6 +146,11 @@ mod test {
     #[test]
     fn bge_mle_random() {
         instruction_mle_random_test::<Fr, BGEInstruction<32>>();
+    }
+
+    #[test]
+    fn bge_prefix_suffix() {
+        prefix_suffix_test::<Fr, BGEInstruction<32>>();
     }
 
     #[test]

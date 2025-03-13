@@ -7,7 +7,10 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltInstruction;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     jolt::{instruction::SubtableIndices, subtable::LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
@@ -107,6 +110,28 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for AssertValidDiv0Instruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LeftOperandIsZero, Prefixes::DivByZero]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![
+            Suffixes::One,
+            Suffixes::LeftOperandIsZero,
+            Suffixes::DivByZero,
+        ]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        suffixes[Suffixes::One]
+            - prefixes[Prefixes::LeftOperandIsZero] * suffixes[Suffixes::LeftOperandIsZero]
+            + prefixes[Prefixes::DivByZero] * suffixes[Suffixes::DivByZero]
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -117,7 +142,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -139,6 +164,11 @@ mod test {
     #[test]
     fn assert_valid_div0_mle_random() {
         instruction_mle_random_test::<Fr, AssertValidDiv0Instruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_div0_prefix_suffix() {
+        prefix_suffix_test::<Fr, AssertValidDiv0Instruction<32>>();
     }
 
     #[test]

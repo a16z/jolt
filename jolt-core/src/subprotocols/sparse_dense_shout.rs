@@ -750,11 +750,16 @@ mod tests {
     use super::*;
     use crate::{
         jolt::instruction::{
-            add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bgeu::BGEUInstruction,
-            bne::BNEInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
-            mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction, sltu::SLTUInstruction,
-            sub::SUBInstruction, virtual_advice::ADVICEInstruction,
-            virtual_assert_lte::ASSERTLTEInstruction, xor::XORInstruction,
+            add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+            bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction,
+            mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction,
+            slt::SLTInstruction, sltu::SLTUInstruction, sub::SUBInstruction,
+            virtual_advice::ADVICEInstruction,
+            virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
+            virtual_assert_lte::ASSERTLTEInstruction,
+            virtual_assert_valid_div0::AssertValidDiv0Instruction,
+            virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
+            xor::XORInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -830,6 +835,11 @@ mod tests {
     }
 
     #[test]
+    fn test_bge() {
+        test_single_instruction::<BGEInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
     fn test_bgeu() {
         test_single_instruction::<BGEUInstruction<WORD_SIZE>>();
     }
@@ -837,6 +847,11 @@ mod tests {
     #[test]
     fn test_bne() {
         test_single_instruction::<BNEInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_slt() {
+        test_single_instruction::<SLTInstruction<WORD_SIZE>>();
     }
 
     #[test]
@@ -867,6 +882,21 @@ mod tests {
     #[test]
     fn test_assert_lte() {
         test_single_instruction::<ASSERTLTEInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_assert_valid_unsigned_remainder() {
+        test_single_instruction::<AssertValidUnsignedRemainderInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_assert_valid_div0() {
+        test_single_instruction::<AssertValidDiv0Instruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_assert_halfword_alignment() {
+        test_single_instruction::<AssertHalfwordAlignmentInstruction<WORD_SIZE>>();
     }
 
     #[ignore = "not working"]
