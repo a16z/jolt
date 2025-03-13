@@ -4,7 +4,7 @@ use crate::{
         prefixes::{PrefixCheckpoint, Prefixes},
         suffixes::{SuffixEval, Suffixes},
     },
-    subprotocols::sparse_dense_shout::{LookupBits, SparseDenseSumcheckAlt},
+    subprotocols::sparse_dense_shout::{LookupBits, PrefixSuffixDecomposition},
 };
 use rand::{rngs::StdRng, SeedableRng};
 use strum::{EnumCount, IntoEnumIterator};
@@ -170,53 +170,7 @@ macro_rules! instruction_mle_test_large {
     };
 }
 
-#[macro_export]
-macro_rules! instruction_update_function_test {
-    ($test_name:ident, $instruction_type:ty) => {
-        #[test]
-        fn $test_name() {
-            use crate::{field::JoltField, utils::index_to_field_bitvector};
-            use ark_std::{test_rng, Zero};
-
-            let mut rng = test_rng();
-            let instr = <$instruction_type>::default();
-            const WORD_SIZE: usize = 32;
-
-            for _ in 0..1000 {
-                let index = rng.next_u64();
-                let mut t_parameters: Vec<Fr> = index_to_field_bitvector(index, 2 * WORD_SIZE);
-                let mut r_prev = None;
-
-                for j in 0..2 * WORD_SIZE {
-                    let r_j = Fr::random(&mut rng);
-                    let b_j = if t_parameters[j].is_zero() { 0 } else { 1 };
-
-                    let b_next = if j == 2 * WORD_SIZE - 1 {
-                        None
-                    } else {
-                        Some(t_parameters[j + 1].to_u64().unwrap() as u8)
-                    };
-
-                    let actual: Fr = (0..instr.eta())
-                        .map(|l| {
-                            instr.multiplicative_update(l, j, r_j, b_j, r_prev, b_next)
-                                * instr.subtable_mle(l, &t_parameters)
-                                + instr.additive_update(l, j, r_j, b_j, r_prev, b_next)
-                        })
-                        .sum();
-
-                    t_parameters[j] = r_j;
-                    r_prev = Some(r_j);
-                    let expected = instr.evaluate_mle(&t_parameters);
-
-                    assert_eq!(actual, expected);
-                }
-            }
-        }
-    };
-}
-
-pub fn prefix_suffix_test<F: JoltField, I: SparseDenseSumcheckAlt<32, F>>() {
+pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {

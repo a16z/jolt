@@ -1,6 +1,6 @@
 use crate::{
     field::JoltField,
-    subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
+    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
     utils::{interleave_bits, uninterleave_bits},
 };
 use rand::prelude::StdRng;
@@ -63,11 +63,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    fn eta(&self) -> usize {
-        1
-    }
-
-    fn subtable_entry(&self, _: usize, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u64) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x < y).into()
     }
@@ -91,7 +87,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
         }
     }
 
-    fn subtable_mle<F: JoltField>(&self, _: usize, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
 
         // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
@@ -107,7 +103,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
     for SLTUInstruction<WORD_SIZE>
 {
     fn prefixes() -> Vec<Prefixes> {

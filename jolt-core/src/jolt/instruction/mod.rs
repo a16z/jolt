@@ -15,38 +15,7 @@ use std::fmt::Debug;
 
 #[enum_dispatch]
 pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
-    // k = x || y
     fn to_lookup_index(&self) -> u64 {
-        todo!();
-    }
-
-    fn eta(&self) -> usize {
-        todo!()
-    }
-
-    // m_\ell(r_j, j, b_j)
-    fn multiplicative_update<F: JoltField>(
-        &self,
-        l: usize,
-        j: usize,
-        r_j: F,
-        b_j: u8,
-        r_prev: Option<F>,
-        b_next: Option<u8>,
-    ) -> F {
-        todo!()
-    }
-
-    // a_\ell(r_j, j, b_j)
-    fn additive_update<F: JoltField>(
-        &self,
-        l: usize,
-        j: usize,
-        r_j: F,
-        b_j: u8,
-        r_prev: Option<F>,
-        b_next: Option<u8>,
-    ) -> F {
         todo!()
     }
 
@@ -56,18 +25,10 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     }
 
     fn materialize_entry(&self, index: u64) -> u64 {
-        (0..self.eta()).map(|l| self.subtable_entry(l, index)).sum()
-    }
-
-    fn subtable_entry(&self, l: usize, index: u64) -> u64 {
         todo!()
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        (0..self.eta()).map(|l| self.subtable_mle(l, r)).sum()
-    }
-
-    fn subtable_mle<F: JoltField>(&self, l: usize, r: &[F]) -> F {
         todo!()
     }
 

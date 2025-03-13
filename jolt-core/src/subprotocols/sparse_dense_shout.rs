@@ -202,14 +202,14 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
     suffix_len
 }
 
-pub trait SparseDenseSumcheckAlt<const WORD_SIZE: usize, F: JoltField>:
+pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize, F: JoltField>:
     JoltInstruction + Default
 {
     fn prefixes() -> Vec<Prefixes>;
     fn suffixes() -> Vec<Suffixes>;
     fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
-    fn compute_prover_message(
+    fn compute_sumcheck_prover_message(
         prefix_checkpoints: &[PrefixCheckpoint<F>],
         suffix_polys: &[DensePolynomial<F>],
         r: &[F],
@@ -258,10 +258,10 @@ pub trait SparseDenseSumcheckAlt<const WORD_SIZE: usize, F: JoltField>:
     }
 }
 
-pub fn prove_single_instruction_alt<
+pub fn prove_single_instruction<
     const WORD_SIZE: usize,
     F: JoltField,
-    I: SparseDenseSumcheckAlt<WORD_SIZE, F>,
+    I: PrefixSuffixDecomposition<WORD_SIZE, F>,
     ProofTranscript: Transcript,
 >(
     instructions: &[I],
@@ -411,7 +411,7 @@ pub fn prove_single_instruction_alt<
             let _guard = span.enter();
 
             let univariate_poly_evals =
-                I::compute_prover_message(&prefix_checkpoints, &suffix_polys, &r, j);
+                I::compute_sumcheck_prover_message(&prefix_checkpoints, &suffix_polys, &r, j);
 
             #[cfg(test)]
             {
@@ -764,7 +764,7 @@ mod tests {
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn test_single_instruction<I: SparseDenseSumcheckAlt<WORD_SIZE, Fr>>() {
+    fn test_single_instruction<I: PrefixSuffixDecomposition<WORD_SIZE, Fr>>() {
         let mut rng = StdRng::seed_from_u64(12345);
 
         let instructions: Vec<_> = (0..T).map(|_| I::default().random(&mut rng)).collect();
@@ -772,7 +772,7 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        let (proof, rv_claim, ra_claims) = prove_single_instruction_alt::<WORD_SIZE, _, _, _>(
+        let (proof, rv_claim, ra_claims) = prove_single_instruction::<WORD_SIZE, _, _, _>(
             &instructions,
             r_cycle,
             &mut prover_transcript,

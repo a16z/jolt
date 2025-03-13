@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::{interleave_bits, uninterleave_bits};
 use ark_std::log2;
 use rand::prelude::StdRng;
@@ -79,7 +79,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for XORInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
     for XORInstruction<WORD_SIZE>
 {
     fn prefixes() -> Vec<Prefixes> {

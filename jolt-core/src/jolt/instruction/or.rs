@@ -8,7 +8,7 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
-use crate::subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use crate::utils::{interleave_bits, uninterleave_bits};
 
@@ -40,11 +40,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    fn eta(&self) -> usize {
-        1
-    }
-
-    fn subtable_entry(&self, _: usize, index: u64) -> u64 {
+    fn materialize_entry(&self, index: u64) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x | y) as u64
     }
@@ -68,44 +64,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
         }
     }
 
-    // m_\ell(r_j, j, b_j)
-    fn multiplicative_update<F: JoltField>(
-        &self,
-        l: usize,
-        j: usize,
-        r_j: F,
-        b_j: u8,
-        r_prev: Option<F>,
-        b_next: Option<u8>,
-    ) -> F {
-        F::one()
-    }
-
-    // a_\ell(r_j, j, b_j)
-    fn additive_update<F: JoltField>(
-        &self,
-        l: usize,
-        j: usize,
-        r_j: F,
-        b_j: u8,
-        r_prev: Option<F>,
-        b_next: Option<u8>,
-    ) -> F {
-        let shift = F::from_u32(1 << (WORD_SIZE - 1 - (j / 2)));
-        if j % 2 == 0 {
-            // Update x_{j/2} to r_j
-            let x = F::from_u8(b_j);
-            let y = F::from_u8(b_next.unwrap());
-            shift * (r_j - x) * (F::one() - y)
-        } else {
-            // Update y_{j/2} to r_j
-            let x = r_prev.unwrap();
-            let y = F::from_u8(b_j);
-            shift * (F::one() - x) * (r_j - y)
-        }
-    }
-
-    fn subtable_mle<F: JoltField>(&self, _: usize, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
 
         let mut result = F::zero();
@@ -118,7 +77,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
     for ORInstruction<WORD_SIZE>
 {
     fn prefixes() -> Vec<Prefixes> {
@@ -141,7 +100,7 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        instruction_mle_test_large, instruction_mle_test_small, instruction_update_function_test,
+        instruction_mle_test_large, instruction_mle_test_small,
         jolt::instruction::{test::prefix_suffix_test, JoltInstruction},
         jolt_instruction_test,
     };
@@ -155,7 +114,6 @@ mod test {
 
     instruction_mle_test_small!(or_mle_small, ORInstruction<8>);
     instruction_mle_test_large!(or_mle_large, ORInstruction<32>);
-    instruction_update_function_test!(or_update_fn, ORInstruction<32>);
 
     #[test]
     fn or_instruction_32_e2e() {

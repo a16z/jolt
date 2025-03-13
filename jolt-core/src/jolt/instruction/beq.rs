@@ -13,7 +13,7 @@ use crate::{
         instruction::SubtableIndices,
         subtable::{eq::EqSubtable, LassoSubtable},
     },
-    subprotocols::sparse_dense_shout::SparseDenseSumcheckAlt,
+    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
     utils::{
         instruction_utils::chunk_and_concatenate_operands, interleave_bits, uninterleave_bits,
     },
@@ -82,7 +82,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for BEQInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDenseSumcheckAlt<WORD_SIZE, F>
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
     for BEQInstruction<WORD_SIZE>
 {
     fn prefixes() -> Vec<Prefixes> {
