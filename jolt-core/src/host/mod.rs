@@ -41,7 +41,7 @@ pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod toolchain;
 
-const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
 
 #[derive(Clone)]
 pub struct Program {
