@@ -3,14 +3,20 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltInstruction;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     field::JoltField,
     jolt::{
         instruction::SubtableIndices,
         subtable::{identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable},
     },
-    utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
+    utils::{
+        instruction_utils::{chunk_operand_usize, concatenate_lookups},
+        interleave_bits,
+    },
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -65,7 +71,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     }
 
     fn to_lookup_index(&self) -> u64 {
-        self.0
+        interleave_bits(self.0 as u32, 0)
     }
 
     fn lookup_entry(&self) -> u64 {
@@ -89,7 +95,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     }
 
     fn materialize_entry(&self, index: u64) -> u64 {
-        let sign_bit = 1 << (WORD_SIZE - 1);
+        let sign_bit = 1 << (2 * WORD_SIZE - 1);
         if index & sign_bit != 0 {
             (1 << WORD_SIZE) - 1
         } else {
@@ -111,9 +117,26 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
         // 2 ^ {WORD_SIZE - 1} * x_0
         debug_assert!(r.len() == 2 * WORD_SIZE);
 
-        let sign_bit = r[WORD_SIZE];
+        let sign_bit = r[0];
         let ones: u64 = (1 << WORD_SIZE) - 1;
         sign_bit * F::from_u64(ones)
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for MOVSIGNInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LeftOperandMsb]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        let ones: u64 = (1 << WORD_SIZE) - 1;
+        F::from_u64(ones) * prefixes[Prefixes::LeftOperandMsb] * suffixes[Suffixes::One]
     }
 }
 
@@ -127,7 +150,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
             JoltInstruction,
@@ -150,6 +173,11 @@ mod test {
     #[test]
     fn virtual_movsign_mle_random() {
         instruction_mle_random_test::<Fr, MOVSIGNInstruction<32>>();
+    }
+
+    #[test]
+    fn virtual_movsign_prefix_suffix() {
+        prefix_suffix_test::<Fr, MOVSIGNInstruction<32>>();
     }
 
     #[test]

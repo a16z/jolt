@@ -758,8 +758,9 @@ mod tests {
             virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
             virtual_assert_lte::ASSERTLTEInstruction,
             virtual_assert_valid_div0::AssertValidDiv0Instruction,
+            virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
             virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
-            xor::XORInstruction,
+            virtual_movsign::MOVSIGNInstruction, xor::XORInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -860,6 +861,11 @@ mod tests {
     }
 
     #[test]
+    fn test_movsign() {
+        test_single_instruction::<MOVSIGNInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
     fn test_mul() {
         test_single_instruction::<MULInstruction<WORD_SIZE>>();
     }
@@ -882,6 +888,11 @@ mod tests {
     #[test]
     fn test_assert_lte() {
         test_single_instruction::<ASSERTLTEInstruction<WORD_SIZE>>();
+    }
+
+    #[test]
+    fn test_assert_valid_signed_remainder() {
+        test_single_instruction::<AssertValidSignedRemainderInstruction<WORD_SIZE>>();
     }
 
     #[test]

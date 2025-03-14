@@ -5,7 +5,12 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{
+    negative_divisor_equals_remainder, positive_remainder_equals_divisor, PrefixEval, Prefixes,
+};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, left_is_zero::LeftIsZeroSubtable,
@@ -173,24 +178,70 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
         let x_sign = r[0];
         let y_sign = r[1];
 
-        let mut lt = F::zero();
-        let mut eq = F::one();
         let mut remainder_is_zero = F::one() - r[0];
         let mut divisor_is_zero = F::one() - r[1];
+        let mut positive_remainder_equals_divisor = (F::one() - x_sign) * (F::one() - y_sign);
+        let mut positive_remainder_less_than_divisor = (F::one() - x_sign) * (F::one() - y_sign);
+        let mut negative_divisor_equals_remainder = x_sign * y_sign;
+        let mut negative_divisor_greater_than_remainder = x_sign * y_sign;
 
         for i in 1..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            lt += (F::one() - x_i) * y_i * eq;
-            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            if i == 1 {
+                positive_remainder_less_than_divisor *= (F::one() - x_i) * y_i;
+                negative_divisor_greater_than_remainder *= x_i * (F::one() - y_i);
+            } else {
+                positive_remainder_less_than_divisor +=
+                    positive_remainder_equals_divisor * (F::one() - x_i) * y_i;
+                negative_divisor_greater_than_remainder +=
+                    negative_divisor_equals_remainder * x_i * (F::one() - y_i);
+            }
+            positive_remainder_equals_divisor *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            negative_divisor_equals_remainder *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
             remainder_is_zero *= F::one() - x_i;
             divisor_is_zero *= F::one() - y_i;
         }
 
-        (F::one() - x_sign - y_sign) * lt
-            + x_sign * y_sign * (F::one() - eq)
-            + (F::one() - x_sign) * y_sign * remainder_is_zero
+        positive_remainder_less_than_divisor
+            + negative_divisor_greater_than_remainder
+            + y_sign * remainder_is_zero
             + divisor_is_zero
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for AssertValidSignedRemainderInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![
+            Prefixes::RightOperandIsZero,
+            Prefixes::PositiveRemainderEqualsDivisor,
+            Prefixes::PositiveRemainderLessThanDivisor,
+            Prefixes::NegativeDivisorZeroRemainder,
+            Prefixes::NegativeDivisorEqualsRemainder,
+            Prefixes::NegativeDivisorGreaterThanRemainder,
+        ]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![
+            Suffixes::One,
+            Suffixes::LessThan,
+            Suffixes::GreaterThan,
+            Suffixes::LeftOperandIsZero,
+            Suffixes::RightOperandIsZero,
+        ]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::RightOperandIsZero] * suffixes[Suffixes::RightOperandIsZero]
+            + prefixes[Prefixes::PositiveRemainderEqualsDivisor] * suffixes[Suffixes::LessThan]
+            + prefixes[Prefixes::PositiveRemainderLessThanDivisor] * suffixes[Suffixes::One]
+            + prefixes[Prefixes::NegativeDivisorZeroRemainder]
+                * suffixes[Suffixes::LeftOperandIsZero]
+            + prefixes[Prefixes::NegativeDivisorEqualsRemainder] * suffixes[Suffixes::GreaterThan]
+            + prefixes[Prefixes::NegativeDivisorGreaterThanRemainder] * suffixes[Suffixes::One]
     }
 }
 
@@ -204,7 +255,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -226,6 +277,11 @@ mod test {
     #[test]
     fn assert_valid_signed_remainder_mle_random() {
         instruction_mle_random_test::<Fr, AssertValidSignedRemainderInstruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_signed_remainder_prefix_suffix() {
+        prefix_suffix_test::<Fr, AssertValidSignedRemainderInstruction<32>>();
     }
 
     #[test]

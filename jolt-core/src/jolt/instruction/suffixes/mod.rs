@@ -3,6 +3,7 @@ use std::{fmt::Display, ops::Index};
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
+use gt::GreaterThanSuffix;
 use left_is_zero::LeftOperandIsZeroSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
@@ -20,6 +21,7 @@ use xor::XorSuffix;
 pub mod and;
 pub mod div_by_zero;
 pub mod eq;
+pub mod gt;
 pub mod left_is_zero;
 pub mod lower_word;
 pub mod lsb;
@@ -44,6 +46,7 @@ pub enum Suffixes {
     UpperWord,
     LowerWord,
     LessThan,
+    GreaterThan,
     Eq,
     LeftOperandIsZero,
     RightOperandIsZero,
@@ -92,6 +95,7 @@ impl Suffixes {
             Suffixes::UpperWord => UpperWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LessThan => LessThanSuffix::suffix_mle(b),
+            Suffixes::GreaterThan => GreaterThanSuffix::suffix_mle(b),
             Suffixes::Eq => EqSuffix::suffix_mle(b),
             Suffixes::LeftOperandIsZero => LeftOperandIsZeroSuffix::suffix_mle(b),
             Suffixes::RightOperandIsZero => RightOperandIsZeroSuffix::suffix_mle(b),

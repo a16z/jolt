@@ -1,6 +1,15 @@
-use std::{fmt::Display, ops::Index};
-
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
+use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
+use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
+use num_derive::FromPrimitive;
+use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
+use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
+use rayon::prelude::*;
+use std::{fmt::Display, ops::Index};
+use strum::EnumCount;
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+
 use and::AndPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
@@ -9,13 +18,9 @@ use left_msb::LeftMsbPrefix;
 use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
-use num_derive::FromPrimitive;
 use or::OrPrefix;
-use rayon::prelude::*;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
-use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
@@ -26,7 +31,12 @@ pub mod left_is_zero;
 pub mod left_msb;
 pub mod lower_word;
 pub mod lt;
+pub mod negative_divisor_equals_remainder;
+pub mod negative_divisor_greater_than_remainder;
+pub mod negative_divisor_zero_remainder;
 pub mod or;
+pub mod positive_remainder_equals_divisor;
+pub mod positive_remainder_less_than_divisor;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod upper_word;
@@ -64,6 +74,11 @@ pub enum Prefixes {
     LeftOperandMsb,
     RightOperandMsb,
     DivByZero,
+    PositiveRemainderEqualsDivisor,
+    PositiveRemainderLessThanDivisor,
+    NegativeDivisorZeroRemainder,
+    NegativeDivisorEqualsRemainder,
+    NegativeDivisorGreaterThanRemainder,
 }
 
 #[derive(Clone, Copy)]
@@ -127,6 +142,21 @@ impl Prefixes {
             Prefixes::LeftOperandMsb => LeftMsbPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::RightOperandMsb => RightMsbPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::DivByZero => DivByZeroPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::PositiveRemainderEqualsDivisor => {
+                PositiveRemainderEqualsDivisorPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::PositiveRemainderLessThanDivisor => {
+                PositiveRemainderLessThanDivisorPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::NegativeDivisorZeroRemainder => {
+                NegativeDivisorZeroRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::NegativeDivisorEqualsRemainder => {
+                NegativeDivisorEqualsRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::NegativeDivisorGreaterThanRemainder => {
+                NegativeDivisorGreaterThanRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
         };
         PrefixEval(eval)
     }
@@ -194,6 +224,46 @@ impl Prefixes {
             }
             Prefixes::DivByZero => {
                 DivByZeroPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::PositiveRemainderEqualsDivisor => {
+                PositiveRemainderEqualsDivisorPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::PositiveRemainderLessThanDivisor => {
+                PositiveRemainderLessThanDivisorPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::NegativeDivisorZeroRemainder => {
+                NegativeDivisorZeroRemainderPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::NegativeDivisorEqualsRemainder => {
+                NegativeDivisorEqualsRemainderPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::NegativeDivisorGreaterThanRemainder => {
+                NegativeDivisorGreaterThanRemainderPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
             }
         }
     }

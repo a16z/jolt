@@ -17,7 +17,7 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
 
         if let Some(r_x) = r_x {
             let c = F::from_u32(c);
-            lt += (F::one() - r_x) * c * eq;
+            lt += eq * (F::one() - r_x) * c;
             let (x, y) = b.uninterleave();
             if u64::from(x) < u64::from(y) {
                 eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
@@ -25,18 +25,12 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
             }
         } else {
             let c = F::from_u32(c);
-            let y_msb = b.pop_msb();
-            if y_msb == 1 {
-                // lt += eq * (1 - c) * y_msb
-                lt += eq * (F::one() - c);
-            }
+            let y_msb = F::from_u8(b.pop_msb());
+            lt += eq * (F::one() - c) * y_msb;
             let (x, y) = b.uninterleave();
             if u64::from(x) < u64::from(y) {
-                if y_msb == 1 {
-                    lt += eq * c;
-                } else {
-                    lt += eq * (F::one() - c);
-                }
+                eq *= c * y_msb + (F::one() - c) * (F::one() - y_msb);
+                lt += eq;
             }
         }
 
