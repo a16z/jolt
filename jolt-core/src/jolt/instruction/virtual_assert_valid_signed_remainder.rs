@@ -5,9 +5,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{
-    negative_divisor_equals_remainder, positive_remainder_equals_divisor, PrefixEval, Prefixes,
-};
+use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;

@@ -9,6 +9,7 @@ use lsb::LsbSuffix;
 use lt::LessThanSuffix;
 use num_derive::FromPrimitive;
 use or::OrSuffix;
+use pow2::Pow2Suffix;
 use right_is_zero::RightOperandIsZeroSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
@@ -28,6 +29,7 @@ pub mod lsb;
 pub mod lt;
 pub mod one;
 pub mod or;
+pub mod pow2;
 pub mod right_is_zero;
 pub mod upper_word;
 pub mod xor;
@@ -52,6 +54,7 @@ pub enum Suffixes {
     RightOperandIsZero,
     Lsb,
     DivByZero,
+    Pow2,
 }
 
 #[derive(Clone, Copy)]
@@ -101,6 +104,7 @@ impl Suffixes {
             Suffixes::RightOperandIsZero => RightOperandIsZeroSuffix::suffix_mle(b),
             Suffixes::Lsb => LsbSuffix::suffix_mle(b),
             Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
+            Suffixes::Pow2 => Pow2Suffix::<WORD_SIZE>::suffix_mle(b),
         }
     }
 }

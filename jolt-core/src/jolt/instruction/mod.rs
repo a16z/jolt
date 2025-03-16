@@ -208,6 +208,7 @@ pub mod virtual_assert_valid_signed_remainder;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_move;
 pub mod virtual_movsign;
+pub mod virtual_pow2;
 pub mod xor;
 
 #[cfg(test)]

@@ -3,13 +3,18 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::JoltInstruction;
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltInstruction,
+};
 use crate::{
     field::JoltField,
     jolt::{
         instruction::SubtableIndices,
         subtable::{identity::IdentitySubtable, LassoSubtable},
     },
+    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
 
@@ -79,6 +84,22 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVEInstruction<WORD_SIZE> {
     }
 }
 
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for MOVEInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LowerWord]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LowerWord]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::LowerWord] * suffixes[Suffixes::One] + suffixes[Suffixes::LowerWord]
+    }
+}
+
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
@@ -89,7 +110,7 @@ mod test {
         jolt::instruction::{
             test::{
                 instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test,
+                materialize_entry_test, prefix_suffix_test,
             },
             JoltInstruction,
         },
@@ -111,6 +132,11 @@ mod test {
     #[test]
     fn virtual_move_mle_random() {
         instruction_mle_random_test::<Fr, MOVEInstruction<32>>();
+    }
+
+    #[test]
+    fn virtual_move_prefix_suffix() {
+        prefix_suffix_test::<Fr, MOVEInstruction<32>>();
     }
 
     #[test]

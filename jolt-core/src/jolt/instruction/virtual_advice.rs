@@ -126,7 +126,7 @@ mod test {
     }
 
     #[test]
-    fn add_prefix_suffix() {
+    fn advice_prefix_suffix() {
         prefix_suffix_test::<Fr, ADVICEInstruction<32>>();
     }
 

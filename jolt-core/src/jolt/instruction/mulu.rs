@@ -135,7 +135,7 @@ mod test {
     }
 
     #[test]
-    fn add_prefix_suffix() {
+    fn mulu_prefix_suffix() {
         prefix_suffix_test::<Fr, MULUInstruction<32>>();
     }
 
