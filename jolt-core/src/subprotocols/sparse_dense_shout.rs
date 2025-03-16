@@ -354,49 +354,52 @@ pub fn prove_single_instruction<
 
         let suffix_len = (3 - phase) * log_m;
 
-        // Initialize suffix poly for each suffix
-        let span = tracing::span!(tracing::Level::INFO, "compute instruction_index_iters");
+        // Split lookups into parallelizable groups
+        let span = tracing::span!(tracing::Level::INFO, "compute parallelizable_groups");
         let _guard = span.enter();
-        let instruction_index_iters: Vec<_> = (0..num_chunks)
+        let parallelizable_groups: Vec<Vec<_>> = (0..num_chunks)
             .into_par_iter()
             .map(|i| {
-                lookup_indices.iter().enumerate().filter_map(move |(j, k)| {
-                    let (prefix, _) = k.split(suffix_len);
-                    let group = (prefix % m) / chunk_size;
-                    if group == i {
-                        Some(j)
-                    } else {
-                        None
-                    }
-                })
+                lookup_indices
+                    .iter()
+                    .zip(u_evals.iter())
+                    .filter_map(move |(k, u)| {
+                        let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                        let group = (prefix_bits % m) / chunk_size;
+                        if group == i {
+                            Some((prefix_bits, suffix_bits, u))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             })
             .collect();
         drop(_guard);
         drop(span);
 
+        // Initialize suffix poly for each suffix
         let span = tracing::span!(tracing::Level::INFO, "Compute suffix polys");
         let _guard = span.enter();
         suffix_polys
             .par_iter_mut()
             .enumerate()
-            .for_each(|(index, poly)| {
+            .for_each(|(suffix_index, poly)| {
+                let suffix: Suffixes = FromPrimitive::from_u8(suffix_index as u8).unwrap();
                 if phase != 0 {
                     poly.len = m;
                     poly.num_vars = poly.len.log_2();
                     poly.Z.par_iter_mut().for_each(|eval| *eval = F::zero());
                 }
-                instruction_index_iters
+                parallelizable_groups
                     .par_iter()
                     .zip(poly.Z.par_chunks_mut(chunk_size))
-                    .for_each(|(j_iter, evals)| {
-                        j_iter.clone().for_each(|j| {
-                            let k = lookup_indices[j];
-                            let u = u_evals[j];
-                            let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                            let suffix: Suffixes = FromPrimitive::from_u8(index as u8).unwrap();
-                            let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
-                            let index = prefix_bits % chunk_size;
-                            evals[index] += u.mul_u64_unchecked(t as u64);
+                    .for_each(|(group, evals)| {
+                        group.iter().for_each(|(prefix_bits, suffix_bits, u)| {
+                            let t = suffix.suffix_mle::<WORD_SIZE>(*suffix_bits);
+                            if t != 0 {
+                                evals[prefix_bits % chunk_size] += u.mul_u64_unchecked(t as u64);
+                            }
                         });
                     });
             });
