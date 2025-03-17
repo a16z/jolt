@@ -104,6 +104,10 @@ fn benchmark_sparse_interleaved<F: JoltField>(
 }
 
 fn main() {
+    // Initialize lookup tables for Fr field operations
+    let tables = Fr::compute_lookup_tables();
+    Fr::initialize_lookup_tables(tables);
+
     let mut criterion = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(5));

@@ -132,3 +132,113 @@ where
 pub mod ark;
 pub mod binius;
 pub mod constantine;
+
+// Tests to check that the field operations are correct between `ark` and `constantine`
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::constantine::ConstantineFr;
+    use ark_bn254::Fr as ArkFr;
+    use ark_serialize::Compress;
+    use ark_std::test_rng;
+    use ark_std::UniformRand;
+    use rand::Rng;
+    use rand_chacha::rand_core::RngCore;
+
+    fn compare_field_ops(a: ArkFr, b: ConstantineFr) {
+        // Compare basic properties
+        assert_eq!(a.is_zero(), b.is_zero());
+        assert_eq!(a.is_one(), b.is_one());
+
+        // Compare arithmetic operations
+        println!("Comparing sums of {} and {}", a, b);
+        let ark_sum = a + a;
+        let const_sum = b + b;
+        assert_eq!(ark_sum.to_u64().unwrap(), const_sum.to_limbs_le()[3]);
+
+        // println!("Comparing products of {} and {}", a, b);
+        // let ark_prod = a * a;
+        // let const_prod = b * b;
+        // assert_eq!(ark_prod.0 .0, const_prod.to_limbs_le());
+
+        // println!("Comparing squares of {} and {}", a, b);
+        // let ark_square = a.square();
+        // let const_square = b.square();
+        // assert_eq!(ark_square.0 .0, const_square.to_limbs_le());
+
+        // println!("Comparing inverses of {} and {}", a, b);
+        // if !a.is_zero() {
+        //     let ark_inv = a.inverse().unwrap();
+        //     let const_inv = b.inverse().unwrap();
+        //     assert_eq!(ark_inv.0 .0, const_inv.to_limbs_le());
+        // }
+    }
+
+    #[test]
+    fn test_field_ops_consistency() {
+        let mut plain_rng = rand::thread_rng();
+        // let mut rng = test_rng();
+
+        // Test with small values
+        for i in 0..100 {
+            let ark_val = ArkFr::from_u64(i);
+            let const_val = ConstantineFr::from_u64(i);
+            compare_field_ops(ark_val, const_val);
+        }
+
+        // // Test with random values
+        // for _ in 0..100 {
+        //     let val = plain_rng.gen::<u64>();
+        //     // Generate a random u64 value, then convert it to a field element
+        //     let ark_val = ArkFr::from_u64(val);
+        //     let const_val = ConstantineFr::from_u64(val);
+        //     compare_field_ops(ark_val, const_val);
+        // }
+    }
+
+    #[test]
+    fn test_field_serialization_consistency() {
+        let mut rng = test_rng();
+
+        // Test serialization consistency
+        for _ in 0..100 {
+            let ark_val = ark_bn254::Fr::rand(&mut rng);
+            let const_val = ConstantineFr::from_u64(ark_val.0 .0[0]);
+
+            // Serialize both values
+            let mut ark_bytes = Vec::new();
+            ark_val
+                .serialize_with_mode(&mut ark_bytes, Compress::No)
+                .unwrap();
+
+            let mut const_bytes = Vec::new();
+            const_val
+                .serialize_with_mode(&mut const_bytes, Compress::No)
+                .unwrap();
+
+            // Compare serialized bytes
+            assert_eq!(ark_bytes, const_bytes);
+        }
+    }
+
+    // #[test]
+    // fn test_field_conversion_consistency() {
+    //     let mut rng = thread_rng();
+
+    //     // Test conversion between different integer types
+    //     for _ in 0..100 {
+    //         let i64_val = rng.gen::<i64>();
+    //         let i128_val = rng.gen::<i128>();
+
+    //         // Test i64 conversion
+    //         let ark_i64 = ArkFr::from_i64(i64_val);
+    //         let const_i64 = ConstantineFr::from_i64(i64_val);
+    //         assert_eq!(ark_i64.0, const_i64.to_i64().unwrap());
+
+    //         // Test i128 conversion
+    //         let ark_i128 = ArkFr::from_i128(i128_val);
+    //         let const_i128 = ConstantineFr::from_i128(i128_val);
+    //         assert_eq!(ark_i128.0, const_i128.to_i64().unwrap());
+    //     }
+    // }
+}

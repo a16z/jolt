@@ -230,6 +230,8 @@ mod tests {
         // Test if BN254's Fr field can use no-carry optimization
         let modulus = Fr::MODULUS.0;
 
+        println!("Modulus has spare bit? {}", Fr::MODULUS.0[3] >> 63 == 0);
+
         // Check top bit is zero
         let top_bit_is_zero = modulus[3] >> 63 == 0;
         println!("Top bit is zero: {}", top_bit_is_zero);

@@ -18,12 +18,39 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub enum ConstraintType {
+    /// The variable is binary
+    ///
+    /// Constraint takes the form `var * (1 - var) = 0`
+    Binary,
+    /// The variable is the bit decomposition of a vector of binary variables
+    ///
+    /// Constraint takes the form `1 * (\sum_i 2^i * var_i) = var_total`
+    BitDecomp,
+    /// Either `condition` is equal to 0 (i.e. false), or one (linear combination of) variables is equal to another (linear combination of) variables
+    ///
+    /// Constraint takes the form `lc_var_cond * (lc_var_left - lc_var_right) = 0`
+    EqConditional,
+    /// Constraint is an if-else statement, where
+    /// `result = if (condition) then (result_true) else (result_false)`
+    ///
+    /// Here `condition` should be binary, and `result`, `result_true` and `result_false` may be a variable or a linear combination of variables
+    ///
+    /// Constraint takes the form `lc_var_cond * (lc_var_true - lc_var_false) = var_result - lc_var_false`
+    IfElse,
+    /// One (linear combination of) variable is a product of two other (linear combination of) variables
+    ///
+    /// Constraint takes the form `lc_var_left * lc_var_right = lc_var_result`
+    Prod,
+}
+
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone)]
 pub struct Constraint {
     pub(crate) a: LC,
     pub(crate) b: LC,
     pub(crate) c: LC,
+    // pub(crate) ty: ConstraintType,
 }
 
 impl Constraint {

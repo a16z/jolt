@@ -60,6 +60,9 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
     type Inputs = JoltR1CSInputs;
 
     fn uniform_constraints(cs: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64) {
+        // Note(quang): the convention is that the first variable is always the smaller one (i.e.
+        // the condition), except for the single `prod` constraint between `rs1_read` and `rs2_read`
+
         for flag in RV32I::iter() {
             cs.constrain_binary(JoltR1CSInputs::InstructionFlags(flag));
         }

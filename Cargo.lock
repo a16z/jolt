@@ -806,6 +806,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "constantine-sys"
+version = "0.2.0"
+source = "git+https://github.com/mratsim/constantine.git#74faa5f6fed6cfabfdda76bd45bf492f2015877e"
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1921,6 +1926,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "common",
+ "constantine-sys",
  "criterion",
  "dirs",
  "enum_dispatch",
