@@ -304,7 +304,7 @@ where
                 1 << 18,
             );
 
-        let (jolt_proof, jolt_commitments, _) =
+        let (jolt_proof, jolt_commitments, verifier_io_device, _) =
             <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
                 io_device,
                 trace,
@@ -326,7 +326,7 @@ where
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, None);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -369,14 +369,14 @@ where
                 1 << 22,
             );
 
-        let (jolt_proof, jolt_commitments, _) =
+        let (jolt_proof, jolt_commitments, verifier_io_device, _) =
             <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
             );
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, None);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

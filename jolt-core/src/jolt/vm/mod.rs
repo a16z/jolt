@@ -139,7 +139,6 @@ pub struct JoltProof<
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
@@ -407,6 +406,7 @@ where
             ProofTranscript,
         >,
         JoltCommitments<PCS, ProofTranscript>,
+        JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
         icicle::icicle_init();
@@ -552,7 +552,6 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            program_io,
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
@@ -567,7 +566,7 @@ where
         });
         #[cfg(not(test))]
         let debug_info = None;
-        (jolt_proof, jolt_commitments, debug_info)
+        (jolt_proof, jolt_commitments, program_io, debug_info)
     }
 
     #[tracing::instrument(skip_all)]
@@ -584,6 +583,7 @@ where
             ProofTranscript,
         >,
         commitments: JoltCommitments<PCS, ProofTranscript>,
+        program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -598,7 +598,7 @@ where
         }
         Self::fiat_shamir_preamble(
             &mut transcript,
-            &proof.program_io,
+            &program_io,
             &preprocessing.memory_layout,
             proof.trace_length,
         );
@@ -651,7 +651,7 @@ where
             &preprocessing.memory_layout,
             proof.read_write_memory,
             &commitments,
-            proof.program_io,
+            program_io,
             &mut opening_accumulator,
             &mut transcript,
         )?;

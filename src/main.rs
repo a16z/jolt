@@ -210,7 +210,7 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
     let (output, proof) = prove_fib(50);
-    let is_valid = verify_fib(proof);
+    let is_valid = verify_fib(50, output, proof);
 
     println!("output: {}", output);
     println!("valid: {}", is_valid);

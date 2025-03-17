@@ -8,9 +8,7 @@ use std::{
     process::Command,
 };
 
-use postcard;
 use rayon::prelude::*;
-use serde::Serialize;
 
 use common::{
     constants::{
