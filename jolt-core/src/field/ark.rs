@@ -200,8 +200,7 @@ impl JoltField for ark_bn254::Fr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::{Fr, FrConfig};
-    use ark_ff::fields::{Fp256, MontBackend};
+    use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
