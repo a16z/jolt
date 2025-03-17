@@ -138,6 +138,8 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let is_mul = JoltR1CSInputs::InstructionFlags(MULInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(MULUInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(MULHUInstruction::default().into());
+        // This is the **only** constraint where the `a` variable may not be in {0,1}
+        // When we prove the first Spartan sumcheck, we will process this separately.
         let product = cs.allocate_prod(
             JoltR1CSInputs::Aux(AuxVariable::Product),
             JoltR1CSInputs::RS1_Read,
@@ -197,8 +199,8 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
         let rd_nonzero_and_lookup_to_rd = cs.allocate_prod(
             JoltR1CSInputs::Aux(AuxVariable::WriteLookupOutputToRD),
-            JoltR1CSInputs::Bytecode_RD,
             JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            JoltR1CSInputs::Bytecode_RD,
         );
         cs.constrain_eq_conditional(
             rd_nonzero_and_lookup_to_rd,
@@ -208,8 +210,8 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
         let rd_nonzero_and_jmp = cs.allocate_prod(
             JoltR1CSInputs::Aux(AuxVariable::WritePCtoRD),
-            JoltR1CSInputs::Bytecode_RD,
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            JoltR1CSInputs::Bytecode_RD,
         );
         cs.constrain_eq_conditional(
             rd_nonzero_and_jmp,
@@ -266,5 +268,77 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
 
         vec![pc_constraint, virtual_sequence_constraint]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        // field::JoltField,
+        // jolt::vm::JoltPolynomials,
+        // poly::multilinear_polynomial::MultilinearPolynomial,
+        r1cs::{
+            builder::CombinedUniformBuilder, constraints::JoltRV32IMConstraints,
+            inputs::JoltR1CSInputs,
+        },
+    };
+    use ark_bn254::Fr;
+
+    #[test]
+    fn print_constraints() {
+        // Create a small test instance with a reasonable trace length
+        const C: usize = 4; // Number of chunks
+
+        let padded_trace_length = 32; // Small power of 2 for testing
+        let memory_start = 0x1000; // Example memory start address
+
+        // Construct the constraints
+        let builder: CombinedUniformBuilder<C, Fr, JoltR1CSInputs> =
+            JoltRV32IMConstraints::construct_constraints(padded_trace_length, memory_start);
+
+        // Get the materialized uniform constraints
+        let uniform_r1cs = builder.materialize_uniform();
+        let nonuniform_r1cs = builder.materialize_offset_eq();
+
+        // Print the number of instruction flags (corresponding to cardinality of `RV32I`)
+        println!("Number of instruction flags: {}", RV32I::iter().count());
+
+        // Print the number of circuit flags (corresponding to cardinality of `CircuitFlags`)
+        println!("Number of circuit flags: {}", CircuitFlags::iter().count());
+
+        // Total number of binary constraints, as the sum of the number of instruction flags and
+        // circuit flags
+        println!(
+            "Total number of binary constraints: {}",
+            RV32I::iter().count() + CircuitFlags::iter().count()
+        );
+
+        // Print the number of constraints
+        println!(
+            "Uniform constraints, num_rows: {}, num_vars: {}",
+            uniform_r1cs.num_rows, uniform_r1cs.num_vars
+        );
+
+        // Print all the constraints
+        println!(
+            "a_vars: {:?}\n\n a_consts: {:?}",
+            uniform_r1cs.a.vars, uniform_r1cs.a.consts
+        );
+        println!(
+            "b_vars: {:?}\n\n b_consts: {:?}",
+            uniform_r1cs.b.vars, uniform_r1cs.b.consts
+        );
+        println!(
+            "c_vars: {:?}\n\n c_consts: {:?}",
+            uniform_r1cs.c.vars, uniform_r1cs.c.consts
+        );
+
+        println!(
+            "num_offset_eq_constraints: {:?}",
+            nonuniform_r1cs.num_constraints()
+        );
+
+        println!("offset_eq_r1cs: {:?}", nonuniform_r1cs.constants());
     }
 }

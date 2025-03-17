@@ -98,7 +98,7 @@ pub struct NonUniformR1CS<F: JoltField> {
 
 impl<F: JoltField> NonUniformR1CS<F> {
     /// Returns a tuple of (eq_constants, condition_constants)
-    fn constants(&self) -> (Vec<F>, Vec<F>) {
+    pub fn constants(&self) -> (Vec<F>, Vec<F>) {
         let mut eq_constants = Vec::with_capacity(self.constraints.len());
         let mut condition_constants = Vec::with_capacity(self.constraints.len());
 
@@ -111,7 +111,7 @@ impl<F: JoltField> NonUniformR1CS<F> {
     }
 
     /// Unpadded number of non-uniform constraints.
-    fn num_constraints(&self) -> usize {
+    pub fn num_constraints(&self) -> usize {
         self.constraints.len()
     }
 }

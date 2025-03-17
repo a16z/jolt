@@ -221,8 +221,8 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         let left: LC = left.into();
         let right: LC = right.into();
 
-        let a = left - right.clone();
-        let b = Variable::Constant.into();
+        let a = Variable::Constant.into();
+        let b = left - right.clone();
         let constraint = Constraint {
             a,
             b,
