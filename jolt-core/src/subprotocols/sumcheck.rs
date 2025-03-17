@@ -11,6 +11,7 @@ use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+use crate::utils::small_value;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
@@ -20,10 +21,6 @@ use std::marker::PhantomData;
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
 }
-
-// pub trait GeneralizedBindable<F: JoltField>: Sync {
-//     fn bind(&mut self, r: F, );
-// }
 
 /// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F, ProofTranscript>: Bindable<F>
@@ -50,7 +47,7 @@ where
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for i in 0..num_rounds {
+        for _ in 0..num_rounds {
             #[cfg(test)]
             self.sumcheck_sanity_check(eq_poly, previous_claim);
 
@@ -202,6 +199,17 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut r: Vec<F> = Vec::new();
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
         let mut claim = F::zero();
+
+        // for round in 0..num_rounds {
+        //     if round < small_value::NUM_SMALL_VALUE_ROUNDS {
+        //         az_bz_cz_poly.small_value_sumcheck_round(
+        //             eq_poly, transcript, &mut r, &mut polys, &mut claim,
+        //         );
+        //     } else {
+        //         az_bz_cz_poly
+        //             .subsequent_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+        //     }
+        // }
 
         for round in 0..num_rounds {
             if round == 0 {

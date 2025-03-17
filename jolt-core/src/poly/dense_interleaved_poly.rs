@@ -228,7 +228,6 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
         // `t_0(X) = \sum_x2 E2[x2] * (\sum_x1 E1[x1] * \prod_k ((1 - X) * P_k(0 || x1 || x2) + X * P_k(1 || x1 || x2)))`
         // (here "evaluation at infinity" is just the quadratic coefficient of t_i(X))
 
-        let start_quadratic_evals_time = std::time::Instant::now();
         let quadratic_evals = if eq_poly.E1_len() == 1 {
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as
             // \sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(r || 0 || x2) + j * P_k(r || 1 || x2))

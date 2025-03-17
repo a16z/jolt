@@ -52,6 +52,11 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
         let chunk_size = num_steps.div_ceil(num_chunks);
 
+        println!("num_steps: {}", num_steps);
+        println!("num_chunks: {}", num_chunks);
+        println!("chunk_size: {}", chunk_size);
+        println!("padded_num_constraints: {}", padded_num_constraints);
+
         let unbound_coeffs: Vec<SparseCoefficient<i128>> = (0..num_chunks)
             .into_par_iter()
             .flat_map_iter(|chunk_index| {
@@ -82,7 +87,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                 coeffs.push((global_index + 1, bz_coeff).into());
                             }
                         }
-                        // Cz = Az ⊙ Cz
+                        // Cz = Az ⊙ Bz
                         if !az_coeff.is_zero() && !bz_coeff.is_zero() {
                             let cz_coeff = az_coeff * bz_coeff;
                             #[cfg(test)]
@@ -427,6 +432,19 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             assert!(bz_bound.Z[..bz_bound.len()] == bz.Z[..bz.len()]);
             assert!(cz_bound.Z[..cz_bound.len()] == cz.Z[..cz.len()]);
         }
+    }
+
+    // A round of the first Spartan sumcheck that uses small value optimization (i.e. Algorithm 4)
+    pub fn small_value_sumcheck_round<ProofTranscript: Transcript>(
+        &mut self,
+        // The round index can be read off `eq_poly.current_index`
+        _eq_poly: &mut SplitEqPolynomial<F>,
+        _transcript: &mut ProofTranscript,
+        _r: &mut Vec<F>,
+        _polys: &mut Vec<CompressedUniPoly<F>>,
+        _claim: &mut F,
+    ) {
+        todo!()
     }
 
     /// All subsequent rounds of the first Spartan sumcheck.
