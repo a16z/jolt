@@ -1,10 +1,11 @@
-use ark_ec::Group;
+use crate::msm::Icicle;
+use ark_ec::AffineRepr;
 use ark_ec::{
     pairing::{Pairing, PairingOutput},
     scalar_mul::variable_base::VariableBaseMSM,
     CurveGroup,
 };
-use ark_ff::{Field, One, UniformRand, Zero};
+use ark_ff::{Field, One, Zero};
 
 use ark_std::{end_timer, start_timer};
 use std::marker::PhantomData;
@@ -16,17 +17,15 @@ use super::{
         Dhc,
     },
     inner_products::MultiexponentiationInnerProduct,
-    tipa::{
-        structured_generators_scalar_power,
-        structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
-        Srs, VerifierSrs,
-    },
+    tipa::structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
     Error,
 };
 use crate::field::JoltField;
+use crate::poly::commitment::kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS};
 use crate::poly::unipoly::UniPoly as UnivariatePolynomial;
 use crate::utils::transcript::Transcript;
 use ark_std::rand::Rng;
+use rand_core::CryptoRng;
 
 type G1<P> = <P as Pairing>::G1;
 type ScalarField<P> = <P as Pairing>::ScalarField;
@@ -41,80 +40,6 @@ type PolynomialEvaluationSecondTierIpa<P, D> = TipaWithSsm<
 
 type PolynomialEvaluationSecondTierIpaProof<P> =
     TipaWithSsmProof<P, AfghoCommitment<P>, IdentityCommitment<G1<P>, ScalarField<P>>>;
-
-pub struct Kzg<P: Pairing> {
-    _pairing: PhantomData<P>,
-}
-
-// Simple implementation of KZG polynomial commitment scheme
-impl<P: Pairing> Kzg<P>
-where
-    P::ScalarField: JoltField,
-{
-    pub fn setup<R: Rng>(
-        rng: &mut R,
-        degree: usize,
-    ) -> Result<(Vec<P::G1Affine>, VerifierSrs<P>), Error> {
-        let alpha = P::ScalarField::rand(rng);
-        let beta = P::ScalarField::rand(rng);
-        let g = P::G1::generator();
-        let h = P::G2::generator();
-        let g_alpha_powers = structured_generators_scalar_power(degree + 1, &g, &alpha);
-        Ok((
-            P::G1::normalize_batch(&g_alpha_powers),
-            VerifierSrs {
-                g,
-                h,
-                g_beta: g * beta,
-                h_alpha: h * alpha,
-            },
-        ))
-    }
-
-    pub fn commit(
-        powers: &[P::G1Affine],
-        polynomial: &UnivariatePolynomial<P::ScalarField>,
-    ) -> Result<P::G1, Error> {
-        assert!(powers.len() > polynomial.degree());
-        let mut coeffs = polynomial.coeffs.to_vec();
-        coeffs.resize(powers.len(), P::ScalarField::zero());
-
-        // Can unwrap because coeffs.len() is guaranteed to be equal to powers.len()
-        Ok(P::G1::msm(powers, &coeffs).unwrap())
-    }
-
-    pub fn open(
-        powers: &[P::G1Affine],
-        polynomial: &UnivariatePolynomial<P::ScalarField>,
-        point: &P::ScalarField,
-    ) -> Result<P::G1, Error> {
-        assert!(powers.len() > polynomial.degree());
-
-        // Trick to calculate (p(x) - p(z)) / (x - z) as p(x) / (x - z) ignoring remainder p(z)
-        let (quotient_polynomial, _reminder) = polynomial
-            .divide_with_remainder(&UnivariatePolynomial::from_coeff(vec![
-                -*point,
-                P::ScalarField::one(),
-            ]))
-            .unwrap();
-        let mut quotient_coeffs = quotient_polynomial.coeffs.to_vec();
-        quotient_coeffs.resize(powers.len(), P::ScalarField::zero());
-
-        // Can unwrap because quotient_coeffs.len() is guaranteed to be equal to powers.len()
-        Ok(P::G1::msm(powers, &quotient_coeffs).unwrap())
-    }
-
-    pub fn verify(
-        v_srs: &VerifierSrs<P>,
-        com: &P::G1,
-        point: &P::ScalarField,
-        eval: &P::ScalarField,
-        proof: &P::G1,
-    ) -> Result<bool, Error> {
-        Ok(P::pairing(*com - v_srs.g * eval, v_srs.h)
-            == P::pairing(*proof, v_srs.h_alpha - v_srs.h * point))
-    }
-}
 
 pub struct BivariatePolynomial<F: Field> {
     y_polynomials: Vec<UnivariatePolynomial<F>>,
@@ -151,38 +76,21 @@ pub struct BivariatePolynomialCommitment<P: Pairing, D>(PolynomialEvaluationSeco
 impl<P: Pairing, ProofTranscript: Transcript> BivariatePolynomialCommitment<P, ProofTranscript>
 where
     P::ScalarField: JoltField,
+    P::G1: Icicle,
 {
-    pub fn setup<R: Rng>(
+    pub fn setup<R: Rng + CryptoRng>(
         rng: &mut R,
         x_degree: usize,
         y_degree: usize,
-    ) -> Result<(Srs<P>, Vec<P::G1Affine>), Error> {
-        let alpha = P::ScalarField::rand(rng);
-        let beta = P::ScalarField::rand(rng);
-        let g = P::G1::generator();
-        let h = P::G2::generator();
-        let kzg_srs = P::G1::normalize_batch(&structured_generators_scalar_power(
-            y_degree + 1,
-            &g,
-            &alpha,
-        ));
-        let srs = Srs {
-            g_alpha_powers: vec![g],
-            // why 2x
-            // MAYBE artifact of afgho or because of ceiling
-            h_beta_powers: structured_generators_scalar_power(2 * x_degree + 1, &h, &beta),
-            g_beta: g * beta,
-            h_alpha: h * alpha,
-        };
-        Ok((srs, kzg_srs))
+    ) -> Result<SRS<P>, Error> {
+        Ok(SRS::setup(rng, y_degree, 2 * x_degree))
     }
 
     pub fn commit(
-        srs: &(Srs<P>, Vec<P::G1Affine>),
+        srs: &(Vec<P::G2>, KZGProverKey<P>),
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        let (ip_srs, kzg_srs) = srs;
-        let ck = ip_srs.get_commitment_keys();
+        let (ck, kzg_srs) = srs;
         assert!(ck.len() >= bivariate_polynomial.y_polynomials.len());
 
         // Create KZG commitments to Y polynomials
@@ -191,26 +99,30 @@ where
             .iter()
             .chain([UnivariatePolynomial::zero()].iter().cycle())
             .take(ck.len())
-            .map(|y_polynomial| Kzg::<P>::commit(kzg_srs, y_polynomial))
-            .collect::<Result<Vec<P::G1>, Error>>()?;
+            .map(|y_polynomial| UnivariateKZG::<P>::commit(kzg_srs, y_polynomial))
+            .collect::<Result<Vec<P::G1Affine>, _>>()?;
+        // TODO update
+        let y_polynomial_coms = y_polynomial_coms
+            .into_iter()
+            .map(|affine| affine.into_group())
+            .collect::<Vec<_>>();
 
         // Create AFGHO commitment to Y polynomial commitments
         Ok((
-            AfghoCommitment::<P>::commit(&ck, &y_polynomial_coms)?,
+            AfghoCommitment::<P>::commit(ck, &y_polynomial_coms)?,
             y_polynomial_coms,
         ))
     }
 
     pub fn open(
-        srs: &(Srs<P>, Vec<P::G1Affine>),
+        srs: &(Vec<P::G2>, KZGProverKey<P>),
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
         y_polynomial_comms: &[P::G1],
         point: &(P::ScalarField, P::ScalarField),
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
         let (x, y) = point;
-        let (ip_srs, kzg_srs) = srs;
-        let ck_1 = ip_srs.get_commitment_keys();
+        let (ck_1, kzg_srs) = srs;
         assert!(ck_1.len() >= bivariate_polynomial.y_polynomials.len());
 
         let precomp_time = start_timer!(|| "Computing coefficients and KZG commitment");
@@ -236,32 +148,32 @@ where
             .map(|j| (0..ck_1.len()).map(|i| powers_of_x[i] * coeffs[i][j]).sum())
             .collect::<Vec<P::ScalarField>>();
         // Can unwrap because y_eval_coeffs.len() is guarnateed to be equal to kzg_srs.len()
-        let y_eval_comm = P::G1::msm(kzg_srs, &y_eval_coeffs).unwrap();
+        let y_eval_comm = P::G1::msm(kzg_srs.g1_powers(), &y_eval_coeffs).unwrap();
         end_timer!(precomp_time);
 
         let ipa_time = start_timer!(|| "Computing IPA proof");
         let ip_proof =
             PolynomialEvaluationSecondTierIpa::<P, ProofTranscript>::prove_with_structured_scalar_message(
-                &ip_srs.h_beta_powers,
+                &kzg_srs.h_beta_powers(),
                 (y_polynomial_comms, &powers_of_x),
-                (&ck_1, &DummyParam),
+                (ck_1, &DummyParam),
                 transcript,
             )?;
         end_timer!(ipa_time);
         let kzg_time = start_timer!(|| "Computing KZG opening proof");
-        let kzg_proof =
-            Kzg::<P>::open(kzg_srs, &UnivariatePolynomial::from_coeff(y_eval_coeffs), y)?;
+        let (kzg_proof, _eval) =
+            UnivariateKZG::<P>::open(kzg_srs, &UnivariatePolynomial::from_coeff(y_eval_coeffs), y)?;
         end_timer!(kzg_time);
 
         Ok(OpeningProof {
             ip_proof,
             y_eval_comm,
-            kzg_proof,
+            kzg_proof: kzg_proof.into_group(),
         })
     }
 
     pub fn verify(
-        v_srs: &VerifierSrs<P>,
+        v_srs: &KZGVerifierKey<P>,
         com: &PairingOutput<P>,
         point: &(P::ScalarField, P::ScalarField),
         eval: &P::ScalarField,
@@ -271,15 +183,24 @@ where
         let (x, y) = point;
         let ip_proof_valid =
             PolynomialEvaluationSecondTierIpa::<P, ProofTranscript>::verify_with_structured_scalar_message(
-                v_srs,
+                &v_srs.into(),
                 &DummyParam,
                 (com, &IdentityOutput(vec![proof.y_eval_comm])),
                 x,
                 &proof.ip_proof,
                 transcript,
             )?;
-        let kzg_proof_valid =
-            Kzg::<P>::verify(v_srs, &proof.y_eval_comm, y, eval, &proof.kzg_proof)?;
+        let kzg_proof_valid = UnivariateKZG::<P>::verify(
+            v_srs,
+            &proof.y_eval_comm.into_affine(),
+            y,
+            &proof.kzg_proof.into_affine(),
+            eval,
+        )?;
+        println!(
+            "ip_proof_valid: {}, kzg_proof_valid: {}",
+            ip_proof_valid, kzg_proof_valid
+        );
         Ok(ip_proof_valid && kzg_proof_valid)
     }
 }
@@ -292,6 +213,7 @@ pub struct UnivariatePolynomialCommitment<P, D> {
 impl<P: Pairing, ProofTranscript: Transcript> UnivariatePolynomialCommitment<P, ProofTranscript>
 where
     P::ScalarField: JoltField,
+    P::G1: Icicle,
 {
     fn bivariate_degrees(univariate_degree: usize) -> (usize, usize) {
         //(((univariate_degree + 1) as f64).sqrt().ceil() as usize).next_power_of_two() - 1;
@@ -301,9 +223,9 @@ where
         (sqrt / skew_factor - 1, sqrt * skew_factor - 1)
     }
 
-    fn parse_bivariate_degrees_from_srs(srs: &(Srs<P>, Vec<P::G1Affine>)) -> (usize, usize) {
-        let x_degree = (srs.0.h_beta_powers.len() - 1) / 2;
-        let y_degree = srs.1.len() - 1;
+    fn parse_bivariate_degrees_from_srs(srs: &KZGProverKey<P>) -> (usize, usize) {
+        let x_degree = (srs.h_beta_powers().len() - 1) / 2;
+        let y_degree = srs.len() - 1;
         (x_degree, y_degree)
     }
 
@@ -330,16 +252,16 @@ where
         BivariatePolynomial { y_polynomials }
     }
 
-    pub fn setup<R: Rng>(rng: &mut R, degree: usize) -> Result<(Srs<P>, Vec<P::G1Affine>), Error> {
+    pub fn setup<R: Rng + CryptoRng>(rng: &mut R, degree: usize) -> Result<SRS<P>, Error> {
         let (x_degree, y_degree) = Self::bivariate_degrees(degree);
         BivariatePolynomialCommitment::<P, ProofTranscript>::setup(rng, x_degree, y_degree)
     }
 
     pub fn commit(
-        srs: &(Srs<P>, Vec<P::G1Affine>),
+        srs: &(Vec<P::G2>, KZGProverKey<P>),
         polynomial: &UnivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(srs);
+        let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(&srs.1);
         BivariatePolynomialCommitment::<P, ProofTranscript>::commit(
             srs,
             &Self::bivariate_form(bivariate_degrees, polynomial),
@@ -347,13 +269,13 @@ where
     }
 
     pub fn open(
-        srs: &(Srs<P>, Vec<P::G1Affine>),
+        srs: &(Vec<P::G2>, KZGProverKey<P>),
         polynomial: &UnivariatePolynomial<P::ScalarField>,
         y_polynomial_comms: &[P::G1],
         point: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
-        let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(srs);
+        let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(&srs.1);
         let y = *point;
         let x = point.pow(vec![(y_degree + 1) as u64]);
         BivariatePolynomialCommitment::<P, ProofTranscript>::open(
@@ -366,7 +288,7 @@ where
     }
 
     pub fn verify(
-        v_srs: &VerifierSrs<P>,
+        v_srs: &KZGVerifierKey<P>,
         max_degree: usize,
         com: &PairingOutput<P>,
         point: &P::ScalarField,
@@ -393,7 +315,9 @@ mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
+    use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use std::sync::Arc;
 
     const BIVARIATE_X_DEGREE: usize = 7;
     const BIVARIATE_Y_DEGREE: usize = 7;
@@ -410,7 +334,8 @@ mod tests {
         let srs =
             TestBivariatePolyCommitment::setup(&mut rng, BIVARIATE_X_DEGREE, BIVARIATE_Y_DEGREE)
                 .unwrap();
-        let v_srs = srs.0.get_verifier_key();
+        let ck = srs.get_commitment_keys();
+        let (p_srs, v_srs) = SRS::trim(Arc::new(srs), BIVARIATE_X_DEGREE);
 
         let mut y_polynomials = Vec::new();
         for _ in 0..BIVARIATE_X_DEGREE + 1 {
@@ -421,6 +346,7 @@ mod tests {
             y_polynomials.push(UnivariatePolynomial::from_coeff(y_polynomial_coeffs));
         }
         let bivariate_polynomial = BivariatePolynomial { y_polynomials };
+        let srs = (ck, p_srs);
 
         // Commit to polynomial
         let (com, y_polynomial_comms) =
@@ -460,13 +386,18 @@ mod tests {
     fn univariate_poly_commit_test() {
         let mut rng = StdRng::seed_from_u64(0u64);
         let srs = TestUnivariatePolyCommitment::setup(&mut rng, UNIVARIATE_DEGREE).unwrap();
-        let v_srs = srs.0.get_verifier_key();
+        let ck = srs.get_commitment_keys();
+        let powers_len = srs.g1_powers.len();
+        let (p_srs, v_srs) = SRS::trim(Arc::new(srs), powers_len - 1);
+        // let v_srs = srs.0.get_verifier_key();
 
         let mut polynomial_coeffs = vec![];
         for _ in 0..UNIVARIATE_DEGREE + 1 {
             polynomial_coeffs.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
         let polynomial = UnivariatePolynomial::from_coeff(polynomial_coeffs);
+
+        let srs = (ck, p_srs);
 
         // Commit to polynomial
         let (com, y_polynomial_comms) =

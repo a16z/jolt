@@ -5,10 +5,11 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::unipoly::UniPoly;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
-use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{Field, One, PrimeField, Zero};
 use ark_std::{end_timer, start_timer};
 use itertools::Itertools;
+use crate::poly::commitment::kzg::KZGVerifierKey;
 
 pub mod structured_scalar_message;
 
@@ -29,6 +30,18 @@ pub struct VerifierSrs<P: Pairing> {
     pub h: P::G2,
     pub g_beta: P::G1,
     pub h_alpha: P::G2,
+}
+
+impl<P: Pairing> From<&KZGVerifierKey<P>> for VerifierSrs<P> {
+    fn from(value: &KZGVerifierKey<P>) -> Self {
+        Self {
+            g: value.g1.into_group(),
+            h: value.g2.into_group(),
+            // TODO g_beta is wrong
+            g_beta: value.alpha_g1.into_group(),
+            h_alpha: value.beta_g2.into_group(),
+        }
+    }
 }
 
 //TODO: Change SRS to return reference iterator - requires changes to TIPA and GIPA signatures

@@ -110,6 +110,14 @@ where
         }
     }
 
+    pub fn get_commitment_keys(&self) -> Vec<P::G2> {
+        self.g2_powers
+            .iter()
+            .map(|aff| aff.into_group())
+            .step_by(2)
+            .collect()
+    }
+
     pub fn trim(params: Arc<Self>, max_degree: usize) -> (KZGProverKey<P>, KZGVerifierKey<P>) {
         assert!(!params.g1_powers.is_empty(), "max_degree is 0");
         assert!(
@@ -118,9 +126,10 @@ where
         );
         let g1 = params.g1_powers[0];
         let g2 = params.g2_powers[0];
+        let alpha_g1= params.g1_powers[1];
         let beta_g2 = params.g2_powers[1];
         let pk = KZGProverKey::new(params, 0, max_degree + 1);
-        let vk = KZGVerifierKey { g1, g2, beta_g2 };
+        let vk = KZGVerifierKey { g1, g2, beta_g2, alpha_g1 };
         (pk, vk)
     }
 }
@@ -160,6 +169,18 @@ where
         &self.srs.g1_powers[self.offset..self.offset + self.supported_size]
     }
 
+    pub fn h_beta_powers(&self) -> Vec<P::G2> {
+        self.srs
+            .g2_powers
+            .iter()
+            .map(|affine| affine.into_group())
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.g1_powers().len()
+    }
+
     pub fn gpu_g1(&self) -> Option<&[GpuBaseType<P::G1>]> {
         self.srs
             .gpu_g1
@@ -172,6 +193,7 @@ where
 pub struct KZGVerifierKey<P: Pairing> {
     pub g1: P::G1Affine,
     pub g2: P::G2Affine,
+    pub alpha_g1: P::G1Affine,
     pub beta_g2: P::G2Affine,
 }
 
