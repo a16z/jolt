@@ -129,20 +129,39 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let build_verifier_fn_name = Ident::new(&format!("build_verifier_{}", fn_name), fn_name.span());
 
+        let input_types = self.func_args.iter().map(|(_, ty)| ty);
+        let output_type: Type = match &self.func.sig.output {
+            ReturnType::Default => syn::parse_quote!(()),
+            ReturnType::Type(_, ty) => syn::parse_quote!((#ty)),
+        };
+        let inputs = self.func.sig.inputs.iter();
         let imports = self.make_imports();
+        let set_program_args = self.func_args.iter().map(|(name, _)| {
+            quote! {
+                io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
-            ) -> impl Fn(jolt::JoltHyperKZGProof) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types ,)* #output_type, jolt::JoltHyperKZGProof) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |proof: jolt::JoltHyperKZGProof| {
+                let verify_closure = move |#(#inputs,)* output, proof: jolt::JoltHyperKZGProof| {
                     let preprocessing = (*preprocessing).clone();
-                    RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments, None).is_ok()
+
+                    let mut io_device = tracer::JoltDevice::new(
+                        preprocessing.memory_layout.max_input_size,
+                        preprocessing.memory_layout.max_output_size,
+                    );
+                    #(#set_program_args;)*
+                    io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
+
+                    RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments, io_device, None).is_ok()
                 };
 
                 verify_closure
@@ -176,7 +195,7 @@ impl MacroBuilder {
         let inputs = &self.func.sig.inputs;
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
-                program.set_input(&#name);
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
 
@@ -190,9 +209,11 @@ impl MacroBuilder {
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
+
+                let mut input_bytes = vec![];
                 #(#set_program_args;)*
 
-                program.trace_analyze::<jolt::F>()
+                program.trace_analyze::<jolt::F>(&input_bytes)
              }
         }
     }
@@ -298,13 +319,13 @@ impl MacroBuilder {
                 let ret_val = ();
             },
             ReturnType::Type(_, ty) => quote! {
-                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_bytes).unwrap();
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_io_device.outputs).unwrap();
             },
         };
 
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
-                program.set_input(&#name);
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
 
@@ -322,13 +343,12 @@ impl MacroBuilder {
             ) -> #prove_output_ty {
                 #imports
 
+                let mut input_bytes = vec![];
                 #(#set_program_args;)*
 
-                let (io_device, trace) = program.trace();
+                let (io_device, trace) = program.trace(&input_bytes);
 
-                let output_bytes = io_device.outputs.clone();
-
-                let (jolt_proof, jolt_commitments, _) = RV32IJoltVM::prove(
+                let (jolt_proof, jolt_commitments, output_io_device, _) = RV32IJoltVM::prove(
                     io_device,
                     trace,
                     preprocessing,

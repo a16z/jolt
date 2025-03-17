@@ -310,14 +310,14 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) =
+        let (proof, commitments, verifier_io_device, debug_info) =
             <RV32IJoltVM as Jolt<F, PCS, C, M, ProofTranscript>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
             );
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, verifier_io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -366,7 +366,7 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
+        let (jolt_proof, jolt_commitments, verifier_io_device, debug_info) = <RV32IJoltVM as Jolt<
             _,
             Zeromorph<Bn254, KeccakTranscript>,
             C,
@@ -377,7 +377,7 @@ mod tests {
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -404,7 +404,7 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
+        let (jolt_proof, jolt_commitments, verifier_io_device, debug_info) = <RV32IJoltVM as Jolt<
             _,
             HyperKZG<Bn254, KeccakTranscript>,
             C,
@@ -415,7 +415,7 @@ mod tests {
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -439,7 +439,7 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
+        let (jolt_proof, jolt_commitments, verifier_io_device, debug_info) = <RV32IJoltVM as Jolt<
             _,
             HyperKZG<Bn254, KeccakTranscript>,
             C,
@@ -450,7 +450,7 @@ mod tests {
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -479,7 +479,7 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
+        let (proof, commitments, verifier_io_device, debug_info) = <RV32IJoltVM as Jolt<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
             C,
@@ -489,7 +489,7 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, verifier_io_device, debug_info);
     }
 
     #[test]
@@ -519,7 +519,7 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
+        let (proof, commitments, verifier_io_device, debug_info) = <RV32IJoltVM as Jolt<
             Fr,
             HyperKZG<Bn254, KeccakTranscript>,
             C,
@@ -529,6 +529,6 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
         let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, debug_info);
+            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, verifier_io_device, debug_info);
     }
 }
