@@ -1,6 +1,6 @@
 use super::super::{
     commitments::Dhc,
-    gipa::{Gipa, GipaProof},
+    gipa::Gipa,
     inner_products::InnerProduct,
     tipa::{
         prove_commitment_key_kzg_opening, structured_generators_scalar_power,
@@ -11,6 +11,7 @@ use super::super::{
 use crate::field::JoltField;
 use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::{IdentityCommitment, IdentityOutput};
+use crate::poly::commitment::bmmtv::gipa::CommitmentSteps;
 use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
 use crate::utils::transcript::Transcript;
 use ark_ec::pairing::PairingOutput;
@@ -38,7 +39,8 @@ pub struct TipaWithSsmProof<P>
 where
     P: Pairing,
 {
-    gipa_proof: GipaProof<P>,
+    commitment_steps: CommitmentSteps<P>,
+    final_message: (P::G1, P::ScalarField),
     final_ck: P::G2,
     final_ck_proof: P::G2,
 }
@@ -71,13 +73,13 @@ where
     ) -> Result<TipaWithSsmProof<P>, Error> {
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
-        let (proof, aux) = Gipa::<P, ProofTranscript>::prove_with_aux(values, ck, transcript)?;
+        let proof = Gipa::<P, ProofTranscript>::prove_with_aux(values, ck, transcript)?;
         end_timer!(gipa);
 
         // Prove final commitment key is wellformed
         let ck_kzg = start_timer!(|| "Prove commitment key");
-        let ck_a_final = aux.final_commitment_param;
-        let transcript_inverse = cfg_iter!(aux.scalar_transcript)
+        let ck_a_final = proof.final_commitment_param;
+        let transcript_inverse = cfg_iter!(proof.scalar_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
@@ -95,7 +97,8 @@ where
         end_timer!(ck_kzg);
 
         Ok(TipaWithSsmProof {
-            gipa_proof: proof,
+            final_message: proof.final_message,
+            commitment_steps: proof.commitment_steps,
             final_ck: ck_a_final,
             final_ck_proof: ck_a_kzg_opening,
         })
@@ -111,7 +114,7 @@ where
         let (base_com, gipa_transcript) =
             Gipa::<P, ProofTranscript>::verify_recursive_challenge_transcript(
                 (com.0, scalar_b, com.1),
-                &proof.gipa_proof,
+                &proof.commitment_steps,
                 transcript,
             )?;
         let transcript_inverse = cfg_iter!(gipa_transcript)
@@ -147,85 +150,81 @@ where
 
         // Verify base inner product commitment
         let (com_a, _, com_t) = base_com;
-        let a_base = vec![proof.gipa_proof.final_message.0];
+        let a_base = vec![proof.final_message.0];
         let t_base = vec![MultiexponentiationInnerProduct::<P::G1>::inner_product(
             &a_base,
             &[b_base],
         )?];
         let base_valid = AfghoCommitment::verify(&[*ck_a_final], &a_base, &com_a)?
-            && IdentityCommitment::<P::G1, P::ScalarField>::verify(&[], &t_base, &com_t)?;
+            && IdentityCommitment::<P>::verify(&t_base, &com_t);
 
         Ok(ck_a_valid && base_valid)
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::{
-//         super::super::{
-//             commitments::{
-//                 afgho16::AfghoCommitment, identity::IdentityCommitment, random_generators,
-//             },
-//             inner_products::{InnerProduct, MultiexponentiationInnerProduct},
-//         },
-//         *,
-//     };
-//     use crate::poly::commitment::bmmtv::tipa::Field;
-//     use crate::utils::transcript::KeccakTranscript;
-//     use ark_bn254::Bn254;
-//     use ark_std::rand::{rngs::StdRng, SeedableRng};
-//
-//     type BlsAfghoG1 = AfghoCommitment<Bn254>;
-//     type BlsScalarField = <Bn254 as Pairing>::ScalarField;
-//     type BlsG1 = <Bn254 as Pairing>::G1;
-//
-//     const TEST_SIZE: usize = 8;
-//
-//     fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
-//         let mut powers = vec![F::one()];
-//         for i in 1..num {
-//             powers.push(powers[i - 1] * s);
-//         }
-//         powers
-//     }
-//
-//     #[test]
-//     fn tipa_ssm_multiexponentiation_inner_product_test() {
-//         type IP = MultiexponentiationInnerProduct<BlsG1>;
-//         type Ipc = IdentityCommitment<BlsG1, BlsScalarField>;
-//         type MultiExpTipa = TipaWithSsm<IP, BlsAfghoG1, Ipc, Bn254, KeccakTranscript>;
-//
-//         let mut rng = StdRng::seed_from_u64(0u64);
-//         let (srs, ck_t) = MultiExpTipa::setup(&mut rng, TEST_SIZE).unwrap();
-//         let ck_a = srs.get_commitment_keys();
-//         let v_srs = srs.get_verifier_key();
-//         let m_a = random_generators(&mut rng, TEST_SIZE);
-//         let b = BlsScalarField::rand(&mut rng);
-//         let m_b = structured_scalar_power(TEST_SIZE, &b);
-//         let com_a = BlsAfghoG1::commit(&ck_a, &m_a).unwrap();
-//         let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
-//         let com_t = Ipc::commit(&[ck_t.clone()], &t).unwrap();
-//
-//         let mut transcript = KeccakTranscript::new(b"TipaTest");
-//
-//         let proof = MultiExpTipa::prove_with_structured_scalar_message(
-//             &srs.h_beta_powers,
-//             (&m_a, &m_b),
-//             (&ck_a, &ck_t),
-//             &mut transcript,
-//         )
-//         .unwrap();
-//
-//         let mut transcript = KeccakTranscript::new(b"TipaTest");
-//
-//         assert!(MultiExpTipa::verify_with_structured_scalar_message(
-//             &v_srs,
-//             &ck_t,
-//             (&com_a, &com_t),
-//             &b,
-//             &proof,
-//             &mut transcript,
-//         )
-//         .unwrap());
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::{
+        super::super::{
+            commitments::{afgho16::AfghoCommitment, random_generators},
+            inner_products::{InnerProduct, MultiexponentiationInnerProduct},
+        },
+        *,
+    };
+    use crate::poly::commitment::bmmtv::tipa::Field;
+    use crate::utils::transcript::KeccakTranscript;
+    use ark_bn254::Bn254;
+    use ark_std::rand::{rngs::StdRng, SeedableRng};
+
+    type BlsAfghoG1 = AfghoCommitment<Bn254>;
+    type BlsScalarField = <Bn254 as Pairing>::ScalarField;
+    type BlsG1 = <Bn254 as Pairing>::G1;
+
+    const TEST_SIZE: usize = 8;
+
+    fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
+        let mut powers = vec![F::one()];
+        for i in 1..num {
+            powers.push(powers[i - 1] * s);
+        }
+        powers
+    }
+
+    #[test]
+    fn tipa_ssm_multiexponentiation_inner_product_test() {
+        type IP = MultiexponentiationInnerProduct<BlsG1>;
+        type MultiExpTipa = TipaWithSsm<Bn254, KeccakTranscript>;
+
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let srs = MultiExpTipa::setup(&mut rng, TEST_SIZE).unwrap();
+        let ck_a = srs.get_commitment_keys();
+        let v_srs = srs.get_verifier_key();
+        let m_a = random_generators(&mut rng, TEST_SIZE);
+        let b = BlsScalarField::rand(&mut rng);
+        let m_b = structured_scalar_power(TEST_SIZE, &b);
+        let com_a = BlsAfghoG1::commit(&ck_a, &m_a).unwrap();
+        let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
+        let com_t = IdentityOutput(t);
+
+        let mut transcript = KeccakTranscript::new(b"TipaTest");
+
+        let proof = MultiExpTipa::prove_with_structured_scalar_message(
+            &srs.h_beta_powers,
+            (&m_a, &m_b),
+            &ck_a,
+            &mut transcript,
+        )
+        .unwrap();
+
+        let mut transcript = KeccakTranscript::new(b"TipaTest");
+
+        assert!(MultiExpTipa::verify_with_structured_scalar_message(
+            &v_srs,
+            (&com_a, &com_t),
+            &b,
+            &proof,
+            &mut transcript,
+        )
+        .unwrap());
+    }
+}

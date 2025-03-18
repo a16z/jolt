@@ -1,20 +1,16 @@
-use ark_ff::fields::PrimeField;
+use ark_ec::pairing::Pairing;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::rand::Rng;
 use std::{
     marker::PhantomData,
     ops::{Add, MulAssign},
 };
 
-use super::{Dhc, Error};
-
 /// Simplest commitment to a Vec<T>, simply send the Vec<T>
 ///
 /// This is just used to fill the gaps in other traits
 #[derive(Clone)]
-pub struct IdentityCommitment<T, F: PrimeField> {
-    _t: PhantomData<T>,
-    _field: PhantomData<F>,
+pub struct IdentityCommitment<P> {
+    _pairing: PhantomData<P>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Default, Eq, PartialEq)]
@@ -49,21 +45,8 @@ where
     }
 }
 
-impl<T, F> Dhc for IdentityCommitment<T, F>
-where
-    T: CanonicalSerialize + CanonicalDeserialize + Clone + Default + Eq,
-    F: PrimeField,
-{
-    type Scalar = F;
-    type Message = T;
-    type Param = ();
-    type Output = IdentityOutput<T>;
-
-    fn setup<R: Rng>(_rng: &mut R, _size: usize) -> Result<Vec<Self::Param>, Error> {
-        Ok(vec![])
-    }
-
-    fn commit(_k: &[Self::Param], m: &[Self::Message]) -> Result<Self::Output, Error> {
-        Ok(IdentityOutput(m.to_vec()))
+impl<P: Pairing> IdentityCommitment<P> {
+    pub fn verify(a: &[P::G1], b: &IdentityOutput<P::G1>) -> bool {
+        b.0 == a
     }
 }
