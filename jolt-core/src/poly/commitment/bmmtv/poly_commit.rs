@@ -11,12 +11,7 @@ use ark_std::{end_timer, start_timer};
 use std::marker::PhantomData;
 
 use super::{
-    commitments::{
-        afgho16::AfghoCommitment,
-        identity::{DummyParam, IdentityOutput},
-        Dhc,
-    },
-    // inner_products::MultiexponentiationInnerProduct,
+    commitments::{afgho16::AfghoCommitment, identity::IdentityOutput, Dhc},
     tipa::structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
     Error,
 };
@@ -141,7 +136,7 @@ where
         let ip_proof = TipaWithSsm::<P, ProofTranscript>::prove_with_structured_scalar_message(
             &kzg_srs.h_beta_powers(),
             (y_polynomial_comms, &powers_of_x),
-            (ck_1, &DummyParam),
+            ck_1,
             transcript,
         )?;
         end_timer!(ipa_time);
@@ -169,7 +164,6 @@ where
         let ip_proof_valid =
             TipaWithSsm::<P, ProofTranscript>::verify_with_structured_scalar_message(
                 &v_srs.into(),
-                &DummyParam,
                 (com, &IdentityOutput(vec![proof.y_eval_comm])),
                 x,
                 &proof.ip_proof,

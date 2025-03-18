@@ -1,6 +1,5 @@
 use super::super::{
-    commitments::{identity::DummyParam, Dhc},
-    gipa::GipaParams,
+    commitments::Dhc,
     gipa::{Gipa, GipaProof},
     inner_products::InnerProduct,
     tipa::{
@@ -34,11 +33,11 @@ pub struct SsmDummyCommitment<F> {
 impl<F: PrimeField> Dhc for SsmDummyCommitment<F> {
     type Scalar = F;
     type Message = F;
-    type Param = DummyParam;
+    type Param = ();
     type Output = F;
 
-    fn setup<R: Rng>(_rng: &mut R, size: usize) -> Result<Vec<Self::Param>, Error> {
-        Ok(vec![DummyParam {}; size])
+    fn setup<R: Rng>(_rng: &mut R, _size: usize) -> Result<Vec<Self::Param>, Error> {
+        Ok(vec![])
     }
 
     //TODO: Doesn't include message which means scalar b not included in generating challenges
@@ -73,42 +72,33 @@ where
     ProofTranscript: Transcript,
 {
     //TODO: Don't need full TIPA SRS since only using one set of powers
-    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<(Srs<P>, DummyParam), Error> {
+    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<Srs<P>, Error> {
         let alpha = <P::ScalarField>::rand(rng);
         let beta = <P::ScalarField>::rand(rng);
         let g = P::G1::generator();
         let h = P::G2::generator();
-        Ok((
-            Srs {
-                g_alpha_powers: structured_generators_scalar_power(2 * size - 1, &g, &alpha),
-                h_beta_powers: structured_generators_scalar_power(2 * size - 1, &h, &beta),
-                g_beta: g * beta,
-                h_alpha: h * alpha,
-            },
-            IdentityCommitment::<P::G1, P::ScalarField>::setup(rng, 1)?
-                .pop()
-                .unwrap(),
-        ))
+        Ok(Srs {
+            g_alpha_powers: structured_generators_scalar_power(2 * size - 1, &g, &alpha),
+            h_beta_powers: structured_generators_scalar_power(2 * size - 1, &h, &beta),
+            g_beta: g * beta,
+            h_alpha: h * alpha,
+        })
     }
 
     pub fn prove_with_structured_scalar_message(
         h_beta_powers: &[P::G2],
         values: (&[P::G1], &[P::ScalarField]),
-        ck: (&[P::G2], &DummyParam),
+        ck: &[P::G2],
         transcript: &mut ProofTranscript,
     ) -> Result<TipaWithSsmProof<P>, Error> {
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
-        let (proof, aux) = Gipa::<P, ProofTranscript>::prove_with_aux(
-            values,
-            &GipaParams::new_aux(ck.0, &vec![DummyParam {}; values.1.len()], &[ck.1.clone()]),
-            transcript,
-        )?;
+        let (proof, aux) = Gipa::<P, ProofTranscript>::prove_with_aux(values, ck, transcript)?;
         end_timer!(gipa);
 
         // Prove final commitment key is wellformed
         let ck_kzg = start_timer!(|| "Prove commitment key");
-        let (ck_a_final, _) = aux.final_commitment_param;
+        let ck_a_final = aux.final_commitment_param;
         let transcript_inverse = cfg_iter!(aux.scalar_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
@@ -135,7 +125,6 @@ where
 
     pub fn verify_with_structured_scalar_message(
         v_srs: &VerifierSrs<P>,
-        ck_t: &DummyParam,
         com: (&PairingOutput<P>, &IdentityOutput<P::G1>),
         scalar_b: &P::ScalarField,
         proof: &TipaWithSsmProof<P>,
@@ -186,11 +175,7 @@ where
             &[b_base],
         )?];
         let base_valid = AfghoCommitment::verify(&[*ck_a_final], &a_base, &com_a)?
-            && IdentityCommitment::<P::G1, P::ScalarField>::verify(
-                &[ck_t.clone()],
-                &t_base,
-                &com_t,
-            )?;
+            && IdentityCommitment::<P::G1, P::ScalarField>::verify(&[], &t_base, &com_t)?;
 
         Ok(ck_a_valid && base_valid)
     }

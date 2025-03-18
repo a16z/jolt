@@ -7,8 +7,8 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
+use crate::poly::commitment::bmmtv::commitments::identity::IdentityCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::IdentityOutput;
-use crate::poly::commitment::bmmtv::commitments::identity::{DummyParam, IdentityCommitment};
 use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
 use crate::poly::commitment::bmmtv::tipa::structured_scalar_message::SsmDummyCommitment;
 use crate::utils::transcript::Transcript;
@@ -43,39 +43,17 @@ pub struct GipaProof<P: Pairing> {
 }
 
 /// Transcript in reverse order and commitment bases?
-///
-// GipaAux<AfghoCommitment<P>, SsmDummyCommitment<P::ScalarField>>,
-///
 #[allow(unused)]
 #[derive(Clone)]
 pub struct GipaAux<P: Pairing> {
     pub(crate) scalar_transcript: Vec<P::ScalarField>,
-    pub(crate) final_commitment_param: (P::G2, DummyParam),
+    pub(crate) final_commitment_param: P::G2,
 }
 
 pub struct GipaCommitment<P: Pairing> {
     l_commit: PairingOutput<P>,
     r_commit: P::ScalarField,
     ip_commit: IdentityOutput<P::G1>,
-}
-
-#[derive(Clone)]
-pub struct GipaParams<P: Pairing> {
-    l_params: Vec<P::G2>,
-    r_params: Vec<DummyParam>,
-    ip_param: DummyParam,
-}
-impl<P: Pairing> GipaParams<P> {
-    pub fn new_aux(l_params: &[P::G2], r_params: &[DummyParam], ip_param: &[DummyParam]) -> Self {
-        Self::new(l_params, r_params, &ip_param[0])
-    }
-    pub fn new(l_params: &[P::G2], r_params: &[DummyParam], ip_param: &DummyParam) -> Self {
-        Self {
-            l_params: l_params.to_vec(),
-            r_params: r_params.to_vec(),
-            ip_param: ip_param.clone(),
-        }
-    }
 }
 
 /// Something to keep in mind for Gipas is that Left Message for the inner product is:
@@ -92,20 +70,14 @@ where
     /// Generate setup for all commitments and returm them
     ///
     /// For the Inner Product, we only take the first element
-    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<GipaParams<P>, Error> {
-        Ok(GipaParams {
-            l_params: AfghoCommitment::<P>::setup(rng, size)?,
-            r_params: SsmDummyCommitment::<P::ScalarField>::setup(rng, size)?,
-            ip_param: IdentityCommitment::<P::G1, P::ScalarField>::setup(rng, 1)?
-                .pop()
-                .unwrap(),
-        })
+    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<Vec<P::G2>, Error> {
+        AfghoCommitment::<P>::setup(rng, size)
     }
 
     /// Create a proof for the provided values
     pub fn prove(
         values: (&[P::G1], &[P::ScalarField], &P::G1),
-        params: &GipaParams<P>,
+        params: &[P::G2],
         commitment: &GipaCommitment<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<GipaProof<P>, Error> {
@@ -122,16 +94,14 @@ where
             ));
         }
         let valid_left_commitment =
-            AfghoCommitment::verify(&params.l_params, values.0, &commitment.l_commit)?;
-        let valid_right_commitment =
-            SsmDummyCommitment::verify(&params.r_params, values.1, &commitment.r_commit)?;
+            AfghoCommitment::verify(params, values.0, &commitment.l_commit)?;
         let valid_ip_commitment = IdentityCommitment::<P::G1, P::ScalarField>::verify(
-            &[params.ip_param.clone()],
+            &[],
             &[*values.2],
             &commitment.ip_commit,
         )?;
         // check if all provided values correspond to the provided commitments
-        if !(valid_left_commitment && valid_right_commitment && valid_ip_commitment) {
+        if !(valid_left_commitment && valid_ip_commitment) {
             bail!(InnerProductArgumentError::InnerProductInvalid);
         }
 
@@ -142,17 +112,18 @@ where
 
     /// Check if the proof with final commitment (size 1) was calculated from the commitment
     pub fn verify(
-        params: &GipaParams<P>,
+        params: &[P::G2],
         commitment: GipaCommitment<P>,
         proof: &GipaProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
-        if params.l_params.len().count_ones() != 1 || params.l_params.len() != params.r_params.len()
-        {
+        if params.len().count_ones() != 1 {
             // Power of 2 length
+            // TODO change to only 1 argument
+            // TODO removed r_params
             bail!(InnerProductArgumentError::MessageLengthInvalid(
-                params.l_params.len(),
-                params.r_params.len(),
+                params.len(),
+                params.len(),
             ));
         }
         // Calculate base commitment and transcript
@@ -166,23 +137,23 @@ where
             transcript,
         )?;
         // Calculate base commitment keys
-        let (ck_a_base, ck_b_base) = Self::_compute_final_commitment_keys(params, &transcript)?;
+        let ck_a_base = Self::_compute_final_commitment_keys(params, &transcript)?;
         // Verify base commitment
-        Self::_verify_base_commitment(
-            (&ck_a_base, &ck_b_base, &vec![params.ip_param.clone()]),
-            base_com,
-            proof,
-        )
+        Self::_verify_base_commitment(&ck_a_base, base_com, proof)
     }
 
     /// Same as prove, but prepares the slices into vec for you
     pub fn prove_with_aux(
         values: (&[P::G1], &[P::ScalarField]),
-        params: &GipaParams<P>,
+        params: &[P::G2],
         transcript: &mut ProofTranscript,
     ) -> Result<(GipaProof<P>, GipaAux<P>), Error> {
         let (msg_l, msg_r) = values;
-        Self::_prove((msg_l.to_vec(), msg_r.to_vec()), params.clone(), transcript)
+        Self::_prove(
+            (msg_l.to_vec(), msg_r.to_vec()),
+            params.to_vec(),
+            transcript,
+        )
     }
 
     /// Returns vector of recursive commitments and transcripts in reverse order
@@ -219,15 +190,10 @@ where
     /// [a41] + [com_1, com2, com3]
     fn _prove(
         values: (Vec<P::G1>, Vec<P::ScalarField>),
-        GipaParams {
-            mut l_params,
-            mut r_params,
-            ip_param,
-        }: GipaParams<P>,
+        mut l_params: Vec<P::G2>,
         transcript: &mut ProofTranscript,
     ) -> Result<(GipaProof<P>, GipaAux<P>), Error> {
         let (mut msg_l, mut msg_r) = values;
-        let ip_param = &[ip_param];
         // fiat-shamir steps
         let mut r_commitment_steps = Vec::new();
         // fiat-shamir transcripts
@@ -237,18 +203,13 @@ where
         // for loop instead of using recursion
         let (final_msg, final_param) = 'recurse: loop {
             let recurse = start_timer!(|| format!("Recurse round size {}", msg_l.len()));
-            match (
-                &msg_l.as_slice(),
-                &msg_r.as_slice(),
-                &l_params.as_slice(),
-                &r_params.as_slice(),
-            ) {
-                ([m_l], [m_r], [param_l], &[param_r]) => {
+            match (&msg_l.as_slice(), &msg_r.as_slice(), &l_params.as_slice()) {
+                ([m_l], [m_r], [param_l]) => {
                     // base case
                     // when we get to zero
-                    break 'recurse ((*m_l, *m_r), (*param_l, param_r.clone()));
+                    break 'recurse ((*m_l, *m_r), *param_l);
                 }
-                (m_l, m_r, p_l, p_r) => {
+                (m_l, m_r, p_l) => {
                     // recursive step
                     // Recurse with problem of half size
                     let split = m_l.len() / 2;
@@ -260,18 +221,16 @@ where
 
                     let m_rl = &m_r[..split];
                     let m_rr = &m_r[split..];
-                    let param_rl = &p_r[split..];
-                    let param_rr = &p_r[..split];
 
                     let cl = start_timer!(|| "Commit L");
                     let com_l = (
                         // commit to first left half
                         AfghoCommitment::commit(param_ll, m_ll)?,
                         // commit to first right half
-                        SsmDummyCommitment::<P::ScalarField>::commit(param_rl, m_rl)?,
+                        SsmDummyCommitment::<P::ScalarField>::commit(&[], m_rl)?, // TODO all zeros
                         // commit to inner pairing from first half of left msg with first half of right message
                         IdentityCommitment::<P::G1, P::ScalarField>::commit(
-                            ip_param,
+                            &[],
                             &[MultiexponentiationInnerProduct::inner_product(m_ll, m_rl)?],
                         )?,
                     );
@@ -281,10 +240,10 @@ where
                         // commit to second left half
                         AfghoCommitment::commit(param_lr, m_lr)?,
                         // commit to second right half
-                        SsmDummyCommitment::<P::ScalarField>::commit(param_rr, m_rr)?,
+                        SsmDummyCommitment::<P::ScalarField>::commit(&[], m_rr)?,
                         // commit to inner pairing from second half of left msg with second half of right message
                         IdentityCommitment::<P::G1, P::ScalarField>::commit(
-                            ip_param,
+                            &[],
                             &[MultiexponentiationInnerProduct::inner_product(m_lr, m_rr)?],
                         )?,
                     );
@@ -324,14 +283,6 @@ where
                         .map(|(a_1, a_2)| a_1 + a_2)
                         .collect::<Vec<P::G2>>();
                     end_timer!(rescale_pl);
-
-                    let rescale_pr = start_timer!(|| "Rescale CK2");
-                    r_params = cfg_iter!(param_rl)
-                        .map(|b| mul_helper(b, &c))
-                        .zip(param_rr)
-                        .map(|(b_1, b_2)| b_1 + b_2.clone())
-                        .collect::<Vec<DummyParam>>();
-                    end_timer!(rescale_pr);
 
                     // add commitment steps
                     r_commitment_steps.push((com_l, com_r));
@@ -410,11 +361,9 @@ where
     }
 
     pub(crate) fn _compute_final_commitment_keys(
-        GipaParams {
-            l_params, r_params, ..
-        }: &GipaParams<P>,
+        l_params: &[P::G2],
         transcript: &[P::ScalarField],
-    ) -> Result<(P::G2, DummyParam), Error> {
+    ) -> Result<P::G2, Error> {
         // Calculate base commitment keys
         assert!(l_params.len().is_power_of_two());
 
@@ -436,23 +385,16 @@ where
             .map(|(g, x)| mul_helper(g, x))
             .fold(ck_a_base_init, |sum, x| sum + x);
         //.reduce(|| ck_a_base_init.clone(), |sum, x| sum + x);
-        let ck_b_base_init = mul_helper(&r_params[0], &ck_b_agg_challenge_exponents[0]);
-        let ck_b_base = r_params[1..]
-            .iter()
-            .zip(&ck_b_agg_challenge_exponents[1..])
-            .map(|(g, x)| mul_helper(g, x))
-            .fold(ck_b_base_init, |sum, x| sum + x);
-        //.reduce(|| ck_b_base_init.clone(), |sum, x| sum + x);
-        Ok((ck_a_base, ck_b_base))
+        Ok(ck_a_base)
     }
 
     pub(crate) fn _verify_base_commitment(
-        base_ck: (&P::G2, &DummyParam, &Vec<DummyParam>),
+        base_ck: &P::G2,
         base_com: (PairingOutput<P>, P::ScalarField, IdentityOutput<P::G1>),
         proof: &GipaProof<P>,
     ) -> Result<bool, Error> {
         let (com_a, com_b, com_t) = base_com;
-        let (ck_a_base, ck_b_base, ck_t) = base_ck;
+        let ck_a_base = base_ck;
         let a_base = vec![proof.final_message.0];
         let b_base = vec![proof.final_message.1];
         let t_base = vec![MultiexponentiationInnerProduct::inner_product(
@@ -460,8 +402,8 @@ where
         )?];
 
         Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)?
-            && SsmDummyCommitment::<P::ScalarField>::verify(&[ck_b_base.clone()], &b_base, &com_b)?
-            && IdentityCommitment::<P::G1, P::ScalarField>::verify(ck_t, &t_base, &com_t)?)
+            && SsmDummyCommitment::<P::ScalarField>::verify(&[], &b_base, &com_b)?
+            && IdentityCommitment::<P::G1, P::ScalarField>::verify(&[], &t_base, &com_t)?)
     }
 }
 
@@ -501,10 +443,10 @@ mod tests {
         for _ in 0..TEST_SIZE {
             m_b.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
-        let l_commit = AfghoBlsG1::commit(&params.l_params, &m_a).unwrap();
-        let r_commit = DummySsm::commit(&params.r_params, &m_b).unwrap();
+        let l_commit = AfghoBlsG1::commit(&params, &m_a).unwrap();
+        let r_commit = DummySsm::commit(&[], &m_b).unwrap();
         let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
-        let ip_commit = Ipc::commit(&[params.ip_param.clone()], &t).unwrap();
+        let ip_commit = Ipc::commit(&[], &t).unwrap();
 
         let commitment = GipaCommitment {
             l_commit,

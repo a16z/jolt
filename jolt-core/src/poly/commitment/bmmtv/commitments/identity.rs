@@ -17,22 +17,6 @@ pub struct IdentityCommitment<T, F: PrimeField> {
     _field: PhantomData<F>,
 }
 
-/// Dummy Key param used when you don't need any setup output like [`IdentityCommitment`] does
-#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Default, Eq, PartialEq)]
-pub struct DummyParam;
-
-impl Add for DummyParam {
-    type Output = Self;
-
-    fn add(self, _rhs: Self) -> Self::Output {
-        DummyParam
-    }
-}
-
-impl<T> MulAssign<T> for DummyParam {
-    fn mul_assign(&mut self, _rhs: T) {}
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Default, Eq, PartialEq)]
 pub struct IdentityOutput<T>(pub Vec<T>)
 where
@@ -67,24 +51,16 @@ where
 
 impl<T, F> Dhc for IdentityCommitment<T, F>
 where
-    T: CanonicalSerialize
-        + CanonicalDeserialize
-        + Clone
-        + Default
-        + Eq
-        + Add<T, Output = T>
-        + MulAssign<F>
-        + Send
-        + Sync,
+    T: CanonicalSerialize + CanonicalDeserialize + Clone + Default + Eq,
     F: PrimeField,
 {
     type Scalar = F;
     type Message = T;
-    type Param = DummyParam;
+    type Param = ();
     type Output = IdentityOutput<T>;
 
-    fn setup<R: Rng>(_rng: &mut R, size: usize) -> Result<Vec<Self::Param>, Error> {
-        Ok(vec![DummyParam; size])
+    fn setup<R: Rng>(_rng: &mut R, _size: usize) -> Result<Vec<Self::Param>, Error> {
+        Ok(vec![])
     }
 
     fn commit(_k: &[Self::Param], m: &[Self::Message]) -> Result<Self::Output, Error> {

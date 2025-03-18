@@ -2,13 +2,7 @@
 //! exports some implementations of it like Afgho, Identity and Pedersen
 
 use ark_ec::CurveGroup;
-use ark_ff::fields::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
-use std::{
-    cmp::Eq,
-    ops::{Add, MulAssign},
-};
 
 pub mod afgho16;
 pub mod identity;
@@ -23,37 +17,15 @@ pub type Error = anyhow::Error;
 /// Something is considered homomorphic if f(x.y) = f(x).f(y)
 pub trait Dhc: Clone {
     /// Field in which Messages and Keys are homomorphic
-    type Scalar: PrimeField;
+    type Scalar;
     /// Message is the type of the
-    type Message: CanonicalSerialize
-        + CanonicalDeserialize
-        + Clone
-        + Default
-        + Eq
-        + Send
-        + Sync
-        + Add<Self::Message, Output = Self::Message>
-        + MulAssign<Self::Scalar>;
+    type Message;
     /// Commitment key is the output of the setup phase
     ///
     /// Used as parameters for the commitment
-    type Param: CanonicalSerialize
-        + CanonicalDeserialize
-        + Clone
-        + Default
-        + Eq
-        + Send
-        + Sync
-        + Add<Self::Param, Output = Self::Param>
-        + MulAssign<Self::Scalar>;
+    type Param;
     /// Output of the commitment
-    type Output: CanonicalSerialize
-        + CanonicalDeserialize
-        + Clone
-        + Default
-        + Eq
-        + Add<Self::Output, Output = Self::Output>
-        + MulAssign<Self::Scalar>;
+    type Output: PartialEq + Eq;
 
     /// Generates a setup for commitments with `size`
     ///
