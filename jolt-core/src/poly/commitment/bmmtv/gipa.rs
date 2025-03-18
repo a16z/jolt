@@ -10,11 +10,11 @@ use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::IdentityCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::IdentityOutput;
 use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
-use crate::poly::commitment::bmmtv::tipa::structured_scalar_message::SsmDummyCommitment;
 use crate::utils::transcript::Transcript;
 use anyhow::bail;
 use ark_ec::pairing::Pairing;
 use ark_ec::pairing::PairingOutput;
+use ark_ff::Field;
 use ark_ff::One;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
@@ -139,7 +139,7 @@ where
         // Calculate base commitment keys
         let ck_a_base = Self::_compute_final_commitment_keys(params, &transcript)?;
         // Verify base commitment
-        Self::_verify_base_commitment(&ck_a_base, base_com, proof)
+        Self::_verify_base_commitment(&ck_a_base, (base_com.0, base_com.2), proof)
     }
 
     /// Same as prove, but prepares the slices into vec for you
@@ -227,7 +227,7 @@ where
                         // commit to first left half
                         AfghoCommitment::commit(param_ll, m_ll)?,
                         // commit to first right half
-                        SsmDummyCommitment::<P::ScalarField>::commit(&[], m_rl)?, // TODO all zeros
+                        P::ScalarField::ZERO,
                         // commit to inner pairing from first half of left msg with first half of right message
                         IdentityCommitment::<P::G1, P::ScalarField>::commit(
                             &[],
@@ -240,7 +240,7 @@ where
                         // commit to second left half
                         AfghoCommitment::commit(param_lr, m_lr)?,
                         // commit to second right half
-                        SsmDummyCommitment::<P::ScalarField>::commit(&[], m_rr)?,
+                        P::ScalarField::ZERO,
                         // commit to inner pairing from second half of left msg with second half of right message
                         IdentityCommitment::<P::G1, P::ScalarField>::commit(
                             &[],
@@ -390,10 +390,10 @@ where
 
     pub(crate) fn _verify_base_commitment(
         base_ck: &P::G2,
-        base_com: (PairingOutput<P>, P::ScalarField, IdentityOutput<P::G1>),
+        base_com: (PairingOutput<P>, IdentityOutput<P::G1>),
         proof: &GipaProof<P>,
     ) -> Result<bool, Error> {
-        let (com_a, com_b, com_t) = base_com;
+        let (com_a, com_t) = base_com;
         let ck_a_base = base_ck;
         let a_base = vec![proof.final_message.0];
         let b_base = vec![proof.final_message.1];
@@ -402,7 +402,6 @@ where
         )?];
 
         Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)?
-            && SsmDummyCommitment::<P::ScalarField>::verify(&[], &b_base, &com_b)?
             && IdentityCommitment::<P::G1, P::ScalarField>::verify(&[], &t_base, &com_t)?)
     }
 }
@@ -416,7 +415,6 @@ mod tests {
         super::inner_products::{InnerProduct, MultiexponentiationInnerProduct},
         *,
     };
-    use crate::poly::commitment::bmmtv::tipa::structured_scalar_message::SsmDummyCommitment;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
@@ -425,9 +423,6 @@ mod tests {
 
     /// Inner pairing product commitment in G1
     type AfghoBlsG1 = AfghoCommitment<Bn254>;
-    /// Pedersen commitment in G1
-    type DummySsm = SsmDummyCommitment<<AfghoBlsG1 as Dhc>::Scalar>;
-    // IdentityCommitment<<Bn254 as Pairing>::ScalarField, <Bn254 as Pairing>::G2>;
     const TEST_SIZE: usize = 8;
 
     #[test]
@@ -444,7 +439,7 @@ mod tests {
             m_b.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
         let l_commit = AfghoBlsG1::commit(&params, &m_a).unwrap();
-        let r_commit = DummySsm::commit(&[], &m_b).unwrap();
+        let r_commit = <Bn254 as Pairing>::ScalarField::ZERO;
         let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
         let ip_commit = Ipc::commit(&[], &t).unwrap();
 

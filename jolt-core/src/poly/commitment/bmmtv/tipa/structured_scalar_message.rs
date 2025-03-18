@@ -15,7 +15,7 @@ use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProd
 use crate::utils::transcript::Transcript;
 use ark_ec::pairing::PairingOutput;
 use ark_ec::{pairing::Pairing, Group};
-use ark_ff::{One, PrimeField, UniformRand};
+use ark_ff::{One, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, rand::Rng};
 use ark_std::{end_timer, start_timer};
@@ -23,28 +23,6 @@ use std::marker::PhantomData;
 //TODO: Properly generalize the non-committed message approach of SIPP and MIPP to GIPA
 //TODO: Structured message is a special case of the non-committed message and does not rely on TIPA
 //TODO: Can support structured group element messages as well as structured scalar messages
-
-/// Use placeholder commitment to commit to vector in clear during GIPA execution
-#[derive(Clone)]
-pub struct SsmDummyCommitment<F> {
-    _field: PhantomData<F>,
-}
-
-impl<F: PrimeField> Dhc for SsmDummyCommitment<F> {
-    type Scalar = F;
-    type Message = F;
-    type Param = ();
-    type Output = F;
-
-    fn setup<R: Rng>(_rng: &mut R, _size: usize) -> Result<Vec<Self::Param>, Error> {
-        Ok(vec![])
-    }
-
-    //TODO: Doesn't include message which means scalar b not included in generating challenges
-    fn commit(_k: &[Self::Param], _m: &[Self::Message]) -> Result<Self::Output, Error> {
-        Ok(F::zero())
-    }
-}
 
 /// Pairing-based instantiation of GIPA with an updatable
 /// (trusted) structured reference string (SRS) to achieve
