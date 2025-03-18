@@ -1,14 +1,13 @@
-use super::{
-    inner_products::{InnerProduct, MultiexponentiationInnerProduct},
-    Error,
-};
-use crate::field::JoltField;
-use crate::poly::commitment::kzg::KZGVerifierKey;
-use crate::poly::unipoly::UniPoly;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{Field, One, Zero};
 use ark_std::{end_timer, start_timer};
 use itertools::Itertools;
+
+use super::{inner_products::MultiexponentiationInnerProduct, Error};
+use crate::{
+    field::JoltField,
+    poly::{commitment::kzg::KZGVerifierKey, unipoly::UniPoly},
+};
 
 pub mod structured_scalar_message;
 

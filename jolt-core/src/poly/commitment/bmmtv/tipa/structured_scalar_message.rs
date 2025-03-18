@@ -7,7 +7,6 @@ use ark_std::{cfg_iter, end_timer, start_timer};
 
 use super::super::{
     gipa::Gipa,
-    inner_products::InnerProduct,
     tipa::{prove_commitment_key_kzg_opening, verify_commitment_key_g2_kzg_opening},
     Error,
 };
@@ -141,7 +140,7 @@ where
         // Verify base inner product commitment
         let (com_a, _, com_t) = base_com;
         let a_base = vec![proof.final_message.0];
-        let t_base = vec![MultiexponentiationInnerProduct::<P::G1>::inner_product(
+        let t_base = vec![MultiexponentiationInnerProduct::inner_product(
             &a_base,
             &[b_base],
         )?];
@@ -154,24 +153,25 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use ark_bn254::Bn254;
+    use ark_std::{
+        rand::{rngs::StdRng, SeedableRng},
+        UniformRand,
+    };
+
     use super::{
-        super::super::{
-            commitments::{afgho16::AfghoCommitment, random_generators},
-            inner_products::{InnerProduct, MultiexponentiationInnerProduct},
-        },
+        super::super::commitments::{afgho16::AfghoCommitment, random_generators},
         *,
     };
-    use crate::poly::commitment::bmmtv::tipa::Field;
-    use crate::poly::commitment::kzg::SRS;
-    use crate::utils::transcript::KeccakTranscript;
-    use ark_bn254::Bn254;
-    use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use ark_std::UniformRand;
-    use std::sync::Arc;
+    use crate::{
+        poly::commitment::{bmmtv::tipa::Field, kzg::SRS},
+        utils::transcript::KeccakTranscript,
+    };
 
     type BnAfghoG1 = AfghoCommitment<Bn254>;
     type BnScalarField = <Bn254 as Pairing>::ScalarField;
-    type BnG1 = <Bn254 as Pairing>::G1;
 
     const TEST_SIZE: usize = 8;
 
@@ -185,7 +185,6 @@ mod tests {
 
     #[test]
     fn tipa_ssm_multiexponentiation_inner_product_test() {
-        type IP = MultiexponentiationInnerProduct<BnG1>;
         type MultiExpTipa = TipaWithSsm<Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
@@ -199,7 +198,7 @@ mod tests {
         let b = BnScalarField::rand(&mut rng);
         let m_b = structured_scalar_power(TEST_SIZE, &b);
         let com_a = BnAfghoG1::commit(&ck_a, &m_a).unwrap();
-        let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
+        let t = vec![MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap()];
         let com_t = IdentityOutput(t);
 
         let mut transcript = KeccakTranscript::new(b"TipaTest");

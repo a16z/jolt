@@ -1,9 +1,10 @@
+use std::marker::PhantomData;
+
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing, PairingOutput},
     CurveGroup,
 };
 use ark_std::cfg_iter;
-use std::marker::PhantomData;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -14,21 +15,6 @@ pub enum InnerProductError {
     MessageLengthInvalid(usize, usize),
 }
 
-/// Represents an inner product operation
-pub trait InnerProduct {
-    /// Left side of the message
-    type LeftMessage;
-    /// Right side of the message
-    type RightMessage;
-    /// Output of the inner product
-    type Output;
-
-    fn inner_product(
-        left: &[Self::LeftMessage],
-        right: &[Self::RightMessage],
-    ) -> Result<Self::Output, InnerProductError>;
-}
-
 /// Inner pairing product representation
 ///
 /// Simple Afgho
@@ -36,15 +22,11 @@ pub struct PairingInnerProduct<P: Pairing> {
     _pair: PhantomData<P>,
 }
 
-impl<P: Pairing> InnerProduct for PairingInnerProduct<P> {
-    type LeftMessage = P::G1;
-    type RightMessage = P::G2;
-    type Output = PairingOutput<P>;
-
-    fn inner_product(
-        left: &[Self::LeftMessage],
-        right: &[Self::RightMessage],
-    ) -> Result<Self::Output, InnerProductError> {
+impl<P: Pairing> PairingInnerProduct<P> {
+    pub fn inner_product(
+        left: &[P::G1],
+        right: &[P::G2],
+    ) -> Result<PairingOutput<P>, InnerProductError> {
         if left.len() != right.len() {
             return Err(InnerProductError::MessageLengthInvalid(
                 left.len(),
@@ -98,21 +80,13 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
     P::final_exponentiation(MillerLoopOutput(ml_result))
 }
 
-/// Simple pedersen
-#[derive(Copy, Clone)]
-pub struct MultiexponentiationInnerProduct<G: CurveGroup> {
-    _projective: PhantomData<G>,
-}
+pub enum MultiexponentiationInnerProduct {}
 
-impl<G: CurveGroup> InnerProduct for MultiexponentiationInnerProduct<G> {
-    type LeftMessage = G;
-    type RightMessage = G::ScalarField;
-    type Output = G;
-
-    fn inner_product(
-        left: &[Self::LeftMessage],
-        right: &[Self::RightMessage],
-    ) -> Result<Self::Output, InnerProductError> {
+impl MultiexponentiationInnerProduct {
+    pub fn inner_product<G: CurveGroup>(
+        left: &[G],
+        right: &[G::ScalarField],
+    ) -> Result<G, InnerProductError> {
         if left.len() != right.len() {
             return Err(InnerProductError::MessageLengthInvalid(
                 left.len(),

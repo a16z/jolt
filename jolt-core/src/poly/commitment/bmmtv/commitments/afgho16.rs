@@ -1,10 +1,9 @@
-use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_std::rand::Rng;
 use std::marker::PhantomData;
 
-use super::{random_generators, Error};
+use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_std::rand::Rng;
 
-use super::super::inner_products::{InnerProduct, PairingInnerProduct};
+use super::{super::inner_products::PairingInnerProduct, random_generators, Error};
 
 /// Afgho commitment is simply an inner pairing product commitment
 #[derive(Clone)]

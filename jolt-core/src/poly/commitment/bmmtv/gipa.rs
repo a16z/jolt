@@ -1,21 +1,25 @@
 //! General Inner Produc Arguments
 //!
 //! This is the building block of other Product Arguments like Tipa
+use std::marker::PhantomData;
 
-use super::{inner_products::InnerProduct, Error};
-use crate::field::JoltField;
-use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
-use crate::poly::commitment::bmmtv::commitments::identity::IdentityCommitment;
-use crate::poly::commitment::bmmtv::commitments::identity::IdentityOutput;
-use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
-use crate::utils::transcript::Transcript;
-use ark_ec::pairing::Pairing;
-use ark_ec::pairing::PairingOutput;
+use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ff::One;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::cfg_iter;
-use ark_std::{end_timer, start_timer};
-use std::marker::PhantomData;
+use ark_std::{cfg_iter, end_timer, start_timer};
+
+use super::Error;
+use crate::{
+    field::JoltField,
+    poly::commitment::bmmtv::{
+        commitments::{
+            afgho16::AfghoCommitment,
+            identity::{IdentityCommitment, IdentityOutput},
+        },
+        inner_products::MultiexponentiationInnerProduct,
+    },
+    utils::transcript::Transcript,
+};
 // #[cfg(feature = "rayon")]
 // use rayon::prelude::*;
 
@@ -301,7 +305,7 @@ where
 mod tests {
     use super::{
         super::commitments::{afgho16::AfghoCommitment, random_generators},
-        super::inner_products::{InnerProduct, MultiexponentiationInnerProduct},
+        super::inner_products::MultiexponentiationInnerProduct,
         *,
     };
     use crate::utils::transcript::KeccakTranscript;
@@ -316,7 +320,6 @@ mod tests {
 
     #[test]
     fn multiexponentiation_inner_product_test() {
-        type IP = MultiexponentiationInnerProduct<<Bn254 as Pairing>::G1>;
         type MultiExpGIPA = Gipa<Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
@@ -328,7 +331,7 @@ mod tests {
             m_b.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
         let l_commit = AfghoBn245::commit(&params, &m_a).unwrap();
-        let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
+        let t = vec![MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap()];
         let ip_commit = IdentityOutput(t.clone());
 
         let r_commit = <Bn254 as Pairing>::ScalarField::rand(&mut rng);

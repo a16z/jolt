@@ -1,7 +1,7 @@
+use std::ops::{Add, Mul, MulAssign};
+
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::ops::Mul;
-use std::ops::{Add, MulAssign};
 
 /// Simplest commitment to a Vec<T>, simply send the Vec<T>
 ///
