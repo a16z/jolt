@@ -2379,6 +2379,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -4611,14 +4612,17 @@ dependencies = [
 name = "zklean-extractor"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
  "ark-serialize 0.4.2",
  "ark-std 0.4.0",
  "binius_field",
  "clap",
+ "common",
  "jolt-core",
  "proc-macro2",
  "proptest",
  "quote",
  "rand_core 0.6.4",
+ "regex",
  "syn 1.0.109",
 ]

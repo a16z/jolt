@@ -46,8 +46,6 @@ declare_subtables_enum! {
     //subtable::srl::SrlSubtable<5, 64>,
     //subtable::srl::SrlSubtable<6, 64>,
     //subtable::srl::SrlSubtable<7, 64>,
-    subtable::truncate_overflow::TruncateOverflowSubtable<32>,
-    //subtable::truncate_overflow::TruncateOverflowSubtable<64>,
     subtable::xor::XorSubtable,
 }
 

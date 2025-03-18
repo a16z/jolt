@@ -21,9 +21,9 @@ use std::{
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone)]
 pub struct Constraint {
-    pub(crate) a: LC,
-    pub(crate) b: LC,
-    pub(crate) c: LC,
+    pub a: LC,
+    pub b: LC,
+    pub c: LC,
 }
 
 impl Constraint {
@@ -451,6 +451,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
             num_rows: self.constraints.len(),
         }
     }
+
+    pub fn get_constraints(&self) -> Vec<Constraint> {
+        self.constraints.clone()
+    }
 }
 
 /// An Offset Linear Combination. If OffsetLC.0 is true, then the OffsetLC.1 refers to the next step in a uniform
@@ -461,9 +465,9 @@ pub type OffsetLC = (bool, LC);
 /// uniform constraint system.
 #[derive(Debug)]
 pub struct OffsetEqConstraint {
-    pub(crate) cond: OffsetLC,
-    pub(crate) a: OffsetLC,
-    pub(crate) b: OffsetLC,
+    pub cond: OffsetLC,
+    pub a: OffsetLC,
+    pub b: OffsetLC,
 }
 
 impl OffsetEqConstraint {
