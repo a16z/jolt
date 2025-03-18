@@ -2,7 +2,7 @@ use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_std::rand::Rng;
 use std::marker::PhantomData;
 
-use super::{random_generators, Dhc, Error};
+use super::{random_generators, Error};
 
 use super::super::inner_products::{InnerProduct, PairingInnerProduct};
 
@@ -12,18 +12,28 @@ pub struct AfghoCommitment<P: Pairing> {
     _pair: PhantomData<P>,
 }
 
-impl<P: Pairing> Dhc for AfghoCommitment<P> {
-    type Scalar = P::ScalarField;
-    type Message = P::G1;
-    type Param = P::G2;
-    type Output = PairingOutput<P>;
-
-    fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<Vec<Self::Param>, Error> {
+impl<P: Pairing> AfghoCommitment<P> {
+    /// Generates a setup for commitments with `size`
+    ///
+    /// Takes an `Rng` for parameter generator (if needed)
+    ///
+    /// Output [`Vec<Self::Param>`]
+    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<Vec<P::G2>, Error> {
         Ok(random_generators(rng, size))
     }
 
-    fn commit(k: &[Self::Param], m: &[Self::Message]) -> Result<Self::Output, Error> {
+    /// Commits to some message `msg` taking the parameters `params` from [`Self::setup`]
+    /// and outputting [`Self::Output`]
+    pub fn commit(k: &[P::G2], m: &[P::G1]) -> Result<PairingOutput<P>, Error> {
         Ok(PairingInnerProduct::<P>::inner_product(m, k)?)
+    }
+    /// Verifies if the commitment is really the output of `msg` and params `k`
+    pub fn verify(
+        params: &[P::G2],
+        msg: &[P::G1],
+        commitment: &PairingOutput<P>,
+    ) -> Result<bool, Error> {
+        Ok(Self::commit(params, msg)? == *commitment)
     }
 }
 

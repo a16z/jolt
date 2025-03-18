@@ -11,7 +11,7 @@ use ark_std::{end_timer, start_timer};
 use std::marker::PhantomData;
 
 use super::{
-    commitments::{afgho16::AfghoCommitment, identity::IdentityOutput, Dhc},
+    commitments::{afgho16::AfghoCommitment, identity::IdentityOutput},
     tipa::structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
     Error,
 };

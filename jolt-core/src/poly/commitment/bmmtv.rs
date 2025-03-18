@@ -17,11 +17,3 @@ pub(crate) fn mul_helper<T: MulAssign<F> + Clone, F: Clone>(t: &T, f: &F) -> T {
     clone.mul_assign(f.clone());
     clone
 }
-
-#[derive(Debug, thiserror::Error)]
-pub enum InnerProductArgumentError {
-    #[error("left length, right length: {0}, {1}")]
-    MessageLengthInvalid(usize, usize),
-    #[error("inner product not sound")]
-    InnerProductInvalid,
-}

@@ -2,7 +2,7 @@
 //!
 //! This is the building block of other Product Arguments like Tipa
 
-use super::{commitments::Dhc, inner_products::InnerProduct, mul_helper, Error};
+use super::{inner_products::InnerProduct, mul_helper, Error};
 use crate::field::JoltField;
 use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::IdentityCommitment;

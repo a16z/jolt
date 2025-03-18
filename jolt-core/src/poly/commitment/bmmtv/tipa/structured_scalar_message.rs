@@ -1,5 +1,4 @@
 use super::super::{
-    commitments::Dhc,
     gipa::Gipa,
     inner_products::InnerProduct,
     tipa::{prove_commitment_key_kzg_opening, verify_commitment_key_g2_kzg_opening},
