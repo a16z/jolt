@@ -18,8 +18,8 @@ impl<P: Pairing> AfghoCommitment<P> {
     /// Takes an `Rng` for parameter generator (if needed)
     ///
     /// Output [`Vec<Self::Param>`]
-    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<Vec<P::G2>, Error> {
-        Ok(random_generators(rng, size))
+    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Vec<P::G2> {
+        random_generators(rng, size)
     }
 
     /// Commits to some message `msg` taking the parameters `params` from [`Self::setup`]
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn afgho_g1_test() {
         let mut rng = StdRng::seed_from_u64(0u64);
-        let params = CommitG1::setup(&mut rng, TEST_SIZE).unwrap();
+        let params = CommitG1::setup(&mut rng, TEST_SIZE);
 
         // random message
         let mut message = (0..TEST_SIZE)

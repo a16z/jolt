@@ -5,9 +5,8 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::commitment::kzg::KZGVerifierKey;
 use crate::poly::unipoly::UniPoly;
-use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{Field, One, PrimeField, Zero};
+use ark_ff::{Field, One, Zero};
 use ark_std::{end_timer, start_timer};
 use itertools::Itertools;
 
@@ -75,26 +74,6 @@ pub fn verify_commitment_key_g2_kzg_opening<P: Pairing>(
         v_srs.alpha_g1.into_group() - v_srs.g1 * kzg_challenge,
         *ck_opening,
     ))
-}
-
-pub fn structured_generators_scalar_power<G: CurveGroup>(
-    num: usize,
-    g: &G,
-    s: &G::ScalarField,
-) -> Vec<G> {
-    assert!(num > 0);
-    let mut powers_of_scalar = vec![];
-    let mut pow_s = G::ScalarField::one();
-    for _ in 0..num {
-        powers_of_scalar.push(pow_s);
-        pow_s *= s;
-    }
-
-    let window_size = FixedBase::get_mul_window_size(num);
-
-    let scalar_bits = G::ScalarField::MODULUS_BIT_SIZE as usize;
-    let g_table = FixedBase::get_window_table(scalar_bits, window_size, *g);
-    FixedBase::msm::<G>(scalar_bits, window_size, &g_table, &powers_of_scalar)
 }
 
 fn polynomial_evaluation_product_form_from_transcript<F: Field>(

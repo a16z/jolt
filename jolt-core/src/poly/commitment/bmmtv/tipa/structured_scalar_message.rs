@@ -1,28 +1,32 @@
+use std::marker::PhantomData;
+
+use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_ff::One;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{cfg_iter, end_timer, start_timer};
+
 use super::super::{
     gipa::Gipa,
     inner_products::InnerProduct,
     tipa::{prove_commitment_key_kzg_opening, verify_commitment_key_g2_kzg_opening},
     Error,
 };
-use crate::field::JoltField;
-use crate::msm::Icicle;
-use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
-use crate::poly::commitment::bmmtv::commitments::identity::{IdentityCommitment, IdentityOutput};
-use crate::poly::commitment::bmmtv::gipa::CommitmentSteps;
-use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
-use crate::poly::commitment::kzg::{KZGVerifierKey, SRS};
-use crate::utils::transcript::Transcript;
-use ark_ec::pairing::Pairing;
-use ark_ec::pairing::PairingOutput;
-use ark_ff::One;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter, rand::Rng};
-use ark_std::{end_timer, start_timer};
-use rand_core::CryptoRng;
-use std::marker::PhantomData;
-//TODO: Properly generalize the non-committed message approach of SIPP and MIPP to GIPA
-//TODO: Structured message is a special case of the non-committed message and does not rely on TIPA
-//TODO: Can support structured group element messages as well as structured scalar messages
+use crate::{
+    field::JoltField,
+    msm::Icicle,
+    poly::commitment::{
+        bmmtv::{
+            commitments::{
+                afgho16::AfghoCommitment,
+                identity::{IdentityCommitment, IdentityOutput},
+            },
+            gipa::CommitmentSteps,
+            inner_products::MultiexponentiationInnerProduct,
+        },
+        kzg::KZGVerifierKey,
+    },
+    utils::transcript::Transcript,
+};
 
 /// Pairing-based instantiation of GIPA with an updatable
 /// (trusted) structured reference string (SRS) to achieve
@@ -51,11 +55,6 @@ where
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
-    //TODO: Don't need full TIPA SRS since only using one set of powers
-    pub fn setup<R: Rng + CryptoRng>(rng: &mut R, size: usize) -> Result<SRS<P>, Error> {
-        Ok(SRS::setup(rng, 2 * size, 2 * size))
-    }
-
     pub fn prove_with_structured_scalar_message(
         h_beta_powers: &[P::G2],
         values: (&[P::G1], &[P::ScalarField]),
@@ -147,7 +146,7 @@ where
             &[b_base],
         )?];
         let base_valid = AfghoCommitment::verify(&[*ck_a_final], &a_base, &com_a)?
-            && IdentityCommitment::<P>::verify(&t_base, &com_t);
+            && IdentityCommitment::verify(&t_base, &com_t);
 
         Ok(ck_a_valid && base_valid)
     }
@@ -163,15 +162,16 @@ mod tests {
         *,
     };
     use crate::poly::commitment::bmmtv::tipa::Field;
+    use crate::poly::commitment::kzg::SRS;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use ark_std::UniformRand;
     use std::sync::Arc;
 
-    type BlsAfghoG1 = AfghoCommitment<Bn254>;
-    type BlsScalarField = <Bn254 as Pairing>::ScalarField;
-    type BlsG1 = <Bn254 as Pairing>::G1;
+    type BnAfghoG1 = AfghoCommitment<Bn254>;
+    type BnScalarField = <Bn254 as Pairing>::ScalarField;
+    type BnG1 = <Bn254 as Pairing>::G1;
 
     const TEST_SIZE: usize = 8;
 
@@ -185,20 +185,20 @@ mod tests {
 
     #[test]
     fn tipa_ssm_multiexponentiation_inner_product_test() {
-        type IP = MultiexponentiationInnerProduct<BlsG1>;
+        type IP = MultiexponentiationInnerProduct<BnG1>;
         type MultiExpTipa = TipaWithSsm<Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
-        let srs = MultiExpTipa::setup(&mut rng, TEST_SIZE - 1).unwrap();
+        let srs = SRS::setup(&mut rng, 2 * (TEST_SIZE - 1), 2 * (TEST_SIZE - 1));
 
         let ck_a = srs.get_commitment_keys();
         let powers_len = srs.g1_powers.len();
         let (p_srs, v_srs) = SRS::trim(Arc::new(srs), powers_len - 1);
 
         let m_a = random_generators(&mut rng, TEST_SIZE);
-        let b = BlsScalarField::rand(&mut rng);
+        let b = BnScalarField::rand(&mut rng);
         let m_b = structured_scalar_power(TEST_SIZE, &b);
-        let com_a = BlsAfghoG1::commit(&ck_a, &m_a).unwrap();
+        let com_a = BnAfghoG1::commit(&ck_a, &m_a).unwrap();
         let t = vec![IP::inner_product(&m_a, &m_b).unwrap()];
         let com_t = IdentityOutput(t);
 

@@ -1,17 +1,13 @@
-use ark_ec::pairing::Pairing;
+use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::{
-    marker::PhantomData,
-    ops::{Add, MulAssign},
-};
+use std::ops::Mul;
+use std::ops::{Add, MulAssign};
 
 /// Simplest commitment to a Vec<T>, simply send the Vec<T>
 ///
 /// This is just used to fill the gaps in other traits
 #[derive(Clone)]
-pub struct IdentityCommitment<P> {
-    _pairing: PhantomData<P>,
-}
+pub enum IdentityCommitment {}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Default, Eq, PartialEq)]
 pub struct IdentityOutput<T>(pub Vec<T>)
@@ -35,18 +31,27 @@ where
     }
 }
 
-impl<T, F> MulAssign<F> for IdentityOutput<T>
+impl<T, F> Mul<F> for IdentityOutput<T>
 where
-    T: MulAssign<F> + CanonicalSerialize + CanonicalDeserialize + Clone + Default + Eq,
-    F: Clone,
+    T: MulAssign<F>
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + Clone
+        + Copy
+        + Default
+        + Eq
+        + std::ops::Mul<F, Output = T>,
+    F: Clone + Copy,
 {
-    fn mul_assign(&mut self, rhs: F) {
-        self.0.iter_mut().for_each(|a| a.mul_assign(rhs.clone()))
+    type Output = IdentityOutput<T>;
+
+    fn mul(self, rhs: F) -> Self::Output {
+        IdentityOutput(self.0.iter().map(|a| *a * rhs).collect())
     }
 }
 
-impl<P: Pairing> IdentityCommitment<P> {
-    pub fn verify(a: &[P::G1], b: &IdentityOutput<P::G1>) -> bool {
+impl IdentityCommitment {
+    pub fn verify<G: CurveGroup>(a: &[G], b: &IdentityOutput<G>) -> bool {
         b.0 == a
     }
 }

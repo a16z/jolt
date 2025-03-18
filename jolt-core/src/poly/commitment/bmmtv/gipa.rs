@@ -2,7 +2,7 @@
 //!
 //! This is the building block of other Product Arguments like Tipa
 
-use super::{inner_products::InnerProduct, mul_helper, Error};
+use super::{inner_products::InnerProduct, Error};
 use crate::field::JoltField;
 use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::IdentityCommitment;
@@ -160,7 +160,7 @@ where
                     // Set up values for next step of recursion
                     let rescale_ml = start_timer!(|| "Rescale ML");
                     msg_l = cfg_iter!(m_ll)
-                        .map(|a| mul_helper(a, &c))
+                        .map(|a| *a * c)
                         .zip(m_lr)
                         .map(|(a_1, a_2)| a_1 + a_2)
                         .collect::<Vec<P::G1>>();
@@ -168,7 +168,7 @@ where
 
                     let rescale_mr = start_timer!(|| "Rescale MR");
                     msg_r = cfg_iter!(m_rr)
-                        .map(|b| mul_helper(b, &c_inv))
+                        .map(|b| *b * c_inv)
                         .zip(m_rl)
                         .map(|(b_1, b_2)| b_1 + b_2)
                         .collect::<Vec<P::ScalarField>>();
@@ -176,7 +176,7 @@ where
 
                     let rescale_pl = start_timer!(|| "Rescale CK1");
                     l_params = cfg_iter!(param_lr)
-                        .map(|a| mul_helper(a, &c_inv))
+                        .map(|a| *a * c_inv)
                         .zip(param_ll)
                         .map(|(a_1, a_2)| a_1 + a_2)
                         .collect::<Vec<P::G2>>();
@@ -242,8 +242,8 @@ where
             let c: P::ScalarField = transcript.challenge_scalar();
             let c_inv = JoltField::inverse(&c).unwrap();
 
-            com_a = mul_helper(&com_l.0, &c) + com_a + mul_helper(&com_r.0, &c_inv);
-            com_t = mul_helper(&com_l.1, &c) + com_t.clone() + mul_helper(&com_r.1, &c_inv);
+            com_a = com_l.0 * c + com_a + com_r.0 * c_inv;
+            com_t = com_l.1.clone() * c + com_t.clone() + com_r.1.clone() * c_inv;
 
             r_transcript.push(c);
         }
@@ -269,11 +269,11 @@ where
         }
         assert_eq!(ck_a_agg_challenge_exponents.len(), l_params.len());
         //TODO: Optimization: Use VariableMSM multiexponentiation
-        let ck_a_base_init = mul_helper(&l_params[0], &ck_a_agg_challenge_exponents[0]);
+        let ck_a_base_init = l_params[0] * ck_a_agg_challenge_exponents[0];
         let ck_a_base = l_params[1..]
             .iter()
             .zip(&ck_a_agg_challenge_exponents[1..])
-            .map(|(g, x)| mul_helper(g, x))
+            .map(|(g, x)| *g * x)
             .fold(ck_a_base_init, |sum, x| sum + x);
         //.reduce(|| ck_a_base_init.clone(), |sum, x| sum + x);
         Ok(ck_a_base)
@@ -293,7 +293,7 @@ where
         )?];
 
         Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)?
-            && IdentityCommitment::<P>::verify(&t_base, &com_t))
+            && IdentityCommitment::verify(&t_base, &com_t))
     }
 }
 
@@ -321,7 +321,7 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0u64);
 
-        let params = AfghoBn245::setup(&mut rng, TEST_SIZE).unwrap();
+        let params = AfghoBn245::setup(&mut rng, TEST_SIZE);
         let m_a = random_generators(&mut rng, TEST_SIZE);
         let mut m_b = Vec::new();
         for _ in 0..TEST_SIZE {
