@@ -3,62 +3,15 @@ use super::{
     Error,
 };
 use crate::field::JoltField;
+use crate::poly::commitment::kzg::KZGVerifierKey;
 use crate::poly::unipoly::UniPoly;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{Field, One, PrimeField, Zero};
 use ark_std::{end_timer, start_timer};
 use itertools::Itertools;
-use crate::poly::commitment::kzg::KZGVerifierKey;
 
 pub mod structured_scalar_message;
-
-/// Structured Reference String
-///
-/// This is also known as the trusted setup
-#[derive(Clone)]
-pub struct Srs<P: Pairing> {
-    pub g_alpha_powers: Vec<P::G1>,
-    pub h_beta_powers: Vec<P::G2>,
-    pub g_beta: P::G1,
-    pub h_alpha: P::G2,
-}
-
-#[derive(Clone)]
-pub struct VerifierSrs<P: Pairing> {
-    pub g: P::G1,
-    pub h: P::G2,
-    pub g_beta: P::G1,
-    pub h_alpha: P::G2,
-}
-
-impl<P: Pairing> From<&KZGVerifierKey<P>> for VerifierSrs<P> {
-    fn from(value: &KZGVerifierKey<P>) -> Self {
-        Self {
-            g: value.g1.into_group(),
-            h: value.g2.into_group(),
-            // TODO g_beta is wrong
-            g_beta: value.alpha_g1.into_group(),
-            h_alpha: value.beta_g2.into_group(),
-        }
-    }
-}
-
-//TODO: Change SRS to return reference iterator - requires changes to TIPA and GIPA signatures
-impl<P: Pairing> Srs<P> {
-    pub fn get_commitment_keys(&self) -> Vec<P::G2> {
-        self.h_beta_powers.iter().step_by(2).cloned().collect()
-    }
-
-    pub fn get_verifier_key(&self) -> VerifierSrs<P> {
-        VerifierSrs {
-            g: self.g_alpha_powers[0],
-            h: self.h_beta_powers[0],
-            g_beta: self.g_beta,
-            h_alpha: self.h_alpha,
-        }
-    }
-}
 
 /// Returns the proof that the polynomial
 ///
@@ -106,7 +59,7 @@ where
 
 //TODO: Figure out how to avoid needing two separate methods for verification of opposite groups
 pub fn verify_commitment_key_g2_kzg_opening<P: Pairing>(
-    v_srs: &VerifierSrs<P>,
+    v_srs: &KZGVerifierKey<P>,
     ck_final: &P::G2,
     ck_opening: &P::G2,
     transcript: &[P::ScalarField],
@@ -115,10 +68,13 @@ pub fn verify_commitment_key_g2_kzg_opening<P: Pairing>(
 ) -> Result<bool, Error> {
     let ck_polynomial_c_eval =
         polynomial_evaluation_product_form_from_transcript(transcript, kzg_challenge, r_shift);
-    Ok(
-        P::pairing(v_srs.g, *ck_final - v_srs.h * ck_polynomial_c_eval)
-            == P::pairing(v_srs.g_beta - v_srs.g * kzg_challenge, *ck_opening),
-    )
+    Ok(P::pairing(
+        v_srs.g1.into_group(),
+        *ck_final - v_srs.g2.into_group() * ck_polynomial_c_eval,
+    ) == P::pairing(
+        v_srs.alpha_g1.into_group() - v_srs.g1 * kzg_challenge,
+        *ck_opening,
+    ))
 }
 
 pub fn structured_generators_scalar_power<G: CurveGroup>(

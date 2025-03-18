@@ -163,7 +163,7 @@ where
         let (x, y) = point;
         let ip_proof_valid =
             TipaWithSsm::<P, ProofTranscript>::verify_with_structured_scalar_message(
-                &v_srs.into(),
+                v_srs,
                 (com, &IdentityOutput(vec![proof.y_eval_comm])),
                 x,
                 &proof.ip_proof,

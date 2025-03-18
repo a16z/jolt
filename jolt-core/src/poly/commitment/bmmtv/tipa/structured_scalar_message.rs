@@ -2,24 +2,24 @@ use super::super::{
     commitments::Dhc,
     gipa::Gipa,
     inner_products::InnerProduct,
-    tipa::{
-        prove_commitment_key_kzg_opening, structured_generators_scalar_power,
-        verify_commitment_key_g2_kzg_opening, Srs, VerifierSrs,
-    },
+    tipa::{prove_commitment_key_kzg_opening, verify_commitment_key_g2_kzg_opening},
     Error,
 };
 use crate::field::JoltField;
+use crate::msm::Icicle;
 use crate::poly::commitment::bmmtv::commitments::afgho16::AfghoCommitment;
 use crate::poly::commitment::bmmtv::commitments::identity::{IdentityCommitment, IdentityOutput};
 use crate::poly::commitment::bmmtv::gipa::CommitmentSteps;
 use crate::poly::commitment::bmmtv::inner_products::MultiexponentiationInnerProduct;
+use crate::poly::commitment::kzg::{KZGVerifierKey, SRS};
 use crate::utils::transcript::Transcript;
+use ark_ec::pairing::Pairing;
 use ark_ec::pairing::PairingOutput;
-use ark_ec::{pairing::Pairing, Group};
-use ark_ff::{One, UniformRand};
+use ark_ff::One;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, rand::Rng};
 use ark_std::{end_timer, start_timer};
+use rand_core::CryptoRng;
 use std::marker::PhantomData;
 //TODO: Properly generalize the non-committed message approach of SIPP and MIPP to GIPA
 //TODO: Structured message is a special case of the non-committed message and does not rely on TIPA
@@ -48,21 +48,13 @@ where
 impl<P, ProofTranscript> TipaWithSsm<P, ProofTranscript>
 where
     P: Pairing,
+    P::G1: Icicle,
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
     //TODO: Don't need full TIPA SRS since only using one set of powers
-    pub fn setup<R: Rng>(rng: &mut R, size: usize) -> Result<Srs<P>, Error> {
-        let alpha = <P::ScalarField>::rand(rng);
-        let beta = <P::ScalarField>::rand(rng);
-        let g = P::G1::generator();
-        let h = P::G2::generator();
-        Ok(Srs {
-            g_alpha_powers: structured_generators_scalar_power(2 * size - 1, &g, &alpha),
-            h_beta_powers: structured_generators_scalar_power(2 * size - 1, &h, &beta),
-            g_beta: g * beta,
-            h_alpha: h * alpha,
-        })
+    pub fn setup<R: Rng + CryptoRng>(rng: &mut R, size: usize) -> Result<SRS<P>, Error> {
+        Ok(SRS::setup(rng, 2 * size, 2 * size))
     }
 
     pub fn prove_with_structured_scalar_message(
@@ -105,7 +97,7 @@ where
     }
 
     pub fn verify_with_structured_scalar_message(
-        v_srs: &VerifierSrs<P>,
+        v_srs: &KZGVerifierKey<P>,
         com: (&PairingOutput<P>, &IdentityOutput<P::G1>),
         scalar_b: &P::ScalarField,
         proof: &TipaWithSsmProof<P>,
@@ -175,6 +167,8 @@ mod tests {
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use ark_std::UniformRand;
+    use std::sync::Arc;
 
     type BlsAfghoG1 = AfghoCommitment<Bn254>;
     type BlsScalarField = <Bn254 as Pairing>::ScalarField;
@@ -196,9 +190,12 @@ mod tests {
         type MultiExpTipa = TipaWithSsm<Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
-        let srs = MultiExpTipa::setup(&mut rng, TEST_SIZE).unwrap();
+        let srs = MultiExpTipa::setup(&mut rng, TEST_SIZE - 1).unwrap();
+
         let ck_a = srs.get_commitment_keys();
-        let v_srs = srs.get_verifier_key();
+        let powers_len = srs.g1_powers.len();
+        let (p_srs, v_srs) = SRS::trim(Arc::new(srs), powers_len - 1);
+
         let m_a = random_generators(&mut rng, TEST_SIZE);
         let b = BlsScalarField::rand(&mut rng);
         let m_b = structured_scalar_power(TEST_SIZE, &b);
@@ -209,7 +206,7 @@ mod tests {
         let mut transcript = KeccakTranscript::new(b"TipaTest");
 
         let proof = MultiExpTipa::prove_with_structured_scalar_message(
-            &srs.h_beta_powers,
+            &p_srs.h_beta_powers(),
             (&m_a, &m_b),
             &ck_a,
             &mut transcript,
