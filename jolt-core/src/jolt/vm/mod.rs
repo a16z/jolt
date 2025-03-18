@@ -12,6 +12,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::{fs::File, io::{Read, Write}, path::Path};
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
@@ -70,6 +71,30 @@ where
     pub memory_layout: MemoryLayout,
 }
 
+impl<const C: usize, F, PCS, ProofTranscript> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
+}
+
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProverPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
@@ -79,6 +104,30 @@ where
 {
     pub shared: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
     field: F::SmallValueLookupTables,
+}
+
+impl<const C: usize, F, PCS, ProofTranscript> JoltProverPreprocessing<C, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
