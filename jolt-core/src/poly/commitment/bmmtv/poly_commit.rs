@@ -13,10 +13,10 @@ use std::marker::PhantomData;
 use super::{
     commitments::{
         afgho16::AfghoCommitment,
-        identity::{DummyParam, IdentityCommitment, IdentityOutput},
+        identity::{DummyParam, IdentityOutput},
         Dhc,
     },
-    inner_products::MultiexponentiationInnerProduct,
+    // inner_products::MultiexponentiationInnerProduct,
     tipa::structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
     Error,
 };
@@ -26,20 +26,6 @@ use crate::poly::unipoly::UniPoly as UnivariatePolynomial;
 use crate::utils::transcript::Transcript;
 use ark_std::rand::Rng;
 use rand_core::CryptoRng;
-
-type G1<P> = <P as Pairing>::G1;
-type ScalarField<P> = <P as Pairing>::ScalarField;
-
-type PolynomialEvaluationSecondTierIpa<P, D> = TipaWithSsm<
-    MultiexponentiationInnerProduct<G1<P>>,
-    AfghoCommitment<P>,
-    IdentityCommitment<G1<P>, ScalarField<P>>,
-    P,
-    D,
->;
-
-type PolynomialEvaluationSecondTierIpaProof<P> =
-    TipaWithSsmProof<P, AfghoCommitment<P>, IdentityCommitment<G1<P>, ScalarField<P>>>;
 
 pub struct BivariatePolynomial<F: Field> {
     y_polynomials: Vec<UnivariatePolynomial<F>>,
@@ -66,12 +52,12 @@ where
 }
 
 pub struct OpeningProof<P: Pairing> {
-    ip_proof: PolynomialEvaluationSecondTierIpaProof<P>,
+    ip_proof: TipaWithSsmProof<P>,
     y_eval_comm: P::G1,
     kzg_proof: P::G1,
 }
 
-pub struct BivariatePolynomialCommitment<P: Pairing, D>(PolynomialEvaluationSecondTierIpa<P, D>);
+pub struct BivariatePolynomialCommitment<P: Pairing, D>(TipaWithSsm<P, D>);
 
 impl<P: Pairing, ProofTranscript: Transcript> BivariatePolynomialCommitment<P, ProofTranscript>
 where
@@ -152,13 +138,12 @@ where
         end_timer!(precomp_time);
 
         let ipa_time = start_timer!(|| "Computing IPA proof");
-        let ip_proof =
-            PolynomialEvaluationSecondTierIpa::<P, ProofTranscript>::prove_with_structured_scalar_message(
-                &kzg_srs.h_beta_powers(),
-                (y_polynomial_comms, &powers_of_x),
-                (ck_1, &DummyParam),
-                transcript,
-            )?;
+        let ip_proof = TipaWithSsm::<P, ProofTranscript>::prove_with_structured_scalar_message(
+            &kzg_srs.h_beta_powers(),
+            (y_polynomial_comms, &powers_of_x),
+            (ck_1, &DummyParam),
+            transcript,
+        )?;
         end_timer!(ipa_time);
         let kzg_time = start_timer!(|| "Computing KZG opening proof");
         let (kzg_proof, _eval) =
@@ -182,7 +167,7 @@ where
     ) -> Result<bool, Error> {
         let (x, y) = point;
         let ip_proof_valid =
-            PolynomialEvaluationSecondTierIpa::<P, ProofTranscript>::verify_with_structured_scalar_message(
+            TipaWithSsm::<P, ProofTranscript>::verify_with_structured_scalar_message(
                 &v_srs.into(),
                 &DummyParam,
                 (com, &IdentityOutput(vec![proof.y_eval_comm])),
