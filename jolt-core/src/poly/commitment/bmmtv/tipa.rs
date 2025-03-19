@@ -20,8 +20,8 @@ pub mod structured_scalar_message;
 pub fn prove_commitment_key_kzg_opening<G: CurveGroup>(
     srs_powers: &[G],
     transcript: &[G::ScalarField],
-    r_shift: &G::ScalarField,
-    kzg_challenge: &G::ScalarField,
+    r_shift: G::ScalarField,
+    kzg_challenge: G::ScalarField,
 ) -> Result<G, Error>
 where
     G::ScalarField: JoltField,
@@ -39,7 +39,7 @@ where
     let (quotient_polynomial, _remainder) = (ck_polynomial
         - UniPoly::from_coeff(vec![ck_polynomial_c_eval]))
     .divide_with_remainder(&UniPoly::from_coeff(vec![
-        -*kzg_challenge,
+        -kzg_challenge,
         <G::ScalarField>::one(),
     ]))
     .unwrap();
@@ -58,32 +58,32 @@ where
 //TODO: Figure out how to avoid needing two separate methods for verification of opposite groups
 pub fn verify_commitment_key_g2_kzg_opening<P: Pairing>(
     v_srs: &KZGVerifierKey<P>,
-    ck_final: &P::G2,
-    ck_opening: &P::G2,
+    ck_final: P::G2,
+    ck_opening: P::G2,
     transcript: &[P::ScalarField],
-    r_shift: &P::ScalarField,
-    kzg_challenge: &P::ScalarField,
+    r_shift: P::ScalarField,
+    kzg_challenge: P::ScalarField,
 ) -> Result<bool, Error> {
     let ck_polynomial_c_eval =
         polynomial_evaluation_product_form_from_transcript(transcript, kzg_challenge, r_shift);
     Ok(P::pairing(
         v_srs.g1.into_group(),
-        *ck_final - v_srs.g2.into_group() * ck_polynomial_c_eval,
+        ck_final - v_srs.g2.into_group() * ck_polynomial_c_eval,
     ) == P::pairing(
         v_srs.alpha_g1.into_group() - v_srs.g1 * kzg_challenge,
-        *ck_opening,
+        ck_opening,
     ))
 }
 
 fn polynomial_evaluation_product_form_from_transcript<F: Field>(
     transcript: &[F],
-    z: &F,
-    r_shift: &F,
+    z: F,
+    r_shift: F,
 ) -> F {
-    let mut power_2_zr = (*z * z) * r_shift;
+    let mut power_2_zr = (z * z) * r_shift;
     let mut product_form = Vec::new();
-    for x in transcript.iter() {
-        product_form.push(F::one() + (*x * power_2_zr));
+    for x in transcript.iter().cloned() {
+        product_form.push(F::one() + (x * power_2_zr));
         power_2_zr *= power_2_zr;
     }
     product_form.iter().product()
@@ -91,9 +91,9 @@ fn polynomial_evaluation_product_form_from_transcript<F: Field>(
 
 /// We create a polynomial using the transcript
 /// This is why we need 2x srs for g2 we interleave it with zeroes
-fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: &F) -> Vec<F> {
+fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: F) -> Vec<F> {
     let mut coefficients = vec![F::one()];
-    let mut power_2_r = *r_shift;
+    let mut power_2_r = r_shift;
     for (i, x) in transcript.iter().enumerate() {
         for j in 0..(2_usize).pow(i as u32) {
             coefficients.push(coefficients[j] * (*x * power_2_r));

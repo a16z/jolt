@@ -76,8 +76,8 @@ where
         let ck_a_kzg_opening = prove_commitment_key_kzg_opening(
             h_beta_powers,
             &transcript_inverse,
-            &<P::ScalarField>::one(), // r_shift = one, why?
-            &c,
+            P::ScalarField::one(), // r_shift = one, why?
+            c,
         )?;
         end_timer!(ck_kzg);
 
@@ -91,8 +91,8 @@ where
 
     pub fn verify_with_structured_scalar_message(
         v_srs: &KZGVerifierKey<P>,
-        com: (&PairingOutput<P>, &P::G1),
-        scalar_b: &P::ScalarField,
+        com: (PairingOutput<P>, P::G1),
+        scalar_b: P::ScalarField,
         proof: &TipaWithSsmProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
@@ -106,25 +106,22 @@ where
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
-        let ck_a_final = &proof.final_ck;
-        let ck_a_proof = &proof.final_ck_proof;
-
         // KZG challenge point
-        transcript.append_serializable(ck_a_final);
+        transcript.append_serializable(&proof.final_ck);
         let c = transcript.challenge_scalar();
 
         // Check commitment key
         let ck_a_valid = verify_commitment_key_g2_kzg_opening(
             v_srs,
-            ck_a_final,
-            ck_a_proof,
+            proof.final_ck,
+            proof.final_ck_proof,
             &transcript_inverse,
-            &P::ScalarField::one(),
-            &c,
+            P::ScalarField::one(),
+            c,
         )?;
 
         // Compute final scalar
-        let mut power_2_b = *scalar_b;
+        let mut power_2_b = scalar_b;
         let mut product_form = Vec::new();
         for x in gipa_transcript.iter() {
             product_form
@@ -140,7 +137,7 @@ where
 
         let same_ip_commit = t_base == com_t;
         let base_valid =
-            AfghoCommitment::verify(&[*ck_a_final], &a_base, &com_a)? && same_ip_commit;
+            AfghoCommitment::verify(&[proof.final_ck], &a_base, &com_a)? && same_ip_commit;
 
         Ok(ck_a_valid && base_valid)
     }
@@ -209,8 +206,8 @@ mod tests {
 
         assert!(MultiExpTipa::verify_with_structured_scalar_message(
             &v_srs,
-            (&com_a, &com_t),
-            &b,
+            (com_a, com_t),
+            b,
             &proof,
             &mut transcript,
         )

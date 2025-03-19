@@ -120,7 +120,7 @@ where
             .chain([UnivariatePolynomial::zero()].iter().cycle())
             .take(ck_1.len())
             .map(|y_polynomial| {
-                let mut c = y_polynomial.coeffs.to_vec();
+                let mut c = y_polynomial.coeffs.clone();
                 c.resize(kzg_srs.len(), <P::ScalarField>::zero());
                 c
             })
@@ -154,9 +154,9 @@ where
 
     pub fn verify(
         v_srs: &KZGVerifierKey<P>,
-        com: &PairingOutput<P>,
-        point: &(P::ScalarField, P::ScalarField),
-        eval: &P::ScalarField,
+        com: PairingOutput<P>,
+        point: (P::ScalarField, P::ScalarField),
+        eval: P::ScalarField,
         proof: &OpeningProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
@@ -164,7 +164,7 @@ where
         let ip_proof_valid =
             TipaWithSsm::<P, ProofTranscript>::verify_with_structured_scalar_message(
                 v_srs,
-                (com, &proof.y_eval_comm),
+                (com, proof.y_eval_comm),
                 x,
                 &proof.ip_proof,
                 transcript,
@@ -172,9 +172,9 @@ where
         let kzg_proof_valid = UnivariateKZG::<P>::verify(
             v_srs,
             &proof.y_eval_comm.into_affine(),
-            y,
+            &y,
             &proof.kzg_proof.into_affine(),
-            eval,
+            &eval,
         )?;
         println!(
             "ip_proof_valid: {}, kzg_proof_valid: {}",
@@ -269,19 +269,19 @@ where
     pub fn verify(
         v_srs: &KZGVerifierKey<P>,
         max_degree: usize,
-        com: &PairingOutput<P>,
-        point: &P::ScalarField,
-        eval: &P::ScalarField,
+        com: PairingOutput<P>,
+        point: P::ScalarField,
+        eval: P::ScalarField,
         proof: &OpeningProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         let (_, y_degree) = Self::bivariate_degrees(max_degree);
-        let y = *point;
+        let y = point;
         let x = y.pow(vec![(y_degree + 1) as u64]);
         BivariatePolynomialCommitment::<P, ProofTranscript>::verify(
             v_srs,
             com,
-            &(x, y),
+            (x, y),
             eval,
             proof,
             transcript,
@@ -350,9 +350,9 @@ mod tests {
         // Verify proof
         assert!(TestBivariatePolyCommitment::verify(
             &v_srs,
-            &com,
-            &point,
-            &eval,
+            com,
+            point,
+            eval,
             &eval_proof,
             &mut transcript
         )
@@ -400,9 +400,9 @@ mod tests {
         assert!(TestUnivariatePolyCommitment::verify(
             &v_srs,
             UNIVARIATE_DEGREE,
-            &com,
-            &point,
-            &eval,
+            com,
+            point,
+            eval,
             &eval_proof,
             &mut transcript,
         )

@@ -101,7 +101,7 @@ where
     ) -> Result<GipaProof<P>, Error> {
         let (mut msg_l, mut msg_r) = values;
         // fiat-shamir steps
-        let mut r_commitment_steps = Vec::new();
+        let mut commitment_steps = Vec::new();
         // fiat-shamir transcripts
         let mut r_transcript: Vec<P::ScalarField> = Vec::new();
         assert!(msg_l.len().is_power_of_two());
@@ -179,7 +179,7 @@ where
                     end_timer!(rescale_pl);
 
                     // add commitment steps
-                    r_commitment_steps.push((com_l, com_r));
+                    commitment_steps.push((com_l, com_r));
                     // add scalar used to trancript
                     r_transcript.push(c);
                     end_timer!(recurse);
@@ -188,11 +188,11 @@ where
         };
         // reverse them | TODO why?
         r_transcript.reverse();
-        r_commitment_steps.reverse();
+        commitment_steps.reverse();
 
         // return the proofs + transcript
         Ok(GipaProof {
-            commitment_steps: r_commitment_steps,
+            commitment_steps,
             final_message: final_msg,
             scalar_transcript: r_transcript,
             final_commitment_param: final_param,
@@ -201,7 +201,7 @@ where
 
     // Helper function used to calculate recursive challenges from proof execution (transcript in reverse)
     pub fn verify_recursive_challenge_transcript(
-        com: (&PairingOutput<P>, &P::ScalarField, &P::G1),
+        com: (PairingOutput<P>, P::ScalarField, P::G1),
         proof: &CommitmentSteps<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<
@@ -211,7 +211,7 @@ where
         ),
         Error,
     > {
-        Self::_compute_recursive_challenges((*com.0, *com.1, *com.2), proof, transcript)
+        Self::_compute_recursive_challenges(com, proof, transcript)
     }
 
     fn _compute_recursive_challenges(
