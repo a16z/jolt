@@ -11,7 +11,7 @@ use ark_std::{end_timer, start_timer};
 use std::marker::PhantomData;
 
 use super::{
-    commitments::{afgho16::AfghoCommitment, identity::IdentityOutput},
+    commitments::afgho16::AfghoCommitment,
     tipa::structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
     Error,
 };
@@ -164,7 +164,7 @@ where
         let ip_proof_valid =
             TipaWithSsm::<P, ProofTranscript>::verify_with_structured_scalar_message(
                 v_srs,
-                (com, &IdentityOutput(vec![proof.y_eval_comm])),
+                (com, &proof.y_eval_comm),
                 x,
                 &proof.ip_proof,
                 transcript,

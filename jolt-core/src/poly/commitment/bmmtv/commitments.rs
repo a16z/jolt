@@ -5,8 +5,6 @@ use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 
 pub mod afgho16;
-pub mod identity;
-
 pub type Error = anyhow::Error;
 
 /// Helpers for generator commitment keys used by Pedersen and AFGHO16

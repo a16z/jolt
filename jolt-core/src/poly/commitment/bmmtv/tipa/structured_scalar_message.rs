@@ -15,11 +15,7 @@ use crate::{
     msm::Icicle,
     poly::commitment::{
         bmmtv::{
-            commitments::{
-                afgho16::AfghoCommitment,
-                identity::{IdentityCommitment, IdentityOutput},
-            },
-            gipa::CommitmentSteps,
+            commitments::afgho16::AfghoCommitment, gipa::CommitmentSteps,
             inner_products::MultiexponentiationInnerProduct,
         },
         kzg::KZGVerifierKey,
@@ -95,7 +91,7 @@ where
 
     pub fn verify_with_structured_scalar_message(
         v_srs: &KZGVerifierKey<P>,
-        com: (&PairingOutput<P>, &IdentityOutput<P::G1>),
+        com: (&PairingOutput<P>, &P::G1),
         scalar_b: &P::ScalarField,
         proof: &TipaWithSsmProof<P>,
         transcript: &mut ProofTranscript,
@@ -140,12 +136,11 @@ where
         // Verify base inner product commitment
         let (com_a, _, com_t) = base_com;
         let a_base = vec![proof.final_message.0];
-        let t_base = vec![MultiexponentiationInnerProduct::inner_product(
-            &a_base,
-            &[b_base],
-        )?];
-        let base_valid = AfghoCommitment::verify(&[*ck_a_final], &a_base, &com_a)?
-            && IdentityCommitment::verify(&t_base, &com_t);
+        let t_base = MultiexponentiationInnerProduct::inner_product(&a_base, &[b_base])?;
+
+        let same_ip_commit = t_base == com_t;
+        let base_valid =
+            AfghoCommitment::verify(&[*ck_a_final], &a_base, &com_a)? && same_ip_commit;
 
         Ok(ck_a_valid && base_valid)
     }
@@ -198,8 +193,7 @@ mod tests {
         let b = BnScalarField::rand(&mut rng);
         let m_b = structured_scalar_power(TEST_SIZE, &b);
         let com_a = BnAfghoG1::commit(&ck_a, &m_a).unwrap();
-        let t = vec![MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap()];
-        let com_t = IdentityOutput(t);
+        let com_t = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
         let mut transcript = KeccakTranscript::new(b"TipaTest");
 

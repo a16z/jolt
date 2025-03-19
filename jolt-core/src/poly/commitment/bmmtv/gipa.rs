@@ -12,11 +12,7 @@ use super::Error;
 use crate::{
     field::JoltField,
     poly::commitment::bmmtv::{
-        commitments::{
-            afgho16::AfghoCommitment,
-            identity::{IdentityCommitment, IdentityOutput},
-        },
-        inner_products::MultiexponentiationInnerProduct,
+        commitments::afgho16::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
     },
     utils::transcript::Transcript,
 };
@@ -32,8 +28,8 @@ pub struct Gipa<P, ProofTranscript> {
 }
 
 pub type CommitmentSteps<P> = Vec<(
-    (PairingOutput<P>, IdentityOutput<<P as Pairing>::G1>),
-    (PairingOutput<P>, IdentityOutput<<P as Pairing>::G1>),
+    (PairingOutput<P>, <P as Pairing>::G1),
+    (PairingOutput<P>, <P as Pairing>::G1),
 )>;
 
 /// Proof of [`Gipa`]
@@ -137,9 +133,7 @@ where
                         // commit to first left half
                         AfghoCommitment::commit(param_ll, m_ll)?,
                         // commit to inner pairing from first half of left msg with first half of right message
-                        IdentityOutput(vec![MultiexponentiationInnerProduct::inner_product(
-                            m_ll, m_rl,
-                        )?]),
+                        MultiexponentiationInnerProduct::inner_product(m_ll, m_rl)?,
                     );
                     end_timer!(cl);
                     let cr = start_timer!(|| "Commit R");
@@ -147,9 +141,7 @@ where
                         // commit to second left half
                         AfghoCommitment::commit(param_lr, m_lr)?,
                         // commit to inner pairing from second half of left msg with second half of right message
-                        IdentityOutput(vec![MultiexponentiationInnerProduct::inner_product(
-                            m_lr, m_rr,
-                        )?]),
+                        MultiexponentiationInnerProduct::inner_product(m_lr, m_rr)?,
                     );
                     end_timer!(cr);
 
@@ -209,26 +201,26 @@ where
 
     // Helper function used to calculate recursive challenges from proof execution (transcript in reverse)
     pub fn verify_recursive_challenge_transcript(
-        com: (&PairingOutput<P>, &P::ScalarField, &IdentityOutput<P::G1>),
+        com: (&PairingOutput<P>, &P::ScalarField, &P::G1),
         proof: &CommitmentSteps<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<
         (
-            (PairingOutput<P>, P::ScalarField, IdentityOutput<P::G1>),
+            (PairingOutput<P>, P::ScalarField, P::G1),
             Vec<P::ScalarField>,
         ),
         Error,
     > {
-        Self::_compute_recursive_challenges((*com.0, *com.1, com.2.clone()), proof, transcript)
+        Self::_compute_recursive_challenges((*com.0, *com.1, *com.2), proof, transcript)
     }
 
     fn _compute_recursive_challenges(
-        com: (PairingOutput<P>, P::ScalarField, IdentityOutput<P::G1>),
+        com: (PairingOutput<P>, P::ScalarField, P::G1),
         commitment_steps: &CommitmentSteps<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<
         (
-            (PairingOutput<P>, P::ScalarField, IdentityOutput<P::G1>),
+            (PairingOutput<P>, P::ScalarField, P::G1),
             Vec<P::ScalarField>,
         ),
         Error,
@@ -247,7 +239,7 @@ where
             let c_inv = JoltField::inverse(&c).unwrap();
 
             com_a = com_l.0 * c + com_a + com_r.0 * c_inv;
-            com_t = com_l.1.clone() * c + com_t.clone() + com_r.1.clone() * c_inv;
+            com_t = com_l.1 * c + com_t + com_r.1 * c_inv;
 
             r_transcript.push(c);
         }
@@ -285,19 +277,18 @@ where
 
     fn _verify_base_commitment(
         base_ck: &P::G2,
-        base_com: (PairingOutput<P>, IdentityOutput<P::G1>),
+        base_com: (PairingOutput<P>, P::G1),
         proof: &GipaProof<P>,
     ) -> Result<bool, Error> {
         let (com_a, com_t) = base_com;
         let ck_a_base = base_ck;
         let a_base = vec![proof.final_message.0];
         let b_base = vec![proof.final_message.1];
-        let t_base = vec![MultiexponentiationInnerProduct::inner_product(
-            &a_base, &b_base,
-        )?];
+        let t_base = MultiexponentiationInnerProduct::inner_product(&a_base, &b_base)?;
 
-        Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)?
-            && IdentityCommitment::verify(&t_base, &com_t))
+        let same_ip_commit = t_base == com_t;
+
+        Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)? && same_ip_commit)
     }
 }
 
@@ -331,8 +322,7 @@ mod tests {
             m_b.push(<Bn254 as Pairing>::ScalarField::rand(&mut rng));
         }
         let l_commit = AfghoBn245::commit(&params, &m_a).unwrap();
-        let t = vec![MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap()];
-        let ip_commit = IdentityOutput(t.clone());
+        let ip_commit = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
         let r_commit = <Bn254 as Pairing>::ScalarField::rand(&mut rng);
 
