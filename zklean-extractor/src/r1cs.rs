@@ -107,8 +107,7 @@ fn input_index_to_field_name(index: usize) -> String {
 
 fn pretty_print_term(inputs_struct: &str, Term(var, coeff): &Term) -> Option<String> {
     let var = match *var {
-        Variable::Input(index) => Some(input_index_to_field_name(index)),
-        Variable::Auxiliary(index) => Some(input_index_to_field_name(index)), // XXX What do we do differently for auxs?
+        Variable::Input(index) | Variable::Auxiliary(index) => Some(input_index_to_field_name(index)),
         Variable::Constant => None,
     };
     match (coeff, var) {
