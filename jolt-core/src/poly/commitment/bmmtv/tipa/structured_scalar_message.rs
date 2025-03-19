@@ -23,17 +23,18 @@ use crate::{
     utils::transcript::Transcript,
 };
 
-/// Pairing-based instantiation of GIPA with an updatable
-/// (trusted) structured reference string (SRS) to achieve
-/// logarithmic-time verification
-pub struct TipaWithSsm<P, Transcript> {
+/// Multiexponentiation with known field vector
+///
+/// In the MIPPk protocol a prover demonstrates knowledge of [A] ∈ [G1] such
+/// that A commits to pairing commitment T under *v* and U = A^b for a public vector [b] ∈ [F].
+pub struct MippK<P, Transcript> {
     _pair: PhantomData<P>,
     _transcript: PhantomData<Transcript>,
 }
 
-/// Proof of [`TipaWithSsm`]
+/// Proof of [`MippK`]
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
-pub struct TipaWithSsmProof<P>
+pub struct MippKProof<P>
 where
     P: Pairing,
 {
@@ -43,22 +44,26 @@ where
     final_ck_proof: P::G2,
 }
 
-impl<P, ProofTranscript> TipaWithSsm<P, ProofTranscript>
+impl<P, ProofTranscript> MippK<P, ProofTranscript>
 where
     P: Pairing,
     P::G1: Icicle,
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
-    pub fn prove_with_structured_scalar_message(
+    pub fn prove(
         h_beta_powers: &[P::G2],
         values: (&[P::G1], &[P::ScalarField]),
-        ck: &[P::G2],
+        commitment_key: &[P::G2],
         transcript: &mut ProofTranscript,
-    ) -> Result<TipaWithSsmProof<P>, Error> {
+    ) -> Result<MippKProof<P>, Error> {
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
-        let proof = Gipa::<P, ProofTranscript>::prove_with_aux(values, ck, transcript)?;
+        let proof = Gipa::<P, ProofTranscript>::prove(
+            (values.0.to_vec(), values.1.to_vec()),
+            commitment_key.to_vec(),
+            transcript,
+        )?;
         end_timer!(gipa);
 
         // Prove final commitment key is wellformed
@@ -81,7 +86,7 @@ where
         )?;
         end_timer!(ck_kzg);
 
-        Ok(TipaWithSsmProof {
+        Ok(MippKProof {
             final_message: proof.final_message,
             commitment_steps: proof.commitment_steps,
             final_ck: ck_a_final,
@@ -89,19 +94,15 @@ where
         })
     }
 
-    pub fn verify_with_structured_scalar_message(
+    pub fn verify(
         v_srs: &KZGVerifierKey<P>,
         com: (PairingOutput<P>, P::G1),
         scalar_b: P::ScalarField,
-        proof: &TipaWithSsmProof<P>,
+        proof: &MippKProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         let (base_com, gipa_transcript) =
-            Gipa::<P, ProofTranscript>::verify_recursive_challenge_transcript(
-                (com.0, scalar_b, com.1),
-                &proof.commitment_steps,
-                transcript,
-            )?;
+            Gipa::<P, ProofTranscript>::verify(com, &proof.commitment_steps, transcript)?;
         let transcript_inverse = cfg_iter!(gipa_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
@@ -131,7 +132,7 @@ where
         let b_base = cfg_iter!(product_form).product::<P::ScalarField>();
 
         // Verify base inner product commitment
-        let (com_a, _, com_t) = base_com;
+        let (com_a, com_t) = base_com;
         let a_base = vec![proof.final_message.0];
         let t_base = MultiexponentiationInnerProduct::inner_product(&a_base, &[b_base])?;
 
@@ -177,7 +178,7 @@ mod tests {
 
     #[test]
     fn tipa_ssm_multiexponentiation_inner_product_test() {
-        type MultiExpTipa = TipaWithSsm<Bn254, KeccakTranscript>;
+        type MultiExpTipa = MippK<Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
         let srs = SRS::setup(&mut rng, 2 * (TEST_SIZE - 1), 2 * (TEST_SIZE - 1));
@@ -194,23 +195,12 @@ mod tests {
 
         let mut transcript = KeccakTranscript::new(b"TipaTest");
 
-        let proof = MultiExpTipa::prove_with_structured_scalar_message(
-            &p_srs.h_beta_powers(),
-            (&m_a, &m_b),
-            &ck_a,
-            &mut transcript,
-        )
-        .unwrap();
+        let proof =
+            MultiExpTipa::prove(&p_srs.h_beta_powers(), (&m_a, &m_b), &ck_a, &mut transcript)
+                .unwrap();
 
         let mut transcript = KeccakTranscript::new(b"TipaTest");
 
-        assert!(MultiExpTipa::verify_with_structured_scalar_message(
-            &v_srs,
-            (com_a, com_t),
-            b,
-            &proof,
-            &mut transcript,
-        )
-        .unwrap());
+        assert!(MultiExpTipa::verify(&v_srs, (com_a, com_t), b, &proof, &mut transcript,).unwrap());
     }
 }

@@ -4,7 +4,6 @@
 use std::marker::PhantomData;
 
 use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_ff::One;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, end_timer, start_timer};
 
@@ -48,20 +47,6 @@ where
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
-    /// Same as prove, but prepares the slices into vec for you
-    pub fn prove_with_aux(
-        values: (&[P::G1], &[P::ScalarField]),
-        params: &[P::G2],
-        transcript: &mut ProofTranscript,
-    ) -> Result<GipaProof<P>, Error> {
-        let (msg_l, msg_r) = values;
-        Self::_prove(
-            (msg_l.to_vec(), msg_r.to_vec()),
-            params.to_vec(),
-            transcript,
-        )
-    }
-
     /// Returns vector of recursive commitments and transcripts in reverse order
     ///
     /// This is basically bullet-proofs, we have an array with 2^x elements
@@ -94,12 +79,11 @@ where
     /// This final element is our proof + intermidiate commitments
     ///
     /// [a41] + [com_1, com2, com3]
-    fn _prove(
-        values: (Vec<P::G1>, Vec<P::ScalarField>),
-        mut l_params: Vec<P::G2>,
+    pub fn prove(
+        (mut msg_l, mut msg_r): (Vec<P::G1>, Vec<P::ScalarField>),
+        mut params: Vec<P::G2>,
         transcript: &mut ProofTranscript,
     ) -> Result<GipaProof<P>, Error> {
-        let (mut msg_l, mut msg_r) = values;
         // fiat-shamir steps
         let mut commitment_steps = Vec::new();
         // fiat-shamir transcripts
@@ -109,7 +93,7 @@ where
         // for loop instead of using recursion
         let (final_msg, final_param) = 'recurse: loop {
             let recurse = start_timer!(|| format!("Recurse round size {}", msg_l.len()));
-            match (&msg_l.as_slice(), &msg_r.as_slice(), &l_params.as_slice()) {
+            match (&msg_l.as_slice(), &msg_r.as_slice(), &params.as_slice()) {
                 ([m_l], [m_r], [param_l]) => {
                     // base case
                     // when we get to zero
@@ -171,7 +155,7 @@ where
                     end_timer!(rescale_mr);
 
                     let rescale_pl = start_timer!(|| "Rescale CK1");
-                    l_params = cfg_iter!(param_lr)
+                    params = cfg_iter!(param_lr)
                         .map(|a| *a * c_inv)
                         .zip(param_ll)
                         .map(|(a_1, a_2)| a_1 + a_2)
@@ -200,32 +184,11 @@ where
     }
 
     // Helper function used to calculate recursive challenges from proof execution (transcript in reverse)
-    pub fn verify_recursive_challenge_transcript(
-        com: (PairingOutput<P>, P::ScalarField, P::G1),
-        proof: &CommitmentSteps<P>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<
-        (
-            (PairingOutput<P>, P::ScalarField, P::G1),
-            Vec<P::ScalarField>,
-        ),
-        Error,
-    > {
-        Self::_compute_recursive_challenges(com, proof, transcript)
-    }
-
-    fn _compute_recursive_challenges(
-        com: (PairingOutput<P>, P::ScalarField, P::G1),
+    pub fn verify(
+        (mut com_a, mut com_t): (PairingOutput<P>, P::G1),
         commitment_steps: &CommitmentSteps<P>,
         transcript: &mut ProofTranscript,
-    ) -> Result<
-        (
-            (PairingOutput<P>, P::ScalarField, P::G1),
-            Vec<P::ScalarField>,
-        ),
-        Error,
-    > {
-        let (mut com_a, com_b, mut com_t) = com;
+    ) -> Result<((PairingOutput<P>, P::G1), Vec<P::ScalarField>), Error> {
         let mut r_transcript: Vec<P::ScalarField> = Vec::new();
         for (com_l, com_r) in commitment_steps.iter().rev() {
             // Fiat-Shamir challenge
@@ -244,51 +207,7 @@ where
             r_transcript.push(c);
         }
         r_transcript.reverse();
-        Ok(((com_a, com_b, com_t), r_transcript))
-    }
-
-    fn _compute_final_commitment_keys(
-        l_params: &[P::G2],
-        transcript: &[P::ScalarField],
-    ) -> Result<P::G2, Error> {
-        // Calculate base commitment keys
-        assert!(l_params.len().is_power_of_two());
-
-        let mut ck_a_agg_challenge_exponents = vec![P::ScalarField::one()];
-        let mut ck_b_agg_challenge_exponents = vec![P::ScalarField::one()];
-        for (i, c) in transcript.iter().enumerate() {
-            let c_inv = JoltField::inverse(c).unwrap();
-            for j in 0..(2_usize).pow(i as u32) {
-                ck_a_agg_challenge_exponents.push(ck_a_agg_challenge_exponents[j] * c_inv);
-                ck_b_agg_challenge_exponents.push(ck_b_agg_challenge_exponents[j] * c);
-            }
-        }
-        assert_eq!(ck_a_agg_challenge_exponents.len(), l_params.len());
-        //TODO: Optimization: Use VariableMSM multiexponentiation
-        let ck_a_base_init = l_params[0] * ck_a_agg_challenge_exponents[0];
-        let ck_a_base = l_params[1..]
-            .iter()
-            .zip(&ck_a_agg_challenge_exponents[1..])
-            .map(|(g, x)| *g * x)
-            .fold(ck_a_base_init, |sum, x| sum + x);
-        //.reduce(|| ck_a_base_init.clone(), |sum, x| sum + x);
-        Ok(ck_a_base)
-    }
-
-    fn _verify_base_commitment(
-        base_ck: &P::G2,
-        base_com: (PairingOutput<P>, P::G1),
-        proof: &GipaProof<P>,
-    ) -> Result<bool, Error> {
-        let (com_a, com_t) = base_com;
-        let ck_a_base = base_ck;
-        let a_base = vec![proof.final_message.0];
-        let b_base = vec![proof.final_message.1];
-        let t_base = MultiexponentiationInnerProduct::inner_product(&a_base, &b_base)?;
-
-        let same_ip_commit = t_base == com_t;
-
-        Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)? && same_ip_commit)
+        Ok(((com_a, com_t), r_transcript))
     }
 }
 
@@ -304,10 +223,63 @@ mod tests {
     use ark_ec::pairing::Pairing;
     use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use ark_std::One;
 
     /// Inner pairing product commitment in G1
     type AfghoBn245 = AfghoCommitment<Bn254>;
     const TEST_SIZE: usize = 8;
+
+    // used only for tests
+    impl<P, ProofTranscript> Gipa<P, ProofTranscript>
+    where
+        P: Pairing,
+        P::ScalarField: JoltField,
+        ProofTranscript: Transcript,
+    {
+        fn _compute_final_commitment_keys(
+            l_params: &[P::G2],
+            transcript: &[P::ScalarField],
+        ) -> Result<P::G2, Error> {
+            // Calculate base commitment keys
+            assert!(l_params.len().is_power_of_two());
+
+            let mut ck_a_agg_challenge_exponents = vec![P::ScalarField::one()];
+            let mut ck_b_agg_challenge_exponents = vec![P::ScalarField::one()];
+            for (i, c) in transcript.iter().enumerate() {
+                let c_inv = JoltField::inverse(c).unwrap();
+                for j in 0..(2_usize).pow(i as u32) {
+                    ck_a_agg_challenge_exponents.push(ck_a_agg_challenge_exponents[j] * c_inv);
+                    ck_b_agg_challenge_exponents.push(ck_b_agg_challenge_exponents[j] * c);
+                }
+            }
+            assert_eq!(ck_a_agg_challenge_exponents.len(), l_params.len());
+            //TODO: Optimization: Use VariableMSM multiexponentiation
+            let ck_a_base_init = l_params[0] * ck_a_agg_challenge_exponents[0];
+            let ck_a_base = l_params[1..]
+                .iter()
+                .zip(&ck_a_agg_challenge_exponents[1..])
+                .map(|(g, x)| *g * x)
+                .fold(ck_a_base_init, |sum, x| sum + x);
+            //.reduce(|| ck_a_base_init.clone(), |sum, x| sum + x);
+            Ok(ck_a_base)
+        }
+
+        fn _verify_base_commitment(
+            base_ck: &P::G2,
+            base_com: (PairingOutput<P>, P::G1),
+            proof: &GipaProof<P>,
+        ) -> Result<bool, Error> {
+            let (com_a, com_t) = base_com;
+            let ck_a_base = base_ck;
+            let a_base = vec![proof.final_message.0];
+            let b_base = vec![proof.final_message.1];
+            let t_base = MultiexponentiationInnerProduct::inner_product(&a_base, &b_base)?;
+
+            let same_ip_commit = t_base == com_t;
+
+            Ok(AfghoCommitment::verify(&[*ck_a_base], &a_base, &com_a)? && same_ip_commit)
+        }
+    }
 
     #[test]
     fn multiexponentiation_inner_product_test() {
@@ -324,17 +296,15 @@ mod tests {
         let l_commit = AfghoBn245::commit(&params, &m_a).unwrap();
         let ip_commit = MultiexponentiationInnerProduct::inner_product(&m_a, &m_b).unwrap();
 
-        let r_commit = <Bn254 as Pairing>::ScalarField::rand(&mut rng);
-
         let mut transcript = KeccakTranscript::new(b"test");
 
-        let proof = MultiExpGIPA::prove_with_aux((&m_a, &m_b), &params, &mut transcript).unwrap();
+        let proof = MultiExpGIPA::prove((m_a, m_b), params.clone(), &mut transcript).unwrap();
 
         let mut transcript = KeccakTranscript::new(b"test");
 
         // Calculate base commitment and transcript
-        let (base_com, transcript) = MultiExpGIPA::_compute_recursive_challenges(
-            (l_commit, r_commit, ip_commit),
+        let (base_com, transcript) = MultiExpGIPA::verify(
+            (l_commit, ip_commit),
             &proof.commitment_steps,
             &mut transcript,
         )
@@ -343,7 +313,7 @@ mod tests {
         let ck_a_base = MultiExpGIPA::_compute_final_commitment_keys(&params, &transcript).unwrap();
         // Verify base commitment
         assert!(
-            MultiExpGIPA::_verify_base_commitment(&ck_a_base, (base_com.0, base_com.2), &proof)
+            MultiExpGIPA::_verify_base_commitment(&ck_a_base, (base_com.0, base_com.1), &proof)
                 .unwrap()
         )
     }

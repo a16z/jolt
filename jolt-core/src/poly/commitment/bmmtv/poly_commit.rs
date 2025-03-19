@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 
 use super::{
     commitments::afgho16::AfghoCommitment,
-    tipa::structured_scalar_message::{TipaWithSsm, TipaWithSsmProof},
+    tipa::structured_scalar_message::{MippK, MippKProof},
     Error,
 };
 use crate::field::JoltField;
@@ -47,12 +47,12 @@ where
 }
 
 pub struct OpeningProof<P: Pairing> {
-    ip_proof: TipaWithSsmProof<P>,
+    ip_proof: MippKProof<P>,
     y_eval_comm: P::G1,
     kzg_proof: P::G1,
 }
 
-pub struct BivariatePolynomialCommitment<P: Pairing, D>(TipaWithSsm<P, D>);
+pub struct BivariatePolynomialCommitment<P: Pairing, D>(MippK<P, D>);
 
 impl<P: Pairing, ProofTranscript: Transcript> BivariatePolynomialCommitment<P, ProofTranscript>
 where
@@ -133,7 +133,7 @@ where
         end_timer!(precomp_time);
 
         let ipa_time = start_timer!(|| "Computing IPA proof");
-        let ip_proof = TipaWithSsm::<P, ProofTranscript>::prove_with_structured_scalar_message(
+        let ip_proof = MippK::<P, ProofTranscript>::prove(
             &kzg_srs.h_beta_powers(),
             (y_polynomial_comms, &powers_of_x),
             ck_1,
@@ -162,7 +162,7 @@ where
     ) -> Result<bool, Error> {
         let (x, y) = point;
         let ip_proof_valid =
-            TipaWithSsm::<P, ProofTranscript>::verify_with_structured_scalar_message(
+            MippK::<P, ProofTranscript>::verify(
                 v_srs,
                 (com, proof.y_eval_comm),
                 x,
