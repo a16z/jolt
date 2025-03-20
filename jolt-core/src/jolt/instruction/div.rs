@@ -237,11 +237,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn div_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(DIVInstruction::<32>, RV32IM::DIV);
+        jolt_virtual_sequence_test::<DIVInstruction<32>>(RV32IM::DIV);
     }
 }

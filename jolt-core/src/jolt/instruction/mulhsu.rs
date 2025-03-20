@@ -127,11 +127,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn mulhsu_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(MULHSUInstruction::<32>, RV32IM::MULHSU);
+        jolt_virtual_sequence_test::<MULHSUInstruction<32>>(RV32IM::MULHSU);
     }
 }

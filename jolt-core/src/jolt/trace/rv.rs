@@ -20,6 +20,7 @@ use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruct
 use crate::jolt::instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
+use crate::jolt::instruction::virtual_pow2::POW2Instruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, virtual_movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -62,6 +63,7 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::JAL   => Ok(ADDInstruction::default().into()),
             RV32IM::JALR  => Ok(ADDInstruction::default().into()),
             RV32IM::AUIPC => Ok(ADDInstruction::default().into()),
+            RV32IM::LUI => Ok(ADVICEInstruction::default().into()),
 
             RV32IM::MUL => Ok(MULInstruction::default().into()),
             RV32IM::MULU => Ok(MULUInstruction::default().into()),
@@ -76,6 +78,8 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>::default().into()),
+            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>::default().into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
@@ -119,6 +123,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address, row.imm_u32() as u64).into()),
             RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address, row.imm_u32() as u64).into()),
+            RV32IM::LUI => Ok(ADVICEInstruction(row.imm_u32() as u64).into()),
 
             RV32IM::MUL => Ok(MULInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
@@ -133,6 +138,8 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
+            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>(row.register_state.rs1_val.unwrap()).into()),
+            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>(row.imm_u64()).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

@@ -123,6 +123,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
+        // TOOO(moodlezoup): is this assert unnecessary?
         let lte = ASSERTLTEInstruction::<WORD_SIZE>(q_y, x).lookup_entry();
         assert_eq!(lte, 1);
         virtual_trace.push(RVTraceRow {
@@ -242,11 +243,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn divu_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(DIVUInstruction::<32>, RV32IM::DIVU);
+        jolt_virtual_sequence_test::<DIVUInstruction<32>>(RV32IM::DIVU);
     }
 }

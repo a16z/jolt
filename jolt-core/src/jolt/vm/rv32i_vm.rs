@@ -3,6 +3,7 @@ use crate::jolt::instruction::virtual_assert_halfword_alignment::AssertHalfwordA
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
+use crate::jolt::instruction::virtual_pow2::POW2Instruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::low_bit::LowBitSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
@@ -130,7 +131,8 @@ instruction_set!(
   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertHalfwordAlignmentInstruction<WORD_SIZE>
+  VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertHalfwordAlignmentInstruction<WORD_SIZE>,
+  VIRTUAL_POW2: POW2Instruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,

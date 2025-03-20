@@ -23,11 +23,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for POW2Instruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        todo!()
+        F::zero()
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
-        todo!()
+        1
     }
 
     fn subtables<F: JoltField>(
@@ -35,11 +35,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for POW2Instruction<WORD_SIZE> {
         C: usize,
         M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        todo!()
+        vec![]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-        todo!()
+        vec![0; C]
     }
 
     fn lookup_entry(&self) -> u64 {
