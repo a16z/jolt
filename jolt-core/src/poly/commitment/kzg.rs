@@ -110,14 +110,6 @@ where
         }
     }
 
-    pub fn get_commitment_keys(&self) -> Vec<P::G2> {
-        self.g2_powers
-            .iter()
-            .map(|aff| aff.into_group())
-            .step_by(2)
-            .collect()
-    }
-
     pub fn trim(params: Arc<Self>, max_degree: usize) -> (KZGProverKey<P>, KZGVerifierKey<P>) {
         assert!(!params.g1_powers.is_empty(), "max_degree is 0");
         assert!(
@@ -126,10 +118,15 @@ where
         );
         let g1 = params.g1_powers[0];
         let g2 = params.g2_powers[0];
-        let alpha_g1= params.g1_powers[1];
+        let alpha_g1 = params.g1_powers[1];
         let beta_g2 = params.g2_powers[1];
         let pk = KZGProverKey::new(params, 0, max_degree + 1);
-        let vk = KZGVerifierKey { g1, g2, beta_g2, alpha_g1 };
+        let vk = KZGVerifierKey {
+            g1,
+            g2,
+            beta_g2,
+            alpha_g1,
+        };
         (pk, vk)
     }
 }
@@ -177,6 +174,20 @@ where
             .collect()
     }
 
+    /// Return a list of every other g2 powers
+    pub fn commitment_keys(&self) -> Vec<P::G2> {
+        self.srs
+            .g2_powers
+            .iter()
+            .map(|aff| aff.into_group())
+            .step_by(2)
+            .collect()
+    }
+
+    pub fn commitment_keys_len(&self) -> usize {
+        self.commitment_keys().len()
+    }
+
     pub fn len(&self) -> usize {
         self.g1_powers().len()
     }
@@ -197,9 +208,20 @@ pub struct KZGVerifierKey<P: Pairing> {
     pub beta_g2: P::G2Affine,
 }
 
+/// Marker trait
+pub trait Group {}
+
+/// Marker for operations in G1
+pub enum G1 {}
+impl Group for G1 {}
+
+/// Marker for operations in G2
+pub enum G2 {}
+impl Group for G2 {}
+
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct UnivariateKZG<P: Pairing> {
-    _phantom: PhantomData<P>,
+pub struct UnivariateKZG<P: Pairing, G: Group = G1> {
+    _phantom: PhantomData<(P, G)>,
 }
 
 impl<P: Pairing> UnivariateKZG<P>
@@ -391,6 +413,25 @@ where
     }
 }
 
+impl<P: Pairing> UnivariateKZG<P, G2> {
+    pub fn verify(
+        v_srs: &KZGVerifierKey<P>,
+        commitment: P::G2,
+        point: P::ScalarField,
+        proof: P::G2,
+        evaluation: P::ScalarField,
+    ) -> bool {
+        P::multi_pairing(
+            [
+                v_srs.g1.into_group(),
+                v_srs.alpha_g1.into_group() - v_srs.g1 * point,
+            ],
+            [commitment - v_srs.g2.into_group() * evaluation, -proof],
+        )
+        .is_zero()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -415,7 +456,7 @@ mod test {
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
-                UnivariateKZG::verify(&vk, &comm, &point, &proof, &value)?,
+                UnivariateKZG::<_, G1>::verify(&vk, &comm, &point, &proof, &value)?,
                 "proof was incorrect for max_degree = {}, polynomial_degree = {}",
                 degree,
                 p.degree(),

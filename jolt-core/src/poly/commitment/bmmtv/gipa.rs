@@ -11,7 +11,7 @@ use super::Error;
 use crate::{
     field::JoltField,
     poly::commitment::bmmtv::{
-        commitments::afgho16::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
+        afgho::AfghoCommitment, inner_products::MultiexponentiationInnerProduct,
     },
     utils::transcript::Transcript,
 };
@@ -214,7 +214,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        super::commitments::{afgho16::AfghoCommitment, random_generators},
+        super::afgho::{AfghoCommitment, random_generators},
         super::inner_products::MultiexponentiationInnerProduct,
         *,
     };

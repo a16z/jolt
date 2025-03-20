@@ -11,8 +11,8 @@ use ark_std::{end_timer, start_timer};
 use std::marker::PhantomData;
 
 use super::{
-    commitments::afgho16::AfghoCommitment,
-    tipa::structured_scalar_message::{MippK, MippKProof},
+    afgho::AfghoCommitment,
+    tipa::{MippK, MippKProof},
     Error,
 };
 use crate::field::JoltField;
@@ -68,11 +68,11 @@ where
     }
 
     pub fn commit(
-        srs: &(Vec<P::G2>, KZGProverKey<P>),
+        kzg_srs: &KZGProverKey<P>,
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        let (ck, kzg_srs) = srs;
-        assert!(ck.len() >= bivariate_polynomial.y_polynomials.len());
+        assert!(kzg_srs.commitment_keys_len() >= bivariate_polynomial.y_polynomials.len());
+        let ck = kzg_srs.commitment_keys();
 
         // Create KZG commitments to Y polynomials
         let y_polynomial_coms = bivariate_polynomial
@@ -90,26 +90,25 @@ where
 
         // Create AFGHO commitment to Y polynomial commitments
         Ok((
-            AfghoCommitment::<P>::commit(ck, &y_polynomial_coms)?,
+            AfghoCommitment::<P>::commit(&ck, &y_polynomial_coms)?,
             y_polynomial_coms,
         ))
     }
 
     pub fn open(
-        srs: &(Vec<P::G2>, KZGProverKey<P>),
+        kzg_srs: &KZGProverKey<P>,
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
-        y_polynomial_comms: &[P::G1],
+        y_polynomial_comms: Vec<P::G1>,
         point: &(P::ScalarField, P::ScalarField),
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
         let (x, y) = point;
-        let (ck_1, kzg_srs) = srs;
-        assert!(ck_1.len() >= bivariate_polynomial.y_polynomials.len());
+        assert!(kzg_srs.commitment_keys_len() >= bivariate_polynomial.y_polynomials.len());
 
         let precomp_time = start_timer!(|| "Computing coefficients and KZG commitment");
         let mut powers_of_x = vec![];
         let mut cur = P::ScalarField::one();
-        for _ in 0..(ck_1.len()) {
+        for _ in 0..(kzg_srs.commitment_keys_len()) {
             powers_of_x.push(cur);
             cur *= *x;
         }
@@ -118,7 +117,7 @@ where
             .y_polynomials
             .iter()
             .chain([UnivariatePolynomial::zero()].iter().cycle())
-            .take(ck_1.len())
+            .take(kzg_srs.commitment_keys_len())
             .map(|y_polynomial| {
                 let mut c = y_polynomial.coeffs.clone();
                 c.resize(kzg_srs.len(), <P::ScalarField>::zero());
@@ -126,7 +125,11 @@ where
             })
             .collect::<Vec<Vec<P::ScalarField>>>();
         let y_eval_coeffs = (0..kzg_srs.len())
-            .map(|j| (0..ck_1.len()).map(|i| powers_of_x[i] * coeffs[i][j]).sum())
+            .map(|j| {
+                (0..kzg_srs.commitment_keys_len())
+                    .map(|i| powers_of_x[i] * coeffs[i][j])
+                    .sum()
+            })
             .collect::<Vec<P::ScalarField>>();
         // Can unwrap because y_eval_coeffs.len() is guarnateed to be equal to kzg_srs.len()
         let y_eval_comm = P::G1::msm(kzg_srs.g1_powers(), &y_eval_coeffs).unwrap();
@@ -134,9 +137,8 @@ where
 
         let ipa_time = start_timer!(|| "Computing IPA proof");
         let ip_proof = MippK::<P, ProofTranscript>::prove(
-            &kzg_srs.h_beta_powers(),
-            (y_polynomial_comms, &powers_of_x),
-            ck_1,
+            kzg_srs,
+            (y_polynomial_comms, powers_of_x),
             transcript,
         )?;
         end_timer!(ipa_time);
@@ -161,14 +163,13 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         let (x, y) = point;
-        let ip_proof_valid =
-            MippK::<P, ProofTranscript>::verify(
-                v_srs,
-                (com, proof.y_eval_comm),
-                x,
-                &proof.ip_proof,
-                transcript,
-            )?;
+        let ip_proof_valid = MippK::<P, ProofTranscript>::verify(
+            v_srs,
+            (com, proof.y_eval_comm),
+            x,
+            &proof.ip_proof,
+            transcript,
+        )?;
         let kzg_proof_valid = UnivariateKZG::<P>::verify(
             v_srs,
             &proof.y_eval_comm.into_affine(),
@@ -237,10 +238,10 @@ where
     }
 
     pub fn commit(
-        srs: &(Vec<P::G2>, KZGProverKey<P>),
+        srs: &KZGProverKey<P>,
         polynomial: &UnivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(&srs.1);
+        let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(srs);
         BivariatePolynomialCommitment::<P, ProofTranscript>::commit(
             srs,
             &Self::bivariate_form(bivariate_degrees, polynomial),
@@ -248,13 +249,13 @@ where
     }
 
     pub fn open(
-        srs: &(Vec<P::G2>, KZGProverKey<P>),
+        srs: &KZGProverKey<P>,
         polynomial: &UnivariatePolynomial<P::ScalarField>,
-        y_polynomial_comms: &[P::G1],
+        y_polynomial_comms: Vec<P::G1>,
         point: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
-        let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(&srs.1);
+        let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(srs);
         let y = *point;
         let x = point.pow(vec![(y_degree + 1) as u64]);
         BivariatePolynomialCommitment::<P, ProofTranscript>::open(
@@ -313,7 +314,6 @@ mod tests {
         let srs =
             TestBivariatePolyCommitment::setup(&mut rng, BIVARIATE_X_DEGREE, BIVARIATE_Y_DEGREE)
                 .unwrap();
-        let ck = srs.get_commitment_keys();
         let (p_srs, v_srs) = SRS::trim(Arc::new(srs), BIVARIATE_X_DEGREE);
 
         let mut y_polynomials = Vec::new();
@@ -325,20 +325,19 @@ mod tests {
             y_polynomials.push(UnivariatePolynomial::from_coeff(y_polynomial_coeffs));
         }
         let bivariate_polynomial = BivariatePolynomial { y_polynomials };
-        let srs = (ck, p_srs);
 
         // Commit to polynomial
         let (com, y_polynomial_comms) =
-            TestBivariatePolyCommitment::commit(&srs, &bivariate_polynomial).unwrap();
+            TestBivariatePolyCommitment::commit(&p_srs, &bivariate_polynomial).unwrap();
 
         let mut transcript = KeccakTranscript::new(b"test");
 
         // Evaluate at challenge point
         let point = (UniformRand::rand(&mut rng), UniformRand::rand(&mut rng));
         let eval_proof = TestBivariatePolyCommitment::open(
-            &srs,
+            &p_srs,
             &bivariate_polynomial,
-            &y_polynomial_comms,
+            y_polynomial_comms,
             &point,
             &mut transcript,
         )
@@ -365,10 +364,8 @@ mod tests {
     fn univariate_poly_commit_test() {
         let mut rng = StdRng::seed_from_u64(0u64);
         let srs = TestUnivariatePolyCommitment::setup(&mut rng, UNIVARIATE_DEGREE).unwrap();
-        let ck = srs.get_commitment_keys();
         let powers_len = srs.g1_powers.len();
         let (p_srs, v_srs) = SRS::trim(Arc::new(srs), powers_len - 1);
-        // let v_srs = srs.0.get_verifier_key();
 
         let mut polynomial_coeffs = vec![];
         for _ in 0..UNIVARIATE_DEGREE + 1 {
@@ -376,19 +373,17 @@ mod tests {
         }
         let polynomial = UnivariatePolynomial::from_coeff(polynomial_coeffs);
 
-        let srs = (ck, p_srs);
-
         // Commit to polynomial
         let (com, y_polynomial_comms) =
-            TestUnivariatePolyCommitment::commit(&srs, &polynomial).unwrap();
+            TestUnivariatePolyCommitment::commit(&p_srs, &polynomial).unwrap();
 
         let mut transcript = KeccakTranscript::new(b"test");
         // Evaluate at challenge point
         let point = UniformRand::rand(&mut rng);
         let eval_proof = TestUnivariatePolyCommitment::open(
-            &srs,
+            &p_srs,
             &polynomial,
-            &y_polynomial_comms,
+            y_polynomial_comms,
             &point,
             &mut transcript,
         )
