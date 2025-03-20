@@ -1,8 +1,8 @@
 #![allow(dead_code)]
-use crate::field::JoltField;
-
 use ark_std::test_rng;
 use rayon::prelude::*;
+
+use crate::field::JoltField;
 
 pub mod errors;
 pub mod gaussian_elimination;
@@ -12,6 +12,7 @@ pub mod profiling;
 pub mod sol_types;
 pub mod thread;
 pub mod transcript;
+mod streaming;
 
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
