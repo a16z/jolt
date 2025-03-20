@@ -11,6 +11,7 @@ use num_derive::FromPrimitive;
 use or::OrSuffix;
 use pow2::Pow2Suffix;
 use right_is_zero::RightOperandIsZeroSuffix;
+use right_shift_padding::RightShiftPaddingSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
@@ -31,6 +32,7 @@ pub mod one;
 pub mod or;
 pub mod pow2;
 pub mod right_is_zero;
+pub mod right_shift_padding;
 pub mod upper_word;
 pub mod xor;
 
@@ -55,6 +57,7 @@ pub enum Suffixes {
     Lsb,
     DivByZero,
     Pow2,
+    RightShiftPadding,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +108,7 @@ impl Suffixes {
             Suffixes::Lsb => LsbSuffix::suffix_mle(b),
             Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
             Suffixes::Pow2 => Pow2Suffix::<WORD_SIZE>::suffix_mle(b),
+            Suffixes::RightShiftPadding => RightShiftPaddingSuffix::<WORD_SIZE>::suffix_mle(b),
         }
     }
 }

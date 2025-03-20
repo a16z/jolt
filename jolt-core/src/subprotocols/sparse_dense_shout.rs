@@ -764,7 +764,8 @@ mod tests {
             virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
             virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
             virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
-            virtual_pow2::POW2Instruction, xor::XORInstruction,
+            virtual_pow2::POW2Instruction,
+            virtual_right_shift_padding::RightShiftPaddingInstruction, xor::XORInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -924,9 +925,8 @@ mod tests {
         test_single_instruction::<POW2Instruction<WORD_SIZE>>();
     }
 
-    #[ignore = "not working"]
     #[test]
-    fn test_sll() {
-        test_single_instruction::<SLLInstruction<WORD_SIZE>>();
+    fn test_right_shift_padding() {
+        test_single_instruction::<RightShiftPaddingInstruction<WORD_SIZE>>();
     }
 }
