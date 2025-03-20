@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use std::marker::PhantomData;
 
 use ark_ec::{
@@ -6,6 +7,7 @@ use ark_ec::{
 };
 use ark_std::cfg_iter;
 
+use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -86,7 +88,11 @@ impl MultiexponentiationInnerProduct {
     pub fn inner_product<G: CurveGroup>(
         left: &[G],
         right: &[G::ScalarField],
-    ) -> Result<G, InnerProductError> {
+    ) -> Result<G, InnerProductError>
+    where
+        G: Icicle,
+        G::ScalarField: JoltField,
+    {
         if left.len() != right.len() {
             return Err(InnerProductError::MessageLengthInvalid(
                 left.len(),
@@ -95,6 +101,13 @@ impl MultiexponentiationInnerProduct {
         };
 
         // Can unwrap because we did the length check above
-        Ok(G::msm(&G::normalize_batch(left), right).unwrap())
+        Ok(<G as VariableBaseMSM>::msm_field_elements(
+            &G::normalize_batch(left),
+            None,
+            right,
+            None,
+            use_icicle(),
+        )
+        .unwrap())
     }
 }

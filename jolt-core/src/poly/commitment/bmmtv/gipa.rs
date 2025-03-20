@@ -8,6 +8,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, end_timer, start_timer};
 
 use super::Error;
+use crate::msm::Icicle;
 use crate::{
     field::JoltField,
     poly::commitment::bmmtv::{
@@ -44,6 +45,7 @@ pub struct GipaProof<P: Pairing> {
 impl<P, ProofTranscript> Gipa<P, ProofTranscript>
 where
     P: Pairing,
+    P::G1: Icicle,
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
@@ -214,13 +216,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        super::afgho::{AfghoCommitment, random_generators},
+        super::afgho::{random_generators, AfghoCommitment},
         super::inner_products::MultiexponentiationInnerProduct,
         *,
     };
+    use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Bn254;
     use ark_ec::pairing::Pairing;
+    use ark_ec::CurveGroup;
     use ark_ff::UniformRand;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use ark_std::One;
@@ -233,6 +237,8 @@ mod tests {
     impl<P, ProofTranscript> Gipa<P, ProofTranscript>
     where
         P: Pairing,
+        P::G1: Icicle,
+        P::G2: Icicle,
         P::ScalarField: JoltField,
         ProofTranscript: Transcript,
     {
@@ -253,14 +259,13 @@ mod tests {
                 }
             }
             assert_eq!(ck_a_agg_challenge_exponents.len(), l_params.len());
-            //TODO: Optimization: Use VariableMSM multiexponentiation
-            let ck_a_base_init = l_params[0] * ck_a_agg_challenge_exponents[0];
-            let ck_a_base = l_params[1..]
-                .iter()
-                .zip(&ck_a_agg_challenge_exponents[1..])
-                .map(|(g, x)| *g * x)
-                .fold(ck_a_base_init, |sum, x| sum + x);
-            //.reduce(|| ck_a_base_init.clone(), |sum, x| sum + x);
+            let ck_a_base = <P::G2 as VariableBaseMSM>::msm_field_elements(
+                &P::G2::normalize_batch(l_params),
+                None,
+                &ck_a_agg_challenge_exponents,
+                None,
+                use_icicle(),
+            )?;
             Ok(ck_a_base)
         }
 
