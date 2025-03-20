@@ -209,18 +209,24 @@ pub struct KZGVerifierKey<P: Pairing> {
 }
 
 /// Marker trait
-pub trait Group {}
+pub trait Group<P: Pairing> {
+    type Curve: CurveGroup;
+}
 
 /// Marker for operations in G1
 pub enum G1 {}
-impl Group for G1 {}
+impl<P: Pairing> Group<P> for G1 {
+    type Curve = P::G1;
+}
 
 /// Marker for operations in G2
 pub enum G2 {}
-impl Group for G2 {}
+impl<P: Pairing> Group<P> for G2 {
+    type Curve = P::G2;
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct UnivariateKZG<P: Pairing, G: Group = G1> {
+pub struct UnivariateKZG<P: Pairing, G: Group<P> = G1> {
     _phantom: PhantomData<(P, G)>,
 }
 
@@ -382,15 +388,7 @@ where
     where
         <P as Pairing>::ScalarField: JoltField,
     {
-        let divisor = UniPoly::from_coeff(vec![-*point, P::ScalarField::one()]);
-        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
-        let proof = <P::G1 as VariableBaseMSM>::msm_field_elements(
-            &pk.g1_powers()[..witness_poly.coeffs.len()],
-            pk.gpu_g1().map(|g| &g[..witness_poly.coeffs.len()]),
-            witness_poly.coeffs.as_slice(),
-            None,
-            use_icicle(),
-        )?;
+        let proof = Self::generic_open(pk.g1_powers(), pk.gpu_g1(), poly, *point)?;
         let evaluation = poly.evaluate(point);
         Ok((proof.into_affine(), evaluation))
     }
@@ -410,6 +408,34 @@ where
             [vk.g2, (vk.beta_g2.into_group() - (vk.g2 * point)).into()],
         )
         .is_zero())
+    }
+}
+
+impl<P: Pairing, G: Group<P>> UnivariateKZG<P, G>
+where
+    P::ScalarField: JoltField,
+    G::Curve: CurveGroup<ScalarField= P::ScalarField> + Icicle,
+{
+    #[tracing::instrument(skip_all, name = "KZG::open")]
+    pub fn generic_open(
+        powers: &[<G::Curve as CurveGroup>::Affine],
+        gpu_powers: Option<&[GpuBaseType<G::Curve>]>,
+        poly: &UniPoly<P::ScalarField>,
+        point: P::ScalarField,
+    ) -> Result<G::Curve, ProofVerifyError>
+    where
+        <P as Pairing>::ScalarField: JoltField,
+    {
+        let divisor = UniPoly::from_coeff(vec![-point, P::ScalarField::one()]);
+        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
+        let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
+            &powers[..witness_poly.coeffs.len()],
+            gpu_powers.map(|g| &g[..witness_poly.coeffs.len()]),
+            witness_poly.coeffs.as_slice(),
+            None,
+            use_icicle(),
+        )?;
+        Ok(proof)
     }
 }
 

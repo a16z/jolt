@@ -58,6 +58,7 @@ impl<P: Pairing, ProofTranscript: Transcript> BivariatePolynomialCommitment<P, P
 where
     P::ScalarField: JoltField,
     P::G1: Icicle,
+    P::G2: Icicle,
 {
     pub fn setup<R: Rng + CryptoRng>(
         rng: &mut R,
@@ -194,6 +195,7 @@ impl<P: Pairing, ProofTranscript: Transcript> UnivariatePolynomialCommitment<P, 
 where
     P::ScalarField: JoltField,
     P::G1: Icicle,
+    P::G2: Icicle,
 {
     fn bivariate_degrees(univariate_degree: usize) -> (usize, usize) {
         //(((univariate_degree + 1) as f64).sqrt().ceil() as usize).next_power_of_two() - 1;

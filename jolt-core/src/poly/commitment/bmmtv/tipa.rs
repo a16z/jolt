@@ -4,7 +4,7 @@ use ark_ec::{
     pairing::{Pairing, PairingOutput},
     CurveGroup,
 };
-use ark_ff::{Field, One, Zero};
+use ark_ff::{Field, One};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, end_timer, start_timer};
 use itertools::Itertools;
@@ -31,14 +31,15 @@ use crate::{
 ///
 /// `kzg_challenge`: X
 /// `srs_powers`:
-pub fn prove_commitment_key_kzg_opening<G: CurveGroup>(
-    srs_powers: &[G],
-    transcript: &[G::ScalarField],
-    r_shift: G::ScalarField,
-    kzg_challenge: G::ScalarField,
-) -> Result<G, Error>
+pub fn prove_commitment_key_kzg_opening<P: Pairing>(
+    srs_powers: &[P::G2],
+    transcript: &[P::ScalarField],
+    r_shift: P::ScalarField,
+    point: P::ScalarField,
+) -> Result<P::G2, Error>
 where
-    G::ScalarField: JoltField,
+    P::ScalarField: JoltField,
+    P::G2: Icicle,
 {
     let ck_polynomial =
         UniPoly::from_coeff(polynomial_coefficients_from_transcript(transcript, r_shift));
@@ -46,27 +47,15 @@ where
 
     let eval = start_timer!(|| "polynomial eval");
     let ck_polynomial_c_eval =
-        polynomial_evaluation_product_form_from_transcript(transcript, kzg_challenge, r_shift);
+        polynomial_evaluation_product_form_from_transcript(transcript, point, r_shift);
     end_timer!(eval);
 
-    let quotient = start_timer!(|| "polynomial quotient");
-    let (quotient_polynomial, _remainder) = (ck_polynomial
-        - UniPoly::from_coeff(vec![ck_polynomial_c_eval]))
-    .divide_with_remainder(&UniPoly::from_coeff(vec![
-        -kzg_challenge,
-        <G::ScalarField>::one(),
-    ]))
-    .unwrap();
-    end_timer!(quotient);
+    let poly = ck_polynomial - UniPoly::from_coeff(vec![ck_polynomial_c_eval]);
+    let powers = P::G2::normalize_batch(srs_powers);
 
-    let mut quotient_polynomial_coeffs = quotient_polynomial.coeffs;
-    quotient_polynomial_coeffs.resize(srs_powers.len(), <G::ScalarField>::zero());
-
-    let multiexp = start_timer!(|| "opening multiexp");
-    let opening =
-        MultiexponentiationInnerProduct::inner_product(srs_powers, &quotient_polynomial_coeffs)?;
-    end_timer!(multiexp);
-    Ok(opening)
+    Ok(UnivariateKZG::<P, G2>::generic_open(
+        &powers, None, &poly, point,
+    )?)
 }
 
 pub fn verify_kzg_g2<P: Pairing>(
@@ -139,6 +128,7 @@ impl<P, ProofTranscript> MippK<P, ProofTranscript>
 where
     P: Pairing,
     P::G1: Icicle,
+    P::G2: Icicle,
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
@@ -164,10 +154,10 @@ where
 
         // KZG challenge point
         transcript.append_serializable(&ck_a_final);
-        let c = transcript.challenge_scalar();
+        let c: P::ScalarField = transcript.challenge_scalar();
 
         // Complete KZG proof
-        let ck_a_kzg_opening = prove_commitment_key_kzg_opening(
+        let ck_a_kzg_opening = prove_commitment_key_kzg_opening::<P>(
             &h_beta_powers,
             &transcript_inverse,
             P::ScalarField::one(), // r_shift = one, why?
@@ -244,7 +234,7 @@ mod tests {
     };
 
     use super::{
-        super::afgho::{AfghoCommitment, random_generators},
+        super::afgho::{random_generators, AfghoCommitment},
         *,
     };
     use crate::{

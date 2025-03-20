@@ -17,8 +17,9 @@ use icicle_runtime::{
 };
 use rayon::prelude::*;
 use std::os::raw::c_void;
+use ark_ec::short_weierstrass::SWCurveConfig;
 
-impl Icicle for G1Projective {
+impl<T: SWCurveConfig> Icicle for ark_ec::short_weierstrass::Projective<T> {
     type C = IcicleBn254;
 
     fn to_ark_projective(point: &Projective<Self::C>) -> Self {
