@@ -193,9 +193,9 @@ impl JoltField for ark_bn254::Fr {
     }
 
     // #[inline(always)]
-    // fn mul_u64_unchecked(&self, n: u64) -> Self {
-    //     ark_ff::Fp::mul_u64(*self, n)
-    // }
+    fn mul_u64_unchecked(&self, n: u64) -> Self {
+        self * &ark_ff::Fp::new_unchecked(n.into())
+    }
 }
 
 #[cfg(test)]
@@ -204,7 +204,7 @@ mod tests {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use super::*;
+    use crate::field::JoltField;
 
     #[test]
     fn implicit_montgomery_conversion() {
