@@ -39,7 +39,7 @@ macro_rules! jolt_instruction_test {
 /// 7. Checks that no unintended modifications have been made to other registers.
 macro_rules! jolt_virtual_sequence_test {
     ($instr_type:ty, $opcode:expr) => {
-        use crate::jolt::vm::rv32i_vm::RV32I;
+        use $crate::jolt::vm::rv32i_vm::RV32I;
         use ark_std::test_rng;
         use common::constants::REGISTER_COUNT;
         use rand_chacha::rand_core::RngCore;

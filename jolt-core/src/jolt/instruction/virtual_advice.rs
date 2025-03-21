@@ -118,7 +118,7 @@ mod test {
             ADVICEInstruction::<WORD_SIZE>(1 << 8),
             ADVICEInstruction::<WORD_SIZE>(1 << 16),
             ADVICEInstruction::<WORD_SIZE>(1 << 32),
-            ADVICEInstruction::<WORD_SIZE>(1 << 48 + 2),
+            ADVICEInstruction::<WORD_SIZE>(1 << (48 + 2)),
             ADVICEInstruction::<WORD_SIZE>(u64_max),
             ADVICEInstruction::<WORD_SIZE>(u64_max - 1),
         ];

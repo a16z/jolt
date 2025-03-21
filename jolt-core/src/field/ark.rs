@@ -6,8 +6,8 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use super::{FieldOps, JoltField};
 
 impl FieldOps for ark_bn254::Fr {}
-impl<'a, 'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for &'a ark_bn254::Fr {}
-impl<'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
+impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
+impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
 static mut SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 4] = [vec![], vec![], vec![], vec![]];
 

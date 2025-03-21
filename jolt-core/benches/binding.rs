@@ -49,7 +49,8 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
                 },
                 |(mut poly, r)| {
                     for i in 0..num_vars {
-                        criterion::black_box(poly.bound_poly_var_top(&r[i]));
+                        poly.bound_poly_var_top(&r[i]);
+                        criterion::black_box(());
                     }
                 },
             );
@@ -105,7 +106,8 @@ fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize)
                 },
                 |(mut poly, r)| {
                     for i in 0..num_vars {
-                        criterion::black_box(poly.bind(r[i]));
+                        poly.bind(r[i]);
+                        criterion::black_box(());
                     }
                 },
             );
@@ -139,7 +141,8 @@ fn benchmark_sparse_interleaved<F: JoltField>(
                 },
                 |(mut poly, r)| {
                     for i in 0..num_vars {
-                        criterion::black_box(poly.bind(r[i]));
+                        poly.bind(r[i]);
+                        criterion::black_box(());
                     }
                 },
             );

@@ -249,6 +249,11 @@ fn main() {
 
     // GKR
     config.name = "HyperKZG GKR";
+    <BatchedDenseGrandProduct<_> as BatchedGrandProduct<
+        Fr,
+        HyperKZG<Bn254, KeccakTranscript>,
+        KeccakTranscript,
+    >>::Config::default();
     benchmark_prove_and_verify::<
         HyperKZG<Bn254, KeccakTranscript>,
         Fr,
@@ -257,11 +262,7 @@ fn main() {
     >(
         &mut c,
         config,
-        <BatchedDenseGrandProduct<_> as BatchedGrandProduct<
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::Config::default(),
+        (),
     );
 
     c.final_summary();
