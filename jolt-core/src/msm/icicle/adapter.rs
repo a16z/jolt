@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use crate::msm::{GpuBaseType, VariableBaseMSM};
 use ark_bn254::G1Projective;
+use ark_ec::short_weierstrass::SWCurveConfig;
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::{BigInteger, Field, PrimeField};
 use icicle_bn254::curve::CurveCfg as IcicleBn254;
@@ -17,7 +18,6 @@ use icicle_runtime::{
 };
 use rayon::prelude::*;
 use std::os::raw::c_void;
-use ark_ec::short_weierstrass::SWCurveConfig;
 
 impl<T: SWCurveConfig> Icicle for ark_ec::short_weierstrass::Projective<T> {
     type C = IcicleBn254;

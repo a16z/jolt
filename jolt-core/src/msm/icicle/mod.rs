@@ -22,7 +22,10 @@ pub trait ScalarMulConfig: ScalarMul {}
 #[cfg(not(feature = "icicle"))]
 pub trait Icicle {}
 #[cfg(not(feature = "icicle"))]
-impl<T: ark_ec::short_weierstrass::SWCurveConfig> Icicle for ark_ec::short_weierstrass::Projective<T> {}
+impl<T: ark_ec::short_weierstrass::SWCurveConfig> Icicle
+    for ark_ec::short_weierstrass::Projective<T>
+{
+}
 
 /// Initializes the icicle backend and sets the CUDA device as active and returns true if successful.
 ///

@@ -414,7 +414,7 @@ where
 impl<P: Pairing, G: Group<P>> UnivariateKZG<P, G>
 where
     P::ScalarField: JoltField,
-    G::Curve: CurveGroup<ScalarField= P::ScalarField> + Icicle,
+    G::Curve: CurveGroup<ScalarField = P::ScalarField> + Icicle,
 {
     #[tracing::instrument(skip_all, name = "KZG::open")]
     pub fn generic_open(
