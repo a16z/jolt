@@ -1,4 +1,4 @@
-use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
+use ark_ff::{BigInt, prelude::*, PrimeField, UniformRand};
 use rayon::prelude::*;
 
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -30,10 +30,11 @@ impl JoltField for ark_bn254::Fr {
 
         for i in 0..4 {
             let bitshift = 16 * i;
-            let unit = <Self as ark_ff::PrimeField>::from_u64(1 << bitshift).unwrap();
+            let unit =
+                <Self as ark_ff::PrimeField>::from_bigint((1_u64 << bitshift).into()).unwrap();
             lookup_tables[i] = (0..(1 << 16))
                 .into_par_iter()
-                .map(|j| unit * <Self as ark_ff::PrimeField>::from_u64(j).unwrap())
+                .map(|j: u32| unit * <Self as ark_ff::PrimeField>::from_bigint(j.into()).unwrap())
                 .collect();
         }
 
@@ -51,7 +52,7 @@ impl JoltField for ark_bn254::Fr {
         // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+            <Self as ark_ff::PrimeField>::from_bigint(n.into()).unwrap()
         }
         #[cfg(not(test))]
         {
@@ -64,7 +65,7 @@ impl JoltField for ark_bn254::Fr {
         // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+            <Self as ark_ff::PrimeField>::from_bigint(n.into()).unwrap()
         }
         #[cfg(not(test))]
         {
@@ -77,7 +78,7 @@ impl JoltField for ark_bn254::Fr {
         // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+            <Self as ark_ff::PrimeField>::from_bigint(n.into()).unwrap()
         }
         #[cfg(not(test))]
         {
@@ -94,7 +95,7 @@ impl JoltField for ark_bn254::Fr {
         // TODO(moodlezoup): Using the lookup tables seems to break our tests
         #[cfg(test)]
         {
-            <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
+            <Self as ark_ff::PrimeField>::from_bigint(n.into()).unwrap()
         }
         #[cfg(not(test))]
         {
@@ -191,18 +192,19 @@ impl JoltField for ark_bn254::Fr {
         Some(ark_ff::Fp::new_unchecked(Self::R2))
     }
 
-    #[inline(always)]
-    fn mul_u64_unchecked(&self, n: u64) -> Self {
-        ark_ff::Fp::mul_u64(*self, n)
-    }
+    // #[inline(always)]
+    // fn mul_u64_unchecked(&self, n: u64) -> Self {
+    //     ark_ff::Fp::mul_u64(*self, n)
+    // }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
+
+    use super::*;
 
     #[test]
     fn implicit_montgomery_conversion() {
