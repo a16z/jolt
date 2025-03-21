@@ -445,7 +445,6 @@ mod tests {
 
         for aux in AuxVariable::iter().flat_map(|aux| match aux {
             AuxVariable::RelevantYChunk(_) => (0..C)
-                .into_iter()
                 .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
                 .collect(),
             _ => vec![JoltR1CSInputs::Aux(aux)],

@@ -34,13 +34,10 @@ pub trait BiniusConstructable {
 pub struct BiniusField<F: BiniusSpecific>(F);
 
 impl<F: BiniusSpecific> FieldOps for BiniusField<F> {}
-impl<'a, 'b, F: BiniusSpecific> FieldOps<&'b BiniusField<F>, BiniusField<F>>
-    for &'a BiniusField<F>
-{
-}
-impl<'b, F: BiniusSpecific> FieldOps<&'b BiniusField<F>, BiniusField<F>> for BiniusField<F> {}
+impl<F: BiniusSpecific> FieldOps<&BiniusField<F>, BiniusField<F>> for &BiniusField<F> {}
+impl<F: BiniusSpecific> FieldOps<&BiniusField<F>, BiniusField<F>> for BiniusField<F> {}
 
-impl<'a, 'b, F: BiniusSpecific> Add<&'b BiniusField<F>> for &'a BiniusField<F> {
+impl<'b, F: BiniusSpecific> Add<&'b BiniusField<F>> for &BiniusField<F> {
     type Output = BiniusField<F>;
 
     fn add(self, other: &'b BiniusField<F>) -> BiniusField<F> {
@@ -48,7 +45,7 @@ impl<'a, 'b, F: BiniusSpecific> Add<&'b BiniusField<F>> for &'a BiniusField<F> {
     }
 }
 
-impl<'a, 'b, F: BiniusSpecific> Sub<&'b BiniusField<F>> for &'a BiniusField<F> {
+impl<'b, F: BiniusSpecific> Sub<&'b BiniusField<F>> for &BiniusField<F> {
     type Output = BiniusField<F>;
 
     fn sub(self, other: &'b BiniusField<F>) -> BiniusField<F> {
@@ -56,7 +53,7 @@ impl<'a, 'b, F: BiniusSpecific> Sub<&'b BiniusField<F>> for &'a BiniusField<F> {
     }
 }
 
-impl<'a, 'b, F: BiniusSpecific> Mul<&'b BiniusField<F>> for &'a BiniusField<F> {
+impl<'b, F: BiniusSpecific> Mul<&'b BiniusField<F>> for &BiniusField<F> {
     type Output = BiniusField<F>;
 
     fn mul(self, other: &'b BiniusField<F>) -> BiniusField<F> {
@@ -64,7 +61,7 @@ impl<'a, 'b, F: BiniusSpecific> Mul<&'b BiniusField<F>> for &'a BiniusField<F> {
     }
 }
 
-impl<'a, 'b, F: BiniusSpecific> Div<&'b BiniusField<F>> for &'a BiniusField<F> {
+impl<'b, F: BiniusSpecific> Div<&'b BiniusField<F>> for &BiniusField<F> {
     type Output = BiniusField<F>;
 
     fn div(self, other: &'b BiniusField<F>) -> BiniusField<F> {

@@ -41,7 +41,7 @@ impl Constraint {
         self.b.pretty_fmt::<C, I>(f)?;
         write!(f, " == ")?;
         self.c.pretty_fmt::<C, I>(f)?;
-        writeln!(f, "")?;
+        writeln!(f)?;
 
         let mut terms = Vec::new();
         for term in self

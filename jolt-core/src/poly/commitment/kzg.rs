@@ -384,7 +384,7 @@ mod test {
         for i in 0..100 {
             let seed = [i; 32];
             let mut rng = &mut ChaCha20Rng::from_seed(seed);
-            let degree = degree_generator(&mut rng);
+            let degree = degree_generator(rng);
 
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);

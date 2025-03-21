@@ -55,7 +55,7 @@ where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {
         polys
-            .into_iter()
+            .iter()
             .map(|poly| Self::commit(poly.borrow(), setup))
             .collect()
     }

@@ -851,11 +851,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         (eval_point_0, eval_point_2, eval_point_3)
                     };
                     let flags = (
-                        *flag_chunk.get(0).unwrap_or(&F::one()),
+                        *flag_chunk.first().unwrap_or(&F::one()),
                         *flag_chunk.get(1).unwrap_or(&F::one()),
                     );
                     let fingerprints = (
-                        *fingerprint_chunk.get(0).unwrap_or(&F::zero()),
+                        *fingerprint_chunk.first().unwrap_or(&F::zero()),
                         *fingerprint_chunk.get(1).unwrap_or(&F::zero()),
                     );
 
@@ -1363,7 +1363,7 @@ mod tests {
                     "Running test with num_vars = {}, density = {}, batch_size = {}, config = {:?}",
                     num_vars, density, batch_size, config
                 );
-                run_sparse_prove_verify_test(num_vars, density, batch_size, config.clone());
+                run_sparse_prove_verify_test(num_vars, density, batch_size, *config);
             }
         }
     }
