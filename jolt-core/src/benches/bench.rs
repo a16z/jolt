@@ -227,14 +227,14 @@ where
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    program.set_input(input);
+    let inputs = postcard::to_stdvec(input).unwrap();
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
+        let (io_device, trace) = program.trace(&inputs);
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
-            RV32IJoltVM::preprocess(
+        let preprocessing: crate::jolt::vm::JoltProverPreprocessing<C, F, PCS, ProofTranscript> =
+            RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
@@ -243,7 +243,7 @@ where
                 1 << 18,
             );
 
-        let (jolt_proof, jolt_commitments, _) =
+        let (jolt_proof, jolt_commitments, verifier_io_device, _) =
             <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
                 io_device,
                 trace,
@@ -265,7 +265,7 @@ where
         );
 
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -289,15 +289,17 @@ where
 {
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
-    program.set_input(&[5u8; 32]);
-    program.set_input(&1000u32);
+
+    let mut inputs = vec![];
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
+        let (io_device, trace) = program.trace(&inputs);
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<C, F, PCS, ProofTranscript> =
-            RV32IJoltVM::preprocess(
+        let preprocessing: crate::jolt::vm::JoltProverPreprocessing<C, F, PCS, ProofTranscript> =
+            RV32IJoltVM::prover_preprocess(
                 bytecode.clone(),
                 io_device.memory_layout.clone(),
                 memory_init,
@@ -306,14 +308,14 @@ where
                 1 << 22,
             );
 
-        let (jolt_proof, jolt_commitments, _) =
+        let (jolt_proof, jolt_commitments, verifier_io_device, _) =
             <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
             );
         let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
+            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

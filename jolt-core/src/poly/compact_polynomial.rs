@@ -4,13 +4,11 @@ use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{field::JoltField, utils};
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
 
-pub trait SmallScalar: Copy + Integer + Sync {
+pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
     /// Performs a field multiplication. Uses `JoltField::mul_u64_unchecked` under the hood.
     /// WARNING: Does not convert the small scalar into Montgomery form before performing
     /// the multiplication, so the other operand should probably have an additional R^2
@@ -75,42 +73,12 @@ impl SmallScalar for i64 {
     }
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     num_vars: usize,
     len: usize,
     pub coeffs: Vec<T>,
     pub bound_coeffs: Vec<F>,
-}
-
-impl<T: SmallScalar, F: JoltField> Valid for CompactPolynomial<T, F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
-    }
-}
-
-impl<T: SmallScalar, F: JoltField> CanonicalDeserialize for CompactPolynomial<T, F> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
-        _compress: Compress,
-        _validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
-    }
-}
-
-impl<T: SmallScalar, F: JoltField> CanonicalSerialize for CompactPolynomial<T, F> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        _writer: W,
-        _compress: Compress,
-    ) -> Result<(), SerializationError> {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
-    }
-
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
-    }
 }
 
 impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {

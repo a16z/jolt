@@ -444,30 +444,106 @@ impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPoly
 impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
-        _writer: W,
-        _compress: Compress,
+        mut writer: W,
+        compress: Compress,
     ) -> Result<(), SerializationError> {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
+        // TODO(protoben) Can we use strum for this?
+        match self {
+            MultilinearPolynomial::LargeScalars(dense_polynomial) => {
+                (0_u8).serialize_with_mode(&mut writer, compress)?;
+                dense_polynomial.serialize_with_mode(&mut writer, compress)?;
+            }
+            MultilinearPolynomial::U8Scalars(compact_polynomial) => {
+                (1_u8).serialize_with_mode(&mut writer, compress)?;
+                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
+            }
+            MultilinearPolynomial::U16Scalars(compact_polynomial) => {
+                (2_u8).serialize_with_mode(&mut writer, compress)?;
+                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
+            }
+            MultilinearPolynomial::U32Scalars(compact_polynomial) => {
+                (3_u8).serialize_with_mode(&mut writer, compress)?;
+                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
+            }
+            MultilinearPolynomial::U64Scalars(compact_polynomial) => {
+                (4_u8).serialize_with_mode(&mut writer, compress)?;
+                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
+            }
+            MultilinearPolynomial::I64Scalars(compact_polynomial) => {
+                (5_u8).serialize_with_mode(&mut writer, compress)?;
+                compact_polynomial.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
     }
 
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            MultilinearPolynomial::LargeScalars(dense_polynomial) => {
+                (0_u8).serialized_size(compress) + dense_polynomial.serialized_size(compress)
+            }
+            MultilinearPolynomial::U8Scalars(compact_polynomial) => {
+                (1_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
+            }
+            MultilinearPolynomial::U16Scalars(compact_polynomial) => {
+                (2_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
+            }
+            MultilinearPolynomial::U32Scalars(compact_polynomial) => {
+                (3_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
+            }
+            MultilinearPolynomial::U64Scalars(compact_polynomial) => {
+                (4_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
+            }
+            MultilinearPolynomial::I64Scalars(compact_polynomial) => {
+                (5_u8).serialized_size(compress) + compact_polynomial.serialized_size(compress)
+            }
+        }
     }
 }
 
 impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
     fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
-        _compress: Compress,
-        _validate: Validate,
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
     ) -> Result<Self, SerializationError> {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
+        // TODO(protoben) Can we use strum for this?
+        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let res = match discriminant {
+            0 => MultilinearPolynomial::LargeScalars(
+                DensePolynomial::deserialize_with_mode(reader, compress, validate)?
+            ),
+            1 => MultilinearPolynomial::U8Scalars(
+                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
+            ),
+            2 => MultilinearPolynomial::U16Scalars(
+                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
+            ),
+            3 => MultilinearPolynomial::U32Scalars(
+                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
+            ),
+            4 => MultilinearPolynomial::U64Scalars(
+                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
+            ),
+            5 => MultilinearPolynomial::I64Scalars(
+                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
+            ),
+            _ => Err(SerializationError::InvalidData)?,
+        };
+        Ok(res)
     }
 }
 
 impl<F: JoltField> Valid for MultilinearPolynomial<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("Unused; needed to satisfy trait bounds for StructuredPolynomialData")
+        match self {
+            MultilinearPolynomial::LargeScalars(dense_polynomial) => dense_polynomial.check(),
+            MultilinearPolynomial::U8Scalars(compact_polynomial) => compact_polynomial.check(),
+            MultilinearPolynomial::U16Scalars(compact_polynomial) => compact_polynomial.check(),
+            MultilinearPolynomial::U32Scalars(compact_polynomial) => compact_polynomial.check(),
+            MultilinearPolynomial::U64Scalars(compact_polynomial) => compact_polynomial.check(),
+            MultilinearPolynomial::I64Scalars(compact_polynomial) => compact_polynomial.check(),
+        }
     }
 }
 
