@@ -26,7 +26,7 @@ use crate::jolt::vm::rv32i_vm::RV32I;
 use common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
 
 impl TryFrom<&ELFInstruction> for RV32I {
-    type Error = &'static str;
+    type Error = String;
 
     #[rustfmt::skip] // keep matches pretty
     fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
@@ -77,13 +77,13 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>::default().into()),
 
-            _ => Err(format!("Unsupported RV32I instruction: {:#010x}", instruction).as_str())
+            unsupported => Err(format!("No corresponding RV32I instruction for {:?}", unsupported))
         }
     }
 }
 
 impl TryFrom<&RVTraceRow> for RV32I {
-    type Error = &'static str;
+    type Error = String;
 
     #[rustfmt::skip] // keep matches pretty
     fn try_from(row: &RVTraceRow) -> Result<Self, Self::Error> {
@@ -134,7 +134,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertAlignedMemoryAccessInstruction::<32, 2>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
 
-            _ => Err(format!("Unsupported RV32I instruction: {:#010x}", row.instruction.opcode).as_str())
+            unsupported => Err(format!("No corresponding RV32I instruction for {:?}", unsupported))
         }
     }
 }
