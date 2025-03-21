@@ -23,9 +23,9 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     ///
     /// Params:
     /// - `vals`: Subtable entries or MLE evaluations. Assumed to be ordered
-    ///           [T1_1, ..., T1_C, T2_1, ..., T2_C, ..., Tk_1, ..., Tk_C]
-    ///           where T1, ..., Tk are the unique subtable types used by this instruction, in the order
-    ///           given by the `subtables` method below. Note that some subtable values may be unused.
+    ///   [T1_1, ..., T1_C, T2_1, ..., T2_C, ..., Tk_1, ..., Tk_C]
+    ///   where T1, ..., Tk are the unique subtable types used by this instruction, in the order
+    ///   given by the `subtables` method below. Note that some subtable values may be unused.
     /// - `C`: The "dimension" of the decomposition, i.e. the number of values read from each subtable.
     /// - `M`: The size of each subtable/memory.
     ///

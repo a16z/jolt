@@ -206,12 +206,7 @@ impl Program {
                 _ => vec![row],
             })
             .map(|row| {
-                let instruction_lookup = if let Ok(jolt_instruction) = RV32I::try_from(&row) {
-                    Some(jolt_instruction)
-                } else {
-                    // Instruction does not use lookups
-                    None
-                };
+                let instruction_lookup = RV32I::try_from(&row).ok();
 
                 JoltTraceStep {
                     instruction_lookup,
