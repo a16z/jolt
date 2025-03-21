@@ -186,6 +186,7 @@ where
     }
 
     // Helper function used to calculate recursive challenges from proof execution (transcript in reverse)
+    #[allow(clippy::type_complexity)]
     pub fn verify(
         (mut com_a, mut com_t): (PairingOutput<P>, P::G1),
         commitment_steps: &CommitmentSteps<P>,

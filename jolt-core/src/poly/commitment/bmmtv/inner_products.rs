@@ -85,12 +85,9 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
 pub enum MultiexponentiationInnerProduct {}
 
 impl MultiexponentiationInnerProduct {
-    pub fn inner_product<G: CurveGroup>(
-        left: &[G],
-        right: &[G::ScalarField],
-    ) -> Result<G, InnerProductError>
+    pub fn inner_product<G>(left: &[G], right: &[G::ScalarField]) -> Result<G, InnerProductError>
     where
-        G: Icicle,
+        G: CurveGroup + Icicle,
         G::ScalarField: JoltField,
     {
         if left.len() != right.len() {
