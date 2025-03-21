@@ -546,7 +546,7 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM, ProofTranscript};
+                use jolt::{Jolt, JoltHyperKZGProof, RV32IJoltVM, ProofTranscript, Serializable};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
                 let proof = JoltHyperKZGProof::deserialize_from_bytes(proof_bytes).unwrap();
