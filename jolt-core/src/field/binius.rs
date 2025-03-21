@@ -34,10 +34,7 @@ pub trait BiniusConstructable {
 pub struct BiniusField<F: BiniusSpecific>(F);
 
 impl<F: BiniusSpecific> FieldOps for BiniusField<F> {}
-impl<F: BiniusSpecific> FieldOps<&BiniusField<F>, BiniusField<F>>
-    for &BiniusField<F>
-{
-}
+impl<F: BiniusSpecific> FieldOps<&BiniusField<F>, BiniusField<F>> for &BiniusField<F> {}
 impl<F: BiniusSpecific> FieldOps<&BiniusField<F>, BiniusField<F>> for BiniusField<F> {}
 
 impl<'b, F: BiniusSpecific> Add<&'b BiniusField<F>> for &BiniusField<F> {

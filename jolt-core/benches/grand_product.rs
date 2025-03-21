@@ -259,11 +259,7 @@ fn main() {
         Fr,
         BatchedDenseGrandProduct<Fr>,
         KeccakTranscript,
-    >(
-        &mut c,
-        config,
-        (),
-    );
+    >(&mut c, config, ());
 
     c.final_summary();
 }

@@ -4296,7 +4296,9 @@ mod test_decode_cache {
         };
 
         // Cache miss test
-        if let Some(_index) = cache.get(2) { panic!("Unexpected cache hit") };
+        if let Some(_index) = cache.get(2) {
+            panic!("Unexpected cache hit")
+        };
     }
 
     #[test]
@@ -4314,11 +4316,15 @@ mod test_decode_cache {
         }
 
         // The oldest entry should have been removed because of the overflow
-        if let Some(_index) = cache.get(0) { panic!("Unexpected cache hit") };
+        if let Some(_index) = cache.get(0) {
+            panic!("Unexpected cache hit")
+        };
 
         // With this .get(), the entry with the word "1" moves to the tail of the list
         // and the entry with the word "2" becomes the oldest entry.
-        if let Some(index) = cache.get(1) { assert_eq!(2, index) };
+        if let Some(index) = cache.get(1) {
+            assert_eq!(2, index)
+        };
 
         // The oldest entry with the word "2" will be removed due to the overflow
         cache.insert(
@@ -4326,6 +4332,8 @@ mod test_decode_cache {
             DECODE_CACHE_ENTRY_NUM + 2,
         );
 
-        if let Some(_index) = cache.get(2) { panic!("Unexpected cache hit") };
+        if let Some(_index) = cache.get(2) {
+            panic!("Unexpected cache hit")
+        };
     }
 }
