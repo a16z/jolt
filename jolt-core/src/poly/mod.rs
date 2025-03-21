@@ -9,4 +9,5 @@ pub mod opening_proof;
 pub mod sparse_interleaved_poly;
 pub mod spartan_interleaved_poly;
 pub mod split_eq_poly;
+pub mod streaming_poly;
 pub mod unipoly;
