@@ -291,7 +291,7 @@ pub enum QuarkError {
     #[error("InvalidOpeningProof")]
     InvalidOpeningProof,
     /// Returned if eq(tau, r)*(f(1, r) - f(r, 0)*f(r,1)) does not match the result from sumcheck
-    #[error("InvalidOpeningProof")]
+    #[error("InvalidBinding")]
     InvalidBinding,
 }
 
