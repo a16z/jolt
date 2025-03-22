@@ -218,37 +218,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-crypto-primitives"
-version = "0.5.0"
-source = "git+https://github.com/a16z/crypto-primitives.git?branch=poseidon#3715d9ad70106116e8a6afe2398060eb876aaf74"
-dependencies = [
- "ahash",
- "ark-crypto-primitives-macros",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-relations",
- "ark-serialize 0.5.0",
- "ark-snark",
- "ark-std 0.5.0",
- "blake2",
- "derivative",
- "digest 0.10.7",
- "fnv",
- "merlin",
- "sha2",
-]
-
-[[package]]
-name = "ark-crypto-primitives-macros"
-version = "0.5.0"
-source = "git+https://github.com/a16z/crypto-primitives.git?branch=poseidon#3715d9ad70106116e8a6afe2398060eb876aaf74"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
 name = "ark-ec"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -410,18 +379,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-relations"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec46ddc93e7af44bcab5230937635b06fb5744464dd6a7e7b083e80ebd274384"
-dependencies = [
- "ark-ff 0.5.0",
- "ark-std 0.5.0",
- "tracing",
- "tracing-subscriber 0.2.25",
-]
-
-[[package]]
 name = "ark-serialize"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -464,18 +421,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.100",
-]
-
-[[package]]
-name = "ark-snark"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d368e2848c2d4c129ce7679a7d0d2d612b6a274d3ea6a13bad4445d61b381b88"
-dependencies = [
- "ark-ff 0.5.0",
- "ark-relations",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
 ]
 
 [[package]]
@@ -678,15 +623,6 @@ dependencies = [
  "radium",
  "tap",
  "wyz",
-]
-
-[[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -1775,7 +1711,7 @@ dependencies = [
 [[package]]
 name = "icicle-bn254"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "cmake",
  "icicle-core",
@@ -1786,7 +1722,7 @@ dependencies = [
 [[package]]
 name = "icicle-core"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "hex",
  "icicle-runtime",
@@ -1796,20 +1732,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "icicle-grumpkin"
-version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
-dependencies = [
- "cmake",
- "icicle-core",
- "icicle-hash",
- "icicle-runtime",
-]
-
-[[package]]
 name = "icicle-hash"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "cmake",
  "icicle-core",
@@ -1820,7 +1745,7 @@ dependencies = [
 [[package]]
 name = "icicle-runtime"
 version = "3.2.0"
-source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=ed93e21#ed93e21cbb405822b0aa1b58b5dc6c7837a04108"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
 dependencies = [
  "cmake",
  "once_cell",
@@ -2094,7 +2019,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "ark-bn254",
- "ark-crypto-primitives",
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
@@ -2113,12 +2037,10 @@ dependencies = [
  "iai-callgrind",
  "icicle-bn254",
  "icicle-core",
- "icicle-grumpkin",
  "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
  "memory-stats",
- "num-bigint",
  "num-integer",
  "once_cell",
  "postcard",
@@ -2127,10 +2049,8 @@ dependencies = [
  "rand_core 0.6.4",
  "rand_distr",
  "rayon",
- "regex",
  "reqwest",
  "serde",
- "serde_json",
  "sha3",
  "strum",
  "strum_macros",
@@ -2142,7 +2062,7 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-flame",
- "tracing-subscriber 0.3.19",
+ "tracing-subscriber",
  "tracing-texray",
 ]
 
@@ -2320,18 +2240,6 @@ checksum = "c73f5c649995a115e1a0220b35e4df0a1294500477f97a91d0660fb5abeb574a"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "merlin"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58c38e2799fc0978b65dfff8023ec7843e2330bb462f19198840b34b6582397d"
-dependencies = [
- "byteorder",
- "keccak",
- "rand_core 0.6.4",
- "zeroize",
 ]
 
 [[package]]
@@ -3979,7 +3887,7 @@ checksum = "bf0a738ed5d6450a9fb96e86a23ad808de2b727fd1394585da5cdd6788ffe724"
 dependencies = [
  "serde_json",
  "tracing-core",
- "tracing-subscriber 0.3.19",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4000,7 +3908,7 @@ checksum = "0bae117ee14789185e129aaee5d93750abe67fdc5a9a62650452bfe4e122a3a9"
 dependencies = [
  "lazy_static",
  "tracing",
- "tracing-subscriber 0.3.19",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4011,15 +3919,6 @@ checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
 dependencies = [
  "log",
  "once_cell",
- "tracing-core",
-]
-
-[[package]]
-name = "tracing-subscriber"
-version = "0.2.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0d2eaa99c3c2e41547cfa109e910a68ea03823cccad4a0525dcbc9b01e8c71"
-dependencies = [
  "tracing-core",
 ]
 
@@ -4047,7 +3946,7 @@ dependencies = [
  "parking_lot",
  "term_size",
  "tracing",
- "tracing-subscriber 0.3.19",
+ "tracing-subscriber",
 ]
 
 [[package]]
