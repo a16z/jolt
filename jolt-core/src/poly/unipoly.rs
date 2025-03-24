@@ -241,7 +241,7 @@ impl<F: JoltField> Sub for UniPoly<F> {
         }
         if matches!(ordering, Ordering::Less) {
             self.coeffs
-                .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
+                .extend(rhs.coeffs[self.coeffs.len()..].iter().map(|v| v.neg()));
         }
         self
     }
