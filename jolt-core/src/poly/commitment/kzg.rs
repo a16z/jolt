@@ -166,26 +166,8 @@ where
         &self.srs.g1_powers[self.offset..self.offset + self.supported_size]
     }
 
-    pub fn h_beta_powers(&self) -> Vec<P::G2> {
-        self.srs
-            .g2_powers
-            .iter()
-            .map(|affine| affine.into_group())
-            .collect()
-    }
-
-    /// Return a list of every other g2 powers
-    pub fn commitment_keys(&self) -> Vec<P::G2> {
-        self.srs
-            .g2_powers
-            .iter()
-            .map(|aff| aff.into_group())
-            .step_by(2)
-            .collect()
-    }
-
-    pub fn commitment_keys_len(&self) -> usize {
-        self.commitment_keys().len()
+    pub fn g2_powers(&self) -> &[P::G2Affine] {
+        &self.srs.g2_powers
     }
 
     pub fn len(&self) -> usize {

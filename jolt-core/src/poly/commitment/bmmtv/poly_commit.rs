@@ -72,8 +72,13 @@ where
         kzg_srs: &KZGProverKey<P>,
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        assert!(kzg_srs.commitment_keys_len() >= bivariate_polynomial.y_polynomials.len());
-        let ck = kzg_srs.commitment_keys();
+        assert!((kzg_srs.g2_powers().len() + 1) / 2 >= bivariate_polynomial.y_polynomials.len());
+        let ck = kzg_srs
+            .g2_powers()
+            .iter()
+            .map(|aff| aff.into_group())
+            .step_by(2)
+            .collect::<Vec<_>>();
 
         // Create KZG commitments to Y polynomials
         let y_polynomial_coms = bivariate_polynomial
@@ -101,12 +106,13 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
         let (x, y) = point;
-        assert!(kzg_srs.commitment_keys_len() >= bivariate_polynomial.y_polynomials.len());
+        let commitment_key_len = (kzg_srs.g2_powers().len() + 1) / 2;
+        assert!(commitment_key_len >= bivariate_polynomial.y_polynomials.len());
 
         let precomp_time = start_timer!(|| "Computing coefficients and KZG commitment");
         let mut powers_of_x = vec![];
         let mut cur = P::ScalarField::one();
-        for _ in 0..(kzg_srs.commitment_keys_len()) {
+        for _ in 0..(commitment_key_len) {
             powers_of_x.push(cur);
             cur *= *x;
         }
@@ -115,7 +121,7 @@ where
             .y_polynomials
             .iter()
             .chain([UnivariatePolynomial::zero()].iter().cycle())
-            .take(kzg_srs.commitment_keys_len())
+            .take(commitment_key_len)
             .map(|y_polynomial| {
                 let mut c = y_polynomial.coeffs.clone();
                 c.resize(kzg_srs.len(), <P::ScalarField>::zero());
@@ -124,7 +130,7 @@ where
             .collect::<Vec<Vec<P::ScalarField>>>();
         let y_eval_coeffs = (0..kzg_srs.len())
             .map(|j| {
-                (0..kzg_srs.commitment_keys_len())
+                (0..commitment_key_len)
                     .map(|i| powers_of_x[i] * coeffs[i][j])
                     .sum()
             })
@@ -203,7 +209,7 @@ where
     }
 
     fn parse_bivariate_degrees_from_srs(srs: &KZGProverKey<P>) -> (usize, usize) {
-        let x_degree = (srs.h_beta_powers().len() - 1) / 2;
+        let x_degree = (srs.g2_powers().len() - 1) / 2;
         let y_degree = srs.len() - 1;
         (x_degree, y_degree)
     }

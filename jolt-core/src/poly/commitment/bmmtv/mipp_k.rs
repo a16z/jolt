@@ -1,3 +1,4 @@
+use ark_ec::AffineRepr;
 use std::marker::PhantomData;
 
 use ark_ec::{
@@ -137,8 +138,17 @@ where
         values: (Vec<P::G1>, Vec<P::ScalarField>),
         transcript: &mut ProofTranscript,
     ) -> Result<MippKProof<P>, Error> {
-        let h_beta_powers = p_srs.h_beta_powers();
-        let commitment_key = p_srs.commitment_keys();
+        let h_beta_powers = p_srs
+            .g2_powers()
+            .iter()
+            .map(|aff| aff.into_group())
+            .collect::<Vec<_>>();
+        let commitment_key = p_srs
+            .g2_powers()
+            .iter()
+            .map(|aff| aff.into_group())
+            .step_by(2)
+            .collect();
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
         let proof =
@@ -265,7 +275,12 @@ mod tests {
         let powers_len = srs.g1_powers.len();
         let (p_srs, v_srs) = SRS::trim(Arc::new(srs), powers_len - 1);
 
-        let ck_a = p_srs.commitment_keys();
+        let ck_a = p_srs
+            .g2_powers()
+            .iter()
+            .map(|aff: &<Bn254 as Pairing>::G2Affine| aff.into_group())
+            .step_by(2)
+            .collect::<Vec<_>>();
 
         let m_a = random_generators(&mut rng, TEST_SIZE);
         let b = BnScalarField::rand(&mut rng);
