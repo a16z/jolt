@@ -67,7 +67,7 @@ pub fn verify_kzg_g2<P: Pairing>(
     point: P::ScalarField,
 ) -> bool {
     let evaluation = polynomial_evaluation_product_form_from_transcript(transcript, point, r_shift);
-    UnivariateKZG::<P, G2>::verify(v_srs, commitment, point, proof, evaluation)
+    UnivariateKZG::<P, G2>::verify_g2(v_srs, commitment, point, proof, evaluation)
 }
 
 fn polynomial_evaluation_product_form_from_transcript<F: Field>(
@@ -153,7 +153,7 @@ where
             .collect::<Vec<_>>();
 
         // KZG challenge point
-        transcript.append_serializable(&ck_a_final);
+        transcript.append_point(&ck_a_final);
         let c: P::ScalarField = transcript.challenge_scalar();
 
         // Complete KZG proof
@@ -187,7 +187,7 @@ where
             .collect::<Vec<_>>();
 
         // KZG challenge point
-        transcript.append_serializable(&proof.final_ck);
+        transcript.append_point(&proof.final_ck);
         let c = transcript.challenge_scalar();
 
         // Check commitment key
@@ -238,7 +238,7 @@ mod tests {
         *,
     };
     use crate::{
-        poly::commitment::{bmmtv::tipa::Field, kzg::SRS},
+        poly::commitment::{bmmtv::mipp_k::Field, kzg::SRS},
         utils::transcript::KeccakTranscript,
     };
 

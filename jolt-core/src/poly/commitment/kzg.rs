@@ -440,7 +440,7 @@ where
 }
 
 impl<P: Pairing> UnivariateKZG<P, G2> {
-    pub fn verify(
+    pub fn verify_g2(
         v_srs: &KZGVerifierKey<P>,
         commitment: P::G2,
         point: P::ScalarField,

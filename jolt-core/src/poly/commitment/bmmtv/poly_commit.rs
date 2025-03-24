@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 
 use super::{
     afgho::AfghoCommitment,
-    tipa::{MippK, MippKProof},
+    mipp_k::{MippK, MippKProof},
     Error,
 };
 use crate::field::JoltField;
@@ -81,13 +81,10 @@ where
             .iter()
             .chain([UnivariatePolynomial::zero()].iter().cycle())
             .take(ck.len())
-            .map(|y_polynomial| UnivariateKZG::<P>::commit(kzg_srs, y_polynomial))
-            .collect::<Result<Vec<P::G1Affine>, _>>()?;
-        // TODO update
-        let y_polynomial_coms = y_polynomial_coms
-            .into_iter()
-            .map(|affine| affine.into_group())
-            .collect::<Vec<_>>();
+            .map(|y_polynomial| {
+                UnivariateKZG::<P>::commit(kzg_srs, y_polynomial).map(|affine| affine.into_group())
+            })
+            .collect::<Result<Vec<P::G1>, _>>()?;
 
         // Create AFGHO commitment to Y polynomial commitments
         Ok((

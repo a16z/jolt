@@ -1,5 +1,6 @@
-//! This crate defines what is a Double Homomorphic Commitment and
-//! exports some implementations of it like Afgho, Identity and Pedersen
+//! Afgho commitment
+//! 
+//! This module implements an inner pairing commitment implementation
 
 use std::marker::PhantomData;
 

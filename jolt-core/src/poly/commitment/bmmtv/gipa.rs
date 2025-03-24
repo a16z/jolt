@@ -1,4 +1,4 @@
-//! General Inner Produc Arguments
+//! General Inner Product Arguments
 //!
 //! This is the building block of other Product Arguments like Tipa
 use std::marker::PhantomData;
@@ -133,9 +133,9 @@ where
 
                     // Calculate Fiat-Shamir challenge
                     transcript.append_serializable(&com_l.0);
-                    transcript.append_serializable(&com_l.1);
+                    transcript.append_point(&com_l.1);
                     transcript.append_serializable(&com_r.0);
-                    transcript.append_serializable(&com_r.1);
+                    transcript.append_point(&com_r.1);
                     let c: P::ScalarField = transcript.challenge_scalar();
                     let c_inv = JoltField::inverse(&c).unwrap();
 
@@ -197,9 +197,9 @@ where
             // Fiat-Shamir challenge
 
             transcript.append_serializable(&com_l.0);
-            transcript.append_serializable(&com_l.1);
+            transcript.append_point(&com_l.1);
             transcript.append_serializable(&com_r.0);
-            transcript.append_serializable(&com_r.1);
+            transcript.append_point(&com_r.1);
 
             let c: P::ScalarField = transcript.challenge_scalar();
             let c_inv = JoltField::inverse(&c).unwrap();
