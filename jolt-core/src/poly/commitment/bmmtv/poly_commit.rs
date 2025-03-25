@@ -52,7 +52,7 @@ pub struct OpeningProof<P: Pairing> {
     kzg_proof: P::G1,
 }
 
-pub struct BivariatePolynomialCommitment<P: Pairing, D>(MippK<P, D>);
+pub struct BivariatePolynomialCommitment<P, D>(MippK<P, D>);
 
 impl<P: Pairing, ProofTranscript: Transcript> BivariatePolynomialCommitment<P, ProofTranscript>
 where
@@ -189,10 +189,7 @@ where
     }
 }
 
-pub struct UnivariatePolynomialCommitment<P, D> {
-    _pairing: PhantomData<P>,
-    _digest: PhantomData<D>,
-}
+pub struct UnivariatePolynomialCommitment<P, D>(BivariatePolynomialCommitment<P, D>);
 
 impl<P: Pairing, ProofTranscript: Transcript> UnivariatePolynomialCommitment<P, ProofTranscript>
 where
