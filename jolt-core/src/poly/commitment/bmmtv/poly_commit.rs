@@ -6,9 +6,7 @@ use ark_ec::{
     CurveGroup,
 };
 use ark_ff::{Field, One, Zero};
-
-use ark_std::{end_timer, start_timer};
-use std::marker::PhantomData;
+use tracing::Level;
 
 use super::{
     afgho::AfghoCommitment,
@@ -34,7 +32,7 @@ where
         let (x, y) = point;
         let mut point_x_powers = vec![];
         let mut cur = F::one();
-        for _ in 0..(self.y_polynomials.len()) {
+        for _ in 0..self.y_polynomials.len() {
             point_x_powers.push(cur);
             cur *= x;
         }
@@ -109,10 +107,12 @@ where
         let commitment_key_len = (kzg_srs.g2_powers().len() + 1) / 2;
         assert!(commitment_key_len >= bivariate_polynomial.y_polynomials.len());
 
-        let precomp_time = start_timer!(|| "Computing coefficients and KZG commitment");
+        let precomp_time =
+            tracing::span!(Level::TRACE, "Computing coefficients and KZG commitment");
+        let _enter = precomp_time.enter();
         let mut powers_of_x = vec![];
         let mut cur = P::ScalarField::one();
-        for _ in 0..(commitment_key_len) {
+        for _ in 0..commitment_key_len {
             powers_of_x.push(cur);
             cur *= *x;
         }
@@ -137,19 +137,15 @@ where
             .collect::<Vec<P::ScalarField>>();
         // Can unwrap because y_eval_coeffs.len() is guarnateed to be equal to kzg_srs.len()
         let y_eval_comm = P::G1::msm(kzg_srs.g1_powers(), &y_eval_coeffs).unwrap();
-        end_timer!(precomp_time);
+        drop(_enter);
 
-        let ipa_time = start_timer!(|| "Computing IPA proof");
         let ip_proof = MippK::<P, ProofTranscript>::prove(
             kzg_srs,
             (y_polynomial_comms, powers_of_x),
             transcript,
         )?;
-        end_timer!(ipa_time);
-        let kzg_time = start_timer!(|| "Computing KZG opening proof");
         let (kzg_proof, _eval) =
             UnivariateKZG::<P>::open(kzg_srs, &UnivariatePolynomial::from_coeff(y_eval_coeffs), y)?;
-        end_timer!(kzg_time);
 
         Ok(OpeningProof {
             ip_proof,
@@ -181,10 +177,6 @@ where
             &proof.kzg_proof.into_affine(),
             &eval,
         )?;
-        println!(
-            "ip_proof_valid: {}, kzg_proof_valid: {}",
-            ip_proof_valid, kzg_proof_valid
-        );
         Ok(ip_proof_valid && kzg_proof_valid)
     }
 }

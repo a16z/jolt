@@ -3,10 +3,6 @@
 //! This is the building block of other Product Arguments like Tipa
 use std::marker::PhantomData;
 
-use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter, end_timer, start_timer};
-
 use super::Error;
 use crate::msm::Icicle;
 use crate::{
@@ -16,6 +12,10 @@ use crate::{
     },
     utils::transcript::Transcript,
 };
+use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rayon::prelude::*;
+use tracing::Level;
 
 pub type CommitmentSteps<P> = Vec<(
     (PairingOutput<P>, <P as Pairing>::G1),
@@ -75,6 +75,7 @@ where
     /// This final element is our proof + intermidiate commitments
     ///
     /// [a41] + [com_1, com2, com3]
+    #[tracing::instrument(name = "Gipa::prove", skip_all)]
     pub fn prove(
         mut g1: Vec<P::G1>,
         mut g2: Vec<P::G2>,
@@ -89,7 +90,8 @@ where
 
         // for loop instead of using recursion
         let (final_msg, final_param) = 'recurse: loop {
-            let recurse = start_timer!(|| format!("Recurse round size {}", msg_l.len()));
+            let recurse = tracing::span!(Level::TRACE, "New Round", size = g1.len());
+            let _ender = recurse.enter();
             match (&g1.as_slice(), &scalars.as_slice(), &g2.as_slice()) {
                 ([m_l], [m_r], [param_l]) => {
                     // base case
@@ -109,22 +111,24 @@ where
                     let m_rl = &m_r[..split];
                     let m_rr = &m_r[split..];
 
-                    let cl = start_timer!(|| "Commit L");
+                    let cl = tracing::span!(Level::TRACE, "Commit L");
+                    let _enter = cl.enter();
                     let com_l = (
                         // commit to first left half
                         AfghoCommitment::commit(param_ll, m_ll)?,
                         // commit to inner pairing from first half of left msg with first half of right message
                         MultiexponentiationInnerProduct::inner_product(m_ll, m_rl)?,
                     );
-                    end_timer!(cl);
-                    let cr = start_timer!(|| "Commit R");
+                    drop(_enter);
+                    let cr = tracing::span!(Level::TRACE, "Commit R");
+                    let _enter = cl.enter();
                     let com_r = (
                         // commit to second left half
                         AfghoCommitment::commit(param_lr, m_lr)?,
                         // commit to inner pairing from second half of left msg with second half of right message
                         MultiexponentiationInnerProduct::inner_product(m_lr, m_rr)?,
                     );
-                    end_timer!(cr);
+                    drop(_enter);
 
                     // Calculate Fiat-Shamir challenge
                     transcript.append_serializable(&com_l.0);
@@ -135,35 +139,40 @@ where
                     let c_inv = JoltField::inverse(&c).unwrap();
 
                     // Set up values for next step of recursion
-                    let rescale_ml = start_timer!(|| "Rescale ML");
-                    g1 = cfg_iter!(m_ll)
+                    let rescale_ml = tracing::span!(Level::TRACE, "Rescale ML");
+                    let _enter = rescale_ml.enter();
+                    g1 = m_ll
+                        .par_iter()
                         .map(|a| *a * c)
                         .zip(m_lr)
                         .map(|(a_1, a_2)| a_1 + a_2)
                         .collect::<Vec<P::G1>>();
-                    end_timer!(rescale_ml);
+                    drop(_enter);
 
-                    let rescale_mr = start_timer!(|| "Rescale MR");
-                    scalars = cfg_iter!(m_rr)
+                    let rescale_mr = tracing::span!(Level::TRACE, "Rescale MR");
+                    let _enter = rescale_mr.enter();
+                    scalars = m_rr
+                        .par_iter()
                         .map(|b| *b * c_inv)
                         .zip(m_rl)
                         .map(|(b_1, b_2)| b_1 + b_2)
                         .collect::<Vec<P::ScalarField>>();
-                    end_timer!(rescale_mr);
+                    drop(_enter);
 
-                    let rescale_pl = start_timer!(|| "Rescale CK1");
-                    g2 = cfg_iter!(param_lr)
+                    let rescale_pl = tracing::span!(Level::TRACE, "Rescale CK1");
+                    let _enter = rescale_pl.enter();
+                    g2 = param_lr
+                        .par_iter()
                         .map(|a| *a * c_inv)
                         .zip(param_ll)
                         .map(|(a_1, a_2)| a_1 + a_2)
                         .collect::<Vec<P::G2>>();
-                    end_timer!(rescale_pl);
+                    drop(_enter);
 
                     // add commitment steps
                     commitment_steps.push((com_l, com_r));
                     // add scalar used to trancript
                     r_transcript.push(c);
-                    end_timer!(recurse);
                 }
             }
         };
@@ -250,7 +259,7 @@ mod tests {
             let mut ck_b_agg_challenge_exponents = vec![P::ScalarField::one()];
             for (i, c) in transcript.iter().enumerate() {
                 let c_inv = JoltField::inverse(c).unwrap();
-                for j in 0..(2_usize).pow(i as u32) {
+                for j in 0..2_usize.pow(i as u32) {
                     ck_a_agg_challenge_exponents.push(ck_a_agg_challenge_exponents[j] * c_inv);
                     ck_b_agg_challenge_exponents.push(ck_b_agg_challenge_exponents[j] * c);
                 }

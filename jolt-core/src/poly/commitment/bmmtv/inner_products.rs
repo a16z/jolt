@@ -5,7 +5,6 @@ use ark_ec::{
     pairing::{MillerLoopOutput, Pairing, PairingOutput},
     CurveGroup,
 };
-use ark_std::cfg_iter;
 
 use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
 use rayon::prelude::*;
@@ -46,10 +45,12 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
     let aff_left = P::G1::normalize_batch(left);
     let aff_right = P::G2::normalize_batch(right);
 
-    let left = cfg_iter!(aff_left)
+    let left = aff_left
+        .par_iter()
         .map(P::G1Prepared::from)
         .collect::<Vec<_>>();
-    let right = cfg_iter!(aff_right)
+    let right = aff_right
+        .par_iter()
         .map(P::G2Prepared::from)
         .collect::<Vec<_>>();
 

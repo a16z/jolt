@@ -1,6 +1,7 @@
 use crate::poly::commitment::bmmtv::gipa::GipaProof;
 use ark_ec::AffineRepr;
 use std::marker::PhantomData;
+use tracing::Level;
 
 use ark_ec::{
     pairing::{Pairing, PairingOutput},
@@ -8,8 +9,8 @@ use ark_ec::{
 };
 use ark_ff::{Field, One};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter, end_timer, start_timer};
 use itertools::Itertools;
+use rayon::prelude::*;
 
 use super::{
     afgho::AfghoCommitment, gipa::CommitmentSteps, inner_products::MultiexponentiationInnerProduct,
@@ -40,10 +41,8 @@ where
         UniPoly::from_coeff(polynomial_coefficients_from_transcript(transcript, r_shift));
     assert_eq!(srs_powers.len(), ck_polynomial.coeffs.len());
 
-    let eval = start_timer!(|| "polynomial eval");
     let ck_polynomial_c_eval =
         polynomial_evaluation_product_form_from_transcript(transcript, point, r_shift);
-    end_timer!(eval);
 
     let poly = ck_polynomial - UniPoly::from_coeff(vec![ck_polynomial_c_eval]);
     let powers = P::G2::normalize_batch(srs_powers);
@@ -65,6 +64,7 @@ pub fn verify_kzg_g2<P: Pairing>(
     UnivariateKZG::<P, G2>::verify_g2(v_srs, commitment, point, proof, evaluation)
 }
 
+#[tracing::instrument(name = "polynomial eval", skip_all)]
 fn polynomial_evaluation_product_form_from_transcript<F: Field>(
     transcript: &[F],
     z: F,
@@ -85,7 +85,7 @@ fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: 
     let mut coefficients = vec![F::one()];
     let mut power_2_r = r_shift;
     for (i, x) in transcript.iter().enumerate() {
-        for j in 0..(2_usize).pow(i as u32) {
+        for j in 0..2_usize.pow(i as u32) {
             coefficients.push(coefficients[j] * (*x * power_2_r));
         }
         power_2_r *= power_2_r;
@@ -127,6 +127,7 @@ where
     P::ScalarField: JoltField,
     ProofTranscript: Transcript,
 {
+    #[tracing::instrument(name = "MippK::prove", skip_all)]
     pub fn prove(
         p_srs: &KZGProverKey<P>,
         values: (Vec<P::G1>, Vec<P::ScalarField>),
@@ -144,30 +145,33 @@ where
             .step_by(2)
             .collect();
         // Run GIPA
-        let gipa = start_timer!(|| "GIPA");
         let proof =
             GipaProof::<P, ProofTranscript>::prove(values.0, commitment_key, values.1, transcript)?;
-        end_timer!(gipa);
 
         // Prove final commitment key is wellformed
-        let ck_kzg = start_timer!(|| "Prove commitment key");
-        let ck_a_final = proof.final_commitment_param;
-        let transcript_inverse = cfg_iter!(proof.scalar_transcript)
-            .map(|x| JoltField::inverse(x).unwrap())
-            .collect::<Vec<_>>();
+        let (ck_a_final, ck_a_kzg_opening) = {
+            let ck_kzg = tracing::span!(Level::TRACE, "Prove commitment key");
+            let _guard = ck_kzg.enter();
+            let ck_a_final = proof.final_commitment_param;
+            let transcript_inverse = proof
+                .scalar_transcript
+                .par_iter()
+                .map(|x| JoltField::inverse(x).unwrap())
+                .collect::<Vec<_>>();
 
-        // KZG challenge point
-        transcript.append_point(&ck_a_final);
-        let c: P::ScalarField = transcript.challenge_scalar();
+            // KZG challenge point
+            transcript.append_point(&ck_a_final);
+            let c: P::ScalarField = transcript.challenge_scalar();
 
-        // Complete KZG proof
-        let ck_a_kzg_opening = prove_commitment_key_kzg_opening::<P>(
-            &h_beta_powers,
-            &transcript_inverse,
-            P::ScalarField::one(), // r_shift = one, why?
-            c,
-        )?;
-        end_timer!(ck_kzg);
+            // Complete KZG proof
+            let ck_a_kzg_opening = prove_commitment_key_kzg_opening::<P>(
+                &h_beta_powers,
+                &transcript_inverse,
+                P::ScalarField::one(), // r_shift = one, why?
+                c,
+            )?;
+            (ck_a_final, ck_a_kzg_opening)
+        };
 
         Ok(MippKProof {
             final_message: proof.final_message,
@@ -186,7 +190,8 @@ where
     ) -> Result<bool, Error> {
         let (base_com, gipa_transcript) =
             GipaProof::<P, ProofTranscript>::verify(com, &proof.commitment_steps, transcript)?;
-        let transcript_inverse = cfg_iter!(gipa_transcript)
+        let transcript_inverse = gipa_transcript
+            .par_iter()
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();
 
@@ -211,7 +216,7 @@ where
             product_form.push(<P::ScalarField>::one() + (*x * power_2_b));
             power_2_b *= power_2_b;
         }
-        let b_base = cfg_iter!(product_form).product::<P::ScalarField>();
+        let b_base = product_form.par_iter().product::<P::ScalarField>();
 
         // Verify base inner product commitment
         let (com_a, com_t) = base_com;
