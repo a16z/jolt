@@ -8,7 +8,6 @@ use ark_ec::{
 use ark_std::cfg_iter;
 
 use crate::msm::{use_icicle, Icicle, VariableBaseMSM};
-#[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
 #[derive(Debug, thiserror::Error)]
@@ -55,10 +54,7 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
         .collect::<Vec<_>>();
 
     // We want to process N chunks in parallel where N is the number of threads available
-    #[cfg(feature = "rayon")]
     let num_chunks = rayon::current_num_threads();
-    #[cfg(not(feature = "rayon"))]
-    let num_chunks = 1;
 
     let chunk_size = if num_chunks <= left.len() {
         left.len() / num_chunks
@@ -67,10 +63,7 @@ fn cfg_multi_pairing<P: Pairing>(left: &[P::G1], right: &[P::G2]) -> Option<Pair
         1
     };
 
-    #[cfg(feature = "rayon")]
     let (left_chunks, right_chunks) = (left.par_chunks(chunk_size), right.par_chunks(chunk_size));
-    #[cfg(not(feature = "rayon"))]
-    let (left_chunks, right_chunks) = (left.chunks(chunk_size), right.chunks(chunk_size));
 
     // Compute all the (partial) pairings and take the product. We have to take the product over
     // P::TargetField because MillerLoopOutput doesn't impl Product
