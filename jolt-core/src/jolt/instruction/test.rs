@@ -98,6 +98,8 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: RV32IM)
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
 
         let virtual_sequence = I::virtual_trace(trace_row);

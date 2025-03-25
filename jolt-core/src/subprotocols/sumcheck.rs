@@ -108,6 +108,17 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        #[cfg(test)]
+        {
+            let total_evals = 1 << num_rounds;
+            let mut sum = F::zero();
+            for i in 0..total_evals {
+                let params: Vec<F> = polys.iter().map(|poly| poly.get_coeff(i)).collect();
+                sum += comb_func(&params);
+            }
+            assert_eq!(&sum, claim, "Sumcheck claim is wrong");
+        }
+
         for _round in 0..num_rounds {
             // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
             // for points {0, ..., |g(x)|}
@@ -159,7 +170,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
-            // bound all tables to the verifier's challenege
+            // bound all tables to the verifier's challenge
             polys
                 .par_iter_mut()
                 .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
@@ -192,7 +203,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                     .first_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
             } else {
                 az_bz_cz_poly
-                    .subseqeunt_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+                    .subsequent_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
             }
         }
 
@@ -207,7 +218,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     // A specialized sumcheck implementation with the 0th round unrolled from the rest of the
     // `for` loop. This allows us to pass in `witness_polynomials` by reference instead of
     // passing them in as a single `DensePolynomial`, which would require an expensive
-    // concatenation. We defer the actual instantation of a `DensePolynomial` to the end of the
+    // concatenation. We defer the actual instantiation of a `DensePolynomial` to the end of the
     // 0th round.
     pub fn prove_spartan_quadratic(
         claim: &F,

@@ -60,6 +60,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: Some(quotient),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
@@ -80,6 +82,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: Some(remainder),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -100,6 +104,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let is_valid = AssertValidUnsignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
@@ -121,6 +127,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let _lte = ASSERTLTEInstruction::<WORD_SIZE>(q_y, x).lookup_entry();
@@ -141,6 +149,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let add_0: u64 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
@@ -161,6 +171,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let _assert_eq = BEQInstruction::<WORD_SIZE>(add_0, x).lookup_entry();
@@ -181,6 +193,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -200,6 +214,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace

@@ -37,6 +37,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 let result = x >> shift;
@@ -64,6 +66,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 let result = x >> shift;
@@ -89,6 +93,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
         let divu_sequence = DIVUInstruction::<WORD_SIZE>::virtual_trace(divu);
         virtual_trace.extend(divu_sequence);

@@ -517,7 +517,7 @@ mod test {
     use ark_std::{test_rng, UniformRand};
     use rand_core::SeedableRng;
 
-    // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficent formula
+    // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficient formula
     fn phi<P: Pairing>(challenge: &P::ScalarField, subscript: usize) -> P::ScalarField {
         let len = (1 << subscript) as u64;
         (0..len).fold(P::ScalarField::zero(), |mut acc, i| {

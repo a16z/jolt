@@ -38,6 +38,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SLLVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 let result = (x << shift) % (1 << WORD_SIZE);
@@ -67,6 +69,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SLLVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 let result = (x << shift) % (1 << WORD_SIZE);
@@ -92,6 +96,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SLLVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace

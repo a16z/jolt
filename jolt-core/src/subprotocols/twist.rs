@@ -19,7 +19,7 @@ use rayon::prelude::*;
 
 /// The Twist+Shout paper gives two different prover algorithms for the read-checking
 /// and write-checking algorithms in Twist, called the "local algorithm" and
-/// "alternative algorithm". The local algorithm has worse dependence on the pararmeter
+/// "alternative algorithm". The local algorithm has worse dependence on the parameter
 /// d, but benefits from locality of memory accesses.
 pub enum TwistAlgorithm {
     /// The "local algorithm" for Twist's read-checking and write-checking sumchecks,

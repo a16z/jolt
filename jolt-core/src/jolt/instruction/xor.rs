@@ -186,7 +186,7 @@ mod test {
             XORInstruction::<WORD_SIZE>(u64_max, u64_max),
             XORInstruction::<WORD_SIZE>(u64_max, 1 << 8),
             XORInstruction::<WORD_SIZE>(1 << 8, u64_max),
-            XORInstruction::<WORD_SIZE>(u64_max, 1 << 32 - 1),
+            XORInstruction::<WORD_SIZE>(u64_max, 1 << (32 - 1)),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

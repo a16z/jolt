@@ -104,3 +104,11 @@ jobs:
       - name: Check Format
         working-directory: ./jolt-evm-verifier
         run: forge fmt --check
+
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: crate-ci/typos@v1.30.0
+        with:
+          files: .

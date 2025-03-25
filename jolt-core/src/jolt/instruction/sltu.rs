@@ -222,8 +222,8 @@ mod test {
             SLTUInstruction::<WORD_SIZE>(u64_max, u64_max),
             SLTUInstruction::<WORD_SIZE>(u64_max, 1 << 32),
             SLTUInstruction::<WORD_SIZE>(1 << 32, u64_max),
-            SLTUInstruction::<WORD_SIZE>(1 << 63, 1 << 63 - 1),
-            SLTUInstruction::<WORD_SIZE>(1 << 63 - 1, 1 << 63),
+            SLTUInstruction::<WORD_SIZE>(1 << 63, 1 << (63 - 1)),
+            SLTUInstruction::<WORD_SIZE>(1 << (63 - 1), 1 << 63),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

@@ -16,7 +16,7 @@ impl Memory {
     /// # Arguments
     /// * `capacity`
     pub fn init(&mut self, capacity: u64) {
-        for _i in 0..((capacity + 7) / 8) {
+        for _i in 0..capacity.div_ceil(8) {
             self.data.push(0);
         }
     }
@@ -69,7 +69,7 @@ impl Memory {
             self.data[index]
         } else if (address % 4) == 0 {
             (self.read_word(address) as u64)
-                | ((self.read_word(address.wrapping_add(4)) as u64) << 4)
+                | ((self.read_word(address.wrapping_add(4)) as u64) << 32)
         } else {
             self.read_bytes(address, 8)
         }

@@ -46,6 +46,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 let shift_pow2: u64 = 1 << shift;
@@ -68,6 +70,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 (x, shift, bitmask)
@@ -97,6 +101,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 let shift_pow2: u64 = 1 << shift;
@@ -119,6 +125,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                     },
                     memory_state: None,
                     advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
                 });
 
                 (x, shift, bitmask)
@@ -145,6 +153,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: Some(result),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let masked_advice = bitmask & result;
@@ -165,6 +175,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let is_negative = x >> (WORD_SIZE - 1);
@@ -185,6 +197,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -204,6 +218,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -223,6 +239,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let shift_pow2: u64 = 1 << shift;
@@ -244,6 +262,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -263,6 +283,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -282,6 +304,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -301,6 +325,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace

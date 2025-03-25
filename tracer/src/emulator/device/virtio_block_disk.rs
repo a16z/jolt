@@ -74,7 +74,7 @@ impl VirtioBlockDisk {
     /// * `contents` filesystem content binary
     pub fn init(&mut self, contents: Vec<u8>) {
         // @TODO: Optimize
-        for _i in 0..((contents.len() + 7) / 8) {
+        for _i in 0..contents.len().div_ceil(8) {
             self.contents.push(0);
         }
         for (i, byte) in contents.iter().enumerate() {
@@ -453,7 +453,7 @@ impl VirtioBlockDisk {
         (self.get_base_avail_address() + 4 + queue_size * 2).div_ceil(align) * align
     }
 
-    // @TODO: Follow the virtio block specification more propertly.
+    // @TODO: Follow the virtio block specification more properly.
     fn handle_disk_access(&mut self, memory: &mut MemoryWrapper) {
         let base_desc_address = self.get_base_desc_address();
         let base_avail_address = self.get_base_avail_address();

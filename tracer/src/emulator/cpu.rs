@@ -158,7 +158,7 @@ pub fn get_privilege_mode(encoding: u64) -> PrivilegeMode {
         0 => PrivilegeMode::User,
         1 => PrivilegeMode::Supervisor,
         3 => PrivilegeMode::Machine,
-        _ => panic!("Unknown privilege uncoding"),
+        _ => panic!("Unknown privilege encoding"),
     }
 }
 
@@ -315,10 +315,7 @@ impl Cpu {
             return Ok(());
         }
 
-        let original_word = match self.fetch() {
-            Ok(word) => word,
-            Err(e) => return Err(e),
-        };
+        let original_word = self.fetch()?;
         let instruction_address = self.pc;
         let word = match (original_word & 0x3) == 0x3 {
             true => {
@@ -770,7 +767,7 @@ impl Cpu {
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
     fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
-            // @TODO: Mask shuld consider of 32-bit mode
+            // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
             CSR_FRM_ADDRESS => (self.csr[CSR_FCSR_ADDRESS as usize] >> 5) & 0x7,
             CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
@@ -1286,7 +1283,7 @@ impl Cpu {
                         if rd != 0 {
                             return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x7;
                         }
-                        // rd == 0 is reseved instruction
+                        // rd == 0 is reserved instruction
                     }
                     2 => {
                         // C.LWSP
@@ -1298,7 +1295,7 @@ impl Cpu {
                         if r != 0 {
                             return (offset << 20) | (2 << 15) | (2 << 12) | (r << 7) | 0x3;
                         }
-                        // r == 0 is reseved instruction
+                        // r == 0 is reserved instruction
                     }
                     3 => {
                         // @TODO: Support C.FLWSP in 32-bit mode
@@ -1311,7 +1308,7 @@ impl Cpu {
                         if rd != 0 {
                             return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x3;
                         }
-                        // rd == 0 is reseved instruction
+                        // rd == 0 is reserved instruction
                     }
                     4 => {
                         let funct1 = (halfword >> 12) & 1; // [12]
@@ -1406,7 +1403,7 @@ impl Cpu {
                     _ => {} // Not happens
                 };
             }
-            _ => {} // No happnes
+            _ => {} // Not happens
         };
         0xffffffff // Return invalid value
     }
@@ -4299,9 +4296,8 @@ mod test_decode_cache {
         };
 
         // Cache miss test
-        match cache.get(2) {
-            Some(_index) => panic!("Unexpected cache hit"),
-            None => {}
+        if let Some(_index) = cache.get(2) {
+            panic!("Unexpected cache hit")
         };
     }
 
@@ -4320,16 +4316,14 @@ mod test_decode_cache {
         }
 
         // The oldest entry should have been removed because of the overflow
-        match cache.get(0) {
-            Some(_index) => panic!("Unexpected cache hit"),
-            None => {}
+        if let Some(_index) = cache.get(0) {
+            panic!("Unexpected cache hit")
         };
 
         // With this .get(), the entry with the word "1" moves to the tail of the list
         // and the entry with the word "2" becomes the oldest entry.
-        match cache.get(1) {
-            Some(index) => assert_eq!(2, index),
-            None => {}
+        if let Some(index) = cache.get(1) {
+            assert_eq!(2, index)
         };
 
         // The oldest entry with the word "2" will be removed due to the overflow
@@ -4338,9 +4332,8 @@ mod test_decode_cache {
             DECODE_CACHE_ENTRY_NUM + 2,
         );
 
-        match cache.get(2) {
-            Some(_index) => panic!("Unexpected cache hit"),
-            None => {}
+        if let Some(_index) = cache.get(2) {
+            panic!("Unexpected cache hit")
         };
     }
 }

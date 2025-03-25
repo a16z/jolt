@@ -237,7 +237,7 @@ impl<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcri
     }
 }
 
-/// Jolt's R1CS constraint inputs are typically represneted as an enum.
+/// Jolt's R1CS constraint inputs are typically represented as an enum.
 /// This trait serves two main purposes:
 /// - Defines a canonical ordering over inputs (and thus indices for each input).
 ///   This is needed for sumcheck.
@@ -445,7 +445,6 @@ mod tests {
 
         for aux in AuxVariable::iter().flat_map(|aux| match aux {
             AuxVariable::RelevantYChunk(_) => (0..C)
-                .into_iter()
                 .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
                 .collect(),
             _ => vec![JoltR1CSInputs::Aux(aux)],
