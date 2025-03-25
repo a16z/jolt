@@ -1,8 +1,6 @@
 //! Afgho commitment
-//! 
+//!
 //! This module implements an inner pairing commitment implementation
-
-use std::marker::PhantomData;
 
 use ark_ec::{
     pairing::{Pairing, PairingOutput},
@@ -22,7 +20,7 @@ pub fn random_generators<R: Rng, G: CurveGroup>(rng: &mut R, num: usize) -> Vec<
 /// Afgho commitment is simply an inner pairing product commitment
 #[derive(Clone)]
 pub struct AfghoCommitment<P: Pairing> {
-    _pair: PhantomData<P>,
+    _pairing_output: PairingOutput<P>,
 }
 
 impl<P: Pairing> AfghoCommitment<P> {
