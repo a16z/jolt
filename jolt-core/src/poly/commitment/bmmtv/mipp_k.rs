@@ -207,9 +207,8 @@ where
         // Compute final scalar
         let mut power_2_b = scalar_b;
         let mut product_form = Vec::new();
-        for x in gipa_transcript.iter() {
-            product_form
-                .push(<P::ScalarField>::one() + (JoltField::inverse(x).unwrap() * power_2_b));
+        for x in transcript_inverse.iter() {
+            product_form.push(<P::ScalarField>::one() + (*x * power_2_b));
             power_2_b *= power_2_b;
         }
         let b_base = cfg_iter!(product_form).product::<P::ScalarField>();
