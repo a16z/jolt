@@ -76,20 +76,21 @@ where
     ///
     /// [a41] + [com_1, com2, com3]
     pub fn prove(
-        (mut msg_l, mut msg_r): (Vec<P::G1>, Vec<P::ScalarField>),
-        mut params: Vec<P::G2>,
+        mut g1: Vec<P::G1>,
+        mut g2: Vec<P::G2>,
+        mut scalars: Vec<P::ScalarField>,
         transcript: &mut ProofTranscript,
     ) -> Result<GipaProof<P, ProofTranscript>, Error> {
         // fiat-shamir steps
         let mut commitment_steps = Vec::new();
         // fiat-shamir transcripts
         let mut r_transcript: Vec<P::ScalarField> = Vec::new();
-        assert!(msg_l.len().is_power_of_two());
+        assert!(g1.len().is_power_of_two());
 
         // for loop instead of using recursion
         let (final_msg, final_param) = 'recurse: loop {
             let recurse = start_timer!(|| format!("Recurse round size {}", msg_l.len()));
-            match (&msg_l.as_slice(), &msg_r.as_slice(), &params.as_slice()) {
+            match (&g1.as_slice(), &scalars.as_slice(), &g2.as_slice()) {
                 ([m_l], [m_r], [param_l]) => {
                     // base case
                     // when we get to zero
@@ -135,7 +136,7 @@ where
 
                     // Set up values for next step of recursion
                     let rescale_ml = start_timer!(|| "Rescale ML");
-                    msg_l = cfg_iter!(m_ll)
+                    g1 = cfg_iter!(m_ll)
                         .map(|a| *a * c)
                         .zip(m_lr)
                         .map(|(a_1, a_2)| a_1 + a_2)
@@ -143,7 +144,7 @@ where
                     end_timer!(rescale_ml);
 
                     let rescale_mr = start_timer!(|| "Rescale MR");
-                    msg_r = cfg_iter!(m_rr)
+                    scalars = cfg_iter!(m_rr)
                         .map(|b| *b * c_inv)
                         .zip(m_rl)
                         .map(|(b_1, b_2)| b_1 + b_2)
@@ -151,7 +152,7 @@ where
                     end_timer!(rescale_mr);
 
                     let rescale_pl = start_timer!(|| "Rescale CK1");
-                    params = cfg_iter!(param_lr)
+                    g2 = cfg_iter!(param_lr)
                         .map(|a| *a * c_inv)
                         .zip(param_ll)
                         .map(|(a_1, a_2)| a_1 + a_2)
@@ -299,7 +300,7 @@ mod tests {
 
         let mut transcript = KeccakTranscript::new(b"test");
 
-        let proof = MultiExpGIPA::prove((m_a, m_b), params.clone(), &mut transcript).unwrap();
+        let proof = MultiExpGIPA::prove(m_a, params.clone(), m_b, &mut transcript).unwrap();
 
         let mut transcript = KeccakTranscript::new(b"test");
 

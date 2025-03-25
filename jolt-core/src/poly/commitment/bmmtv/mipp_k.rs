@@ -150,11 +150,8 @@ where
             .collect();
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
-        let proof = GipaProof::<P, ProofTranscript>::prove(
-            (values.0, values.1),
-            commitment_key,
-            transcript,
-        )?;
+        let proof =
+            GipaProof::<P, ProofTranscript>::prove(values.0, commitment_key, values.1, transcript)?;
         end_timer!(gipa);
 
         // Prove final commitment key is wellformed
