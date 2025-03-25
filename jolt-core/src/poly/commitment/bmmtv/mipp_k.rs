@@ -25,12 +25,7 @@ use crate::{
     utils::transcript::Transcript,
 };
 
-/// Returns the proof that the polynomial
-///
-/// Calculate commitment of quotient polynomial such that w(X).(X-z) = P(X) - v
-///
-/// `kzg_challenge`: X
-/// `srs_powers`:
+/// Calculates KZG opening in G2
 pub fn prove_commitment_key_kzg_opening<P: Pairing>(
     srs_powers: &[P::G2],
     transcript: &[P::ScalarField],
