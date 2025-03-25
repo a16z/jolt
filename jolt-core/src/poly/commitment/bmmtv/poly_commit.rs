@@ -363,8 +363,6 @@ mod tests {
         .unwrap());
     }
 
-    // `cargo test univariate_poly_commit_test --release --features print-trace -- --ignored --nocapture`
-    // #[ignore]
     #[test]
     fn univariate_poly_commit_test() {
         let mut rng = StdRng::seed_from_u64(0u64);
