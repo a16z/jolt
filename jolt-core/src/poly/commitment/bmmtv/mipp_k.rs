@@ -1,3 +1,4 @@
+use crate::poly::commitment::bmmtv::gipa::GipaProof;
 use ark_ec::AffineRepr;
 use std::marker::PhantomData;
 
@@ -11,9 +12,7 @@ use ark_std::{cfg_iter, end_timer, start_timer};
 use itertools::Itertools;
 
 use super::{
-    afgho::AfghoCommitment,
-    gipa::{CommitmentSteps, Gipa},
-    inner_products::MultiexponentiationInnerProduct,
+    afgho::AfghoCommitment, gipa::CommitmentSteps, inner_products::MultiexponentiationInnerProduct,
     Error,
 };
 use crate::{
@@ -151,8 +150,11 @@ where
             .collect();
         // Run GIPA
         let gipa = start_timer!(|| "GIPA");
-        let proof =
-            Gipa::<P, ProofTranscript>::prove((values.0, values.1), commitment_key, transcript)?;
+        let proof = GipaProof::<P, ProofTranscript>::prove(
+            (values.0, values.1),
+            commitment_key,
+            transcript,
+        )?;
         end_timer!(gipa);
 
         // Prove final commitment key is wellformed
@@ -191,7 +193,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<bool, Error> {
         let (base_com, gipa_transcript) =
-            Gipa::<P, ProofTranscript>::verify(com, &proof.commitment_steps, transcript)?;
+            GipaProof::<P, ProofTranscript>::verify(com, &proof.commitment_steps, transcript)?;
         let transcript_inverse = cfg_iter!(gipa_transcript)
             .map(|x| JoltField::inverse(x).unwrap())
             .collect::<Vec<_>>();

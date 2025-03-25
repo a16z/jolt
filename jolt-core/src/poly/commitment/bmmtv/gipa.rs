@@ -16,33 +16,27 @@ use crate::{
     },
     utils::transcript::Transcript,
 };
-// #[cfg(feature = "rayon")]
-// use rayon::prelude::*;
-
-/// General Inner Product Argument
-///
-/// This is basically how bullet-proofs are built
-pub struct Gipa<P, ProofTranscript> {
-    _pairing: PhantomData<P>,
-    _transcript: PhantomData<ProofTranscript>,
-}
 
 pub type CommitmentSteps<P> = Vec<(
     (PairingOutput<P>, <P as Pairing>::G1),
     (PairingOutput<P>, <P as Pairing>::G1),
 )>;
 
-/// Proof of [`Gipa`]
+/// Proof for General Inner Product Argument
+///
+/// This is basically how bullet-proofs are built
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
-pub struct GipaProof<P: Pairing> {
+pub struct GipaProof<P: Pairing, ProofTranscript> {
     pub(crate) commitment_steps: CommitmentSteps<P>,
     pub(crate) final_message: (P::G1, P::ScalarField),
     // auxiliar info
     pub(crate) scalar_transcript: Vec<P::ScalarField>,
     pub(crate) final_commitment_param: P::G2,
+    // we use fn because we need it to be Send without specifying bounds
+    _transcript: PhantomData<fn() -> ProofTranscript>,
 }
 
-impl<P, ProofTranscript> Gipa<P, ProofTranscript>
+impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
 where
     P: Pairing,
     P::G1: Icicle,
@@ -85,7 +79,7 @@ where
         (mut msg_l, mut msg_r): (Vec<P::G1>, Vec<P::ScalarField>),
         mut params: Vec<P::G2>,
         transcript: &mut ProofTranscript,
-    ) -> Result<GipaProof<P>, Error> {
+    ) -> Result<GipaProof<P, ProofTranscript>, Error> {
         // fiat-shamir steps
         let mut commitment_steps = Vec::new();
         // fiat-shamir transcripts
@@ -182,6 +176,7 @@ where
             final_message: final_msg,
             scalar_transcript: r_transcript,
             final_commitment_param: final_param,
+            _transcript: PhantomData,
         })
     }
 
@@ -235,7 +230,7 @@ mod tests {
     const TEST_SIZE: usize = 8;
 
     // used only for tests
-    impl<P, ProofTranscript> Gipa<P, ProofTranscript>
+    impl<P, ProofTranscript> GipaProof<P, ProofTranscript>
     where
         P: Pairing,
         P::G1: Icicle,
@@ -273,7 +268,7 @@ mod tests {
         fn _verify_base_commitment(
             base_ck: &P::G2,
             base_com: (PairingOutput<P>, P::G1),
-            proof: &GipaProof<P>,
+            proof: &GipaProof<P, ProofTranscript>,
         ) -> Result<bool, Error> {
             let (com_a, com_t) = base_com;
             let ck_a_base = base_ck;
@@ -289,7 +284,7 @@ mod tests {
 
     #[test]
     fn multiexponentiation_inner_product_test() {
-        type MultiExpGIPA = Gipa<Bn254, KeccakTranscript>;
+        type MultiExpGIPA = GipaProof<Bn254, KeccakTranscript>;
 
         let mut rng = StdRng::seed_from_u64(0u64);
 
