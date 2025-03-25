@@ -131,7 +131,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             precompile_output_address: None,
         });
 
-        // TOOO(moodlezoup): is this assert unnecessary?
+        // TODO(moodlezoup): is this assert unnecessary?
         let lte = ASSERTLTEInstruction::<WORD_SIZE>(q_y, x).lookup_entry();
         assert_eq!(lte, 1);
         virtual_trace.push(RVTraceRow {

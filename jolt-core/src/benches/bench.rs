@@ -1,7 +1,5 @@
 use crate::field::JoltField;
 use crate::host;
-use crate::jolt::instruction::mulhu::MULHUInstruction;
-use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};

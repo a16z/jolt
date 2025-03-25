@@ -86,7 +86,7 @@ impl<'data, F: JoltField> IntoParallelIterator for &'data ExpandingTable<F> {
     }
 }
 
-impl<'data, F: JoltField> ParallelSlice<F> for &'data ExpandingTable<F> {
+impl<F: JoltField> ParallelSlice<F> for &ExpandingTable<F> {
     fn as_parallel_slice(&self) -> &[F] {
         self.values[..self.len].as_parallel_slice()
     }
@@ -102,7 +102,7 @@ impl LookupBits {
     pub fn new(mut bits: u64, len: usize) -> Self {
         debug_assert!(len <= 64);
         if len < 64 {
-            bits = bits % (1 << len);
+            bits %= 1 << len;
         }
         Self { bits, len }
     }
@@ -124,7 +124,7 @@ impl LookupBits {
 
     pub fn pop_msb(&mut self) -> u8 {
         let msb = (self.bits >> (self.len - 1)) & 1;
-        self.bits = self.bits % (1 << (self.len - 1));
+        self.bits %= 1 << (self.len - 1);
         self.len -= 1;
         msb as u8
     }
@@ -198,8 +198,7 @@ impl PartialEq for LookupBits {
 
 pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
     let phase_length = log_K / 4;
-    let suffix_len = log_K - (j / phase_length + 1) * phase_length;
-    suffix_len
+    log_K - (j / phase_length + 1) * phase_length
 }
 
 pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize, F: JoltField>:
@@ -346,7 +345,7 @@ pub fn prove_single_instruction<
                 .for_each(|(k, u)| {
                     let (prefix, _) = k.split((4 - phase) * log_m);
                     let k_bound: usize = prefix % m;
-                    *u *= v[k_bound as usize];
+                    *u *= v[k_bound];
                 });
             drop(_guard);
             drop(span);
@@ -487,7 +486,7 @@ pub fn prove_single_instruction<
             .map(|k| {
                 let (prefix, _) = k.split(suffix_len);
                 let k_bound: usize = prefix % m;
-                v[k_bound as usize]
+                v[k_bound]
             })
             .collect();
         ra.push(MultilinearPolynomial::from(ra_i));
@@ -733,11 +732,14 @@ pub fn verify_single_instruction<
     ra_claims: [F; 4],
     transcript: &mut ProofTranscript,
 ) -> Result<(), ProofVerifyError> {
-    let (sumcheck_claim, r) = proof.verify(rv_claim, log_K + log_T, 5, transcript)?;
-    let (r_address, r_cycle_prime) = r.split_at(log_K);
+    let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
+    let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
+    let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
+    let (sumcheck_claim, r_cycle_prime) =
+        last_log_T_rounds.verify(sumcheck_claim, log_T, 5, transcript)?;
 
-    let val_eval = I::default().evaluate_mle(r_address);
-    let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(r_cycle_prime);
+    let val_eval = I::default().evaluate_mle(&r_address);
+    let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(&r_cycle_prime);
 
     assert_eq!(
         eq_eval_cycle * ra_claims.iter().product::<F>() * val_eval,
@@ -755,9 +757,8 @@ mod tests {
         jolt::instruction::{
             add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
             bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction,
-            mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction,
-            slt::SLTInstruction, sltu::SLTUInstruction, sub::SUBInstruction,
-            virtual_advice::ADVICEInstruction,
+            mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction, slt::SLTInstruction,
+            sltu::SLTUInstruction, sub::SUBInstruction, virtual_advice::ADVICEInstruction,
             virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
             virtual_assert_lte::ASSERTLTEInstruction,
             virtual_assert_valid_div0::AssertValidDiv0Instruction,

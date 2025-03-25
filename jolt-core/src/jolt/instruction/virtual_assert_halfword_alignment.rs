@@ -59,9 +59,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertHalfwordAlignmentInstruct
 
     fn lookup_entry(&self) -> u64 {
         if WORD_SIZE == 32 {
-            ((self.0 as u32 as i32 + self.1 as u32 as i32) % 2 as i32 == 0) as u64
+            ((self.0 as u32 as i32 + self.1 as u32 as i32) % 2 == 0) as u64
         } else if WORD_SIZE == 64 {
-            ((self.0 as i64 + self.1 as i64) % 2 as i64 == 0) as u64
+            ((self.0 as i64 + self.1 as i64) % 2 == 0) as u64
         } else {
             panic!("Only 32-bit and 64-bit word sizes are supported");
         }
