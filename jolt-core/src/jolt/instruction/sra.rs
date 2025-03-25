@@ -100,7 +100,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
     }
 
     fn evaluate_mle<F: JoltField>(&self, _: &[F]) -> F {
-        todo!()
+        todo!("Placeholder; will use virtual sequence when we switch to Shout")
     }
 }
 

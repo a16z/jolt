@@ -1,4 +1,4 @@
-use crate::utils::{compute_dotproduct, math::Math, split_bits};
+use crate::utils::{compute_dotproduct, math::Math};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -32,7 +32,6 @@ pub enum MultilinearPolynomial<F: JoltField> {
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
-    InterleavedHighToLow,
 }
 
 impl<F: JoltField> Default for MultilinearPolynomial<F> {
@@ -622,38 +621,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 for i in 1..degree {
                     eval += m;
                     evals[i] = eval;
-                }
-            }
-            BindingOrder::InterleavedHighToLow => {
-                let num_vars = self.get_num_vars();
-                if num_vars % 2 == 0 {
-                    // x variable, same as HighToLow case
-                    evals[0] = self.get_bound_coeff(index);
-                    if degree == 1 {
-                        return evals;
-                    }
-                    let mut eval = self.get_bound_coeff(index + self.len() / 2);
-                    let m = eval - evals[0];
-                    for i in 1..degree {
-                        eval += m;
-                        evals[i] = eval;
-                    }
-                } else {
-                    // y variable
-                    let (x_bits, y_bits) = split_bits(index, num_vars / 2);
-                    let low_index = (x_bits << (num_vars / 2 + 1)) | y_bits;
-                    let high_index =
-                        (x_bits << (num_vars / 2 + 1)) | (1 << (num_vars / 2)) | y_bits;
-                    evals[0] = self.get_bound_coeff(low_index);
-                    if degree == 1 {
-                        return evals;
-                    }
-                    let mut eval = self.get_bound_coeff(high_index);
-                    let m = eval - evals[0];
-                    for i in 1..degree {
-                        eval += m;
-                        evals[i] = eval;
-                    }
                 }
             }
         };

@@ -149,7 +149,6 @@ mod test {
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
-        // ALIGN = 2
         for _ in 0..256 {
             let x = rng.next_u64();
             let imm = rng.next_u64() as i64 % (1 << 12);
@@ -165,7 +164,6 @@ mod test {
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 64;
 
-        // ALIGN = 2
         for _ in 0..256 {
             let x = rng.next_u64();
             let imm = rng.next_u64() as i64 % (1 << 12);

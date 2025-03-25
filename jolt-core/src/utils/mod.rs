@@ -183,6 +183,18 @@ pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
     r_i
 }
 
+/// Splits a 64-bit value into two 32-bit values by separating even and odd bits.
+/// The even bits (indices 0,2,4,...) go into the first returned value, and odd bits (indices 1,3,5,...) into the second.
+///
+/// # Arguments
+///
+/// * `val` - The 64-bit input value to split
+///
+/// # Returns
+///
+/// A tuple (x, y) where:
+/// - x contains the bits from even indices (0,2,4,...) compacted into the low 32 bits
+/// - y contains the bits from odd indices (1,3,5,...) compacted into the low 32 bits
 pub fn uninterleave_bits(val: u64) -> (u32, u32) {
     // Isolate even and odd bits.
     let mut x_bits = (val >> 1) & 0x5555_5555_5555_5555;
@@ -205,6 +217,25 @@ pub fn uninterleave_bits(val: u64) -> (u32, u32) {
     (x_bits as u32, y_bits as u32)
 }
 
+/// Combines two 32-bit values into a single 64-bit value by interleaving their bits.
+/// Takes even bits from the first argument and odd bits from the second argument.
+///
+/// # Arguments
+///
+/// * `even_bits` - A 32-bit value whose bits will be placed at even indices (0,2,4,...)
+/// * `odd_bits` - A 32-bit value whose bits will be placed at odd indices (1,3,5,...)
+///
+/// # Returns
+///
+/// A 64-bit value containing interleaved bits from the input values, with even_bits shifted into even positions
+/// and odd_bits in odd positions.
+///
+/// # Examples
+///
+/// ```
+/// # use jolt_core::utils::interleave_bits;
+/// assert_eq!(interleave_bits(0b01, 0b10), 0b100);
+/// ```
 pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
     // Insert zeros between each bit of `x_bits`
     let mut x_bits = even_bits as u64;
