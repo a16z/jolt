@@ -70,7 +70,7 @@ where
         kzg_srs: &KZGProverKey<P>,
         bivariate_polynomial: &BivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        assert!((kzg_srs.g2_powers().len() + 1) / 2 >= bivariate_polynomial.y_polynomials.len());
+        assert!(kzg_srs.g2_powers().len().div_ceil(2) >= bivariate_polynomial.y_polynomials.len());
         let ck = kzg_srs
             .g2_powers()
             .iter()
@@ -104,7 +104,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
         let (x, y) = point;
-        let commitment_key_len = (kzg_srs.g2_powers().len() + 1) / 2;
+        let commitment_key_len = kzg_srs.g2_powers().len().div_ceil(2);
         assert!(commitment_key_len >= bivariate_polynomial.y_polynomials.len());
 
         let precomp_time =
