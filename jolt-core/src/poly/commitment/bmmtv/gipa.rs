@@ -29,7 +29,7 @@ pub type CommitmentSteps<P> = Vec<(
 pub struct GipaProof<P: Pairing, ProofTranscript> {
     pub(crate) commitment_steps: CommitmentSteps<P>,
     pub(crate) final_message: (P::G1, P::ScalarField),
-    // auxiliar info
+    // auxiliary info
     pub(crate) scalar_transcript: Vec<P::ScalarField>,
     pub(crate) final_commitment_param: P::G2,
     // we use fn because we need it to be Send without specifying bounds
@@ -49,7 +49,7 @@ where
     ///
     /// [a11, a12, a13, a14, a15, a16, a17, a18]
     ///
-    /// We split it in two halfs and compute an operation
+    /// We split it in two halves and compute an operation
     ///
     /// [a11 + a15, a12 + a16, a13 + a17, a14 + a18]
     ///
@@ -72,7 +72,7 @@ where
     ///
     /// [a31 + a32]
     ///
-    /// This final element is our proof + intermidiate commitments
+    /// This final element is our proof + intermediate commitments
     ///
     /// [a41] + [com_1, com2, com3]
     #[tracing::instrument(name = "Gipa::prove", skip_all)]
@@ -121,7 +121,7 @@ where
                     );
                     drop(_enter);
                     let cr = tracing::span!(Level::TRACE, "Commit R");
-                    let _enter = cl.enter();
+                    let _enter = cr.enter();
                     let com_r = (
                         // commit to second left half
                         AfghoCommitment::commit(param_lr, m_lr)?,

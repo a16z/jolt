@@ -135,7 +135,7 @@ where
                     .sum()
             })
             .collect::<Vec<P::ScalarField>>();
-        // Can unwrap because y_eval_coeffs.len() is guarnateed to be equal to kzg_srs.len()
+        // Can unwrap because y_eval_coeffs.len() is guaranteed to be equal to kzg_srs.len()
         let y_eval_comm = P::G1::msm(kzg_srs.g1_powers(), &y_eval_coeffs).unwrap();
         drop(_enter);
 
