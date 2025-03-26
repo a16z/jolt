@@ -2,6 +2,8 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
+/// Returns the lower WORD_SIZE bits. Used to range-check values to be in
+/// the range [0, 2^WORD_SIZE).
 pub enum LowerWordSuffix<const WORD_SIZE: usize> {}
 
 impl<const WORD_SIZE: usize> SparseDenseSuffix for LowerWordSuffix<WORD_SIZE> {

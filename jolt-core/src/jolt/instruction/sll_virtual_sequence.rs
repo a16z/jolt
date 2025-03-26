@@ -3,6 +3,7 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 
+/// Performs a logical left shift as a multiplication by a power of 2.
 pub struct SLLVirtualSequence<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for SLLVirtualSequence<WORD_SIZE> {

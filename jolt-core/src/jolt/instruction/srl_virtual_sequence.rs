@@ -3,6 +3,7 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::{divu::DIVUInstruction, VirtualInstructionSequence};
 
+/// Performs a logical right shift as a division by a power of 2.
 pub struct SRLVirtualSequence<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<WORD_SIZE> {

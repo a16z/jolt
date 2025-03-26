@@ -2,6 +2,9 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
+/// 1 if the divisor (first operand) is all 0s and the quotient (second operand) is
+/// all 1s; 0 otherwise. This is how the expected behavior for division-by-zero,
+/// according to the RISC-V spec.
 pub enum DivByZeroSuffix {}
 
 impl SparseDenseSuffix for DivByZeroSuffix {

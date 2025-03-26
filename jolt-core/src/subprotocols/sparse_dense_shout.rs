@@ -27,6 +27,9 @@ use rayon::{prelude::*, slice::Iter};
 use std::{fmt::Display, ops::Index};
 use strum::{EnumCount, IntoEnumIterator};
 
+/// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
+/// built up incrementally as we receive random challenges `r_j` over the
+/// course of sumcheck.
 #[derive(Clone)]
 struct ExpandingTable<F: JoltField> {
     len: usize,
@@ -35,6 +38,7 @@ struct ExpandingTable<F: JoltField> {
 }
 
 impl<F: JoltField> ExpandingTable<F> {
+    /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
     fn new(capacity: usize) -> Self {
         let (values, scratch_space) = rayon::join(
@@ -48,11 +52,14 @@ impl<F: JoltField> ExpandingTable<F> {
         }
     }
 
+    /// Resets this table to be length 1, containing only the given `value`.
     fn reset(&mut self, value: F) {
         self.values[0] = value;
         self.len = 1;
     }
 
+    /// Updates this table (expanding it by a factor of 2) to incorporate
+    /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
     fn update(&mut self, r_j: F) {
         self.values[..self.len]
@@ -92,6 +99,7 @@ impl<F: JoltField> ParallelSlice<F> for &ExpandingTable<F> {
     }
 }
 
+/// A bitvector type used to represent a (substring of a) lookup index.
 #[derive(Clone, Copy, Debug)]
 pub struct LookupBits {
     bits: u64,
@@ -114,6 +122,8 @@ impl LookupBits {
         (x, y)
     }
 
+    /// Splits `self` into a tuple (prefix, suffix) of `LookupBits`, where
+    /// `suffix.len() == suffix_len`.
     pub fn split(&self, suffix_len: usize) -> (Self, Self) {
         let suffix_bits = self.bits % (1 << suffix_len);
         let suffix = Self::new(suffix_bits, suffix_len);
@@ -122,17 +132,12 @@ impl LookupBits {
         (prefix, suffix)
     }
 
+    /// Pops the most significant bit from `self`, decrementing `len`.
     pub fn pop_msb(&mut self) -> u8 {
         let msb = (self.bits >> (self.len - 1)) & 1;
         self.bits %= 1 << (self.len - 1);
         self.len -= 1;
         msb as u8
-    }
-
-    pub fn get_bit(&self, index: usize) -> u8 {
-        assert!(index < self.len);
-        let bit = (self.bits >> (self.len - 1 - index)) & 1;
-        bit as u8
     }
 
     pub fn len(&self) -> usize {
@@ -196,8 +201,13 @@ impl PartialEq for LookupBits {
     }
 }
 
+/// Computes the bit-length of the suffix, for the current (`j`th) round
+/// of sumcheck.
 pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
+    // Number of sumcheck rounds per "phase" of sparse-dense sumcheck.
     let phase_length = log_K / 4;
+    // The suffix length is 3/4 * log_K at the beginning and shrinks by
+    // log_K / 4 after each phase.
     log_K - (j / phase_length + 1) * phase_length
 }
 
@@ -208,6 +218,18 @@ pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize, F: JoltField>:
     fn suffixes() -> Vec<Suffixes>;
     fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
+    /// Compute the sumcheck prover message in round `j` using the prefix-suffix
+    /// decomposition. In the first 3/4 * log(K) rounds of sumcheck, while we're
+    /// binding the "address" variables (and the "cycle" variables remain unbound),
+    /// the univariate polynomial computed each round is degree 2.
+    ///
+    /// To see this, observe that:
+    ///   eq(r', j) * ra_1(k_1, j) * ra_2(k_2, j) * ra_3(k_3, j) * ra_4(k_4, j)
+    /// is multilinear in k, since ra_1, ra_2, ra_3, and ra_4 are polynomials in
+    /// non-overlapping variables of k (and the eq term doesn't involve k at all).
+    /// Val(k) is clearly multilinear in k, so the whole summand
+    ///   eq(r', j) (\prod_i ra_i(k_i, j)) * Val(k)
+    /// is degree 2 in the "address" variables k.
     fn compute_sumcheck_prover_message(
         prefix_checkpoints: &[PrefixCheckpoint<F>],
         suffix_polys: &[DensePolynomial<F>],
@@ -223,12 +245,13 @@ pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize, F: JoltField>:
             .into_par_iter()
             .map(|b| {
                 let b = LookupBits::new(b as u64, log_len - 1);
-                // TODO(moodlezoup): Avoid allocations
+                // Evaluate all prefix MLEs with the current variable fixed to c=0
                 let prefixes_c0: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
                         prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 0, b, j)
                     })
                     .collect();
+                // Evaluate all prefix MLEs with the current variable fixed to c=2
                 let prefixes_c2: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
                         prefix.prefix_mle::<WORD_SIZE, F>(prefix_checkpoints, r_x, 2, b, j)
@@ -386,6 +409,7 @@ pub fn prove_single_instruction<
             .for_each(|(suffix_index, poly)| {
                 let suffix: Suffixes = FromPrimitive::from_u8(suffix_index as u8).unwrap();
                 if phase != 0 {
+                    // Reset polynomial
                     poly.len = m;
                     poly.num_vars = poly.len.log_2();
                     poly.Z.par_iter_mut().for_each(|eval| *eval = F::zero());
@@ -542,6 +566,8 @@ pub fn prove_single_instruction<
         .into_iter()
         .map(|checkpoint| checkpoint.unwrap())
         .collect();
+    // At this point, Val(r, k') is the combination of the prefix checkpoints (which are
+    // equal to prefix(r)) and suffixes evaluated at k' \in {0, 1}^log(m)
     let val: Vec<F> = (0..m)
         .into_par_iter()
         .map(|k| {
@@ -636,6 +662,7 @@ pub fn prove_single_instruction<
     drop(span);
 
     let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
+    // Val(k) is fully bound at this point
     let val_eval = val.final_sumcheck_claim();
 
     let span = tracing::span!(tracing::Level::INFO, "last log(T) sumcheck rounds");
@@ -734,7 +761,9 @@ pub fn verify_single_instruction<
 ) -> Result<(), ProofVerifyError> {
     let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
     let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
+    // The first log(K) rounds' univariate polynomials are degree 2
     let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
+    // The last log(T) rounds' univariate polynomials are degree 5
     let (sumcheck_claim, r_cycle_prime) =
         last_log_T_rounds.verify(sumcheck_claim, log_T, 5, transcript)?;
 

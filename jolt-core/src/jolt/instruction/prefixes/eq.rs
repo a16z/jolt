@@ -35,6 +35,7 @@ impl<F: JoltField> SparseDensePrefix<F> for EqPrefix {
         r_y: F,
         _: usize,
     ) -> PrefixCheckpoint<F> {
+        // checkpoint *= r_x * r_y + (1 - r_x) * (1 - r_y)
         let updated = checkpoints[Prefixes::Eq].unwrap_or(F::one())
             * (r_x * r_y + (F::one() - r_x) * (F::one() - r_y));
         Some(updated).into()

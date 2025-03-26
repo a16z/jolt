@@ -43,6 +43,20 @@ pub mod upper_word;
 pub mod xor;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
+    /// Evalautes the MLE for this prefix:
+    /// - prefix(r, r_x, c, b)   if j is odd
+    /// - prefix(r, c, b)        if j is even
+    ///
+    /// where the prefix checkpoint captures the "contribution" of
+    /// `r` to this evaluation.
+    ///
+    /// `r` (and potentially `r_x`) capture the variables of the prefix
+    /// that have been bound in the previous rounds of sumcheck.
+    /// To compute the current round's prover message, we're fixing the
+    /// current variable to `c`.
+    /// The remaining variables of the prefix are captured by `b`. We sum
+    /// over these variables as they range over the Boolean hypercube, so
+    /// they can be represented by a single bitvector.
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -51,6 +65,12 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
         j: usize,
     ) -> F;
 
+    /// Every two rounds of sumcheck, we update the "checkpoint" value for each
+    /// prefix, incorporating the two random challenges `r_x` and `r_y` received
+    /// since the last update.
+    /// `j` is the sumcheck round index.
+    /// A checkpoint update may depend on the values of the other prefix checkpoints,
+    /// so we pass in all such `checkpoints` to this function.
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: F,
@@ -59,6 +79,7 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     ) -> PrefixCheckpoint<F>;
 }
 
+/// An enum containing all prefixes used by Jolt's instruction lookup tables.
 #[repr(u8)]
 #[derive(EnumCountMacro, EnumIter, FromPrimitive)]
 pub enum Prefixes {
@@ -113,6 +134,20 @@ impl<F> Index<Prefixes> for &[PrefixEval<F>] {
 }
 
 impl Prefixes {
+    /// Evalautes the MLE for this prefix:
+    /// - prefix(r, r_x, c, b)   if j is odd
+    /// - prefix(r, c, b)        if j is even
+    ///
+    /// where the prefix checkpoint captures the "contribution" of
+    /// `r` to this evaluation.
+    ///
+    /// `r` (and potentially `r_x`) capture the variables of the prefix
+    /// that have been bound in the previous rounds of sumcheck.
+    /// To compute the current round's prover message, we're fixing the
+    /// current variable to `c`.
+    /// The remaining variables of the prefix are captured by `b`. We sum
+    /// over these variables as they range over the Boolean hypercube, so
+    /// they can be represented by a single bitvector.
     pub fn prefix_mle<const WORD_SIZE: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
@@ -161,6 +196,10 @@ impl Prefixes {
         PrefixEval(eval)
     }
 
+    /// Every two rounds of sumcheck, we update the "checkpoint" value for each
+    /// prefix, incorporating the two random challenges `r_x` and `r_y` received
+    /// since the last update.
+    /// This function updates all the prefix checkpoints.
     pub fn update_checkpoints<const WORD_SIZE: usize, F: JoltField>(
         checkpoints: &mut [PrefixCheckpoint<F>],
         r_x: F,
@@ -183,6 +222,12 @@ impl Prefixes {
             });
     }
 
+    /// Every two rounds of sumcheck, we update the "checkpoint" value for each
+    /// prefix, incorporating the two random challenges `r_x` and `r_y` received
+    /// since the last update.
+    /// `j` is the sumcheck round index.
+    /// A checkpoint update may depend on the values of the other prefix checkpoints,
+    /// so we pass in all such `checkpoints` to this function.
     fn update_prefix_checkpoint<const WORD_SIZE: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],

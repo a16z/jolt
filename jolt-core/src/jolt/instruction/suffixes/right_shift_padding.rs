@@ -2,6 +2,9 @@ use crate::{subprotocols::sparse_dense_shout::LookupBits, utils::math::Math};
 
 use super::SparseDenseSuffix;
 
+/// Computes a bitmask for the padding bits obtained from an arithmetic right shift.
+/// `shift` := the lower log_2(WORD_SIZE) bits of the second operand.
+/// The bitmask has 1s in the upper `shift` bits and 0s in the lower bits.
 pub enum RightShiftPaddingSuffix<const WORD_SIZE: usize> {}
 
 impl<const WORD_SIZE: usize> SparseDenseSuffix for RightShiftPaddingSuffix<WORD_SIZE> {

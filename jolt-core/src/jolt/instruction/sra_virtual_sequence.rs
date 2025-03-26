@@ -6,6 +6,8 @@ use super::{
     VirtualInstructionSequence,
 };
 
+/// Performs an arithmetic right shift using (untrusted) advice, and various
+/// arithmetic and bitwise manipulations to check that the advice is correct.
 pub struct SRAVirtualSequence<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<WORD_SIZE> {

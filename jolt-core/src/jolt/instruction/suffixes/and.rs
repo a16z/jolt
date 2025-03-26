@@ -2,6 +2,7 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
+/// Bitwise AND suffix
 pub enum AndSuffix {}
 
 impl SparseDenseSuffix for AndSuffix {

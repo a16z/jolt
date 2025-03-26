@@ -16,20 +16,27 @@ use std::fmt::Debug;
 
 #[enum_dispatch]
 pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
+    /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
+    /// By default, interleaves the two bits of the two operands together.
     fn to_lookup_index(&self) -> u64 {
         let (x, y) = self.operands();
         interleave_bits(x as u32, y as u32)
     }
 
+    /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).
     #[cfg(test)]
     fn materialize(&self) -> Vec<u64> {
         (0..1 << 16).map(|i| self.materialize_entry(i)).collect()
     }
 
+    /// Materialize the entry at the given `index` in the lookup table for this instruction.
     fn materialize_entry(&self, index: u64) -> u64;
 
+    /// Evaluates the MLE of this lookup table on the given point `r`.
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
 
+    /// Returns a tuple of the instruction's operands. If the instruction has only one operand,
+    /// one of the tuple values will be 0.
     fn operands(&self) -> (u64, u64);
 
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.

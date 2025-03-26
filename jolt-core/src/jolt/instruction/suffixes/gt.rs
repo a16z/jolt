@@ -2,6 +2,8 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
+/// 1 if the first operand is (strictly) greater than the
+/// second operand; 0 otherwise.
 pub enum GreaterThanSuffix {}
 
 impl SparseDenseSuffix for GreaterThanSuffix {

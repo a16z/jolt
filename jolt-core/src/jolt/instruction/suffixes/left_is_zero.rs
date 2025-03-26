@@ -2,6 +2,7 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
+/// 1 if the first operand is 0, 0 otherwise.
 pub enum LeftOperandIsZeroSuffix {}
 
 impl SparseDenseSuffix for LeftOperandIsZeroSuffix {

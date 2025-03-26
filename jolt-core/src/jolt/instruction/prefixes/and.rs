@@ -40,6 +40,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<WO
         j: usize,
     ) -> PrefixCheckpoint<F> {
         let shift = WORD_SIZE - 1 - j / 2;
+        // checkpoint += 2^shift * r_x * r_y
         let updated =
             checkpoints[Prefixes::And].unwrap_or(F::zero()) + F::from_u32(1 << shift) * r_x * r_y;
         Some(updated).into()

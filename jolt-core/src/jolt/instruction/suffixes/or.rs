@@ -2,6 +2,7 @@ use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::SparseDenseSuffix;
 
+/// Bitwise OR suffix
 pub enum OrSuffix {}
 
 impl SparseDenseSuffix for OrSuffix {
