@@ -218,6 +218,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
     }
 
     fn sequence_output(x: u64, y: u64) -> u64 {
+        if y == 0 {
+            return x;
+        }
         match WORD_SIZE {
             32 => {
                 let mut remainder = (x as i32) % (y as i32);
