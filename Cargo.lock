@@ -812,6 +812,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "constantine-sys"
+version = "0.2.0"
+source = "git+https://github.com/mratsim/constantine.git#71f790a0e40c5eb5e801086135bd2840771c6359"
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
