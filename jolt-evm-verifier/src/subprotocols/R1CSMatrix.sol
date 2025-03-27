@@ -69,7 +69,7 @@ library R1CSMatrix {
         Fr col_eq_constant = Fr.wrap(0);
         // Fr eq_plus_one_eval = eq_plus_one(r, constraint_row_bits, r, row_bits + constraint_col_bits + 1, step_bits);
 
-        // Fr non_uni_constraint_index = Fr.wrap(0);
+        // Fr cross_step_constraint_index = Fr.wrap(0);
 
         return (
             A(eq_poly_row, eq_poly_col, eq_rx_ry_step, col_eq_constant),

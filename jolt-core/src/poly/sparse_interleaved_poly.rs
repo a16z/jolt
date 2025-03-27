@@ -143,11 +143,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 
         if left.len() <= batch_size {
             // Coalesced
-            let coalesced: Vec<F> = left
-                .into_iter()
-                .interleave(right.into_iter())
-                .cloned()
-                .collect();
+            let coalesced: Vec<F> = left.iter().interleave(right).cloned().collect();
             let dense_len = coalesced.len();
             return Self {
                 coeffs: vec![vec![]; batch_size],

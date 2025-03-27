@@ -152,7 +152,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                     step_index,
                                     next_step_index,
                                 );
-                                assert_eq!(bz_coeff, 0, "Non-uniform constraint {constraint_index} violated at step {step_index}");
+                                assert_eq!(bz_coeff, 0, "Cross-step constraint {constraint_index} violated at step {step_index}");
                             }
                         } else {
                             // Bz

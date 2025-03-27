@@ -224,14 +224,17 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 BindingOrder::LowToHigh => {
                     // TODO(moodlezoup): Use `binding_scratch_space` trick
                     let mut new_coeffs = unsafe_allocate_zero_vec(n);
-                    for i in 0..n {
-                        if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
-                            new_coeffs[i] = self.bound_coeffs[2 * i];
-                        } else {
-                            new_coeffs[i] = self.bound_coeffs[2 * i]
-                                + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
-                        }
-                    }
+                    new_coeffs
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(i, new_coeff)| {
+                            if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
+                                *new_coeff = self.bound_coeffs[2 * i];
+                            } else {
+                                *new_coeff = self.bound_coeffs[2 * i]
+                                    + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
+                            }
+                        });
                     self.bound_coeffs = new_coeffs;
                 }
                 BindingOrder::HighToLow => {

@@ -118,9 +118,15 @@ where
         );
         let g1 = params.g1_powers[0];
         let g2 = params.g2_powers[0];
+        let alpha_g1 = params.g1_powers[1];
         let beta_g2 = params.g2_powers[1];
         let pk = KZGProverKey::new(params, 0, max_degree + 1);
-        let vk = KZGVerifierKey { g1, g2, beta_g2 };
+        let vk = KZGVerifierKey {
+            g1,
+            g2,
+            beta_g2,
+            alpha_g1,
+        };
         (pk, vk)
     }
 }
@@ -160,6 +166,14 @@ where
         &self.srs.g1_powers[self.offset..self.offset + self.supported_size]
     }
 
+    pub fn g2_powers(&self) -> &[P::G2Affine] {
+        &self.srs.g2_powers
+    }
+
+    pub fn len(&self) -> usize {
+        self.g1_powers().len()
+    }
+
     pub fn gpu_g1(&self) -> Option<&[GpuBaseType<P::G1>]> {
         self.srs
             .gpu_g1
@@ -172,12 +186,30 @@ where
 pub struct KZGVerifierKey<P: Pairing> {
     pub g1: P::G1Affine,
     pub g2: P::G2Affine,
+    pub alpha_g1: P::G1Affine,
     pub beta_g2: P::G2Affine,
 }
 
+/// Marker trait
+pub trait Group<P: Pairing> {
+    type Curve: CurveGroup;
+}
+
+/// Marker for operations in G1
+pub enum G1 {}
+impl<P: Pairing> Group<P> for G1 {
+    type Curve = P::G1;
+}
+
+/// Marker for operations in G2
+pub enum G2 {}
+impl<P: Pairing> Group<P> for G2 {
+    type Curve = P::G2;
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct UnivariateKZG<P: Pairing> {
-    _phantom: PhantomData<P>,
+pub struct UnivariateKZG<P: Pairing, G: Group<P> = G1> {
+    _phantom: PhantomData<(P, G)>,
 }
 
 impl<P: Pairing> UnivariateKZG<P>
@@ -338,15 +370,7 @@ where
     where
         <P as Pairing>::ScalarField: JoltField,
     {
-        let divisor = UniPoly::from_coeff(vec![-*point, P::ScalarField::one()]);
-        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
-        let proof = <P::G1 as VariableBaseMSM>::msm_field_elements(
-            &pk.g1_powers()[..witness_poly.coeffs.len()],
-            pk.gpu_g1().map(|g| &g[..witness_poly.coeffs.len()]),
-            witness_poly.coeffs.as_slice(),
-            None,
-            use_icicle(),
-        )?;
+        let proof = Self::generic_open(pk.g1_powers(), pk.gpu_g1(), poly, *point)?;
         let evaluation = poly.evaluate(point);
         Ok((proof.into_affine(), evaluation))
     }
@@ -369,6 +393,53 @@ where
     }
 }
 
+impl<P: Pairing, G: Group<P>> UnivariateKZG<P, G>
+where
+    P::ScalarField: JoltField,
+    G::Curve: CurveGroup<ScalarField = P::ScalarField> + Icicle,
+{
+    #[tracing::instrument(skip_all, name = "KZG::open")]
+    pub fn generic_open(
+        powers: &[<G::Curve as CurveGroup>::Affine],
+        gpu_powers: Option<&[GpuBaseType<G::Curve>]>,
+        poly: &UniPoly<P::ScalarField>,
+        point: P::ScalarField,
+    ) -> Result<G::Curve, ProofVerifyError>
+    where
+        <P as Pairing>::ScalarField: JoltField,
+    {
+        let divisor = UniPoly::from_coeff(vec![-point, P::ScalarField::one()]);
+        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
+        let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
+            &powers[..witness_poly.coeffs.len()],
+            gpu_powers.map(|g| &g[..witness_poly.coeffs.len()]),
+            witness_poly.coeffs.as_slice(),
+            None,
+            use_icicle(),
+        )?;
+        Ok(proof)
+    }
+}
+
+impl<P: Pairing> UnivariateKZG<P, G2> {
+    pub fn verify_g2(
+        v_srs: &KZGVerifierKey<P>,
+        commitment: P::G2,
+        point: P::ScalarField,
+        proof: P::G2,
+        evaluation: P::ScalarField,
+    ) -> bool {
+        P::multi_pairing(
+            [
+                v_srs.g1.into_group(),
+                v_srs.alpha_g1.into_group() - v_srs.g1 * point,
+            ],
+            [commitment - v_srs.g2.into_group() * evaluation, -proof],
+        )
+        .is_zero()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -384,7 +455,7 @@ mod test {
         for i in 0..100 {
             let seed = [i; 32];
             let mut rng = &mut ChaCha20Rng::from_seed(seed);
-            let degree = degree_generator(&mut rng);
+            let degree = degree_generator(rng);
 
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);
@@ -393,7 +464,7 @@ mod test {
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
-                UnivariateKZG::verify(&vk, &comm, &point, &proof, &value)?,
+                UnivariateKZG::<_, G1>::verify(&vk, &comm, &point, &proof, &value)?,
                 "proof was incorrect for max_degree = {}, polynomial_degree = {}",
                 degree,
                 p.degree(),

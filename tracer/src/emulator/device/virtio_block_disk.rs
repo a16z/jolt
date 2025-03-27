@@ -74,7 +74,7 @@ impl VirtioBlockDisk {
     /// * `contents` filesystem content binary
     pub fn init(&mut self, contents: Vec<u8>) {
         // @TODO: Optimize
-        for _i in 0..((contents.len() + 7) / 8) {
+        for _i in 0..contents.len().div_ceil(8) {
             self.contents.push(0);
         }
         for (i, byte) in contents.iter().enumerate() {

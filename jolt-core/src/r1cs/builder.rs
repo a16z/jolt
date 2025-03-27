@@ -1,6 +1,6 @@
 use super::{
     inputs::ConstraintInput,
-    key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
+    key::{CrossStepR1CS, CrossStepR1CSConstraint, SparseEqualityItem},
     ops::{Term, Variable, LC},
 };
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -68,7 +68,7 @@ impl Constraint {
         self.b.pretty_fmt::<C, I>(f)?;
         write!(f, " == ")?;
         self.c.pretty_fmt::<C, I>(f)?;
-        writeln!(f, "")?;
+        writeln!(f)?;
 
         let mut terms = Vec::new();
         for term in self
@@ -585,8 +585,8 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         self.uniform_builder.materialize()
     }
 
-    /// Converts builder::OffsetEqConstraints into key::NonUniformR1CSConstraint
-    pub fn materialize_offset_eq(&self) -> NonUniformR1CS<F> {
+    /// Converts builder::OffsetEqConstraints into key::CrossStepR1CSConstraint
+    pub fn materialize_offset_eq(&self) -> CrossStepR1CS<F> {
         // (a - b) * condition == 0
         // A: a - b
         // B: condition
@@ -642,10 +642,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                 eq.constant = F::from_i64(term.1);
             }
 
-            constraints.push(NonUniformR1CSConstraint::new(eq, condition));
+            constraints.push(CrossStepR1CSConstraint::new(eq, condition));
         }
 
-        NonUniformR1CS { constraints }
+        CrossStepR1CS { constraints }
     }
 
     #[tracing::instrument(skip_all)]

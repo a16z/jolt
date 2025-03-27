@@ -3,14 +3,20 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltInstruction;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     field::JoltField,
     jolt::{
         instruction::SubtableIndices,
         subtable::{identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable},
     },
-    utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
+    utils::{
+        instruction_utils::{chunk_operand_usize, concatenate_lookups},
+        interleave_bits,
+    },
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -64,6 +70,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
         chunk_operand_usize(self.0, C, log_M)
     }
 
+    fn to_lookup_index(&self) -> u64 {
+        interleave_bits(self.0 as u32, 0)
+    }
+
     fn lookup_entry(&self) -> u64 {
         match WORD_SIZE {
             32 => {
@@ -84,14 +94,49 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
         }
     }
 
-    fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64())
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let sign_bit = 1 << (2 * WORD_SIZE - 1);
+        if index & sign_bit != 0 {
+            (1 << WORD_SIZE) - 1
         } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+            0
         }
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64),
+            64 => Self(rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        // 2 ^ {WORD_SIZE - 1} * x_0
+        debug_assert!(r.len() == 2 * WORD_SIZE);
+
+        let sign_bit = r[0];
+        let ones: u64 = (1 << WORD_SIZE) - 1;
+        sign_bit * F::from_u64(ones)
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for MOVSIGNInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LeftOperandMsb]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        let ones: u64 = (1 << WORD_SIZE) - 1;
+        F::from_u64(ones) * prefixes[Prefixes::LeftOperandMsb] * suffixes[Suffixes::One]
     }
 }
 
@@ -102,12 +147,38 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
-        jolt::instruction::JoltInstruction,
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
+            virtual_movsign::{SIGN_BIT_32, SIGN_BIT_64},
+            JoltInstruction,
+        },
         jolt_instruction_test,
     };
 
     use super::MOVSIGNInstruction;
+
+    #[test]
+    fn virtual_movsign_materialize_entry() {
+        materialize_entry_test::<Fr, MOVSIGNInstruction<32>>();
+    }
+
+    #[test]
+    fn virtual_movsign_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, MOVSIGNInstruction<8>>();
+    }
+
+    #[test]
+    fn virtual_movsign_mle_random() {
+        instruction_mle_random_test::<Fr, MOVSIGNInstruction<32>>();
+    }
+
+    #[test]
+    fn virtual_movsign_prefix_suffix() {
+        prefix_suffix_test::<Fr, MOVSIGNInstruction<32>>();
+    }
 
     #[test]
     fn virtual_movsign_instruction_32_e2e() {

@@ -77,7 +77,7 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
         setup_bench::<PCS, F, ProofTranscript>(num_layer, layer_size, threshold);
     let leaves = leaves
         .into_iter()
-        .map(|layer| MultilinearPolynomial::from(layer))
+        .map(MultilinearPolynomial::from)
         .collect::<Vec<_>>();
     c.bench_function(&format!("{} Commit: {}% Ones", name, threshold), |b| {
         b.iter(|| {
