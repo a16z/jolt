@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743003372817,
+  "lastUpdate": 1743039401604,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -2638,6 +2638,138 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 4671324,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mchl.zhu.96@gmail.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e2a68681835b0d32e2150cc3029bd1b2efc91079",
+          "message": "(feat) Sparse-dense shout, part 1 (#625)\n\n* temp\n\n* temp2\n\n* temp3\n\n* bug fixes\n\n* verification\n\n* Tracing spans\n\n* Optimize v, w, x binding\n\n* Optimizations\n\n* Progress towards supporting gamma=1\n\n* Optimize tree computation\n\n* Somewhat sketchy hashmap optimization\n\n* temp\n\n* temp2\n\n* Interleave operands to form lookup index\n\n* holy shit it works\n\n* Remove gamma=1 codepaths\n\n* refactor\n\n* Implement sparse-dense methods for OR\n\n* AssertAlignedMemoryAccessInstruction -> AssertHalfwordAlignmentInstruction\n\n* Support eta > 1\n\n* Remove OFFSET const generic from LowBitSubtable\n\n* Add test macros\n\n* SLTU\n\n* New algorithm, works with oR\n\n* SLTU\n\n* Clean up profiling code\n\n* temp\n\n* Add LookupBits\n\n* Slowly but surely\n\n* mulhu\n\n* sub\n\n* xor\n\n* Refactor suffixes\n\n* Refactor prefixes\n\n* Delete old algorithm\n\n* Implement materialize_entry\n\n* Add evaluate_mle tests\n\n* Implement PrefixSuffixDecomposition for more instructions\n\n* More instructions\n\n* movsign and assert_valid_signed_remainder\n\n* Pow2\n\n* Optimize suffix poly computation\n\n* Virtual sequences for shifts\n\n* Optimize SRA virtual sequence using RightShiftPaddingInstruction\n\n* appease CI\n\n* Cleanup + comments\n\n* Add comments\n\n* Fix rem sequence_output",
+          "timestamp": "2025-03-26T21:09:28-04:00",
+          "tree_id": "52ff7f03fa39b61b4d6a5ba2b90a3dd860b7e765",
+          "url": "https://github.com/a16z/jolt/commit/e2a68681835b0d32e2150cc3029bd1b2efc91079"
+        },
+        "date": 1743039401067,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.7796,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 3399932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.6801,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 3393696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.6324,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 3393692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.6124,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 3393540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.5799,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 4610700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 53.5323,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 8907496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 2.3567,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 3393984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 3.1378,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 3393824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 2.2604,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 4670304,
             "unit": "KB",
             "extra": ""
           }
