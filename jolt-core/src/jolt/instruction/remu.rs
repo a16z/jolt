@@ -236,11 +236,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn remu_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(REMUInstruction::<32>, RV32IM::REMU);
+        jolt_virtual_sequence_test::<REMUInstruction<32>>(RV32IM::REMU);
     }
 }

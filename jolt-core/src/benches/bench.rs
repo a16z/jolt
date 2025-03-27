@@ -1,16 +1,23 @@
 use crate::field::JoltField;
 use crate::host;
+use crate::jolt::instruction::sltu::SLTUInstruction;
+use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
+use crate::subprotocols::sparse_dense_shout::{
+    prove_single_instruction, verify_single_instruction,
+};
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use rand_core::RngCore;
 use rand_distr::{Distribution, Zipf};
 use serde::Serialize;
@@ -28,6 +35,7 @@ pub enum BenchType {
     Sha3,
     Sha2Chain,
     Shout,
+    SparseDenseShout,
     Twist,
 }
 
@@ -35,9 +43,6 @@ pub enum BenchType {
 pub fn benchmarks(
     pcs_type: PCSType,
     bench_type: BenchType,
-    _num_cycles: Option<usize>,
-    _memory_size: Option<usize>,
-    _bytecode_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
         PCSType::Zeromorph => match bench_type {
@@ -51,6 +56,7 @@ pub fn benchmarks(
             }
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+            BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         PCSType::HyperKZG => match bench_type {
@@ -64,6 +70,7 @@ pub fn benchmarks(
             }
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
+            BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
@@ -104,6 +111,60 @@ where
 
     tasks.push((
         tracing::info_span!("Shout d=1"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn sparse_dense_shout<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    let small_value_lookup_tables = F::compute_lookup_tables();
+    F::initialize_lookup_tables(small_value_lookup_tables);
+
+    let mut tasks = Vec::new();
+
+    const WORD_SIZE: usize = 32;
+    const LOG_K: usize = 2 * WORD_SIZE;
+    const LOG_T: usize = 19;
+    const T: u64 = 1 << LOG_T;
+
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    let instructions: Vec<_> = (0..T)
+        .map(|_| SLTUInstruction::<32>::default().random(&mut rng))
+        .collect();
+
+    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
+
+    let task = move || {
+        let (proof, rv_claim, ra_claims) =
+            prove_single_instruction::<32, _, _, _>(&instructions, r_cycle, &mut prover_transcript);
+
+        let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
+        let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
+        let verification_result = verify_single_instruction::<_, SLTUInstruction<32>, _>(
+            proof,
+            LOG_K,
+            LOG_T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Sparse-dense shout d=4"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 

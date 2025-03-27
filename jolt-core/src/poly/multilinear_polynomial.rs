@@ -28,7 +28,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
 }
 
 /// The order in which polynomial variables are bound in sumcheck
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
@@ -511,10 +511,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind")]
     fn bind(&mut self, r: F, order: BindingOrder) {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => match order {
-                BindingOrder::LowToHigh => poly.bound_poly_var_bot(&r),
-                BindingOrder::HighToLow => poly.bound_poly_var_top(&r),
-            },
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
@@ -526,10 +523,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => match order {
-                BindingOrder::LowToHigh => poly.bound_poly_var_bot_01_optimized(&r),
-                BindingOrder::HighToLow => poly.bound_poly_var_top_zero_optimized(&r),
-            },
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
@@ -602,9 +596,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![F::zero(); degree];
         match order {
             BindingOrder::HighToLow => {
-                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(index);
                 if degree == 1 {
                     return evals;
@@ -615,10 +610,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     eval += m;
                     evals[i] = eval;
                 }
-                evals
             }
             BindingOrder::LowToHigh => {
-                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(2 * index);
                 if degree == 1 {
                     return evals;
@@ -629,9 +622,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     eval += m;
                     evals[i] = eval;
                 }
-                evals
             }
-        }
+        };
+        evals
     }
 }
 
