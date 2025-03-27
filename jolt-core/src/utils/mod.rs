@@ -9,6 +9,7 @@ pub mod gaussian_elimination;
 pub mod instruction_utils;
 pub mod math;
 pub mod profiling;
+pub mod small_value;
 pub mod sol_types;
 pub mod thread;
 pub mod transcript;

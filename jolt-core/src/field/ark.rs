@@ -224,4 +224,36 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_no_carry_optimization() {
+        // Test if BN254's Fr field can use no-carry optimization
+        let modulus = Fr::MODULUS.0;
+
+        println!("Modulus has spare bit? {}", Fr::MODULUS.0[3] >> 63 == 0);
+
+        // Check top bit is zero
+        let top_bit_is_zero = modulus[3] >> 63 == 0;
+        println!("Top bit is zero: {}", top_bit_is_zero);
+
+        // Check if all remaining bits are ones
+        let top_limb_remaining = modulus[3] == u64::MAX >> 1;
+        let all_ones = modulus[0] == u64::MAX
+            && modulus[1] == u64::MAX
+            && modulus[2] == u64::MAX
+            && top_limb_remaining;
+        println!("All remaining bits are ones: {}", all_ones);
+
+        // Print modulus in binary for visual inspection
+        println!("Modulus limbs:");
+        for (i, limb) in modulus.iter().enumerate() {
+            println!("limb {}: {:064b}", i, limb);
+        }
+
+        // Final result
+        println!(
+            "Can use no-carry optimization: {}",
+            top_bit_is_zero && !all_ones
+        );
+    }
 }

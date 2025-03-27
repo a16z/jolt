@@ -98,7 +98,7 @@ pub struct CrossStepR1CS<F: JoltField> {
 
 impl<F: JoltField> CrossStepR1CS<F> {
     /// Returns a tuple of (eq_constants, condition_constants)
-    fn constants(&self) -> (Vec<F>, Vec<F>) {
+    pub fn constants(&self) -> (Vec<F>, Vec<F>) {
         let mut eq_constants = Vec::with_capacity(self.constraints.len());
         let mut condition_constants = Vec::with_capacity(self.constraints.len());
 
