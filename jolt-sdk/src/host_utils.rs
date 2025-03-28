@@ -13,6 +13,6 @@ pub use jolt_core::jolt::vm::{
     rv32i_vm::{
         JoltHyperKZGProof, ProofTranscript, RV32IJoltProof, RV32IJoltVM, Serializable, PCS, RV32I,
     },
-    Jolt, JoltCommitments, JoltProverPreprocessing, JoltVerifierPreprocessing, JoltProof,
+    Jolt, JoltCommitments, JoltProof, JoltProverPreprocessing, JoltVerifierPreprocessing,
 };
 pub use tracer;
