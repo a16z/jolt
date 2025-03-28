@@ -1,12 +1,19 @@
 use std::time::Instant;
 
 pub fn main() {
-    let (prove, verify) = guest::build_memory_ops();
+    let target_dir = "/tmp/jolt-guest-targets";
+    let program = guest::compile_memory_ops(target_dir);
+
+    let prover_preprocessing = guest::preprocess_prover_memory_ops(&program);
+    let verifier_preprocessing = guest::preprocess_verifier_memory_ops(&program);
+
+    let prove = guest::build_prover_memory_ops(program, prover_preprocessing);
+    let verify = guest::build_verifier_memory_ops(verifier_preprocessing);
 
     let now = Instant::now();
     let (output, proof) = prove();
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(proof);
+    let is_valid = verify(output, proof);
 
     println!(
         "outputs: {} {} {} {}",
