@@ -1,13 +1,16 @@
 #![allow(dead_code)]
 use crate::field::JoltField;
 use std::cmp::Ordering;
-use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
+use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
+use rayon::prelude::*;
+
+use super::compact_polynomial::SmallScalar;
+use super::multilinear_polynomial::MultilinearPolynomial;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -18,7 +21,7 @@ pub struct UniPoly<F> {
 
 // ax^2 + bx + c stored as vec![c,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct CompressedUniPoly<F: JoltField> {
     pub coeffs_except_linear_term: Vec<F>,
 }
@@ -37,7 +40,7 @@ impl<F: JoltField> UniPoly<F> {
 
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
         let n = evals.len();
-        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64).unwrap()).collect();
+        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
 
         let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -79,6 +82,7 @@ impl<F: JoltField> UniPoly<F> {
                 for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
                     remainder.coeffs[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
                 }
+
                 while let Some(true) = remainder.coeffs.last().map(|c| c == &F::zero()) {
                     remainder.coeffs.pop();
                 }
@@ -95,7 +99,7 @@ impl<F: JoltField> UniPoly<F> {
         self.coeffs.last()
     }
 
-    fn zero() -> Self {
+    pub fn zero() -> Self {
         Self::from_coeff(Vec::new())
     }
 
@@ -131,6 +135,66 @@ impl<F: JoltField> UniPoly<F> {
         eval
     }
 
+    #[tracing::instrument(skip_all, name = "UniPoly::eval_as_univariate")]
+    pub fn eval_as_univariate(poly: &MultilinearPolynomial<F>, r: &F) -> F {
+        match poly {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let mut eval = poly.Z[0];
+                let mut power = *r;
+                for coeff in poly.evals_ref()[1..].iter() {
+                    eval += power * coeff;
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += coeff.field_mul(power);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += coeff.field_mul(power);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += coeff.field_mul(power);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += coeff.field_mul(power);
+                    power *= *r;
+                }
+                eval
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                let mut eval = F::zero();
+                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                for coeff in poly.coeffs.iter() {
+                    eval += coeff.field_mul(power);
+                    power *= *r;
+                }
+                eval
+            }
+        }
+    }
+
     pub fn compress(&self) -> CompressedUniPoly<F> {
         let coeffs_except_linear_term = [&self.coeffs[..1], &self.coeffs[2..]].concat();
         debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
@@ -152,14 +216,6 @@ impl<F: JoltField> UniPoly<F> {
     }
 }
 
-/*
-impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
-    fn add_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += rhs);
-    }
-}
-*/
-
 impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
     fn add_assign(&mut self, rhs: &Self) {
         let ordering = self.coeffs.len().cmp(&rhs.coeffs.len());
@@ -171,6 +227,23 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
             self.coeffs
                 .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
         }
+    }
+}
+
+impl<F: JoltField> Sub for UniPoly<F> {
+    type Output = Self;
+
+    fn sub(mut self, rhs: Self) -> Self::Output {
+        let ordering = self.coeffs.len().cmp(&rhs.coeffs.len());
+        #[allow(clippy::disallowed_methods)]
+        for (lhs, rhs) in self.coeffs.iter_mut().zip(&rhs.coeffs) {
+            *lhs -= *rhs;
+        }
+        if matches!(ordering, Ordering::Less) {
+            self.coeffs
+                .extend(rhs.coeffs[self.coeffs.len()..].iter().map(|v| v.neg()));
+        }
+        self
     }
 }
 
@@ -276,8 +349,8 @@ mod tests {
     fn test_from_evals_quad_helper<F: JoltField>() {
         // polynomial is 2x^2 + 3x + 1
         let e0 = F::one();
-        let e1 = F::from_u64(6u64).unwrap();
-        let e2 = F::from_u64(15u64).unwrap();
+        let e1 = F::from_u64(6u64);
+        let e2 = F::from_u64(15u64);
         let evals = vec![e0, e1, e2];
         let poly = UniPoly::from_evals(&evals);
 
@@ -285,8 +358,8 @@ mod tests {
         assert_eq!(poly.eval_at_one(), e1);
         assert_eq!(poly.coeffs.len(), 3);
         assert_eq!(poly.coeffs[0], F::one());
-        assert_eq!(poly.coeffs[1], F::from_u64(3u64).unwrap());
-        assert_eq!(poly.coeffs[2], F::from_u64(2u64).unwrap());
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64));
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64));
 
         let hint = e0 + e1;
         let compressed_poly = poly.compress();
@@ -295,8 +368,8 @@ mod tests {
             assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
         }
 
-        let e3 = F::from_u64(28u64).unwrap();
-        assert_eq!(poly.evaluate(&F::from_u64(3u64).unwrap()), e3);
+        let e3 = F::from_u64(28u64);
+        assert_eq!(poly.evaluate(&F::from_u64(3u64)), e3);
     }
 
     #[test]
@@ -306,9 +379,9 @@ mod tests {
     fn test_from_evals_cubic_helper<F: JoltField>() {
         // polynomial is x^3 + 2x^2 + 3x + 1
         let e0 = F::one();
-        let e1 = F::from_u64(7u64).unwrap();
-        let e2 = F::from_u64(23u64).unwrap();
-        let e3 = F::from_u64(55u64).unwrap();
+        let e1 = F::from_u64(7u64);
+        let e2 = F::from_u64(23u64);
+        let e3 = F::from_u64(55u64);
         let evals = vec![e0, e1, e2, e3];
         let poly = UniPoly::from_evals(&evals);
 
@@ -316,8 +389,8 @@ mod tests {
         assert_eq!(poly.eval_at_one(), e1);
         assert_eq!(poly.coeffs.len(), 4);
         assert_eq!(poly.coeffs[0], F::one());
-        assert_eq!(poly.coeffs[1], F::from_u64(3u64).unwrap());
-        assert_eq!(poly.coeffs[2], F::from_u64(2u64).unwrap());
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64));
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64));
         assert_eq!(poly.coeffs[3], F::one());
 
         let hint = e0 + e1;
@@ -327,8 +400,8 @@ mod tests {
             assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
         }
 
-        let e4 = F::from_u64(109u64).unwrap();
-        assert_eq!(poly.evaluate(&F::from_u64(4u64).unwrap()), e4);
+        let e4 = F::from_u64(109u64);
+        assert_eq!(poly.evaluate(&F::from_u64(4u64)), e4);
     }
 
     pub fn naive_mul<F: JoltField>(ours: &UniPoly<F>, other: &UniPoly<F>) -> UniPoly<F> {

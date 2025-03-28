@@ -14,7 +14,7 @@ pub trait LassoSubtable<F: JoltField>: 'static + Sync {
         TypeId::of::<Self>()
     }
     /// Fully materializes a subtable of size `M`, reprensented as a Vec of length `M`.
-    fn materialize(&self, M: usize) -> Vec<F>;
+    fn materialize(&self, M: usize) -> Vec<u32>;
     /// Evaluates the multilinear extension polynomial for this subtable at the given `point`,
     /// interpreted to be of size log_2(M), where M is the size of the subtable.
     fn evaluate_mle(&self, point: &[F]) -> F;
@@ -46,7 +46,7 @@ pub mod sign_extend;
 pub mod sll;
 pub mod sra_sign;
 pub mod srl;
-pub mod truncate_overflow;
+// pub mod truncate_overflow;
 pub mod xor;
 
 #[cfg(test)]

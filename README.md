@@ -69,6 +69,29 @@ Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ```cargo run --release -p sha2-chain```
 
+## CUDA Support
+
+JOLT supports CUDA acceleration via [icicle](https://github.com/ingonyama-zk/icicle-jolt).
+
+Dependencies:
+1. Install [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
+2. Install [CMake](https://cmake.org/)
+
+Now you may build Jolt with CUDA acceleration using the `--features icicle` flag.
+
+### Build
+
+```cargo build -p jolt-core --features icicle```
+
+### Bench
+
+```
+# Set the icicle backend path - this won't be needed in the future
+export ICICLE_BACKEND_INSTALL_DIR=$(pwd)/target/debug/deps/icicle/lib/backend
+cargo bench --bench msm_batch --no-fail-fast -p jolt-core --features icicle
+```
+
+Note - NVIDIA doesn't support cross compilation on MacOS. Only Windows or Linux.
 
 ## Performance profiling
 
@@ -81,6 +104,10 @@ To generate a trace, run:
 Where `--name` can be `sha2`, `sha3`, `sha2-chain`, or `fibonacci`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
 
 The above command will output a JSON file, e.g. `trace-1712455107389520.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
+
+## CI Benchmarking
+
+We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/) to track performance changes over time in terms of prover runtime and peak memory usage.
 
 ## Acknowledgements
 

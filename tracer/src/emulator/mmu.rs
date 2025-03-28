@@ -23,7 +23,7 @@ use super::terminal::Terminal;
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
 /// devices, maps address to them, and accesses them depending on address.
-/// It also manages virtual-physical address translation and memoty protection.
+/// It also manages virtual-physical address translation and memory protection.
 /// It may also be said Bus.
 /// @TODO: Memory protection is not implemented yet. We should support.
 pub struct Mmu {
@@ -147,7 +147,7 @@ impl Mmu {
         self.disk.init(data);
     }
 
-    /// Overrides defalut Device tree configuration.
+    /// Overrides default Device tree configuration.
     ///
     /// # Arguments
     /// * `data` DTB binary content
@@ -532,7 +532,7 @@ impl Mmu {
             false => match effective_address {
                 // I don't know why but dtb data seems to be stored from 0x1020 on Linux.
                 // It might be from self.x[0xb] initialization?
-                // And DTB size is arbitray.
+                // And DTB size is arbitrary.
                 0x00001020..=0x00001fff => self.dtb[effective_address as usize - 0x1020],
                 0x02000000..=0x0200ffff => self.clint.load(effective_address),
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),

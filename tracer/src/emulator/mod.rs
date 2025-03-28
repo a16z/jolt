@@ -22,7 +22,7 @@ use self::terminal::Terminal;
 ///
 /// Sample code to run the emulator.
 /// ```ignore
-/// // Creates an emulator with arbitary terminal
+/// // Creates an emulator with arbitrary terminal
 /// let mut emulator = Emulator::new(Box::new(DefaultTerminal::new()));
 /// // Set up program content binary
 /// emulator.setup_program(program_content);
@@ -99,7 +99,7 @@ impl Emulator {
 
             // It seems in riscv-tests ends with end code
             // written to a certain physical memory address
-            // (0x80001000 in mose test cases) so checking
+            // (0x80001000 in more test cases) so checking
             // the data in the address and terminating the test
             // if non-zero data is written.
             // End code 1 seems to mean pass.

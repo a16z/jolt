@@ -77,6 +77,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: Some(quotient),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
@@ -97,6 +99,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: Some(remainder),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let is_valid: u64 = AssertValidSignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
@@ -118,6 +122,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let is_valid: u64 = AssertValidDiv0Instruction::<WORD_SIZE>(y, q).lookup_entry();
@@ -139,6 +145,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let q_y = MULInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -159,6 +167,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let add_0 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
@@ -179,6 +189,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let _assert_eq = BEQInstruction::<WORD_SIZE>(add_0, x).lookup_entry();
@@ -199,6 +211,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -218,6 +232,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
@@ -226,6 +242,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
     fn sequence_output(x: u64, y: u64) -> u64 {
         let x = x as i32;
         let y = y as i32;
+        if y == 0 {
+            return (1 << WORD_SIZE) - 1;
+        }
         let mut quotient = x / y;
         let remainder = x % y;
         if (remainder < 0 && y > 0) || (remainder > 0 && y < 0) {
@@ -237,11 +256,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn div_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(DIVInstruction::<32>, RV32IM::DIV);
+        jolt_virtual_sequence_test::<DIVInstruction<32>>(RV32IM::DIV);
     }
 }

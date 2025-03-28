@@ -3,7 +3,7 @@
 The plan to implement folding is simple, with a (very) sketchy overview provided below. 
 
 <OL>
-  <LI> Verifying Jolt proofs involves two procedures: verifiying sum-check proofs, and folding 
+  <LI> Verifying Jolt proofs involves two procedures: verifying sum-check proofs, and folding 
 polynomial evaluation claims for committed polynomials. </LI>
 
 <LI> Running Nova with BN254 as the primary curve, we can simply verify sum-check proofs natively. </LI>

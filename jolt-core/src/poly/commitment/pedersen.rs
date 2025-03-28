@@ -6,7 +6,8 @@ use sha3::digest::{ExtendableOutput, Update};
 use sha3::Shake256;
 use std::io::Read;
 
-use crate::msm::VariableBaseMSM;
+use crate::field::JoltField;
+use crate::msm::{Icicle, VariableBaseMSM};
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PedersenGenerators<G: CurveGroup> {
@@ -54,7 +55,10 @@ pub trait PedersenCommitment<G: CurveGroup>: Sized {
     fn commit_vector(inputs: &[Self], bases: &[G::Affine]) -> G;
 }
 
-impl<G: CurveGroup> PedersenCommitment<G> for G::ScalarField {
+impl<G: CurveGroup + Icicle> PedersenCommitment<G> for G::ScalarField
+where
+    G::ScalarField: JoltField,
+{
     #[tracing::instrument(skip_all, name = "PedersenCommitment::commit")]
     fn commit(&self, gens: &PedersenGenerators<G>) -> G {
         assert_eq!(gens.generators.len(), 1);
@@ -63,6 +67,6 @@ impl<G: CurveGroup> PedersenCommitment<G> for G::ScalarField {
 
     fn commit_vector(inputs: &[Self], bases: &[G::Affine]) -> G {
         assert_eq!(bases.len(), inputs.len());
-        VariableBaseMSM::msm(bases, inputs).unwrap()
+        VariableBaseMSM::msm_field_elements(bases, None, inputs, None, false).unwrap()
     }
 }

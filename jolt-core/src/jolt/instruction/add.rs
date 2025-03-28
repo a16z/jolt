@@ -3,11 +3,12 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
-use crate::jolt::subtable::{
-    identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
-};
+use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
 };
@@ -21,9 +22,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        assert!(vals.len() == C);
-        // The output is the TruncateOverflow(most significant chunk) || identity of other chunks
-        concatenate_lookups(vals, C, log2(M) as usize)
+        assert!(vals.len() == C / 2);
+        // The output is the identity of lower chunks
+        concatenate_lookups(vals, C / 2, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -36,16 +37,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-        vec![
-            (
-                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
-                SubtableIndices::from(0..msb_chunk_index + 1),
-            ),
-            (
-                Box::new(IdentitySubtable::new()),
-                SubtableIndices::from(msb_chunk_index + 1..C),
-            ),
-        ]
+        vec![(
+            Box::new(IdentitySubtable::new()),
+            SubtableIndices::from(msb_chunk_index + 1..C),
+        )]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -53,24 +48,63 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index % (1 << WORD_SIZE)
+    }
+
+    fn to_lookup_index(&self) -> u64 {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => self.0 + self.1,
+            32 => self.0 + self.1,
+            // 64 => (self.0 as u128) + (self.1 as u128),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
     fn lookup_entry(&self) -> u64 {
-        if WORD_SIZE == 32 {
-            (self.0 as u32).overflowing_add(self.1 as u32).0.into()
-        } else if WORD_SIZE == 64 {
-            self.0.overflowing_add(self.1).0
-        } else {
-            panic!("ADD is only implemented for 32-bit or 64-bit word sizes")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (self.0 as u8).overflowing_add(self.1 as u8).0.into(),
+            32 => (self.0 as u32).overflowing_add(self.1 as u32).0.into(),
+            64 => self.0.overflowing_add(self.1).0,
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        let mut result = F::zero();
+        for i in 0..WORD_SIZE {
+            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+        }
+        result
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for ADDInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LowerWord]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LowerWord]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::LowerWord] * suffixes[Suffixes::One] + suffixes[Suffixes::LowerWord]
     }
 }
 
@@ -81,7 +115,36 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use super::ADDInstruction;
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
+            JoltInstruction,
+        },
+        jolt_instruction_test,
+    };
+
+    #[test]
+    fn add_prefix_suffix() {
+        prefix_suffix_test::<Fr, ADDInstruction<32>>();
+    }
+
+    #[test]
+    fn add_materialize_entry() {
+        materialize_entry_test::<Fr, ADDInstruction<32>>();
+    }
+
+    #[test]
+    fn add_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, ADDInstruction<8>>();
+    }
+
+    #[test]
+    fn add_mle_random() {
+        instruction_mle_random_test::<Fr, ADDInstruction<32>>();
+    }
 
     #[test]
     fn add_instruction_32_e2e() {

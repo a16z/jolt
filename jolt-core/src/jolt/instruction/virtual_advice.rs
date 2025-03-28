@@ -3,22 +3,28 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
-use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ADVICEInstruction<const WORD_SIZE: usize>(pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
+    fn to_lookup_index(&self) -> u64 {
+        self.0
+    }
+
     fn operands(&self) -> (u64, u64) {
         (self.0, 0)
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        concatenate_lookups(vals, C, log2(M) as usize)
+        concatenate_lookups(vals, C / 2, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -31,16 +37,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
         M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-        vec![
-            (
-                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
-                SubtableIndices::from(0..msb_chunk_index + 1),
-            ),
-            (
-                Box::new(IdentitySubtable::new()),
-                SubtableIndices::from(msb_chunk_index + 1..C),
-            ),
-        ]
+        vec![(
+            Box::new(IdentitySubtable::new()),
+            SubtableIndices::from(msb_chunk_index + 1..C),
+        )]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -52,14 +52,43 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
         self.0
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        index % (1 << WORD_SIZE)
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64),
+            64 => Self(rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        let mut result = F::zero();
+        for i in 0..WORD_SIZE {
+            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+        }
+        result
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for ADVICEInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LowerWord]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LowerWord]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::LowerWord] * suffixes[Suffixes::One] + suffixes[Suffixes::LowerWord]
     }
 }
 
@@ -70,7 +99,36 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use super::ADVICEInstruction;
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
+            JoltInstruction,
+        },
+        jolt_instruction_test,
+    };
+
+    #[test]
+    fn advice_materialize_entry() {
+        materialize_entry_test::<Fr, ADVICEInstruction<32>>();
+    }
+
+    #[test]
+    fn advice_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, ADVICEInstruction<8>>();
+    }
+
+    #[test]
+    fn advice_mle_random() {
+        instruction_mle_random_test::<Fr, ADVICEInstruction<32>>();
+    }
+
+    #[test]
+    fn advice_prefix_suffix() {
+        prefix_suffix_test::<Fr, ADVICEInstruction<32>>();
+    }
 
     #[test]
     fn advice_instruction_32_e2e() {
@@ -125,7 +183,7 @@ mod test {
             ADVICEInstruction::<WORD_SIZE>(1 << 8),
             ADVICEInstruction::<WORD_SIZE>(1 << 16),
             ADVICEInstruction::<WORD_SIZE>(1 << 32),
-            ADVICEInstruction::<WORD_SIZE>(1 << 48 + 2),
+            ADVICEInstruction::<WORD_SIZE>(1 << (48 + 2)),
             ADVICEInstruction::<WORD_SIZE>(u64_max),
             ADVICEInstruction::<WORD_SIZE>(u64_max - 1),
         ];

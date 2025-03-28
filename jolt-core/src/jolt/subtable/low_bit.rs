@@ -3,11 +3,11 @@ use crate::field::JoltField;
 use std::marker::PhantomData;
 
 #[derive(Default)]
-pub struct LowBitSubtable<F: JoltField, const OFFSET: usize> {
+pub struct LowBitSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: JoltField, const OFFSET: usize> LowBitSubtable<F, OFFSET> {
+impl<F: JoltField> LowBitSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -15,25 +15,20 @@ impl<F: JoltField, const OFFSET: usize> LowBitSubtable<F, OFFSET> {
     }
 }
 
-impl<F: JoltField, const OFFSET: usize> LassoSubtable<F> for LowBitSubtable<F, OFFSET> {
-    fn materialize(&self, M: usize) -> Vec<F> {
-        // table[x] = x & (1 << OFFSET)
-        let mut entries: Vec<F> = Vec::with_capacity(M);
-        let low_bit = 1usize << OFFSET;
+impl<F: JoltField> LassoSubtable<F> for LowBitSubtable<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
+        // table[x] = x & 1
+        let mut entries = Vec::with_capacity(M);
 
         // Materialize table entries in order from 0..M
         for idx in 0..M {
-            entries.push(if idx & low_bit != 0 {
-                F::one()
-            } else {
-                F::zero()
-            });
+            entries.push(idx as u32 & 1);
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        point[point.len() - 1 - OFFSET]
+        point[point.len() - 1]
     }
 }
 
@@ -44,32 +39,15 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
-    subtable_materialize_mle_parity_test!(
-        lsb_materialize_mle_parity,
-        LowBitSubtable<Fr, 0>,
-        Fr,
-        256
-    );
+    subtable_materialize_mle_parity_test!(lsb_materialize_mle_parity, LowBitSubtable<Fr>, Fr, 256);
     subtable_materialize_mle_parity_test!(
         lsb_binius_materialize_mle_parity,
-        LowBitSubtable<BiniusField<BinaryField128b>, 0>,
-        BiniusField<BinaryField128b>,
-        1 << 16
-    );
-
-    subtable_materialize_mle_parity_test!(
-        second_lsb_materialize_mle_parity,
-        LowBitSubtable<Fr, 1>,
-        Fr,
-        256
-    );
-    subtable_materialize_mle_parity_test!(
-        second_lsb_binius_materialize_mle_parity,
-        LowBitSubtable<BiniusField<BinaryField128b>, 1>,
+        LowBitSubtable<BiniusField<BinaryField128b>>,
         BiniusField<BinaryField128b>,
         1 << 16
     );

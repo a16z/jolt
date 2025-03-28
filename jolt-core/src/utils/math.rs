@@ -3,6 +3,7 @@ pub trait Math {
     fn pow2(self) -> usize;
     fn get_bits(self, num_bits: usize) -> Vec<bool>;
     fn log_2(self) -> usize;
+    fn num_bits(self) -> usize;
 }
 
 impl Math for usize {
@@ -32,5 +33,9 @@ impl Math for usize {
         } else {
             (0usize.leading_zeros() - self.leading_zeros()) as usize
         }
+    }
+
+    fn num_bits(self) -> usize {
+        (0usize.leading_zeros() - self.leading_zeros()) as usize
     }
 }

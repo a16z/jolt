@@ -48,6 +48,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let s_y = MOVSIGNInstruction::<WORD_SIZE>(y).lookup_entry();
@@ -68,6 +70,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let xy_high_bits = MULHUInstruction::<WORD_SIZE>(x, y).lookup_entry();
@@ -88,6 +92,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let sx_y_low_bits = MULUInstruction::<WORD_SIZE>(s_x, y).lookup_entry();
@@ -108,6 +114,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let sy_x_low_bits = MULUInstruction::<WORD_SIZE>(s_y, x).lookup_entry();
@@ -128,6 +136,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let partial_sum = ADDInstruction::<WORD_SIZE>(xy_high_bits, sx_y_low_bits).lookup_entry();
@@ -148,6 +158,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let result = ADDInstruction::<WORD_SIZE>(partial_sum, sy_x_low_bits).lookup_entry();
@@ -168,6 +180,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
         virtual_trace
     }
@@ -189,11 +203,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn mulh_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(MULHInstruction::<32>, RV32IM::MULH);
+        jolt_virtual_sequence_test::<MULHInstruction<32>>(RV32IM::MULH);
     }
 }

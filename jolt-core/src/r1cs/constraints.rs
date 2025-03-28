@@ -8,7 +8,7 @@ use crate::{
             add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
             mulu::MULUInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction,
             sub::SUBInstruction,
-            virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction,
+            virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
             virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
         },
         vm::rv32i_vm::RV32I,
@@ -34,25 +34,25 @@ pub trait R1CSConstraints<const C: usize, F: JoltField> {
     ) -> CombinedUniformBuilder<C, F, Self::Inputs> {
         let mut uniform_builder = R1CSBuilder::<C, F, Self::Inputs>::new();
         Self::uniform_constraints(&mut uniform_builder, memory_start);
-        let non_uniform_constraints = Self::non_uniform_constraints();
+        let cross_step_constraints = Self::cross_step_constraints();
 
         CombinedUniformBuilder::construct(
             uniform_builder,
             padded_trace_length,
-            non_uniform_constraints,
+            cross_step_constraints,
         )
     }
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of
     /// the execution trace.
     fn uniform_constraints(builder: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64);
-    /// Construct's Jolt's non-uniform constraints.
-    /// Non-uniform constraints are constraints whose inputs involve witness
+    /// Construct's Jolt's cross-step constraints.
+    /// Cross-step constraints are constraints whose inputs involve witness
     /// values from multiple steps of the execution trace.
-    /// Currently, all of Jolt's non-uniform constraints are of the form
+    /// Currently, all of Jolt's cross-step constraints are of the form
     ///     if condition { some constraint on steps i and i+1 }
     /// This structure is captured in `OffsetEqConstraint`.
-    fn non_uniform_constraints() -> Vec<OffsetEqConstraint>;
+    fn cross_step_constraints() -> Vec<OffsetEqConstraint>;
 }
 
 pub struct JoltRV32IMConstraints;
@@ -119,14 +119,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let packed_query =
             R1CSBuilder::<C, F, JoltR1CSInputs>::pack_be(query_chunks.clone(), LOG_M);
 
-        // For the `AssertAlignedMemoryAccessInstruction` lookups, we add the `rs1` and `imm` values
+        // For the `AssertHalfwordAlignmentInstruction` lookups, we add the `rs1` and `imm` values
         // to obtain the memory address being accessed.
         let add_operands = JoltR1CSInputs::InstructionFlags(ADDInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(
-                AssertAlignedMemoryAccessInstruction::<32, 2>::default().into(),
-            )
-            + JoltR1CSInputs::InstructionFlags(
-                AssertAlignedMemoryAccessInstruction::<32, 4>::default().into(),
+                AssertHalfwordAlignmentInstruction::<32>::default().into(),
             );
         cs.constrain_eq_conditional(add_operands, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
@@ -138,7 +135,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         let is_mul = JoltR1CSInputs::InstructionFlags(MULInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(MULUInstruction::default().into())
             + JoltR1CSInputs::InstructionFlags(MULHUInstruction::default().into());
-        let product = cs.allocate_prod(JoltR1CSInputs::Aux(AuxVariable::Product), x, y);
+        let product = cs.allocate_prod(
+            JoltR1CSInputs::Aux(AuxVariable::Product),
+            JoltR1CSInputs::RS1_Read,
+            JoltR1CSInputs::RS2_Read,
+        );
         cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
         cs.constrain_eq_conditional(
             JoltR1CSInputs::InstructionFlags(MOVSIGNInstruction::default().into())
@@ -236,7 +237,7 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
     }
 
-    fn non_uniform_constraints() -> Vec<OffsetEqConstraint> {
+    fn cross_step_constraints() -> Vec<OffsetEqConstraint> {
         // If the next instruction's ELF address is not zero (i.e. it's
         // not padding), then check the PC update.
         let pc_constraint = OffsetEqConstraint::new(

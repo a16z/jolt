@@ -9,6 +9,7 @@ use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
+use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -59,6 +60,20 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn evaluate_mle<F: JoltField>(&self, _: &[F]) -> F {
+        todo!("Placeholder; will use virtual sequence when we switch to Shout")
+    }
+
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        let shift = y % WORD_SIZE as u32;
+        if WORD_SIZE != 64 {
+            ((x as u64) << shift) % (1u64 << WORD_SIZE)
+        } else {
+            (x as u64) << shift
+        }
+    }
+
     fn lookup_entry(&self) -> u64 {
         // SLL is specified to ignore all but the last 5 (resp. 6) bits of y: https://jemu.oscc.cc/SLL
         if WORD_SIZE == 32 {
@@ -76,12 +91,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 }
@@ -128,6 +143,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn sll_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;

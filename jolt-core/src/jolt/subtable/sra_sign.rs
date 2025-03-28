@@ -20,11 +20,11 @@ impl<F: JoltField, const WORD_SIZE: usize> SraSignSubtable<F, WORD_SIZE> {
 }
 
 impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<F, WORD_SIZE> {
-    fn materialize(&self, M: usize) -> Vec<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
         // table[x | y] = (x_sign == 0) ? 0 : 0b11..100..0,
         // where x_sign = (x >> ((WORD_SIZE - 1) & (log2(M) / 2))) & 1,
         // `0b11..100..0` has `WORD_SIZE` bits and `y % WORD_SIZE` ones
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries = Vec::with_capacity(M);
 
         let operand_chunk_width: usize = (log2(M) / 2) as usize;
 
@@ -37,10 +37,10 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
             let x_sign = (x >> sign_bit_index) & 1;
 
             if x_sign == 0 {
-                entries.push(F::zero());
+                entries.push(0);
             } else {
                 let row = (0..(y % WORD_SIZE)).fold(0, |acc, i| acc + (1 << (WORD_SIZE - 1 - i)));
-                entries.push(F::from_u64(row).unwrap());
+                entries.push(row as u32);
             }
         }
         entries
@@ -82,7 +82,7 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
             }
 
             let x_sign_upper = (0..k).fold(F::zero(), |acc, i| {
-                acc + F::from_u64(1_u64 << (WORD_SIZE - 1 - i)).unwrap() * x_sign
+                acc + F::from_u64(1_u64 << (WORD_SIZE - 1 - i)) * x_sign
             });
 
             result += eq_term * x_sign_upper;
@@ -98,6 +98,7 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
+        field::JoltField,
         jolt::subtable::{sra_sign::SraSignSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };

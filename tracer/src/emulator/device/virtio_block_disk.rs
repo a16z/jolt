@@ -3,7 +3,7 @@ use crate::emulator::mmu::MemoryWrapper;
 // Based on Virtual I/O Device (VIRTIO) Version 1.1
 // https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html
 
-// 0x2000 is an arbitary number.
+// 0x2000 is an arbitrary number.
 const MAX_QUEUE_SIZE: u64 = 0x2000;
 
 // To simulate disk access time.
@@ -74,7 +74,7 @@ impl VirtioBlockDisk {
     /// * `contents` filesystem content binary
     pub fn init(&mut self, contents: Vec<u8>) {
         // @TODO: Optimize
-        for _i in 0..((contents.len() + 7) / 8) {
+        for _i in 0..contents.len().div_ceil(8) {
             self.contents.push(0);
         }
         for (i, byte) in contents.iter().enumerate() {
@@ -315,7 +315,7 @@ impl VirtioBlockDisk {
     ///
     /// # Arguments
     /// * `memory`
-    /// * `mem_addresss` Physical address. Must be eight-byte aligned.
+    /// * `mem_address` Physical address. Must be eight-byte aligned.
     /// * `disk_address` Must be eight-byte aligned.
     /// * `length` Must be eight-byte aligned.
     fn transfer_from_disk(
@@ -350,7 +350,7 @@ impl VirtioBlockDisk {
     ///
     /// # Arguments
     /// * `memory`
-    /// * `mem_addresss` Physical address. Must be eight-byte aligned.
+    /// * `mem_address` Physical address. Must be eight-byte aligned.
     /// * `disk_address` Must be eight-byte aligned.
     /// * `length` Must be eight-byte aligned.
     fn transfer_to_disk(
@@ -384,7 +384,7 @@ impl VirtioBlockDisk {
     /// Reads a byte from disk.
     ///
     /// # Arguments
-    /// * `addresss` Address in disk
+    /// * `address` Address in disk
     fn read_from_disk(&mut self, address: u64) -> u8 {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
@@ -394,7 +394,7 @@ impl VirtioBlockDisk {
     /// Writes a byte to disk.
     ///
     /// # Arguments
-    /// * `addresss` Address in disk
+    /// * `address` Address in disk
     /// * `value` Data written to disk
     fn write_to_disk(&mut self, address: u64, value: u8) {
         let index = (address >> 3) as usize;
@@ -453,7 +453,7 @@ impl VirtioBlockDisk {
         (self.get_base_avail_address() + 4 + queue_size * 2).div_ceil(align) * align
     }
 
-    // @TODO: Follow the virtio block specification more propertly.
+    // @TODO: Follow the virtio block specification more properly.
     fn handle_disk_access(&mut self, memory: &mut MemoryWrapper) {
         let base_desc_address = self.get_base_desc_address();
         let base_avail_address = self.get_base_avail_address();

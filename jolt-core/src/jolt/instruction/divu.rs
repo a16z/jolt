@@ -60,6 +60,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: Some(quotient),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
@@ -80,6 +82,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: Some(remainder),
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -100,6 +104,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let is_valid = AssertValidUnsignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
@@ -121,8 +127,11 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
+        // TODO(moodlezoup): is this assert unnecessary?
         let lte = ASSERTLTEInstruction::<WORD_SIZE>(q_y, x).lookup_entry();
         assert_eq!(lte, 1);
         virtual_trace.push(RVTraceRow {
@@ -142,6 +151,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let is_valid = AssertValidDiv0Instruction::<WORD_SIZE>(y, q).lookup_entry();
@@ -163,6 +174,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let add_0 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
@@ -183,6 +196,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let _assert_eq = BEQInstruction::<WORD_SIZE>(add_0, x).lookup_entry();
@@ -203,6 +218,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -222,6 +239,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
@@ -242,11 +261,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn divu_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(DIVUInstruction::<32>, RV32IM::DIVU);
+        jolt_virtual_sequence_test::<DIVUInstruction<32>>(RV32IM::DIVU);
     }
 }

@@ -13,13 +13,13 @@ use crate::{
 use rayon::prelude::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
-pub struct SparseCoefficient<F: JoltField> {
+pub struct SparseCoefficient<T> {
     pub(crate) index: usize,
-    pub(crate) value: F,
+    pub(crate) value: T,
 }
 
-impl<F: JoltField> From<(usize, F)> for SparseCoefficient<F> {
-    fn from(x: (usize, F)) -> Self {
+impl<T> From<(usize, T)> for SparseCoefficient<T> {
+    fn from(x: (usize, T)) -> Self {
         Self {
             index: x.0,
             value: x.1,
@@ -141,11 +141,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
 
         if left.len() <= batch_size {
             // Coalesced
-            let coalesced: Vec<F> = left
-                .into_iter()
-                .interleave(right.into_iter())
-                .cloned()
-                .collect();
+            let coalesced: Vec<F> = left.iter().interleave(right).cloned().collect();
             let dense_len = coalesced.len();
             return Self {
                 coeffs: vec![vec![]; batch_size],
@@ -227,7 +223,7 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
                             continue;
                         }
                         if coeff.index % 2 == 0 {
-                            // Left node; try to find correspoding right node
+                            // Left node; try to find corresponding right node
                             let right = segment
                                 .get(j + 1)
                                 .cloned()

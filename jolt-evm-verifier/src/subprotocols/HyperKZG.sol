@@ -35,38 +35,6 @@ contract HyperKZG {
     uint256 immutable VK_beta_g2_y_c0;
     uint256 immutable VK_beta_g2_y_c1;
 
-    /// Implements a batching protocol to verify multiple polynomial openings to the same point
-    /// using hyper kzg and a random linear combination.
-    /// @param commitments The polynomial commitment points in a vector arranged with x in the even
-    ///                    and y in the odd positions
-    /// @param point The point which is opened
-    /// @param p_of_x The vector of claimed evaluations
-    /// @param pi The proof of the opening, passed into the rlc verify
-    /// @param transcript The fiat shamair transcript we are sourcing deterministic randoms from
-    /// TODO - WARN - YOU MUST WRITE COMMITMENTS TO TRANSCRIPT BEFORE CALLING
-    /// TODO - Affine and calldata pointer versions of this, to save gas on point rep
-    function batch_verify(
-        uint256[] memory commitments,
-        uint256[] memory point,
-        uint256[] memory p_of_x,
-        HyperKZGProof memory pi,
-        Transcript memory transcript
-    ) public view returns (bool) {
-        // Load a rho from transcript
-        Fr rho = Fr.wrap(transcript.challenge_scalar(MODULUS));
-        (uint256 running_x, uint256 running_y) = (commitments[0], commitments[1]);
-        Fr running_eval = Fr.wrap(p_of_x[0]);
-        Fr scalar = rho;
-        for (uint256 i = 2; i < commitments.length; i += 2) {
-            (uint256 next_x, uint256 next_y) = ec_scalar_mul(commitments[i], commitments[i + 1], scalar.unwrap());
-            (running_x, running_y) = ec_add(running_x, running_y, next_x, next_y);
-            running_eval = running_eval + Fr.wrap(mulmod(p_of_x[i / 2], scalar.unwrap(), MODULUS));
-            scalar = scalar * rho;
-        }
-        // Pass the RLC into the singular verify function
-        return (verify(running_x, running_y, point, running_eval.unwrap(), pi, transcript));
-    }
-
     /// Implements the version multilinear hyper kzg verification as in the rust code at
     /// https://github.com/a16z/jolt/blob/main/jolt-core/src/poly/commitment/hyperkzg.rs
     /// @param c_x The x coordinate of the commitment to the multilinear polynomial

@@ -4,8 +4,8 @@ use tracer::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction,
-    virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction,
-    xor::XORInstruction, JoltInstruction,
+    virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction, xor::XORInstruction,
+    JoltInstruction,
 };
 /// Stores a halfword in memory
 pub struct SHInstruction<const WORD_SIZE: usize>;
@@ -39,8 +39,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
         };
 
         let is_aligned =
-            AssertAlignedMemoryAccessInstruction::<WORD_SIZE, 2>(dest, offset_unsigned)
-                .lookup_entry();
+            AssertHalfwordAlignmentInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
         debug_assert_eq!(is_aligned, 1);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
@@ -59,6 +58,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let ram_address = ADDInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
@@ -80,6 +81,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
@@ -102,6 +105,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let (word_loaded, word_stored) = match trace_row.memory_state.unwrap() {
@@ -143,6 +148,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
                 value: word_loaded,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let bit_shift = SLLInstruction::<WORD_SIZE>(ram_address, 3).lookup_entry();
@@ -163,6 +170,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         // Technically such a LUI instruction isn't valid RISC-V, since the lower
@@ -185,6 +194,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let shifted_mask =
@@ -207,6 +218,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let shifted_value = SLLInstruction::<WORD_SIZE>(value, bit_shift).lookup_entry();
@@ -227,6 +240,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         // The next three instructions (XOR, AND, XOR) splices the halfword into
@@ -251,6 +266,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let masked = ANDInstruction::<WORD_SIZE>(word_xor_halfword, shifted_mask).lookup_entry();
@@ -271,6 +288,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let result = XORInstruction::<WORD_SIZE>(word_loaded, masked).lookup_entry();
@@ -292,6 +311,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace.push(RVTraceRow {
@@ -315,6 +336,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
                 post_value: result,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         virtual_trace
@@ -338,6 +361,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
                 post_value: 0,
             }),
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         };
         Self::virtual_trace(dummy_trace_row)
             .into_iter()
@@ -403,6 +428,8 @@ mod test {
                     post_value: word_after,
                 }),
                 advice_value: None,
+                precompile_input: None,
+                precompile_output_address: None,
             };
 
             let trace = SHInstruction::<32>::virtual_trace(sh_trace_row);

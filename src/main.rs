@@ -186,8 +186,11 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["host"] }
+jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
+
+[features]
+icicle = ["jolt-sdk/icicle"]
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }

@@ -1,5 +1,6 @@
 use crate::field::JoltField;
-use crate::msm::VariableBaseMSM;
+use crate::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
@@ -8,22 +9,34 @@ use ark_ff::PrimeField;
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
+use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
-pub struct SRS<P: Pairing> {
+pub struct SRS<P: Pairing>
+where
+    P::G1: Icicle,
+{
     pub g1_powers: Vec<P::G1Affine>,
     pub g2_powers: Vec<P::G2Affine>,
     pub g_products: Vec<P::G1Affine>,
+    // g1_powers in icicle's GPU types
+    pub gpu_g1: Option<Vec<GpuBaseType<P::G1>>>,
 }
 
-impl<P: Pairing> SRS<P> {
+impl<P: Pairing> SRS<P>
+where
+    P::G1: Icicle,
+{
     pub fn setup<R: RngCore + CryptoRng>(
         mut rng: &mut R,
         num_g1_powers: usize,
         num_g2_powers: usize,
-    ) -> Self {
+    ) -> Self
+    where
+        P::ScalarField: JoltField,
+    {
         let beta = P::ScalarField::rand(&mut rng);
         let g1 = P::G1::rand(&mut rng);
         let g2 = P::G2::rand(&mut rng);
@@ -65,20 +78,35 @@ impl<P: Pairing> SRS<P> {
 
         // Precompute a commitment to each power-of-two length vector of ones, which is just the sum of each power-of-two length prefix of the SRS
         let num_powers = (g1_powers.len() as f64).log2().floor() as usize + 1;
-        let all_ones_coeffs: Vec<P::ScalarField> = vec![P::ScalarField::one(); num_g1_powers + 1];
+        let all_ones_coeffs: Vec<u8> = vec![1; num_g1_powers + 1];
         let powers_of_2 = (0..num_powers).into_par_iter().map(|i| 1usize << i);
         let g_products = powers_of_2
             .map(|power| {
-                <P::G1 as VariableBaseMSM>::msm(&g1_powers[..power], &all_ones_coeffs[..power])
-                    .unwrap()
-                    .into_affine()
+                <P::G1 as VariableBaseMSM>::msm_u8(
+                    &g1_powers[..power],
+                    &all_ones_coeffs[..power],
+                    Some(1),
+                )
+                .unwrap()
+                .into_affine()
             })
             .collect();
+
+        #[cfg(feature = "icicle")]
+        let gpu_g1 = Some(
+            g1_powers
+                .par_iter()
+                .map(<P::G1 as Icicle>::from_ark_affine)
+                .collect::<Vec<_>>(),
+        );
+        #[cfg(not(feature = "icicle"))]
+        let gpu_g1 = None;
 
         Self {
             g1_powers,
             g2_powers,
             g_products,
+            gpu_g1,
         }
     }
 
@@ -90,15 +118,24 @@ impl<P: Pairing> SRS<P> {
         );
         let g1 = params.g1_powers[0];
         let g2 = params.g2_powers[0];
+        let alpha_g1 = params.g1_powers[1];
         let beta_g2 = params.g2_powers[1];
         let pk = KZGProverKey::new(params, 0, max_degree + 1);
-        let vk = KZGVerifierKey { g1, g2, beta_g2 };
+        let vk = KZGVerifierKey {
+            g1,
+            g2,
+            beta_g2,
+            alpha_g1,
+        };
         (pk, vk)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct KZGProverKey<P: Pairing> {
+pub struct KZGProverKey<P: Pairing>
+where
+    P::G1: Icicle,
+{
     srs: Arc<SRS<P>>,
     // offset to read into SRS
     offset: usize,
@@ -106,7 +143,10 @@ pub struct KZGProverKey<P: Pairing> {
     supported_size: usize,
 }
 
-impl<P: Pairing> KZGProverKey<P> {
+impl<P: Pairing> KZGProverKey<P>
+where
+    P::G1: Icicle,
+{
     pub fn new(srs: Arc<SRS<P>>, offset: usize, supported_size: usize) -> Self {
         assert!(
             srs.g1_powers.len() >= offset + supported_size,
@@ -125,40 +165,146 @@ impl<P: Pairing> KZGProverKey<P> {
     pub fn g1_powers(&self) -> &[P::G1Affine] {
         &self.srs.g1_powers[self.offset..self.offset + self.supported_size]
     }
+
+    pub fn g2_powers(&self) -> &[P::G2Affine] {
+        &self.srs.g2_powers
+    }
+
+    pub fn len(&self) -> usize {
+        self.g1_powers().len()
+    }
+
+    pub fn gpu_g1(&self) -> Option<&[GpuBaseType<P::G1>]> {
+        self.srs
+            .gpu_g1
+            .as_ref()
+            .map(|gpu_g1| &gpu_g1[self.offset..self.offset + self.supported_size])
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct KZGVerifierKey<P: Pairing> {
     pub g1: P::G1Affine,
     pub g2: P::G2Affine,
+    pub alpha_g1: P::G1Affine,
     pub beta_g2: P::G2Affine,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum CommitMode {
-    Default,
-    // We noticed that most (93%) of the coefficients arising from lasso grand products are 1.
-    // This mode uses a precomputed commitment, G, to save some compute.
-    // Where G is the commitment to the all-ones vector of length 2^k```
-    GrandProduct,
+/// Marker trait
+pub trait Group<P: Pairing> {
+    type Curve: CurveGroup;
+}
+
+/// Marker for operations in G1
+pub enum G1 {}
+impl<P: Pairing> Group<P> for G1 {
+    type Curve = P::G1;
+}
+
+/// Marker for operations in G2
+pub enum G2 {}
+impl<P: Pairing> Group<P> for G2 {
+    type Curve = P::G2;
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct UnivariateKZG<P: Pairing> {
-    _phantom: PhantomData<P>,
+pub struct UnivariateKZG<P: Pairing, G: Group<P> = G1> {
+    _phantom: PhantomData<(P, G)>,
 }
 
 impl<P: Pairing> UnivariateKZG<P>
 where
-    <P as Pairing>::ScalarField: JoltField,
+    P::ScalarField: JoltField,
+    P::G1: Icicle,
 {
+    #[tracing::instrument(skip_all, name = "KZG::commit_batch")]
+    pub fn commit_batch<U>(
+        pk: &KZGProverKey<P>,
+        polys: &[U],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError>
+    where
+        U: Borrow<MultilinearPolynomial<P::ScalarField>> + Sync,
+    {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches to have the same length
+        assert!(polys
+            .par_iter()
+            .all(|s| s.borrow().len() == polys[0].borrow().len()));
+        assert!(polys[0].borrow().len() <= g1_powers.len());
+
+        if let Some(invalid) = polys
+            .iter()
+            .find(|coeffs| (*coeffs).borrow().len() > g1_powers.len())
+        {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.borrow().len(),
+            ));
+        }
+
+        let msm_size = polys[0].borrow().len();
+        let commitments = <P::G1 as VariableBaseMSM>::batch_msm(
+            &g1_powers[..msm_size],
+            gpu_g1.map(|g| &g[..msm_size]),
+            polys,
+        );
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
+    // This API will try to minimize copies to the GPU or just do the batches in parallel on the CPU
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch")]
+    pub fn commit_variable_batch(
+        pk: &KZGProverKey<P>,
+        polys: &[MultilinearPolynomial<P::ScalarField>],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches be less than the bases in size
+        if let Some(invalid) = polys.iter().find(|poly| poly.len() > g1_powers.len()) {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.len(),
+            ));
+        }
+
+        let commitments = <P::G1 as VariableBaseMSM>::variable_batch_msm(g1_powers, gpu_g1, polys);
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
+    #[tracing::instrument(skip_all, name = "KZG::commit_variable_batch_univariate")]
+    pub fn commit_variable_batch_univariate(
+        pk: &KZGProverKey<P>,
+        polys: &[UniPoly<P::ScalarField>],
+    ) -> Result<Vec<P::G1Affine>, ProofVerifyError> {
+        let g1_powers = &pk.g1_powers();
+        let gpu_g1 = pk.gpu_g1();
+
+        // batch commit requires all batches be less than the bases in size
+        if let Some(invalid) = polys
+            .iter()
+            .find(|poly| poly.coeffs.len() > g1_powers.len())
+        {
+            return Err(ProofVerifyError::KeyLengthError(
+                g1_powers.len(),
+                invalid.coeffs.len(),
+            ));
+        }
+
+        let commitments =
+            <P::G1 as VariableBaseMSM>::variable_batch_msm_univariate(g1_powers, gpu_g1, polys);
+        Ok(commitments.into_iter().map(|c| c.into_affine()).collect())
+    }
+
     #[tracing::instrument(skip_all, name = "KZG::commit_offset")]
     pub fn commit_offset(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, offset, CommitMode::Default)
+        Self::commit_inner(pk, &poly.coeffs, offset)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::commit")]
@@ -166,33 +312,28 @@ where
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, 0, CommitMode::Default)
+        Self::commit_inner(pk, &poly.coeffs, 0)
     }
 
-    #[tracing::instrument(skip_all, name = "KZG::commit_with_mode")]
-    pub fn commit_with_mode(
+    #[tracing::instrument(skip_all, name = "KZG::commit_as_univariate")]
+    pub fn commit_as_univariate(
         pk: &KZGProverKey<P>,
-        poly: &UniPoly<P::ScalarField>,
-        mode: CommitMode,
+        poly: &MultilinearPolynomial<P::ScalarField>,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, &poly.coeffs, 0, mode)
-    }
+        if pk.g1_powers().len() < poly.len() {
+            return Err(ProofVerifyError::KeyLengthError(
+                pk.g1_powers().len(),
+                poly.len(),
+            ));
+        }
 
-    #[tracing::instrument(skip_all, name = "KZG::commit_slice")]
-    pub fn commit_slice(
-        pk: &KZGProverKey<P>,
-        coeffs: &[P::ScalarField],
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, coeffs, 0, CommitMode::Default)
-    }
-
-    #[tracing::instrument(skip_all, name = "KZG::commit_slice_with_mode")]
-    pub fn commit_slice_with_mode(
-        pk: &KZGProverKey<P>,
-        coeffs: &[P::ScalarField],
-        mode: CommitMode,
-    ) -> Result<P::G1Affine, ProofVerifyError> {
-        Self::commit_inner(pk, coeffs, 0, mode)
+        let c = <P::G1 as VariableBaseMSM>::msm(
+            &pk.g1_powers()[..poly.original_len()],
+            pk.gpu_g1().map(|g| &g[..poly.original_len()]),
+            poly,
+            None,
+        )?;
+        Ok(c.into_affine())
     }
 
     #[inline]
@@ -201,7 +342,6 @@ where
         pk: &KZGProverKey<P>,
         coeffs: &[P::ScalarField],
         offset: usize,
-        mode: CommitMode,
     ) -> Result<P::G1Affine, ProofVerifyError> {
         if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
@@ -210,51 +350,15 @@ where
             ));
         }
 
-        match mode {
-            CommitMode::Default => {
-                let c = <P::G1 as VariableBaseMSM>::msm(
-                    &pk.g1_powers()[offset..coeffs.len()],
-                    &coeffs[offset..],
-                )
-                .unwrap();
-                Ok(c.into_affine())
-            }
-            CommitMode::GrandProduct => {
-                let g1_powers = &pk.g1_powers()[offset..coeffs.len()];
-                let coeffs = &coeffs[offset..];
-                // Commit to the non-1 coefficients first then combine them with the G commitment (all-1s vector) in the SRS
-                let (non_one_coeffs, non_one_bases): (Vec<_>, Vec<_>) = coeffs
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, coeff)| {
-                        if *coeff != P::ScalarField::one() {
-                            // Subtract 1 from the coeff because we already have a commitment to the all the 1s
-                            Some((*coeff - P::ScalarField::one(), g1_powers[i]))
-                        } else {
-                            None
-                        }
-                    })
-                    .unzip();
+        let c = <P::G1 as VariableBaseMSM>::msm_field_elements(
+            &pk.g1_powers()[offset..coeffs.len()],
+            pk.gpu_g1().map(|g| &g[offset..coeffs.len()]),
+            &coeffs[offset..],
+            None,
+            use_icicle(),
+        )?;
 
-                // Perform MSM for the non-1 coefficients
-                let non_one_commitment = if !non_one_coeffs.is_empty() {
-                    <P::G1 as VariableBaseMSM>::msm(&non_one_bases, &non_one_coeffs).unwrap()
-                } else {
-                    P::G1::zero()
-                };
-
-                // find the right precomputed g_product to use
-                let num_powers = (coeffs.len() as f64).log2();
-                if num_powers.fract() != 0.0 {
-                    return Err(ProofVerifyError::InvalidKeyLength(coeffs.len()));
-                }
-                let num_powers = num_powers.floor() as usize;
-
-                // Combine G * H: Multiply the precomputed G commitment with the non-1 commitment (H)
-                let final_commitment = pk.srs.g_products[num_powers] + non_one_commitment;
-                Ok(final_commitment.into_affine())
-            }
-        }
+        Ok(c.into_affine())
     }
 
     #[tracing::instrument(skip_all, name = "KZG::open")]
@@ -266,13 +370,7 @@ where
     where
         <P as Pairing>::ScalarField: JoltField,
     {
-        let divisor = UniPoly::from_coeff(vec![-*point, P::ScalarField::one()]);
-        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
-        let proof = <P::G1 as VariableBaseMSM>::msm(
-            &pk.g1_powers()[..witness_poly.coeffs.len()],
-            witness_poly.coeffs.as_slice(),
-        )
-        .unwrap();
+        let proof = Self::generic_open(pk.g1_powers(), pk.gpu_g1(), poly, *point)?;
         let evaluation = poly.evaluate(point);
         Ok((proof.into_affine(), evaluation))
     }
@@ -295,6 +393,53 @@ where
     }
 }
 
+impl<P: Pairing, G: Group<P>> UnivariateKZG<P, G>
+where
+    P::ScalarField: JoltField,
+    G::Curve: CurveGroup<ScalarField = P::ScalarField> + Icicle,
+{
+    #[tracing::instrument(skip_all, name = "KZG::open")]
+    pub fn generic_open(
+        powers: &[<G::Curve as CurveGroup>::Affine],
+        gpu_powers: Option<&[GpuBaseType<G::Curve>]>,
+        poly: &UniPoly<P::ScalarField>,
+        point: P::ScalarField,
+    ) -> Result<G::Curve, ProofVerifyError>
+    where
+        <P as Pairing>::ScalarField: JoltField,
+    {
+        let divisor = UniPoly::from_coeff(vec![-point, P::ScalarField::one()]);
+        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
+        let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
+            &powers[..witness_poly.coeffs.len()],
+            gpu_powers.map(|g| &g[..witness_poly.coeffs.len()]),
+            witness_poly.coeffs.as_slice(),
+            None,
+            use_icicle(),
+        )?;
+        Ok(proof)
+    }
+}
+
+impl<P: Pairing> UnivariateKZG<P, G2> {
+    pub fn verify_g2(
+        v_srs: &KZGVerifierKey<P>,
+        commitment: P::G2,
+        point: P::ScalarField,
+        proof: P::G2,
+        evaluation: P::ScalarField,
+    ) -> bool {
+        P::multi_pairing(
+            [
+                v_srs.g1.into_group(),
+                v_srs.alpha_g1.into_group() - v_srs.g1 * point,
+            ],
+            [commitment - v_srs.g2.into_group() * evaluation, -proof],
+        )
+        .is_zero()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -303,23 +448,23 @@ mod test {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    fn run_kzg_test<F>(degree_generator: F, commit_mode: CommitMode) -> Result<(), ProofVerifyError>
+    fn run_kzg_test<F>(degree_generator: F) -> Result<(), ProofVerifyError>
     where
         F: Fn(&mut ChaCha20Rng) -> usize,
     {
         for i in 0..100 {
             let seed = [i; 32];
             let mut rng = &mut ChaCha20Rng::from_seed(seed);
-            let degree = degree_generator(&mut rng);
+            let degree = degree_generator(rng);
 
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree, 2));
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
-            let comm = UnivariateKZG::<Bn254>::commit_with_mode(&ck, &p, commit_mode)?;
+            let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
-                UnivariateKZG::verify(&vk, &comm, &point, &proof, &value)?,
+                UnivariateKZG::<_, G1>::verify(&vk, &comm, &point, &proof, &value)?,
                 "proof was incorrect for max_degree = {}, polynomial_degree = {}",
                 degree,
                 p.degree(),
@@ -330,12 +475,6 @@ mod test {
 
     #[test]
     fn kzg_commit_prove_verify() -> Result<(), ProofVerifyError> {
-        run_kzg_test(|rng| rng.gen_range(2..20), CommitMode::Default)
-    }
-
-    #[test]
-    fn kzg_commit_prove_verify_mode() -> Result<(), ProofVerifyError> {
-        // This test uses the grand product optimization and ensures only powers of 2 are used for degree generation
-        run_kzg_test(|rng| 1 << rng.gen_range(1..8), CommitMode::GrandProduct)
+        run_kzg_test(|rng| rng.gen_range(2..20))
     }
 }

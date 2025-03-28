@@ -46,6 +46,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let xy_high_bits = MULHUInstruction::<WORD_SIZE>(x, y).lookup_entry();
@@ -66,6 +68,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let sx_y_low_bits = MULUInstruction::<WORD_SIZE>(s_x, y).lookup_entry();
@@ -86,6 +90,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
 
         let result = ADDInstruction::<WORD_SIZE>(xy_high_bits, sx_y_low_bits).lookup_entry();
@@ -106,6 +112,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
             },
             memory_state: None,
             advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
         });
         virtual_trace
     }
@@ -127,11 +135,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn mulhsu_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(MULHSUInstruction::<32>, RV32IM::MULHSU);
+        jolt_virtual_sequence_test::<MULHSUInstruction<32>>(RV32IM::MULHSU);
     }
 }

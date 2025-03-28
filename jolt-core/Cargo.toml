@@ -19,6 +19,23 @@ repository = "https://github.com/a16z/jolt"
 license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs"]
 
+[features]
+default = [
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "ark-ff/asm",
+    "host",
+    "rayon",
+]
+host = ["dep:reqwest", "dep:tokio"]
+icicle = [
+    "default",
+    "dep:icicle-runtime",
+    "dep:icicle-core",
+    "dep:icicle-bn254",
+]
+
 [dependencies]
 ark-bn254 = "0.4.0"
 ark-ec = { version = "0.4.2", default-features = false }
@@ -33,6 +50,9 @@ enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
 num-integer = "0.1.45"
+num-derive = "0.4.2"
+num = "0.4.3"
+num-traits = "0.2.19"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
@@ -47,9 +67,7 @@ strum_macros = "0.26.4"
 thiserror = "1.0.58"
 tracing = "0.1.37"
 tracing-chrome = "0.7.1"
-tracing-flame = "0.2.0"
 tracing-subscriber = "0.3.18"
-tracing-texray = "0.2.0"
 target-lexicon = "0.12.14"
 reqwest = { version = "0.12.3", features = [
     "json",
@@ -65,6 +83,9 @@ bytemuck = "1.19.0"
 tokio = { version = "1.38.0", optional = true }
 alloy-primitives = "0.7.6"
 alloy-sol-types = "0.7.6"
+once_cell = "1.19.0"
+rand_distr = "0.4.3"
+anyhow = "1.0.97"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -93,24 +114,40 @@ harness = false
 name = "compute_cubic"
 harness = false
 
+[[bench]]
+name = "msm"
+harness = false
+
+[[bench]]
+name = "msm_batch"
+harness = false
+
+[[bench]]
+name = "msm_adapter_batch"
+harness = false
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
 
-[features]
-default = [
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "ark-ff/asm",
-    "host",
-    "rayon",
-]
-host = ["dep:reqwest", "dep:tokio"]
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0"
+sys-info = "0.9.1"
 tokio = { version = "1.38.0", optional = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    "cuda_backend",
+], rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    "cuda_backend",
+], rev = "2441eba", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

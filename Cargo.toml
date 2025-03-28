@@ -54,6 +54,7 @@ members = [
 
 [features]
 host = ["jolt-sdk/host"]
+icicle = ["jolt-core/icicle"]
 
 [lib]
 path = "./src/lib.rs"
