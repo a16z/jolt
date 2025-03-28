@@ -8,9 +8,7 @@ use std::{
     process::Command,
 };
 
-use postcard;
 use rayon::prelude::*;
-use serde::Serialize;
 
 use common::{
     constants::{
@@ -41,11 +39,12 @@ pub mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod toolchain;
 
+pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+
 #[derive(Clone)]
 pub struct Program {
     guest: String,
     func: Option<String>,
-    input: Vec<u8>,
     memory_size: u64,
     stack_size: u64,
     max_input_size: u64,
@@ -59,7 +58,6 @@ impl Program {
         Self {
             guest: guest.to_string(),
             func: None,
-            input: Vec::new(),
             memory_size: DEFAULT_MEMORY_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
@@ -75,11 +73,6 @@ impl Program {
 
     pub fn set_func(&mut self, func: &str) {
         self.func = Some(func.to_string())
-    }
-
-    pub fn set_input<T: Serialize>(&mut self, input: &T) {
-        let mut serialized = postcard::to_stdvec(input).unwrap();
-        self.input.append(&mut serialized);
     }
 
     pub fn set_memory_size(&mut self, len: u64) {
@@ -99,7 +92,7 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
-    pub fn build(&mut self) {
+    pub fn build(&mut self, target_dir: &str) {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
@@ -138,7 +131,8 @@ impl Program {
             }
 
             let target = format!(
-                "/tmp/jolt-guest-target-{}-{}",
+                "{}/{}-{}",
+                target_dir,
                 self.guest,
                 self.func.as_ref().unwrap_or(&"".to_string())
             );
@@ -170,8 +164,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
-        self.build();
+    pub fn decode(&self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {:?}", elf));
@@ -182,11 +175,11 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
-        self.build();
+    pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
+        self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.clone().unwrap();
         let (raw_trace, io_device) =
-            tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
+            tracer::trace(&elf, inputs, self.max_input_size, self.max_output_size);
 
         let trace: Vec<_> = raw_trace
             .into_par_iter()
@@ -220,14 +213,13 @@ impl Program {
         (io_device, trace)
     }
 
-    pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary {
-        self.build();
+    pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
+        self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) =
-            tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
+        let (raw_trace, _) = tracer::trace(elf, inputs, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
-        let (io_device, processed_trace) = self.trace();
+        let (io_device, processed_trace) = self.trace(inputs);
 
         ProgramSummary {
             raw_trace,
