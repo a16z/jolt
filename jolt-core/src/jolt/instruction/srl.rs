@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::utils::uninterleave_bits;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -71,14 +72,28 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         }
     }
 
-    fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (x.wrapping_shr(y % 8)) as u64,
+            32 => (x.wrapping_shr(y % 32)) as u64,
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, _: &[F]) -> F {
+        todo!("Placeholder; will use virtual sequence when we switch to Shout")
     }
 }
 

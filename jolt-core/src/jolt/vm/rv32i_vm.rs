@@ -1,8 +1,10 @@
 use crate::field::JoltField;
-use crate::jolt::instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction;
+use crate::jolt::instruction::virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
+use crate::jolt::instruction::virtual_pow2::POW2Instruction;
+use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::low_bit::LowBitSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
@@ -130,8 +132,9 @@ instruction_set!(
   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertAlignedMemoryAccessInstruction<WORD_SIZE, 2>,
-  VIRTUAL_ASSERT_WORD_ALIGNMENT: AssertAlignedMemoryAccessInstruction<WORD_SIZE, 4>
+  VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertHalfwordAlignmentInstruction<WORD_SIZE>,
+  VIRTUAL_POW2: POW2Instruction<WORD_SIZE>,
+  VIRTUAL_SRA_PADDING: RightShiftPaddingInstruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
@@ -158,8 +161,7 @@ subtable_enum!(
   LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
   RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
   DIV_BY_ZERO: DivByZeroSubtable<F>,
-  LSB: LowBitSubtable<F, 0>,
-  SECOND_LEAST_SIGNIFICANT_BIT: LowBitSubtable<F, 1>
+  LSB: LowBitSubtable<F>
 );
 
 // ==================== JOLT ====================

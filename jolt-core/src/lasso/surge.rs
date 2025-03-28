@@ -510,7 +510,7 @@ where
         #[cfg(test)]
         if let Some(debug_info) = _debug_info {
             transcript.compare_to(debug_info.transcript);
-            opening_accumulator.compare_to(debug_info.opening_accumulator, &generators);
+            opening_accumulator.compare_to(debug_info.opening_accumulator, generators);
         }
 
         let protocol_name = Self::protocol_name();

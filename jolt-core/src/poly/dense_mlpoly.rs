@@ -10,10 +10,12 @@ use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
+use super::multilinear_polynomial::BindingOrder;
+
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DensePolynomial<F: JoltField> {
-    num_vars: usize, // the number of variables in the multilinear polynomial
-    len: usize,
+    pub num_vars: usize, // the number of variables in the multilinear polynomial
+    pub len: usize,
     pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 
@@ -60,6 +62,20 @@ impl<F: JoltField> DensePolynomial<F> {
 
     pub fn is_bound(&self) -> bool {
         self.len != self.Z.len()
+    }
+
+    pub fn bind(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top(&r),
+        }
+    }
+
+    pub fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top_zero_optimized(&r),
+        }
     }
 
     pub fn bound_poly_var_top(&mut self, r: &F) {

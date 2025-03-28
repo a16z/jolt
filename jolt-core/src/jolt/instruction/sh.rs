@@ -4,8 +4,8 @@ use tracer::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction,
-    virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction,
-    xor::XORInstruction, JoltInstruction,
+    virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction, xor::XORInstruction,
+    JoltInstruction,
 };
 /// Stores a halfword in memory
 pub struct SHInstruction<const WORD_SIZE: usize>;
@@ -39,8 +39,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
         };
 
         let is_aligned =
-            AssertAlignedMemoryAccessInstruction::<WORD_SIZE, 2>(dest, offset_unsigned)
-                .lookup_entry();
+            AssertHalfwordAlignmentInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
         debug_assert_eq!(is_aligned, 1);
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {

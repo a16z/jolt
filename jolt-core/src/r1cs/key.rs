@@ -310,7 +310,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         let eq_ry_var = EqPolynomial::evals(ry_var);
 
         let constant_column = index_to_field_bitvector(
-            self.num_cols_total() / 2 / self.num_steps,
+            (self.num_cols_total() / 2 / self.num_steps) as u64,
             num_vars_bits + 1,
         );
 
@@ -357,8 +357,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F
         };
 
         for (i, constraint) in self.offset_eq_r1cs.constraints.iter().enumerate() {
-            let cross_step_constraint_index =
-                index_to_field_bitvector(self.uniform_r1cs.num_rows + i, constraint_rows_bits);
+            let cross_step_constraint_index = index_to_field_bitvector(
+                (self.uniform_r1cs.num_rows + i) as u64,
+                constraint_rows_bits,
+            );
             let row_constr_eq_cross_step =
                 EqPolynomial::new(rx_constr.to_vec()).evaluate(&cross_step_constraint_index);
 
