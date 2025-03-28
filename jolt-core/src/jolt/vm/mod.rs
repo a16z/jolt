@@ -412,6 +412,10 @@ where
             &trace,
         );
 
+        // TODO: Declare bytecode_polynomials_new of type BytecodeStuff<StreamingPolynomial<Iter::JoltTraceStep, F>>.
+
+        // TODO: Initialise bytecode_polynomials_new by creating a_read_write etc... using StreamingPolynomial::new().
+        // TODO: To new() we need to pass a closure.
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || {
                 BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
