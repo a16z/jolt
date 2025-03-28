@@ -12,7 +12,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::{fs::File, io::{Read, Write}, path::Path};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
@@ -272,9 +276,12 @@ impl<
         T: CanonicalSerialize + CanonicalDeserialize + Default + Sync,
         PCS: CommitmentScheme<ProofTranscript>,
         ProofTranscript: Transcript,
-    > Initializable<T, JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>> for JoltStuff<T>
+    > Initializable<T, JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>>
+    for JoltStuff<T>
 {
-    fn initialize(preprocessing: &JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>) -> Self {
+    fn initialize(
+        preprocessing: &JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>,
+    ) -> Self {
         Self {
             bytecode: BytecodeStuff::initialize(&preprocessing.bytecode),
             read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
@@ -537,7 +544,8 @@ where
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
-        let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing.shared);
+        let jolt_commitments =
+            jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing.shared);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 
@@ -594,8 +602,8 @@ where
         .expect("r1cs proof failed");
 
         // Batch-prove all openings
-        let opening_proof =
-            opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.shared.generators, &mut transcript);
+        let opening_proof = opening_accumulator
+            .reduce_and_prove::<PCS>(&preprocessing.shared.generators, &mut transcript);
 
         drop_in_background_thread(jolt_polynomials);
 

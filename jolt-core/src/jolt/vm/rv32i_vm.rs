@@ -318,8 +318,13 @@ mod tests {
                 trace,
                 preprocessing.clone(),
             );
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, verifier_io_device, debug_info);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            proof,
+            commitments,
+            verifier_io_device,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -378,8 +383,13 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, debug_info);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            jolt_proof,
+            jolt_commitments,
+            verifier_io_device,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -416,8 +426,13 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, debug_info);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            jolt_proof,
+            jolt_commitments,
+            verifier_io_device,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -451,8 +466,13 @@ mod tests {
             io_device, trace, preprocessing.clone()
         );
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, jolt_proof, jolt_commitments, verifier_io_device, debug_info);
+        let verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            jolt_proof,
+            jolt_commitments,
+            verifier_io_device,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -488,10 +508,17 @@ mod tests {
             M,
             KeccakTranscript,
         >>::prove(
-            io_device, trace, preprocessing.clone()
+            io_device,
+            trace,
+            preprocessing.clone(),
         );
-        let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, verifier_io_device, debug_info);
+        let _verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            proof,
+            commitments,
+            verifier_io_device,
+            debug_info,
+        );
     }
 
     #[test]
@@ -528,9 +555,16 @@ mod tests {
             M,
             KeccakTranscript,
         >>::prove(
-            io_device, trace, preprocessing.clone()
+            io_device,
+            trace,
+            preprocessing.clone(),
         );
-        let _verification_result =
-            RV32IJoltVM::verify(preprocessing.shared, proof, commitments, verifier_io_device, debug_info);
+        let _verification_result = RV32IJoltVM::verify(
+            preprocessing.shared,
+            proof,
+            commitments,
+            verifier_io_device,
+            debug_info,
+        );
     }
 }

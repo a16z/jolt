@@ -127,7 +127,8 @@ impl MacroBuilder {
 
     fn make_build_verifier_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let build_verifier_fn_name = Ident::new(&format!("build_verifier_{}", fn_name), fn_name.span());
+        let build_verifier_fn_name =
+            Ident::new(&format!("build_verifier_{}", fn_name), fn_name.span());
 
         let input_types = self.func_args.iter().map(|(_, ty)| ty);
         let output_type: Type = match &self.func.sig.output {
@@ -250,7 +251,8 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
-        let preprocess_prover_fn_name = Ident::new(&format!("preprocess_prover_{}", fn_name), fn_name.span());
+        let preprocess_prover_fn_name =
+            Ident::new(&format!("preprocess_prover_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(program: &jolt::host::Program)
@@ -284,7 +286,8 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
-        let preprocess_verifier_fn_name = Ident::new(&format!("preprocess_verifier_{}", fn_name), fn_name.span());
+        let preprocess_verifier_fn_name =
+            Ident::new(&format!("preprocess_verifier_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(program: &jolt::host::Program)

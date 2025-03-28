@@ -510,24 +510,24 @@ impl<F: JoltField> CanonicalDeserialize for MultilinearPolynomial<F> {
         // TODO(protoben) Can we use strum for this?
         let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         let res = match discriminant {
-            0 => MultilinearPolynomial::LargeScalars(
-                DensePolynomial::deserialize_with_mode(reader, compress, validate)?
-            ),
-            1 => MultilinearPolynomial::U8Scalars(
-                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
-            ),
-            2 => MultilinearPolynomial::U16Scalars(
-                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
-            ),
-            3 => MultilinearPolynomial::U32Scalars(
-                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
-            ),
-            4 => MultilinearPolynomial::U64Scalars(
-                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
-            ),
-            5 => MultilinearPolynomial::I64Scalars(
-                CompactPolynomial::deserialize_with_mode(reader, compress, validate)?
-            ),
+            0 => MultilinearPolynomial::LargeScalars(DensePolynomial::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
+            1 => MultilinearPolynomial::U8Scalars(CompactPolynomial::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
+            2 => MultilinearPolynomial::U16Scalars(CompactPolynomial::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
+            3 => MultilinearPolynomial::U32Scalars(CompactPolynomial::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
+            4 => MultilinearPolynomial::U64Scalars(CompactPolynomial::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
+            5 => MultilinearPolynomial::I64Scalars(CompactPolynomial::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
             _ => Err(SerializationError::InvalidData)?,
         };
         Ok(res)

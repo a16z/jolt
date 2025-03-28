@@ -216,8 +216,7 @@ impl Program {
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) =
-            tracer::trace(elf, inputs, self.max_input_size, self.max_output_size);
+        let (raw_trace, _) = tracer::trace(elf, inputs, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
         let (io_device, processed_trace) = self.trace(inputs);
