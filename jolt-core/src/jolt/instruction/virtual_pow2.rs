@@ -2,7 +2,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{PrefixEval, Prefixes};
+use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
@@ -70,19 +70,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for POW2Instruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
-    for POW2Instruction<WORD_SIZE>
-{
-    fn prefixes() -> Vec<Prefixes> {
-        vec![]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for POW2Instruction<WORD_SIZE> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::Pow2]
     }
 
-    fn combine(_: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        suffixes[Suffixes::Pow2]
+    fn combine<F: JoltField>(&self, _: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [pow2] = suffixes.try_into().unwrap();
+        pow2
     }
 }
 

@@ -1,14 +1,20 @@
+use add::ADDInstruction;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
+use prefixes::PrefixEval;
 use rand::rngs::StdRng;
 use serde::Serialize;
 use std::marker::Sync;
 use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use sub::SUBInstruction;
+use suffixes::{SuffixEval, Suffixes};
 use tracer::{RVTraceRow, RegisterState};
 
 use crate::field::JoltField;
 use crate::jolt::subtable::LassoSubtable;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::chunk_operand;
 use crate::utils::interleave_bits;
 use common::rv_trace::ELFInstruction;
@@ -226,3 +232,79 @@ pub mod xor;
 
 #[cfg(test)]
 pub mod test;
+
+#[derive(Clone, Debug, Serialize, EnumIter, EnumCountMacro)]
+#[repr(u8)]
+pub enum LookupTables<const WORD_SIZE: usize> {
+    ADD(ADDInstruction<WORD_SIZE>),
+    SUB(SUBInstruction<WORD_SIZE>),
+}
+
+impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
+    pub fn enum_index(instruction: &Self) -> usize {
+        // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+        let byte = unsafe { *(instruction as *const Self as *const u8) };
+        byte as usize
+    }
+
+    pub fn to_lookup_index(&self) -> u64 {
+        match self {
+            LookupTables::ADD(add) => add.to_lookup_index(),
+            LookupTables::SUB(sub) => sub.to_lookup_index(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn materialize(&self) -> Vec<u64> {
+        match self {
+            LookupTables::ADD(add) => add.materialize(),
+            LookupTables::SUB(sub) => sub.materialize(),
+        }
+    }
+
+    pub fn materialize_entry(&self, index: u64) -> u64 {
+        match self {
+            LookupTables::ADD(add) => add.materialize_entry(index),
+            LookupTables::SUB(sub) => sub.materialize_entry(index),
+        }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        match self {
+            LookupTables::ADD(add) => add.evaluate_mle(r),
+            LookupTables::SUB(sub) => sub.evaluate_mle(r),
+        }
+    }
+
+    fn operands(&self) -> (u64, u64) {
+        match self {
+            LookupTables::ADD(add) => add.operands(),
+            LookupTables::SUB(sub) => sub.operands(),
+        }
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        match self {
+            LookupTables::ADD(add) => LookupTables::ADD(add.random(rng)),
+            LookupTables::SUB(sub) => LookupTables::SUB(sub.random(rng)),
+        }
+    }
+
+    pub fn suffixes(&self) -> Vec<Suffixes> {
+        match self {
+            LookupTables::ADD(add) => add.suffixes(),
+            LookupTables::SUB(sub) => sub.suffixes(),
+        }
+    }
+
+    pub fn combine<F: JoltField>(
+        &self,
+        prefixes: &[PrefixEval<F>],
+        suffixes: &[SuffixEval<F>],
+    ) -> F {
+        match self {
+            LookupTables::ADD(add) => add.combine(prefixes, suffixes),
+            LookupTables::SUB(sub) => sub.combine(prefixes, suffixes),
+        }
+    }
+}

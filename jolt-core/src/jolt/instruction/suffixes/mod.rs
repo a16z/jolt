@@ -1,5 +1,3 @@
-use std::{fmt::Display, ops::Index};
-
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
@@ -63,41 +61,15 @@ pub enum Suffixes {
     RightShiftPadding,
 }
 
-#[derive(Clone, Copy)]
-pub struct SuffixEval<F>(F);
-pub type SuffixCheckpoint<F: JoltField> = SuffixEval<Option<F>>;
-
-impl<F: Display> Display for SuffixEval<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl<F> From<F> for SuffixEval<F> {
-    fn from(value: F) -> Self {
-        Self(value)
-    }
-}
-
-impl<F> SuffixCheckpoint<F> {
-    pub fn unwrap(self) -> SuffixEval<F> {
-        self.0.unwrap().into()
-    }
-}
-
-impl<F> Index<Suffixes> for &[SuffixEval<F>] {
-    type Output = F;
-
-    fn index(&self, prefix: Suffixes) -> &Self::Output {
-        let index = prefix as usize;
-        &self.get(index).unwrap().0
-    }
-}
+pub type SuffixEval<F: JoltField> = F;
 
 impl Suffixes {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
     /// `b` represents `b.len()` variables, each assuming a Boolean value.
     pub fn suffix_mle<const WORD_SIZE: usize>(&self, b: LookupBits) -> u32 {
+        if b.len() == 0 {
+            return 1;
+        }
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),

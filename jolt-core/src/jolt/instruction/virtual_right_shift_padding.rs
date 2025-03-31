@@ -2,7 +2,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{PrefixEval, Prefixes};
+use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
@@ -79,19 +79,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for RightShiftPaddingInstruction<WO
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for RightShiftPaddingInstruction<WORD_SIZE>
 {
-    fn prefixes() -> Vec<Prefixes> {
-        vec![]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::RightShiftPadding]
     }
 
-    fn combine(_: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        suffixes[Suffixes::RightShiftPadding]
+    fn combine<F: JoltField>(&self, _: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [right_shift_padding] = suffixes.try_into().unwrap();
+        right_shift_padding
     }
 }
 
