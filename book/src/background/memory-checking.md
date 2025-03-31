@@ -8,9 +8,20 @@ Jolt utilizes offline memory checking in the Bytecode prover, Lookup prover (for
 This is in contrast to "online memory checking" techniques like Merkle hashing that immediately confirm that a memory read was done correctly by insisting that each read includes an authentication path. Merkle hashing is much more expensive on a per-read basis for SNARK provers, and offline memory checking suffices for SNARK design. This is why Lasso and Jolt use offline memory checking techniques rather than online). 
 
 ## Initialization Algorithm
-### `TODO`: 
-- Initialize four timestamp counters
-- Implicitly assume a read operation before each write
+The initialization algorithm for offline memory checking establishes four key timestamp counters and sets up the memory verification framework:
+
+1. **Read Timestamp Counter (`t_read`)**: Tracks the timestamp for each read operation.
+2. **Write Timestamp Counter (`t_write`)**: Tracks the timestamp for each write operation.
+3. **Initial State Timestamp Counter (`t_init`)**: Assigns timestamps to elements in the initial memory state.
+4. **Final State Timestamp Counter (`t_final`)**: Assigns timestamps to elements in the final memory state.
+
+Each counter starts at 0 and increments after each respective operation. The timestamps ensure that operations can be ordered chronologically, which is essential for verifying memory consistency.
+
+For each memory address, we implicitly assume a read operation occurs before each write to that address. This "read-before-write" invariant means:
+- Every write operation to address `a` with value `v` at timestamp `t_write` is preceded by a read operation from address `a` with the previous value at timestamp `t_read < t_write`.
+- This ensures that the prover cannot modify memory without first demonstrating knowledge of its previous state.
+
+The timestamping mechanism, combined with the multiset check described below, provides an efficient way to verify that all read operations return the most recently written values.
 
 ## Multiset Check
 Define $read$ and $write$ as subsets, and $init$ and $final$ as subsets:
