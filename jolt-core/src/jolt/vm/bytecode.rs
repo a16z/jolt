@@ -1,13 +1,22 @@
-use ark_ff::Zero;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::rngs::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
+
+use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rand::RngCore;
+use rand::rngs::StdRng;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use common::rv_trace::ELFInstruction;
 use tracer::RV32IM;
 
+use crate::{
+    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+    poly::identity_poly::IdentityPolynomial,
+};
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
@@ -17,18 +26,9 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::streaming::{map_state, MapState};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use common::rv_trace::ELFInstruction;
-
-use rayon::prelude::*;
-
-use super::{JoltPolynomials, JoltTraceStep};
 use crate::utils::transcript::Transcript;
 
-use crate::{
-    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    poly::identity_poly::IdentityPolynomial,
-};
+use super::{JoltPolynomials, JoltTraceStep};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -106,19 +106,19 @@ pub struct StreamingBytecodePolynomials<'a, F: JoltField> {
     pub polynomial_stream: Box<dyn Iterator<Item = BytecodeStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
 
-pub struct Derived<T> {
-    pub sum: T,
-}
+// pub struct Derived<T> {
+//     pub sum: T,
+// }
 
-pub struct StreamingDerived<'a, F: JoltField> {
-    /// Stream that builds the bytecode polynomial.
-    pub polynomial_stream: Box<dyn Iterator<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
-}
+// pub struct StreamingDerived<'a, F: JoltField> {
+//     /// Stream that builds the bytecode polynomial.
+//     pub polynomial_stream: Box<dyn Iterator<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+// }
 
 impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
     #[tracing::instrument(skip_all, name = "StreamingBytecodePolynomials::new")]
     pub fn new<
-        It: 'a + Iterator<Item = &'a JoltTraceStep<InstructionSet>>,
+        It: 'a + Iterator<Item = &'a JoltTraceStep<InstructionSet>> + Clone,
         InstructionSet: 'a + JoltInstructionSet,
     >(
         preprocessing: &'a BytecodePreprocessing<F>,
@@ -182,19 +182,19 @@ impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
         }
     }
 }
-
-impl<'a, F: JoltField> StreamingDerived<'a, F> {
-    #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
-    pub fn new<It: Iterator<Item = BytecodeStuff<F>> + 'a>(bytecode_stream: It) -> Self {
-        let polynomial_stream = map_state(bytecode_stream, |step| Derived {
-            sum: step.a_read_write + step.v_read_write[0],
-        });
-
-        StreamingDerived {
-            polynomial_stream: Box::new(polynomial_stream),
-        }
-    }
-}
+//
+// impl<'a, F: JoltField> StreamingDerived<'a, F> {
+//     #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
+//     pub fn new<It: Iterator<Item = BytecodeStuff<F>> + Clone + 'a>(bytecode_stream: It) -> Self {
+//         let polynomial_stream = map_state(bytecode_stream, |step| Derived {
+//             sum: step.a_read_write + step.v_read_write[0],
+//         });
+//
+//         StreamingDerived {
+//             polynomial_stream: Box::new(polynomial_stream),
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -805,15 +805,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::jolt::vm::rv32i_vm::RV32I;
+    use std::collections::HashSet;
 
-    use super::*;
     use ark_bn254::Fr;
+
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
         rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
     };
-    use std::collections::HashSet;
+
+    use crate::jolt::vm::rv32i_vm::RV32I;
+
+    use super::*;
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
         let set1: HashSet<_> = vec1.iter().cloned().collect();

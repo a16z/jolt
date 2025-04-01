@@ -1,21 +1,21 @@
 #![allow(clippy::type_complexity)]
 #![allow(dead_code)]
 
-use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
-};
-use crate::r1cs::constraints::R1CSConstraints;
-use crate::r1cs::spartan::{self, UniformSpartanProof};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
-use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::slice::Iter;
+
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{Deserialize, Serialize};
 use strum::EnumCount;
+
+use common::{
+    constants::MEMORY_OPS_PER_INSTRUCTION,
+    rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
+};
+use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use timestamp_range_check::TimestampRangeCheckStuff;
 
+use crate::field::JoltField;
 use crate::join_conditional;
 use crate::jolt::{
     instruction::{
@@ -31,35 +31,40 @@ use crate::lasso::memory_checking::{
 };
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::opening_proof::{
+    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
+};
+use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
+use crate::r1cs::spartan::{self, UniformSpartanProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
-};
 
-use self::bytecode::{
-    BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff, StreamingBytecodePolynomials,
-    StreamingDerived,
-};
-
-use self::instruction_lookups::{
-    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
-};
-use self::read_write_memory::{
-    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
-    ReadWriteMemoryStuff,
-};
-
+use super::instruction::JoltInstructionSet;
 use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
 use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
-use super::instruction::JoltInstructionSet;
+
+use self::bytecode::{
+    BytecodePreprocessing,
+    BytecodeProof,
+    BytecodeRow,
+    BytecodeStuff,
+    StreamingBytecodePolynomials,
+    // StreamingDerived,
+};
+use self::instruction_lookups::{
+    InstructionLookupsPreprocessing, InstructionLookupsProof, InstructionLookupStuff,
+};
+use self::read_write_memory::{
+    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
+    ReadWriteMemoryStuff,
+};
 
 #[derive(Clone)]
 pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
@@ -496,7 +501,10 @@ where
             );
 
             for j in 0..6 {
-                assert_eq!(jolt_polynomials.bytecode.v_read_write[j].get_coeff(i), eval.v_read_write[j]);
+                assert_eq!(
+                    jolt_polynomials.bytecode.v_read_write[j].get_coeff(i),
+                    eval.v_read_write[j]
+                );
             }
         }
 
