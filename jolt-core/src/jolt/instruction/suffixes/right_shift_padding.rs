@@ -9,6 +9,9 @@ pub enum RightShiftPaddingSuffix<const WORD_SIZE: usize> {}
 
 impl<const WORD_SIZE: usize> SparseDenseSuffix for RightShiftPaddingSuffix<WORD_SIZE> {
     fn suffix_mle(b: LookupBits) -> u32 {
+        if b.len() == 0 {
+            return 1;
+        }
         let (_, shift) = b.split(WORD_SIZE.log_2());
         let shift = u32::from(shift);
         if shift == 0 {

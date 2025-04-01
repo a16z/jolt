@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
+use crate::jolt::instruction::prefixes::Prefixes;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     field::JoltField,
@@ -94,10 +95,10 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
         vec![Suffixes::One, Suffixes::Lsb]
     }
 
-    fn combine<F: JoltField>(&self, _prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, lsb] = suffixes.try_into().unwrap();
-        one - lsb
+        one - prefixes[Prefixes::Lsb] * lsb
     }
 }
 

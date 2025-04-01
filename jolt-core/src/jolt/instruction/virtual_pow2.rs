@@ -6,6 +6,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
+use crate::jolt::instruction::prefixes::Prefixes;
 use crate::jolt::subtable::LassoSubtable;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::math::Math;
@@ -75,10 +76,10 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for POW2Instru
         vec![Suffixes::Pow2]
     }
 
-    fn combine<F: JoltField>(&self, _: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2] = suffixes.try_into().unwrap();
-        pow2
+        prefixes[Prefixes::Pow2] * pow2
     }
 }
 

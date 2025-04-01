@@ -1,10 +1,12 @@
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
 use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
 use num_derive::FromPrimitive;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
+use pow2::Pow2Prefix;
 use rayon::prelude::*;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
@@ -30,6 +32,7 @@ pub mod eq;
 pub mod left_is_zero;
 pub mod left_msb;
 pub mod lower_word;
+pub mod lsb;
 pub mod lt;
 pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
@@ -37,6 +40,7 @@ pub mod negative_divisor_zero_remainder;
 pub mod or;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
+pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod upper_word;
@@ -100,6 +104,8 @@ pub enum Prefixes {
     NegativeDivisorZeroRemainder,
     NegativeDivisorEqualsRemainder,
     NegativeDivisorGreaterThanRemainder,
+    Lsb,
+    Pow2,
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +198,8 @@ impl Prefixes {
             Prefixes::NegativeDivisorGreaterThanRemainder => {
                 NegativeDivisorGreaterThanRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
+            Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -309,6 +317,12 @@ impl Prefixes {
                     r_y,
                     j,
                 )
+            }
+            Prefixes::Lsb => {
+                LsbPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::Pow2 => {
+                Pow2Prefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

@@ -435,6 +435,8 @@ pub fn prove_single_instruction<
             let univariate_poly_evals =
                 I::compute_sumcheck_prover_message(&prefix_checkpoints, &suffix_polys, &r, j);
 
+            println!("round {_round}: {univariate_poly_evals:?}");
+
             #[cfg(test)]
             {
                 let expected: [F; 2] = (0..val_test.len() / 2)
@@ -610,6 +612,8 @@ pub fn prove_single_instruction<
                 || [F::zero(); 2],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
+
+        println!("round {_round}: {univariate_poly_evals:?}");
 
         let univariate_poly = UniPoly::from_evals(&[
             univariate_poly_evals[0],
@@ -1003,6 +1007,8 @@ pub fn prove_multiple_instructions<
                 &r,
                 j,
             );
+
+            println!("round {_round}: {univariate_poly_evals:?}");
 
             // #[cfg(test)]
             // {
@@ -1606,10 +1612,10 @@ mod tests {
         ));
     }
 
-    // #[test]
-    // fn test_multiple_pow2() {
-    //     test_multiple_instructions(LookupTables::Pow2(POW2Instruction::default()));
-    // }
+    #[test]
+    fn test_multiple_pow2() {
+        test_multiple_instructions(LookupTables::Pow2(POW2Instruction::default()));
+    }
 
     // #[test]
     // fn test_multiple_right_shift_padding() {
