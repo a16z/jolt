@@ -343,7 +343,7 @@ where
         coeffs: &[P::ScalarField],
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        let final_commitment = Self::commit_inner_helper(pk, coeffs, offset)?;
+        let final_commitment = Self::commit_inner_helper(pk, &coeffs[offset..], offset)?;
         Ok(final_commitment.into_affine())
     }
 
@@ -353,17 +353,17 @@ where
         coeffs: &[P::ScalarField],
         offset: usize,
     ) -> Result<P::G1, ProofVerifyError> {
-        if pk.g1_powers().len() < coeffs.len() {
+        if pk.g1_powers().len() < offset + coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pk.g1_powers().len(),
-                coeffs.len(),
+                offset + coeffs.len(),
             ));
         }
 
         let c = <P::G1 as VariableBaseMSM>::msm_field_elements(
-            &pk.g1_powers()[offset..coeffs.len()],
-            pk.gpu_g1().map(|g| &g[offset..coeffs.len()]),
-            &coeffs[offset..],
+            &pk.g1_powers()[offset..offset + coeffs.len()],
+            pk.gpu_g1().map(|g| &g[offset..offset + coeffs.len()]),
+            &coeffs,
             None,
             use_icicle(),
         )?;
