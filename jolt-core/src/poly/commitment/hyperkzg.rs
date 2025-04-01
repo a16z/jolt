@@ -682,16 +682,15 @@ mod tests {
     #[test]
     fn test_hyperkzg_large() {
         // test the hyperkzg prover and verifier with random instances (derived from a seed)
-        for ell in [4, 5, 6] {
+        for ell in [8, 9, 10] {
             let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(ell as u64);
 
             let n = 1 << ell; // n = 2^ell
 
-            let poly = MultilinearPolynomial::from(
-                (0..n)
+            let poly_raw = (0..n)
                     .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
-                    .collect::<Vec<_>>(),
-            );
+                    .collect::<Vec<_>>();
+            let poly = MultilinearPolynomial::from(poly_raw.clone());
             let point = (0..ell)
                 .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
                 .collect::<Vec<_>>();
@@ -720,6 +719,15 @@ mod tests {
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
             );
+
+            // Test the streaming implementation
+            let setup = (pk, vk);
+            let mut state = HyperKZG::<_, KeccakTranscript>::initialize(n, &setup);
+            for p in poly_raw {
+                state = HyperKZG::<_, KeccakTranscript>::process(state, p);
+            }
+            let C2 = HyperKZG::<_, KeccakTranscript>::finalize(state);
+            assert_eq!(C, C2, "Streaming commitment did not match non-streaming commitment");
         }
     }
 }
