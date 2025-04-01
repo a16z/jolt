@@ -688,8 +688,8 @@ mod tests {
             let n = 1 << ell; // n = 2^ell
 
             let poly_raw = (0..n)
-                    .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
-                    .collect::<Vec<_>>();
+                .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
+                .collect::<Vec<_>>();
             let poly = MultilinearPolynomial::from(poly_raw.clone());
             let point = (0..ell)
                 .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
@@ -727,7 +727,10 @@ mod tests {
                 state = HyperKZG::<_, KeccakTranscript>::process(state, p);
             }
             let C2 = HyperKZG::<_, KeccakTranscript>::finalize(state);
-            assert_eq!(C, C2, "Streaming commitment did not match non-streaming commitment");
+            assert_eq!(
+                C, C2,
+                "Streaming commitment did not match non-streaming commitment"
+            );
         }
     }
 }
