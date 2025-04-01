@@ -838,8 +838,10 @@ pub fn prove_multiple_instructions<
     lookups: &[LookupTables<WORD_SIZE>],
     r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4]) {
+) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4], Vec<F>) {
     let log_K: usize = 2 * WORD_SIZE;
+    #[cfg(test)]
+    let K: u64 = 1 << log_K;
     let log_m = log_K / 4;
     let m = log_m.pow2();
 
@@ -883,15 +885,35 @@ pub fn prove_multiple_instructions<
 
     #[cfg(test)]
     let mut val_test: Vec<MultilinearPolynomial<F>> = LookupTables::<WORD_SIZE>::iter()
-        .map(|instruction| MultilinearPolynomial::from(instruction.materialize()))
+        .map(|table| MultilinearPolynomial::from(table.materialize()))
         .collect();
     #[cfg(test)]
-    let mut eq_ra_test: MultilinearPolynomial<F> = {
-        let mut eq_ra: Vec<F> = unsafe_allocate_zero_vec(val_test.len());
-        for (j, k) in lookup_indices.iter().enumerate() {
-            eq_ra[usize::from(k)] += eq_r_prime[j];
-        }
-        MultilinearPolynomial::from(eq_ra)
+    let mut ra_test: MultilinearPolynomial<F> = {
+        // We will be binding ra from high-to-low starting with
+        // the address variables
+        let mut ra: Vec<F> = unsafe_allocate_zero_vec(T * K as usize);
+        ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+            for j in 0..T {
+                if u64::from(lookup_indices[j]) == k as u64 {
+                    ra_k[j] = F::one();
+                }
+            }
+        });
+        MultilinearPolynomial::from(ra)
+    };
+    #[cfg(test)]
+    let flags_test: Vec<MultilinearPolynomial<F>> = {
+        LookupTables::<WORD_SIZE>::iter()
+            .map(|table| {
+                let mut flags = vec![0u8; T];
+                for (j, instruction) in lookups.iter().enumerate() {
+                    if LookupTables::enum_index(instruction) == LookupTables::enum_index(&table) {
+                        flags[j] = 1;
+                    }
+                }
+                MultilinearPolynomial::from(flags)
+            })
+            .collect()
     };
 
     let mut j: usize = 0;
@@ -984,21 +1006,24 @@ pub fn prove_multiple_instructions<
 
             // #[cfg(test)]
             // {
-            //     let expected: [F; 2] = (0..val_test.len() / 2)
-            //         .into_par_iter()
-            //         .map(|i| {
-            //             let eq_ra_evals = eq_ra_test.sumcheck_evals(i, 2, BindingOrder::HighToLow);
-            //             let val_evals: Vec<_> = val_test
-            //                 .iter()
-            //                 .map(|val_i| val_i.sumcheck_evals(i, 2, BindingOrder::HighToLow))
-            //                 .collect();
-
-            //             [eq_ra_evals[0] * val_evals[0], eq_ra_evals[1] * val_evals[1]]
-            //         })
-            //         .reduce(
-            //             || [F::zero(); 2],
-            //             |running, new| [running[0] + new[0], running[1] + new[1]],
-            //         );
+            //     let mut expected = [F::zero(), F::zero()];
+            //     for k in 0..(K >> _round) / 2 {
+            //         let val_evals: Vec<_> = val_test
+            //             .iter()
+            //             .map(|val_i| val_i.sumcheck_evals(k as usize, 2, BindingOrder::HighToLow))
+            //             .collect();
+            //         for j in 0..T {
+            //             let jk = j * (K as usize >> _round) / 2 + k as usize;
+            //             let ra_evals = ra_test.sumcheck_evals(jk, 2, BindingOrder::HighToLow);
+            //             let eq_eval = eq_r_prime[j];
+            //             for (flag_poly, val_i_evals) in flags_test.iter().zip(val_evals.iter()) {
+            //                 expected[0] +=
+            //                     eq_eval * ra_evals[0] * flag_poly.get_coeff(j) * val_i_evals[0];
+            //                 expected[1] +=
+            //                     eq_eval * ra_evals[1] * flag_poly.get_coeff(j) * val_i_evals[1];
+            //             }
+            //         }
+            //     }
             //     assert_eq!(
             //         expected, univariate_poly_evals,
             //         "Sumcheck sanity check failed in phase {phase} round {_round}"
@@ -1043,7 +1068,7 @@ pub fn prove_multiple_instructions<
 
             #[cfg(test)]
             {
-                eq_ra_test.bind_parallel(r_j, BindingOrder::HighToLow);
+                ra_test.bind_parallel(r_j, BindingOrder::HighToLow);
                 val_test
                     .par_iter_mut()
                     .for_each(|val_i| val_i.bind_parallel(r_j, BindingOrder::HighToLow));
@@ -1076,11 +1101,15 @@ pub fn prove_multiple_instructions<
         .collect();
 
     let mut instruction_val: Vec<Vec<F>> =
-        vec![unsafe_allocate_zero_vec(m); LookupTables::<WORD_SIZE>::COUNT];
+        vec![unsafe_allocate_zero_vec(T); LookupTables::<WORD_SIZE>::COUNT];
     for (j, table) in lookups.iter().enumerate() {
         let instruction_index = LookupTables::enum_index(table);
-        instruction_val[instruction_index][j] =
-            table.combine(&prefixes, &vec![F::one(); table.suffixes().len()]);
+        let suffixes: Vec<_> = table
+            .suffixes()
+            .iter()
+            .map(|suffix| F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0))))
+            .collect();
+        instruction_val[instruction_index][j] = table.combine(&prefixes, &suffixes);
     }
 
     let mut instruction_val_polys: Vec<MultilinearPolynomial<F>> = instruction_val
@@ -1097,24 +1126,25 @@ pub fn prove_multiple_instructions<
         let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _guard = span.enter();
 
-        let univariate_poly_evals: [F; 5] = (0..eq_r_prime.len() / 2)
+        let univariate_poly_evals: [F; 6] = (0..eq_r_prime.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let eq_evals = eq_r_prime.sumcheck_evals(i, 5, BindingOrder::HighToLow);
-                let ra_0_evals = ra[0].sumcheck_evals(i, 5, BindingOrder::HighToLow);
-                let ra_1_evals = ra[1].sumcheck_evals(i, 5, BindingOrder::HighToLow);
-                let ra_2_evals = ra[2].sumcheck_evals(i, 5, BindingOrder::HighToLow);
-                let ra_3_evals = ra[3].sumcheck_evals(i, 5, BindingOrder::HighToLow);
+                let eq_evals = eq_r_prime.sumcheck_evals(i, 6, BindingOrder::HighToLow);
+                let ra_0_evals = ra[0].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+                let ra_1_evals = ra[1].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+                let ra_2_evals = ra[2].sumcheck_evals(i, 6, BindingOrder::HighToLow);
+                let ra_3_evals = ra[3].sumcheck_evals(i, 6, BindingOrder::HighToLow);
                 let val_evals = instruction_val_polys
                     .iter()
-                    .map(|poly| poly.sumcheck_evals(i, 5, BindingOrder::HighToLow))
-                    .fold([F::zero(); 5], |running, new| {
+                    .map(|poly| poly.sumcheck_evals(i, 6, BindingOrder::HighToLow))
+                    .fold([F::zero(); 6], |running, new| {
                         [
                             running[0] + new[0],
                             running[1] + new[1],
                             running[2] + new[2],
                             running[3] + new[3],
                             running[4] + new[4],
+                            running[5] + new[5],
                         ]
                     });
 
@@ -1128,7 +1158,7 @@ pub fn prove_multiple_instructions<
                 })
             })
             .reduce(
-                || [F::zero(); 5],
+                || [F::zero(); 6],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -1136,6 +1166,7 @@ pub fn prove_multiple_instructions<
                         running[2] + new[2],
                         running[3] + new[3],
                         running[4] + new[4],
+                        running[5] + new[5],
                     ]
                 },
             );
@@ -1147,6 +1178,7 @@ pub fn prove_multiple_instructions<
             univariate_poly_evals[2],
             univariate_poly_evals[3],
             univariate_poly_evals[4],
+            univariate_poly_evals[5],
         ]);
 
         drop(_guard);
@@ -1170,6 +1202,19 @@ pub fn prove_multiple_instructions<
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
     }
 
+    let flag_claims = instruction_val_polys
+        .par_iter()
+        .zip(lookup_tables.par_iter())
+        .map(|(poly, table)| {
+            let suffixes: Vec<_> = table
+                .suffixes()
+                .iter()
+                .map(|suffix| F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0))))
+                .collect();
+            poly.final_sumcheck_claim() * table.combine(&prefixes, &suffixes).inverse().unwrap()
+        })
+        .collect();
+
     (
         SumcheckInstanceProof::new(compressed_polys),
         rv_claim,
@@ -1179,7 +1224,50 @@ pub fn prove_multiple_instructions<
             ra[2].final_sumcheck_claim(),
             ra[3].final_sumcheck_claim(),
         ],
+        flag_claims,
     )
+}
+
+pub fn verify_multiple_instructions<
+    const WORD_SIZE: usize,
+    F: JoltField,
+    ProofTranscript: Transcript,
+>(
+    proof: SumcheckInstanceProof<F, ProofTranscript>,
+    log_K: usize,
+    log_T: usize,
+    r_cycle: Vec<F>,
+    rv_claim: F,
+    ra_claims: [F; 4],
+    flag_claims: Vec<F>,
+    transcript: &mut ProofTranscript,
+) -> Result<(), ProofVerifyError> {
+    let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
+    let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
+    // The first log(K) rounds' univariate polynomials are degree 2
+    let (sumcheck_claim, r_address) = first_log_K_rounds.verify(rv_claim, log_K, 2, transcript)?;
+    // The last log(T) rounds' univariate polynomials are degree 6
+    let (sumcheck_claim, r_cycle_prime) =
+        last_log_T_rounds.verify(sumcheck_claim, log_T, 6, transcript)?;
+
+    let val_evals: Vec<_> = LookupTables::<WORD_SIZE>::iter()
+        .map(|table| table.evaluate_mle(&r_address))
+        .collect();
+    let eq_eval_cycle = EqPolynomial::new(r_cycle).evaluate(&r_cycle_prime);
+
+    assert_eq!(
+        eq_eval_cycle
+            * ra_claims.iter().product::<F>()
+            * flag_claims
+                .iter()
+                .zip(val_evals.iter())
+                .map(|(flag, val)| *flag * val)
+                .sum::<F>(),
+        sumcheck_claim,
+        "Read-checking sumcheck failed"
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1234,6 +1322,43 @@ mod tests {
             r_cycle,
             rv_claim,
             ra_claims,
+            &mut verifier_transcript,
+        );
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    fn test_multiple_instructions(instruction: LookupTables<WORD_SIZE>) {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        let instructions: Vec<_> = (0..T)
+            .map(|_| LookupTables::random(&mut rng, Some(instruction)))
+            .collect();
+
+        let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
+        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
+
+        let (proof, rv_claim, ra_claims, flag_claims) =
+            prove_multiple_instructions::<WORD_SIZE, _, _>(
+                &instructions,
+                r_cycle,
+                &mut prover_transcript,
+            );
+
+        let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
+        verifier_transcript.compare_to(prover_transcript);
+        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
+        let verification_result = verify_multiple_instructions::<WORD_SIZE, _, _>(
+            proof,
+            LOG_K,
+            LOG_T,
+            r_cycle,
+            rv_claim,
+            ra_claims,
+            flag_claims,
             &mut verifier_transcript,
         );
         assert!(
@@ -1362,4 +1487,134 @@ mod tests {
     fn test_right_shift_padding() {
         test_single_instruction::<RightShiftPaddingInstruction<WORD_SIZE>>();
     }
+
+    #[test]
+    fn test_multiple_add() {
+        test_multiple_instructions(LookupTables::Add(ADDInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_sub() {
+        test_multiple_instructions(LookupTables::Sub(SUBInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_and() {
+        test_multiple_instructions(LookupTables::And(ANDInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_or() {
+        test_multiple_instructions(LookupTables::Or(ORInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_xor() {
+        test_multiple_instructions(LookupTables::Xor(XORInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_beq() {
+        test_multiple_instructions(LookupTables::Beq(BEQInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_bge() {
+        test_multiple_instructions(LookupTables::Bge(BGEInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_bgeu() {
+        test_multiple_instructions(LookupTables::Bgeu(BGEUInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_bne() {
+        test_multiple_instructions(LookupTables::Bne(BNEInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_slt() {
+        test_multiple_instructions(LookupTables::Slt(SLTInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_sltu() {
+        test_multiple_instructions(LookupTables::Sltu(SLTUInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_move() {
+        test_multiple_instructions(LookupTables::Move(MOVEInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_movsign() {
+        test_multiple_instructions(LookupTables::Movsign(MOVSIGNInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_mul() {
+        test_multiple_instructions(LookupTables::Mul(MULInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_mulu() {
+        test_multiple_instructions(LookupTables::Mulu(MULUInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_mulhu() {
+        test_multiple_instructions(LookupTables::Mulhu(MULHUInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_advice() {
+        test_multiple_instructions(LookupTables::Advice(ADVICEInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_assert_lte() {
+        test_multiple_instructions(LookupTables::AssertLte(ASSERTLTEInstruction::default()));
+    }
+
+    #[test]
+    fn test_multiple_assert_valid_signed_remainder() {
+        test_multiple_instructions(LookupTables::AssertValidSignedRemainder(
+            AssertValidSignedRemainderInstruction::default(),
+        ));
+    }
+
+    #[test]
+    fn test_multiple_assert_valid_unsigned_remainder() {
+        test_multiple_instructions(LookupTables::AssertValidUnsignedRemainder(
+            AssertValidUnsignedRemainderInstruction::default(),
+        ));
+    }
+
+    #[test]
+    fn test_multiple_assert_valid_div0() {
+        test_multiple_instructions(LookupTables::AssertValidDiv0(
+            AssertValidDiv0Instruction::default(),
+        ));
+    }
+
+    #[test]
+    fn test_multiple_assert_halfword_alignment() {
+        test_multiple_instructions(LookupTables::AssertHalfwordAlignment(
+            AssertHalfwordAlignmentInstruction::default(),
+        ));
+    }
+
+    // #[test]
+    // fn test_multiple_pow2() {
+    //     test_multiple_instructions(LookupTables::Pow2(POW2Instruction::default()));
+    // }
+
+    // #[test]
+    // fn test_multiple_right_shift_padding() {
+    //     test_multiple_instructions(LookupTables::RightShiftPadding(
+    //         RightShiftPaddingInstruction::default(),
+    //     ));
+    // }
 }

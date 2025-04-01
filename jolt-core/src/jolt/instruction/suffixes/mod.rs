@@ -67,9 +67,6 @@ impl Suffixes {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
     /// `b` represents `b.len()` variables, each assuming a Boolean value.
     pub fn suffix_mle<const WORD_SIZE: usize>(&self, b: LookupBits) -> u32 {
-        if b.len() == 0 {
-            return 1;
-        }
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),
