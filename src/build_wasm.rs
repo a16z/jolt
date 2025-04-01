@@ -65,7 +65,7 @@ fn extract_provable_functions() -> Vec<FunctionAttributes> {
         .filter_map(|item| {
             if let syn::Item::Fn(ItemFn { attrs, sig, .. }) = item {
                 if let Some(provable_attr) = attrs.iter().find(|attr| is_provable(attr)) {
-                    let meta = provable_attr.parse_meta().expect("Unable to parse meta");
+                    let meta = provable_attr.parse_args::<Meta>().expect("Unable to parse meta");
                     if let Meta::List(meta_list) = meta {
                         let attributes =
                             parse_attributes(&meta_list.nested.iter().cloned().collect());
