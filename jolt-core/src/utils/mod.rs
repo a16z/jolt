@@ -10,9 +10,9 @@ pub mod instruction_utils;
 pub mod math;
 pub mod profiling;
 pub mod sol_types;
+pub mod streaming;
 pub mod thread;
 pub mod transcript;
-mod streaming;
 
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///

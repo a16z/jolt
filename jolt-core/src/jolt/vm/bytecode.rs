@@ -16,6 +16,7 @@ use crate::lasso::memory_checking::{
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::utils::streaming::{map_state, MapState};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
 
@@ -99,6 +100,101 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 
 pub type BytecodeProof<F, PCS, ProofTranscript> =
     MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings, ProofTranscript>;
+
+pub struct StreamingBytecodePolynomials<'a, F: JoltField> {
+    /// Stream that builds the bytecode polynomial.
+    pub polynomial_stream: Box<dyn Iterator<Item = BytecodeStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+}
+
+pub struct Derived<T> {
+    pub sum: T,
+}
+
+pub struct StreamingDerived<'a, F: JoltField> {
+    /// Stream that builds the bytecode polynomial.
+    pub polynomial_stream: Box<dyn Iterator<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+}
+
+impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
+    #[tracing::instrument(skip_all, name = "StreamingBytecodePolynomials::new")]
+    pub fn new<
+        It: 'a + Iterator<Item = &'a JoltTraceStep<InstructionSet>>,
+        InstructionSet: 'a + JoltInstructionSet,
+    >(
+        preprocessing: &'a BytecodePreprocessing<F>,
+        trace: It,
+    ) -> Self {
+        let polynomial_stream = map_state(trace, |step| {
+            let virtual_address = preprocessing
+                .virtual_address_map
+                .get(&(
+                    step.bytecode_row.address,
+                    step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                ))
+                .unwrap();
+            let a_read_write = *virtual_address as u64;
+
+            let address = F::from_u64(step.bytecode_row.address as u64);
+            let bitflags = F::from_u64(step.bytecode_row.bitflags);
+            let rd = F::from_u8(step.bytecode_row.rd);
+            let rs1 = F::from_u8(step.bytecode_row.rs1);
+            let rs2 = F::from_u8(step.bytecode_row.rs2);
+            let imm = F::from_i64(step.bytecode_row.imm);
+
+            let v_read_write = [address, bitflags, rd, rs1, rs2, imm];
+
+            BytecodeStuff {
+                a_read_write: F::from_u64(a_read_write),
+                v_read_write,
+                // These are dummy values since they are not required for Twist + Shout.
+                t_read: -F::one(),
+                t_final: -F::one(),
+                a_init_final: None,
+                v_init_final: None,
+            }
+        });
+
+        StreamingBytecodePolynomials {
+            polynomial_stream: Box::new(polynomial_stream),
+        }
+    }
+
+    pub fn update_trace<InstructionSet: JoltInstructionSet>(
+        trace: &mut [JoltTraceStep<InstructionSet>],
+    ) {
+        for (step_idx, step) in trace.iter_mut().enumerate() {
+            if !step.bytecode_row.address.is_zero() {
+                // println!("step.bytecode_row.address = {}", step.bytecode_row.address);
+                assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
+                assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
+                // Compress instruction address for more efficient commitment:
+                step.bytecode_row.address = 1
+                    + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
+                        / BYTES_PER_INSTRUCTION;
+            }
+
+            // if step_idx < 10 {
+            //     println!(
+            //         "step.bytecode_row.address[{step_idx}] = {}",
+            //         step.bytecode_row.address
+            //     );
+            // }
+        }
+    }
+}
+
+impl<'a, F: JoltField> StreamingDerived<'a, F> {
+    #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
+    pub fn new<It: Iterator<Item = BytecodeStuff<F>> + 'a>(bytecode_stream: It) -> Self {
+        let polynomial_stream = map_state(bytecode_stream, |step| Derived {
+            sum: step.a_read_write + step.v_read_write[0],
+        });
+
+        StreamingDerived {
+            polynomial_stream: Box::new(polynomial_stream),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
@@ -333,6 +429,7 @@ where
                     step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
                 ))
                 .unwrap();
+
             a_read_write[step_index] = *virtual_address as u32;
             let counter = final_cts[*virtual_address];
             read_cts[step_index] = counter;

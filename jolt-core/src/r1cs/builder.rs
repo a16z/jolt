@@ -633,4 +633,16 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             self.padded_rows_per_step(),
         )
     }
+
+    // pub fn streaming_compute_spartan_Az_Bz_Cz(
+    //     &self,
+    //     flattened_polynomials: &[&[F]], // N variables of (S steps)
+    // ) -> SpartanInterleavedPolynomial<F> {
+    //     SpartanInterleavedPolynomial::new(
+    //         &self.uniform_builder.constraints,
+    //         &self.offset_equality_constraints,
+    //         flattened_polynomials,
+    //         self.padded_rows_per_step(),
+    //     )
+    // }
 }

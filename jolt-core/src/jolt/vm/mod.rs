@@ -12,6 +12,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::slice::Iter;
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
@@ -39,7 +40,11 @@ use common::{
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
 
-use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
+use self::bytecode::{
+    BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff, StreamingBytecodePolynomials,
+    StreamingDerived,
+};
+
 use self::instruction_lookups::{
     InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
@@ -147,6 +152,14 @@ pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) r1cs: R1CSStuff<T>,
 }
 
+pub struct StreamingJoltStuff<I: Iterator, F: JoltField> {
+    pub(crate) trace_iter: I,
+    pub(crate) init_iter: I,
+    pub(crate) shard: JoltStuff<Vec<F>>,
+}
+
+//TODO: Implment StreamingOracle for StreamingJoltStuff.
+
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
     for JoltStuff<T>
 {
@@ -201,6 +214,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
 pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
+
+// pub type StreamingJoltPolynomials<F: JoltField> = JoltStuff<StreamingPolynomial<JoltTraceStep<JoltInstructionSet>, F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -380,6 +395,9 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
 
+        let mut trace_1 = trace.clone();
+        let mut trace_2 = trace.clone();
+
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         // TODO(moodlezoup): Truncate generators
@@ -412,10 +430,6 @@ where
             &trace,
         );
 
-        // TODO: Declare bytecode_polynomials_new of type BytecodeStuff<StreamingPolynomial<Iter::JoltTraceStep, F>>.
-
-        // TODO: Initialise bytecode_polynomials_new by creating a_read_write etc... using StreamingPolynomial::new().
-        // TODO: To new() we need to pass a closure.
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || {
                 BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
@@ -461,6 +475,43 @@ where
         let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
 
         transcript.append_scalar(&spartan_key.vk_digest);
+
+        // TODO: Stream Polynomials
+
+        StreamingBytecodePolynomials::<F>::update_trace(&mut trace_1);
+
+        let mut streaming_bytecode_polynomails =
+            StreamingBytecodePolynomials::new(&preprocessing.bytecode, trace_1.iter());
+
+        // let mut a = streaming_bytecode_polynomails.polynomial_stream;
+
+        for i in 0..trace_length {
+            let eval = streaming_bytecode_polynomails
+                .polynomial_stream
+                .next()
+                .unwrap();
+            assert_eq!(
+                eval.a_read_write,
+                jolt_polynomials.bytecode.a_read_write.get_coeff(i)
+            );
+
+            for j in 0..6 {
+                assert_eq!(jolt_polynomials.bytecode.v_read_write[j].get_coeff(i), eval.v_read_write[j]);
+            }
+        }
+
+        // let mut streaming_bytecode_polynomails =
+        //     StreamingBytecodePolynomials::new(&preprocessing.bytecode, trace_1.iter());
+
+        // let streaming_derived =
+        //     StreamingDerived::new(streaming_bytecode_polynomails.polynomial_stream);
+
+        // let mut a = streaming_derived.polynomial_stream;
+
+        // for i in 0..10 {
+        //     let eval = a.next().unwrap();
+        //     println!("a = {}", eval.sum);
+        // }
 
         jolt_commitments
             .read_write_values()

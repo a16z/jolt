@@ -214,6 +214,35 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::streaming_prove_spartan_cubic")]
+    pub fn streaming_prove_spartan_cubic(
+        num_rounds: usize,
+        eq_poly: &mut SplitEqPolynomial<F>,
+        az_bz_cz_poly: &mut SpartanInterleavedPolynomial<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>, [F; 3]) {
+        let mut r: Vec<F> = Vec::new();
+        let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut claim = F::zero();
+
+        for round in 0..num_rounds {
+            if round == 0 {
+                az_bz_cz_poly
+                    .first_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+            } else {
+                az_bz_cz_poly
+                    .subsequent_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
+            }
+        }
+
+        (
+            SumcheckInstanceProof::new(polys),
+            r,
+            az_bz_cz_poly.final_sumcheck_evals(),
+        )
+    }
+
+
     #[tracing::instrument(skip_all)]
     // A specialized sumcheck implementation with the 0th round unrolled from the rest of the
     // `for` loop. This allows us to pass in `witness_polynomials` by reference instead of
