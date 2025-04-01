@@ -218,6 +218,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
     }
 
     fn sequence_output(x: u64, y: u64) -> u64 {
+        if y == 0 {
+            return x;
+        }
         match WORD_SIZE {
             32 => {
                 let mut remainder = (x as i32) % (y as i32);
@@ -240,11 +243,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn rem_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(REMInstruction::<32>, RV32IM::REM);
+        jolt_virtual_sequence_test::<REMInstruction<32>>(RV32IM::REM);
     }
 }

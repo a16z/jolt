@@ -315,10 +315,7 @@ impl Cpu {
             return Ok(());
         }
 
-        let original_word = match self.fetch() {
-            Ok(word) => word,
-            Err(e) => return Err(e),
-        };
+        let original_word = self.fetch()?;
         let instruction_address = self.pc;
         let word = match (original_word & 0x3) == 0x3 {
             true => {
@@ -4299,9 +4296,8 @@ mod test_decode_cache {
         };
 
         // Cache miss test
-        match cache.get(2) {
-            Some(_index) => panic!("Unexpected cache hit"),
-            None => {}
+        if let Some(_index) = cache.get(2) {
+            panic!("Unexpected cache hit")
         };
     }
 
@@ -4320,16 +4316,14 @@ mod test_decode_cache {
         }
 
         // The oldest entry should have been removed because of the overflow
-        match cache.get(0) {
-            Some(_index) => panic!("Unexpected cache hit"),
-            None => {}
+        if let Some(_index) = cache.get(0) {
+            panic!("Unexpected cache hit")
         };
 
         // With this .get(), the entry with the word "1" moves to the tail of the list
         // and the entry with the word "2" becomes the oldest entry.
-        match cache.get(1) {
-            Some(index) => assert_eq!(2, index),
-            None => {}
+        if let Some(index) = cache.get(1) {
+            assert_eq!(2, index)
         };
 
         // The oldest entry with the word "2" will be removed due to the overflow
@@ -4338,9 +4332,8 @@ mod test_decode_cache {
             DECODE_CACHE_ENTRY_NUM + 2,
         );
 
-        match cache.get(2) {
-            Some(_index) => panic!("Unexpected cache hit"),
-            None => {}
+        if let Some(_index) = cache.get(2) {
+            panic!("Unexpected cache hit")
         };
     }
 }

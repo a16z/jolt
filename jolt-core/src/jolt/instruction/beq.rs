@@ -2,14 +2,19 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::JoltInstruction;
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltInstruction,
+};
 use crate::{
     field::JoltField,
     jolt::{
         instruction::SubtableIndices,
         subtable::{eq::EqSubtable, LassoSubtable},
     },
-    utils::instruction_utils::chunk_and_concatenate_operands,
+    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
+    utils::{instruction_utils::chunk_and_concatenate_operands, uninterleave_bits},
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -40,19 +45,50 @@ impl<const WORD_SIZE: usize> JoltInstruction for BEQInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert!(r.len() % 2 == 0);
+
+        let x = r.iter().step_by(2);
+        let y = r.iter().skip(1).step_by(2);
+        x.zip(y)
+            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+            .product()
+    }
+
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        (x == y).into()
+    }
+
     fn lookup_entry(&self) -> u64 {
         // This is the same for both 32-bit and 64-bit
         (self.0 == self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for BEQInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::Eq]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::Eq]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::Eq] * suffixes[Suffixes::Eq]
     }
 }
 
@@ -62,9 +98,38 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
+            JoltInstruction,
+        },
+        jolt_instruction_test,
+    };
 
     use super::BEQInstruction;
+
+    #[test]
+    fn beq_prefix_suffix() {
+        prefix_suffix_test::<Fr, BEQInstruction<32>>();
+    }
+
+    #[test]
+    fn beq_materialize_entry() {
+        materialize_entry_test::<Fr, BEQInstruction<32>>();
+    }
+
+    #[test]
+    fn beq_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, BEQInstruction<8>>();
+    }
+
+    #[test]
+    fn beq_mle_random() {
+        instruction_mle_random_test::<Fr, BEQInstruction<32>>();
+    }
 
     #[test]
     fn beq_instruction_32_e2e() {

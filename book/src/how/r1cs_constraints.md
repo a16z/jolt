@@ -50,7 +50,7 @@ There are as many per step as the number of unique instruction lookup tables in 
 
 #### Constraint system
 
-The constraints for a CPU step are detailed in the `uniform_constraints` and `non_uniform_constraints` functions in [`constraints.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/constraints.rs).
+The constraints for a CPU step are detailed in the `uniform_constraints` and `cross_step_constraints` functions in [`constraints.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/constraints.rs).
 
 ### Reusing commitments
 

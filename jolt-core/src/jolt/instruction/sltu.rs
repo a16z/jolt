@@ -1,9 +1,16 @@
-use crate::field::JoltField;
+use crate::{
+    field::JoltField, subprotocols::sparse_dense_shout::PrefixSuffixDecomposition,
+    utils::uninterleave_bits,
+};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::JoltInstruction;
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltInstruction,
+};
 use crate::{
     jolt::{
         instruction::SubtableIndices,
@@ -55,19 +62,56 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (x, y) = uninterleave_bits(index);
+        (x < y).into()
+    }
+
     fn lookup_entry(&self) -> u64 {
         // This is the same for 32-bit and 64-bit word sizes
         (self.0 < self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported")
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+
+        // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
+        let mut result = F::zero();
+        let mut eq_term = F::one();
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            result += (F::one() - x_i) * y_i * eq_term;
+            eq_term *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+        }
+        result
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for SLTUInstruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LessThan, Prefixes::Eq]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::LessThan]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
+            + prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
     }
 }
 
@@ -77,9 +121,38 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
+            JoltInstruction,
+        },
+        jolt_instruction_test,
+    };
 
     use super::SLTUInstruction;
+
+    #[test]
+    fn sltu_materialize_entry() {
+        materialize_entry_test::<Fr, SLTUInstruction<32>>();
+    }
+
+    #[test]
+    fn sltu_prefix_suffix() {
+        prefix_suffix_test::<Fr, SLTUInstruction<32>>();
+    }
+
+    #[test]
+    fn sltu_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, SLTUInstruction<8>>();
+    }
+
+    #[test]
+    fn sltu_mle_random() {
+        instruction_mle_random_test::<Fr, SLTUInstruction<32>>();
+    }
 
     #[test]
     fn sltu_instruction_32_e2e() {
@@ -149,8 +222,8 @@ mod test {
             SLTUInstruction::<WORD_SIZE>(u64_max, u64_max),
             SLTUInstruction::<WORD_SIZE>(u64_max, 1 << 32),
             SLTUInstruction::<WORD_SIZE>(1 << 32, u64_max),
-            SLTUInstruction::<WORD_SIZE>(1 << 63, 1 << 63 - 1),
-            SLTUInstruction::<WORD_SIZE>(1 << 63 - 1, 1 << 63),
+            SLTUInstruction::<WORD_SIZE>(1 << 63, 1 << (63 - 1)),
+            SLTUInstruction::<WORD_SIZE>(1 << (63 - 1), 1 << 63),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

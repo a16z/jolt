@@ -1,4 +1,4 @@
-use crate::utils::math::Math;
+use crate::utils::{compute_dotproduct, math::Math};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -28,7 +28,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
 }
 
 /// The order in which polynomial variables are bound in sumcheck
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
@@ -269,6 +269,68 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             }
         }
     }
+
+    /// Computes the dot product of the polynomial's coefficients amd a vector
+    /// of field elements.
+    pub fn dot_product(&self, other: Option<&[F]>, other_r2_adjusted: Option<&[F]>) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                compute_dotproduct(&poly.Z, other.unwrap())
+            }
+            MultilinearPolynomial::U8Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::U16Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::U32Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::U64Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::I64Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+        }
+    }
+
+    /// Multiplies the polynomial's coefficient at `index` by a field element.
+    pub fn scale_coeff(&self, index: usize, scaling_factor: F, scaling_factor_r2_adjusted: F) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] * scaling_factor,
+            MultilinearPolynomial::U8Scalars(poly) => {
+                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                poly.coeffs[index].field_mul(scaling_factor_r2_adjusted)
+            }
+        }
+    }
 }
 
 impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {
@@ -449,10 +511,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind")]
     fn bind(&mut self, r: F, order: BindingOrder) {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => match order {
-                BindingOrder::LowToHigh => poly.bound_poly_var_bot(&r),
-                BindingOrder::HighToLow => poly.bound_poly_var_top(&r),
-            },
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
@@ -464,10 +523,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => match order {
-                BindingOrder::LowToHigh => poly.bound_poly_var_bot_01_optimized(&r),
-                BindingOrder::HighToLow => poly.bound_poly_var_top_zero_optimized(&r),
-            },
+            MultilinearPolynomial::LargeScalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
@@ -496,45 +552,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
-            MultilinearPolynomial::U8Scalars(poly) => {
+            _ => {
                 let chis = EqPolynomial::evals_with_r2(r);
-                assert_eq!(chis.len(), poly.coeffs.len());
-                chis.par_iter()
-                    .zip(poly.coeffs.par_iter())
-                    .map(|(a_i, b_i)| b_i.field_mul(*a_i))
-                    .sum()
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(r);
-                assert_eq!(chis.len(), poly.coeffs.len());
-                chis.par_iter()
-                    .zip(poly.coeffs.par_iter())
-                    .map(|(a_i, b_i)| b_i.field_mul(*a_i))
-                    .sum()
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(r);
-                assert_eq!(chis.len(), poly.coeffs.len());
-                chis.par_iter()
-                    .zip(poly.coeffs.par_iter())
-                    .map(|(a_i, b_i)| b_i.field_mul(*a_i))
-                    .sum()
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(r);
-                assert_eq!(chis.len(), poly.coeffs.len());
-                chis.par_iter()
-                    .zip(poly.coeffs.par_iter())
-                    .map(|(a_i, b_i)| b_i.field_mul(*a_i))
-                    .sum()
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                let chis = EqPolynomial::evals_with_r2(r);
-                assert_eq!(chis.len(), poly.coeffs.len());
-                chis.par_iter()
-                    .zip(poly.coeffs.par_iter())
-                    .map(|(a_i, b_i)| b_i.field_mul(*a_i))
-                    .sum()
+                self.dot_product(None, Some(&chis))
             }
         }
     }
@@ -556,31 +576,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     MultilinearPolynomial::LargeScalars(poly) => {
                         poly.evaluate_at_chi_low_optimized(&eq)
                     }
-                    MultilinearPolynomial::U8Scalars(poly) => eq_r2
-                        .par_iter()
-                        .zip(poly.coeffs.par_iter())
-                        .map(|(chi, coeff)| coeff.field_mul(*chi))
-                        .sum(),
-                    MultilinearPolynomial::U16Scalars(poly) => eq_r2
-                        .par_iter()
-                        .zip(poly.coeffs.par_iter())
-                        .map(|(chi, coeff)| coeff.field_mul(*chi))
-                        .sum(),
-                    MultilinearPolynomial::U32Scalars(poly) => eq_r2
-                        .par_iter()
-                        .zip(poly.coeffs.par_iter())
-                        .map(|(chi, coeff)| coeff.field_mul(*chi))
-                        .sum(),
-                    MultilinearPolynomial::U64Scalars(poly) => eq_r2
-                        .par_iter()
-                        .zip(poly.coeffs.par_iter())
-                        .map(|(chi, coeff)| coeff.field_mul(*chi))
-                        .sum(),
-                    MultilinearPolynomial::I64Scalars(poly) => eq_r2
-                        .par_iter()
-                        .zip(poly.coeffs.par_iter())
-                        .map(|(chi, coeff)| coeff.field_mul(*chi))
-                        .sum(),
+                    _ => poly.dot_product(None, Some(&eq_r2)),
                 })
                 .collect();
             (evals, eq)
@@ -600,9 +596,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![F::zero(); degree];
         match order {
             BindingOrder::HighToLow => {
-                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(index);
                 if degree == 1 {
                     return evals;
@@ -613,10 +610,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     eval += m;
                     evals[i] = eval;
                 }
-                evals
             }
             BindingOrder::LowToHigh => {
-                let mut evals = vec![F::zero(); degree];
                 evals[0] = self.get_bound_coeff(2 * index);
                 if degree == 1 {
                     return evals;
@@ -627,9 +622,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     eval += m;
                     evals[i] = eval;
                 }
-                evals
             }
-        }
+        };
+        evals
     }
 }
 

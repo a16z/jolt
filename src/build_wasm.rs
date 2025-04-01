@@ -122,9 +122,7 @@ fn is_std() -> Option<bool> {
             dependencies
                 .get("features")
                 .and_then(|v| v.as_array())
-                .map_or(false, |features| {
-                    features.iter().any(|f| f.as_str() == Some("guest-std"))
-                }),
+                .is_some_and(|features| features.iter().any(|f| f.as_str() == Some("guest-std"))),
         );
     }
     None
@@ -253,7 +251,7 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
             .get("target")
             .and_then(|target| target.get("cfg(target_arch = \"wasm32\")"))
             .and_then(|cfg| cfg.get("dependencies"))
-            .map_or(false, |dependencies| dependencies.is_table())
+            .is_some_and(|dependencies| dependencies.is_table())
         {
             let mut toml_str = doc.to_string();
             toml_str.push_str("\n[target.'cfg(target_arch = \"wasm32\")'.dependencies]\n");

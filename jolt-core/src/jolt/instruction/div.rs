@@ -242,6 +242,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
     fn sequence_output(x: u64, y: u64) -> u64 {
         let x = x as i32;
         let y = y as i32;
+        if y == 0 {
+            return (1 << WORD_SIZE) - 1;
+        }
         let mut quotient = x / y;
         let remainder = x % y;
         if (remainder < 0 && y > 0) || (remainder > 0 && y < 0) {
@@ -253,11 +256,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
 
 #[cfg(test)]
 mod test {
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+
     use super::*;
-    use crate::{jolt::instruction::JoltInstruction, jolt_virtual_sequence_test};
 
     #[test]
     fn div_virtual_sequence_32() {
-        jolt_virtual_sequence_test!(DIVInstruction::<32>, RV32IM::DIV);
+        jolt_virtual_sequence_test::<DIVInstruction<32>>(RV32IM::DIV);
     }
 }

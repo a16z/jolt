@@ -1,12 +1,16 @@
 use crate::{
     field::JoltField,
     jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
+    utils::uninterleave_bits,
 };
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::prefixes::{PrefixEval, Prefixes};
+use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltInstruction;
+use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     jolt::{instruction::SubtableIndices, subtable::LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
@@ -68,14 +72,63 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
         }
     }
 
-    fn random(&self, rng: &mut StdRng) -> Self {
-        if WORD_SIZE == 32 {
-            Self(rng.next_u32() as u64, rng.next_u32() as u64)
-        } else if WORD_SIZE == 64 {
-            Self(rng.next_u64(), rng.next_u64())
+    fn materialize_entry(&self, index: u64) -> u64 {
+        let (divisor, quotient) = uninterleave_bits(index);
+        if divisor == 0 {
+            match WORD_SIZE {
+                8 => (quotient == u8::MAX as u32).into(),
+                32 => (quotient == u32::MAX).into(),
+                _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            }
         } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
+            1
         }
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
+            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
+            64 => Self(rng.next_u64(), rng.next_u64()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        let mut divisor_is_zero = F::one();
+        let mut is_valid_div_by_zero = F::one();
+
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            divisor_is_zero *= F::one() - x_i;
+            is_valid_div_by_zero *= (F::one() - x_i) * y_i;
+        }
+
+        F::one() - divisor_is_zero + is_valid_div_by_zero
+    }
+}
+
+impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+    for AssertValidDiv0Instruction<WORD_SIZE>
+{
+    fn prefixes() -> Vec<Prefixes> {
+        vec![Prefixes::LeftOperandIsZero, Prefixes::DivByZero]
+    }
+
+    fn suffixes() -> Vec<Suffixes> {
+        vec![
+            Suffixes::One,
+            Suffixes::LeftOperandIsZero,
+            Suffixes::DivByZero,
+        ]
+    }
+
+    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        suffixes[Suffixes::One]
+            - prefixes[Prefixes::LeftOperandIsZero] * suffixes[Suffixes::LeftOperandIsZero]
+            + prefixes[Prefixes::DivByZero] * suffixes[Suffixes::DivByZero]
     }
 }
 
@@ -85,9 +138,38 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::{
+        jolt::instruction::{
+            test::{
+                instruction_mle_full_hypercube_test, instruction_mle_random_test,
+                materialize_entry_test, prefix_suffix_test,
+            },
+            JoltInstruction,
+        },
+        jolt_instruction_test,
+    };
 
     use super::AssertValidDiv0Instruction;
+
+    #[test]
+    fn assert_valid_div0_materialize_entry() {
+        materialize_entry_test::<Fr, AssertValidDiv0Instruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_div0_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, AssertValidDiv0Instruction<8>>();
+    }
+
+    #[test]
+    fn assert_valid_div0_mle_random() {
+        instruction_mle_random_test::<Fr, AssertValidDiv0Instruction<32>>();
+    }
+
+    #[test]
+    fn assert_valid_div0_prefix_suffix() {
+        prefix_suffix_test::<Fr, AssertValidDiv0Instruction<32>>();
+    }
 
     #[test]
     fn assert_valid_div0_instruction_32_e2e() {

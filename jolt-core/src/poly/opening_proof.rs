@@ -221,7 +221,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ProverOpeningAccumulator<F, Proo
             assert_eq!(batched_eval, batched_claim);
             let mut opening =
                 ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim);
-            for poly in polynomials.into_iter() {
+            for poly in polynomials.iter() {
                 opening.batch.push((*poly).clone());
             }
             self.openings.push(opening);
@@ -502,7 +502,7 @@ where
             for (i, (poly, commitment)) in prover_opening
                 .batch
                 .iter()
-                .zip(commitments.into_iter())
+                .zip(commitments.iter())
                 .enumerate()
             {
                 let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());

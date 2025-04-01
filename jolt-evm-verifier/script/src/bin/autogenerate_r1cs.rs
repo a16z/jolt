@@ -9,7 +9,7 @@ use jolt_core::r1cs::key::SparseEqualityItem;
 #[allow(dead_code)]
 fn partial_autogenerate<F: JoltField>(
     constraints: &SparseConstraints<F>,
-    non_uni: Option<&SparseEqualityItem<F>>,
+    cross_step: Option<&SparseEqualityItem<F>>,
 ) {
     let bytes = |from: F| -> Vec<u8> {
         let mut buf = vec![];
@@ -39,10 +39,10 @@ fn partial_autogenerate<F: JoltField>(
     }
     println!("running += rc*col_eq_constant;");
 
-    if non_uni.is_some() {
+    if cross_step.is_some() {
         println!("Fr rnu = Fr.wrap(0);");
 
-        for (col, offset, coeff) in non_uni.unwrap().offset_vars.iter() {
+        for (col, offset, coeff) in cross_step.unwrap().offset_vars.iter() {
             if *offset {
                 println!(
                     "rnu += Fr.wrap(0x{})*col[{:?}]*eq_step_offset_1;",
@@ -59,9 +59,9 @@ fn partial_autogenerate<F: JoltField>(
         }
         println!(
             "rnu += col_eq_const*Fr.wrap(0x{});",
-            hex::encode(bytes(non_uni.unwrap().constant))
+            hex::encode(bytes(cross_step.unwrap().constant))
         );
-        println!("running += rnu * row_constr_eq_non_uni;");
+        println!("running += rnu * row_constr_eq_cross_step;");
     }
     println!("return(running);");
 }

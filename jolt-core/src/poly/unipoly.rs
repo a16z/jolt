@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::field::JoltField;
 use std::cmp::Ordering;
-use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
+use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -21,7 +21,7 @@ pub struct UniPoly<F> {
 
 // ax^2 + bx + c stored as vec![c,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct CompressedUniPoly<F: JoltField> {
     pub coeffs_except_linear_term: Vec<F>,
 }
@@ -99,7 +99,7 @@ impl<F: JoltField> UniPoly<F> {
         self.coeffs.last()
     }
 
-    fn zero() -> Self {
+    pub fn zero() -> Self {
         Self::from_coeff(Vec::new())
     }
 
@@ -227,6 +227,23 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
             self.coeffs
                 .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
         }
+    }
+}
+
+impl<F: JoltField> Sub for UniPoly<F> {
+    type Output = Self;
+
+    fn sub(mut self, rhs: Self) -> Self::Output {
+        let ordering = self.coeffs.len().cmp(&rhs.coeffs.len());
+        #[allow(clippy::disallowed_methods)]
+        for (lhs, rhs) in self.coeffs.iter_mut().zip(&rhs.coeffs) {
+            *lhs -= *rhs;
+        }
+        if matches!(ordering, Ordering::Less) {
+            self.coeffs
+                .extend(rhs.coeffs[self.coeffs.len()..].iter().map(|v| v.neg()));
+        }
+        self
     }
 }
 
