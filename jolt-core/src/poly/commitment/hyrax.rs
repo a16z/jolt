@@ -346,3 +346,69 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         )
     }
 }
+
+// A non-impl of StreamingCommitmentScheme
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
+    HyraxCommitment<RATIO, G>
+{
+    // type State<'a> = HyraxCommitmentState<G>;
+
+    fn initialize(n: usize, generators: &PedersenGenerators<G>) -> HyraxCommitmentState<G> {
+        let ell = n.log_2();
+
+        let (L_size, R_size) = matrix_dimensions(ell, RATIO);
+        assert_eq!(L_size * R_size, n);
+
+        let generators = CurveGroup::normalize_batch(&generators.generators[..R_size]);
+
+        let row_commitments = Vec::with_capacity(L_size);
+        let current_row = Vec::with_capacity(R_size);
+
+        HyraxCommitmentState {
+            row_commitments,
+            generators,
+            current_row,
+            L_size,
+            R_size,
+        }
+    }
+
+    fn process<'a>(mut state: HyraxCommitmentState<G>, eval: F) -> HyraxCommitmentState<G> {
+        state.current_row.push(eval);
+
+        if state.current_row.len() == state.R_size {
+            let commitment =
+                PedersenCommitment::commit_vector(&state.current_row, &state.generators);
+            state.row_commitments.push(commitment);
+
+            state.current_row.clear();
+        }
+
+        state
+    }
+
+    fn finalize<'a>(state: HyraxCommitmentState<G>) -> HyraxCommitment<RATIO, G> {
+        assert_eq!(
+            state.current_row.len(),
+            0,
+            "Incorrect number of elements processed."
+        );
+        assert_eq!(
+            state.row_commitments.len(),
+            state.L_size,
+            "Incorrect number of elements processed."
+        );
+
+        HyraxCommitment {
+            row_commitments: state.row_commitments,
+        }
+    }
+}
+
+pub struct HyraxCommitmentState<G: CurveGroup> {
+    row_commitments: Vec<G>,
+    generators: Vec<<G as CurveGroup>::Affine>,
+    current_row: Vec<G::ScalarField>,
+    L_size: usize,
+    R_size: usize,
+}

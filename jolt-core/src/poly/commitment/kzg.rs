@@ -343,6 +343,16 @@ where
         coeffs: &[P::ScalarField],
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
+        let final_commitment = Self::commit_inner_helper(pk, coeffs, offset)?;
+        Ok(final_commitment.into_affine())
+    }
+
+    #[inline]
+    pub(crate) fn commit_inner_helper(
+        pk: &KZGProverKey<P>,
+        coeffs: &[P::ScalarField],
+        offset: usize,
+    ) -> Result<P::G1, ProofVerifyError> {
         if pk.g1_powers().len() < coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pk.g1_powers().len(),
@@ -358,7 +368,7 @@ where
             use_icicle(),
         )?;
 
-        Ok(c.into_affine())
+        Ok(c)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::open")]
