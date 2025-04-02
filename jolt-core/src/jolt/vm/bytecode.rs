@@ -25,7 +25,7 @@ use crate::lasso::memory_checking::{
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use crate::utils::streaming::{map_state, MapState};
+use crate::utils::streaming::{map_state, MapState, Oracle, test_map_state};
 use crate::utils::transcript::Transcript;
 
 use super::{JoltPolynomials, JoltTraceStep};
@@ -101,9 +101,31 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 pub type BytecodeProof<F, PCS, ProofTranscript> =
     MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings, ProofTranscript>;
 
+pub struct StreamTrace<'a, InstructionSet: JoltInstructionSet> {
+    pub length: usize,
+    pub counter: usize,
+    pub trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+}
+impl<'a, InstructionSet: JoltInstructionSet> StreamTrace<'a, InstructionSet> {
+    pub fn new(trace: &'a Vec<JoltTraceStep<InstructionSet>>) -> Self {
+        Self {
+            length: trace.len(),
+            counter: 0,
+            trace: &trace,
+        }
+    }
+}
+impl<'a, InstructionSet: JoltInstructionSet> Oracle for StreamTrace<'a, InstructionSet> {
+    type Item = JoltTraceStep<InstructionSet>;
+    fn next(&mut self) -> Self::Item {
+        let item = self.trace[self.counter].clone();
+        self.counter = (self.counter + 1) % self.length;
+        item
+    }
+}
 pub struct StreamingBytecodePolynomials<'a, F: JoltField> {
     /// Stream that builds the bytecode polynomial.
-    pub polynomial_stream: Box<dyn Iterator<Item = BytecodeStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+    pub polynomial_stream: Box<dyn Oracle<Item = BytecodeStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
 
 pub struct Derived<T> {
@@ -112,19 +134,20 @@ pub struct Derived<T> {
 
 pub struct StreamingDerived<'a, F: JoltField> {
     /// Stream that builds the bytecode polynomial.
-    pub polynomial_stream: Box<dyn Iterator<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+    pub polynomial_stream: Box<dyn Oracle<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
-
+// pub struct StreamingDerived2<'a, F: JoltField> {
+//     /// Stream that builds the bytecode polynomial.
+//     pub polynomial_stream: Box<dyn Oracle<Item = Derived2<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+// }
 impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
     #[tracing::instrument(skip_all, name = "StreamingBytecodePolynomials::new")]
-    pub fn new<
-        It: 'a + Iterator<Item = &'a JoltTraceStep<InstructionSet>> + Clone,
-        InstructionSet: 'a + JoltInstructionSet,
-    >(
+    pub fn new<InstructionSet: 'a + JoltInstructionSet>(
         preprocessing: &'a BytecodePreprocessing<F>,
-        trace: It,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
     ) -> Self {
-        let polynomial_stream = map_state(trace, |step| {
+        let stream_trace = StreamTrace::new(trace);
+        let polynomial_stream = test_map_state(stream_trace, |step| {
             let virtual_address = preprocessing
                 .virtual_address_map
                 .get(&(
@@ -185,8 +208,8 @@ impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
 
 impl<'a, F: JoltField> StreamingDerived<'a, F> {
     #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
-    pub fn new<It: Iterator<Item = BytecodeStuff<F>> + Clone + 'a>(bytecode_stream: It) -> Self {
-        let polynomial_stream = map_state(bytecode_stream, |step| Derived {
+    pub fn new<O: Oracle<Item = BytecodeStuff<F>> + 'a>(bytecode_stream: O) -> Self {
+        let polynomial_stream = test_map_state(bytecode_stream, |step| Derived {
             sum: step.a_read_write + step.v_read_write[0],
         });
 

@@ -5,10 +5,10 @@ use std::marker::PhantomData;
 use std::slice::Iter;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bytecode::StreamingDerived;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
+use bytecode::StreamingDerived;
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
@@ -486,15 +486,12 @@ where
         StreamingBytecodePolynomials::<F>::update_trace(&mut trace_1);
 
         let mut streaming_bytecode_polynomails =
-            StreamingBytecodePolynomials::new(&preprocessing.bytecode, trace_1.iter());
+            StreamingBytecodePolynomials::new(&preprocessing.bytecode, &trace_1);
 
         // let mut a = streaming_bytecode_polynomails.polynomial_stream;
 
         for i in 0..trace_length {
-            let eval = streaming_bytecode_polynomails
-                .polynomial_stream
-                .next()
-                .unwrap();
+            let eval = streaming_bytecode_polynomails.polynomial_stream.next();
             assert_eq!(
                 eval.a_read_write,
                 jolt_polynomials.bytecode.a_read_write.get_coeff(i)
@@ -510,9 +507,8 @@ where
 
         // let mut streaming_bytecode_polynomails =
         //     StreamingBytecodePolynomials::new(&preprocessing.bytecode, trace_1.iter());
-
-        // let streaming_derived =
-        //     StreamingDerived::new(streaming_bytecode_polynomails.polynomial_stream);
+        let typ = streaming_bytecode_polynomails.polynomial_stream.as_ref();
+        let streaming_derived = StreamingDerived::new(typ);
 
         // let mut a = streaming_derived.polynomial_stream;
 

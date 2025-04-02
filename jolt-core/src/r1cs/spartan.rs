@@ -1,6 +1,19 @@
 use std::marker::PhantomData;
-use tracing::{span, Level};
 
+use ark_ff::Zero;
+use ark_serialize::CanonicalDeserialize;
+use ark_serialize::CanonicalSerialize;
+use rayon::prelude::*;
+use thiserror::Error;
+use tracing::{Level, span};
+
+use crate::{
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+    },
+    subprotocols::sumcheck::SumcheckInstanceProof,
+};
 use crate::field::JoltField;
 use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltPolynomials;
@@ -16,28 +29,11 @@ use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::streaming::map_state;
 use crate::utils::thread::drop_in_background_thread;
-
 use crate::utils::transcript::Transcript;
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
 
-use ark_ff::Zero;
-
-use thiserror::Error;
-
-use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-};
-
-use super::builder::eval_offset_lc;
 use super::builder::CombinedUniformBuilder;
+use super::builder::eval_offset_lc;
 use super::inputs::ConstraintInput;
-
-use rayon::prelude::*;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -193,7 +189,10 @@ impl<'a, F: JoltField> StreamingAzBzCz<'a, F> {
                     let bz_coeff =
                         eval_offset_lc(&constraint.cond, z_poly, step_index, next_step_index);
                     if !bz_coeff.is_zero() {
-                        Bz.push((uniform_constraints_len + constraint_index, F::from_i128(bz_coeff)));
+                        Bz.push((
+                            uniform_constraints_len + constraint_index,
+                            F::from_i128(bz_coeff),
+                        ));
                     }
                 }
                 // Cz is always 0 for cross-step constraints
@@ -488,14 +487,14 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let streaming_spartan_witness =
-            StreamingSpartanWitness::new(streaming_polynomials.polynomial_stream);
+        // let streaming_spartan_witness =
+        //     StreamingSpartanWitness::new(streaming_polynomials.polynomial_stream);
 
-        let AzBzCz = StreamingAzBzCz::new(
-            &constraint_builder,
-            constraint_builder.padded_rows_per_step(),
-            streaming_spartan_witness.polynomial_stream,
-        );
+        // let AzBzCz = StreamingAzBzCz::new(
+        //     &constraint_builder,
+        //     constraint_builder.padded_rows_per_step(),
+        //     streaming_spartan_witness.polynomial_stream,
+        // );
         let num_rounds_x = key.num_rows_bits();
 
         /* ************************************* */
