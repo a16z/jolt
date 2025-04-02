@@ -55,7 +55,7 @@ impl<T: SWCurveConfig> Icicle for ark_ec::short_weierstrass::Projective<T> {
 pub trait Icicle: ScalarMul {
     type C: Curve<ScalarField: > + MSM<Self::C>;
 
-    // Note: To prevent excessive trait the arkworks conversion functions within icicle are reimplemented
+    // Note: To prevent excessive trait conversions the arkworks conversion functions within icicle are reimplemented
     fn to_ark_projective(point: &Projective<Self::C>) -> Self;
 
     fn from_ark_affine(point: &Self::MulBase) -> Affine<Self::C>;
@@ -376,6 +376,14 @@ where
     I: FieldImpl,
 {
     T::from_random_bytes(&icicle.to_bytes_le()).unwrap()
+}
+
+pub fn icicle_to_jolt<F, I>(icicle: &I) -> F
+where
+    F: JoltField,
+    I: FieldImpl,
+{
+    F::from_bytes(&icicle.to_bytes_le())
 }
 
 #[cfg(test)]

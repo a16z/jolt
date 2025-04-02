@@ -10,15 +10,6 @@ pub use adapter::*;
 static ICICLE_INIT: Once = Once::new();
 static ICICLE_READY: AtomicBool = AtomicBool::new(false);
 
-#[cfg(feature = "icicle")]
-pub trait CurveGroupConfig: CurveGroup + Icicle {}
-#[cfg(not(feature = "icicle"))]
-pub trait CurveGroupConfig: CurveGroup {}
-
-#[cfg(feature = "icicle")]
-pub trait ScalarMulConfig: ScalarMul + Icicle {}
-#[cfg(not(feature = "icicle"))]
-pub trait ScalarMulConfig: ScalarMul {}
 #[cfg(not(feature = "icicle"))]
 pub trait Icicle {}
 #[cfg(not(feature = "icicle"))]

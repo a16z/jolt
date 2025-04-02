@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
@@ -53,28 +54,39 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
             .next_power_of_two()
             .min(read_addresses.len());
         let chunk_size = (read_addresses.len() / num_chunks).max(1);
-        let F: Vec<_> = read_addresses
-            .par_chunks(chunk_size)
+
+        let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
+        read_addresses
+            .iter()
             .enumerate()
-            .map(|(chunk_index, addresses)| {
-                let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut cycle = chunk_index * chunk_size;
-                for address in addresses {
-                    result[*address] += E[cycle];
-                    cycle += 1;
+            .for_each(|(cycle, &address)| {
+                if address < K {
+                    F[address] += E[cycle];
                 }
-                result
-            })
-            .reduce(
-                || unsafe_allocate_zero_vec(K),
-                |mut running, new| {
-                    running
-                        .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running
-                },
-            );
+            });
+
+        // let F: Vec<_> = read_addresses
+        //     .par_chunks(chunk_size)
+        //     .enumerate()
+        //     .map(|(chunk_index, addresses)| {
+        //         let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
+        //         let mut cycle = chunk_index * chunk_size;
+        //         for address in addresses {
+        //             result[*address] += E[cycle];
+        //             cycle += 1;
+        //         }
+        //         result
+        //     })
+        //     .reduce(
+        //         || unsafe_allocate_zero_vec(K),
+        //         |mut running, new| {
+        //             running
+        //                 .par_iter_mut()
+        //                 .zip(new.into_par_iter())
+        //                 .for_each(|(x, y)| *x += y);
+        //             running
+        //         },
+        //     );
         drop(_guard);
         drop(span);
 
@@ -206,6 +218,137 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
     }
 }
 
+#[cfg(feature = "icicle")]
+use icicle_bn254::sumcheck::SumcheckWrapper as icicle_sumcheck;
+#[cfg(feature = "icicle")]
+use icicle_bn254::curve::ScalarField as IcicleFr;
+#[cfg(feature = "icicle")]
+use icicle_core::sumcheck::{Sumcheck, SumcheckConfig, SumcheckTranscriptConfig};
+#[cfg(feature = "icicle")]
+use icicle_core::traits::{FieldImpl, GenerateRandom};
+#[cfg(feature = "icicle")]
+use crate::msm::{icicle_from_ark, icicle_to_ark, icicle_to_jolt};
+
+#[inline]
+unsafe fn reinterpret_field_slice<F, T>(input: &[F]) -> &[T] {
+    assert_eq!(size_of::<F>(), size_of::<T>());
+    std::slice::from_raw_parts(input.as_ptr() as *const T, input.len())
+}
+
+#[inline]
+unsafe fn reinterpret_field<F, T>(input: &F) -> T
+where
+    T: Copy,
+{
+    assert_eq!(size_of::<F>(), size_of::<T>());
+    *(input as *const F as *const T)
+}
+
+#[cfg(feature = "icicle")]
+pub fn prove_core_shout_piop_icicle<F: JoltField, ProofTranscript: Transcript, SW: Sumcheck, Prog: icicle_core::program::ReturningValueProgram>(
+    lookup_table: Vec<F>,
+    read_addresses: Vec<usize>,
+    transcript: &mut ProofTranscript,
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F, F) {
+    let K = lookup_table.len();
+    let T = read_addresses.len();
+    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+
+    // Sumcheck for the core Shout PIOP (Figure 5)
+    let num_rounds = K.log_2();
+    let r_address: Vec<F> = Vec::with_capacity(num_rounds);
+
+    let E: Vec<F> = EqPolynomial::evals(&r_cycle);
+
+    let mut address_map: HashMap<usize, F> = HashMap::new();
+    for (cycle, &address) in read_addresses.iter().enumerate() {
+        if address < K {
+            *address_map.entry(address).or_insert(F::zero()) += E[cycle];
+        }
+    }
+    let F: Vec<_> = (0..K).map(|k| address_map.get(&k).cloned().unwrap_or(F::zero())).collect();
+
+    // let sumcheck_claim: F = F
+    //     .par_iter()
+    //     .zip(lookup_table.par_iter())
+    //     .map(|(&ra, &val)| ra * val)
+    //     .sum();
+    let sumcheck_claim: F = address_map
+        .par_iter()
+        .map(|(&address, &value)| value * lookup_table[address])
+        .sum();
+    let sumcheck_claim_icicle  = unsafe { reinterpret_field(&sumcheck_claim) };
+
+    let mle_polys = vec![F, lookup_table];
+    const DEGREE: usize = 2;
+    let combine_func = |vars: &mut Vec<Prog::ProgSymbol>| -> Prog::ProgSymbol {
+        let ra = vars[0]; // Shallow copies pointing to the same memory in the backend
+        let val = vars[1];
+        return ra * val;
+    };
+
+    let mle_poly_hosts = mle_polys
+        .iter()
+        .map(|coeffs| {
+            let coeffs = unsafe {
+                reinterpret_field_slice(coeffs)
+                // std::slice::from_raw_parts(coeffs.as_ptr() as *const <SW as Sumcheck>::Field, coeffs.len())
+            };
+
+            icicle_runtime::memory::HostSlice::from_slice(coeffs)
+        })
+        .collect::<Vec<_>>();
+
+    let sumcheck = SW::new().unwrap();
+    let combine_func = Prog::new(combine_func, 2).unwrap();
+    let sumcheck_config = SumcheckConfig::default();
+    let hasher = icicle_hash::keccak::Keccak256::new(32u64).unwrap();
+
+    let seed_rng = <<SW as Sumcheck>::FieldConfig>::generate_random(1)[0];
+
+    let config = SumcheckTranscriptConfig::new(
+        &hasher,
+        b"Domain".to_vec(),
+        b"Round".to_vec(),
+        b"Challenge".to_vec(),
+        true, // little endian
+        seed_rng,
+    );
+
+    let proof = sumcheck.prove(
+        // TODO copy these to the device memory
+        &mle_poly_hosts,
+        K as u64,
+        sumcheck_claim_icicle,
+        combine_func,
+        &config,
+        &sumcheck_config,
+    );
+
+    let proof_round_polys =
+        <<SW as Sumcheck>::Proof as icicle_core::sumcheck::SumcheckProofOps<<SW as Sumcheck>::Field>>::get_round_polys(&proof).unwrap();
+    // Convert this into compressed Polys
+    let compressed_polys = proof_round_polys.par_iter().map(|coeffs| {
+        let coeffs = coeffs.iter().map(|c| icicle_to_jolt(c)).collect::<Vec<_>>();
+        UniPoly::from_evals(&coeffs).compress()
+    }).collect::<Vec<CompressedUniPoly<F>>>();
+
+    // Add these to our transcript to remain consistent with the rest of the proof
+    compressed_polys.iter().for_each(|p| {
+        p.append_to_transcript(transcript);
+        transcript.challenge_scalar::<F>();
+    });
+
+    // let ra_claim = ra.final_sumcheck_claim(); // doesn't work since we're not binding anything
+    let ra_claim = F::zero();
+    (
+        SumcheckInstanceProof::new(compressed_polys),
+        r_address,
+        sumcheck_claim,
+        ra_claim,
+    )
+}
+
 /// Implements the sumcheck prover for the core Shout PIOP when d = 1. See
 /// Figure 5 from the Twist+Shout paper.
 pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
@@ -222,16 +365,25 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
     let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
 
     let E: Vec<F> = EqPolynomial::evals(&r_cycle);
-    let F: Vec<_> = (0..K)
-        .into_par_iter()
-        .map(|k| {
-            read_addresses
-                .iter()
-                .enumerate()
-                .filter_map(|(cycle, address)| if *address == k { Some(E[cycle]) } else { None })
-                .sum::<F>()
-        })
-        .collect();
+
+    let mut address_map: HashMap<usize, F> = HashMap::new();
+    for (cycle, &address) in read_addresses.iter().enumerate() {
+        if address < K {
+            *address_map.entry(address).or_insert(F::zero()) += E[cycle];
+        }
+    }
+    let F: Vec<F> = (0..K).map(|k| address_map.get(&k).cloned().unwrap_or(F::zero())).collect();
+
+    // let F: Vec<_> = (0..K)
+    //     .into_par_iter()
+    //     .map(|k| {
+    //         read_addresses
+    //             .iter()
+    //             .enumerate()
+    //             .filter_map(|(cycle, address)| if *address == k { Some(E[cycle]) } else { None })
+    //             .sum::<F>()
+    //     })
+    //     .collect();
 
     let sumcheck_claim: F = F
         .par_iter()
@@ -714,9 +866,7 @@ mod tests {
             verification_result.err()
         );
     }
-
-    #[test]
-    fn core_shout_sumcheck() {
+    fn run_core_shout_sumcheck_test<const USE_ICICLE: bool>() {
         const TABLE_SIZE: usize = 64;
         const NUM_LOOKUPS: usize = 1 << 10;
 
@@ -728,8 +878,25 @@ mod tests {
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let (sumcheck_proof, _, sumcheck_claim, _) =
-            prove_core_shout_piop(lookup_table, read_addresses, &mut prover_transcript);
+
+        let (sumcheck_proof, _, sumcheck_claim, _) = if USE_ICICLE {
+            #[cfg(feature = "icicle")]
+            {
+                use icicle_bn254::sumcheck::SumcheckWrapper;
+                use icicle_bn254::program::bn254::FieldReturningValueProgram;
+                prove_core_shout_piop_icicle::<Fr, KeccakTranscript, SumcheckWrapper, FieldReturningValueProgram>(
+                    lookup_table,
+                    read_addresses,
+                    &mut prover_transcript,
+                )
+            }
+            #[cfg(not(feature = "icicle"))]
+            {
+                panic!("Tried to run icicle test without enabling the icicle feature");
+            }
+        } else {
+            prove_core_shout_piop(lookup_table, read_addresses, &mut prover_transcript)
+        };
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
@@ -746,6 +913,17 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
+    }
+
+    #[test]
+    fn core_shout_sumcheck() {
+        run_core_shout_sumcheck_test::<false>();
+    }
+
+    #[test]
+    #[cfg(feature = "icicle")]
+    fn core_shout_sumcheck_icicle() {
+        run_core_shout_sumcheck_test::<true>();
     }
 
     #[test]
