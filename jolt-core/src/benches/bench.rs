@@ -383,7 +383,7 @@ where
     };
 
     tasks.push((
-        tracing::info_span!("Example_E2E"),
+        tracing::info_span!("Example_SHA2_CHAIN"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
