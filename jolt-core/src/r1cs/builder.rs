@@ -183,7 +183,8 @@ impl<F: JoltField> AuxComputation<F> {
 
 pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
     _inputs: PhantomData<I>,
-    constraints: Vec<Constraint>,
+    // TODO (Bhargav): pub added. Remove it.
+    pub constraints: Vec<Constraint>,
     aux_computations: BTreeMap<usize, AuxComputation<F>>,
 }
 
@@ -506,12 +507,14 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
 
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
-    uniform_builder: R1CSBuilder<C, F, I>,
+    // TODO (Bhargav): pub added. Remove it.
+    pub uniform_builder: R1CSBuilder<C, F, I>,
 
     /// Padded to the nearest power of 2
     uniform_repeat: usize, // TODO(JP): Remove padding of steps
 
-    offset_equality_constraints: Vec<OffsetEqConstraint>,
+    // TODO (Bhargav): pub added. Remove it.
+    pub offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
 impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C, F, I> {

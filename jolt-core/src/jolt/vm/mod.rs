@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use std::slice::Iter;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use bytecode::StreamingDerived;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
@@ -157,10 +158,9 @@ pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) r1cs: R1CSStuff<T>,
 }
 
-pub struct StreamingJoltStuff<I: Iterator, F: JoltField> {
-    pub(crate) trace_iter: I,
-    pub(crate) init_iter: I,
-    pub(crate) shard: JoltStuff<Vec<F>>,
+pub struct StreamingJoltPolynomials<'a, F: JoltField> {
+    /// Stream that builds the jolt polynomial.
+    pub polynomial_stream: Box<dyn Iterator<Item = JoltStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
 
 //TODO: Implment StreamingOracle for StreamingJoltStuff.

@@ -106,14 +106,14 @@ pub struct StreamingBytecodePolynomials<'a, F: JoltField> {
     pub polynomial_stream: Box<dyn Iterator<Item = BytecodeStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
 
-// pub struct Derived<T> {
-//     pub sum: T,
-// }
+pub struct Derived<T> {
+    pub sum: T,
+}
 
-// pub struct StreamingDerived<'a, F: JoltField> {
-//     /// Stream that builds the bytecode polynomial.
-//     pub polynomial_stream: Box<dyn Iterator<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
-// }
+pub struct StreamingDerived<'a, F: JoltField> {
+    /// Stream that builds the bytecode polynomial.
+    pub polynomial_stream: Box<dyn Iterator<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+}
 
 impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
     #[tracing::instrument(skip_all, name = "StreamingBytecodePolynomials::new")]
@@ -182,19 +182,19 @@ impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
         }
     }
 }
-//
-// impl<'a, F: JoltField> StreamingDerived<'a, F> {
-//     #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
-//     pub fn new<It: Iterator<Item = BytecodeStuff<F>> + Clone + 'a>(bytecode_stream: It) -> Self {
-//         let polynomial_stream = map_state(bytecode_stream, |step| Derived {
-//             sum: step.a_read_write + step.v_read_write[0],
-//         });
-//
-//         StreamingDerived {
-//             polynomial_stream: Box::new(polynomial_stream),
-//         }
-//     }
-// }
+
+impl<'a, F: JoltField> StreamingDerived<'a, F> {
+    #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
+    pub fn new<It: Iterator<Item = BytecodeStuff<F>> + Clone + 'a>(bytecode_stream: It) -> Self {
+        let polynomial_stream = map_state(bytecode_stream, |step| Derived {
+            sum: step.a_read_write + step.v_read_write[0],
+        });
+
+        StreamingDerived {
+            polynomial_stream: Box::new(polynomial_stream),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
