@@ -5,7 +5,7 @@ use sha3::{Digest, Keccak256};
 use std::borrow::Borrow;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct KeccakTranscript {
     /// Ethereum-compatible 256-bit running state
     pub state: [u8; 32],
@@ -65,10 +65,7 @@ impl KeccakTranscript {
         #[cfg(test)]
         {
             if let Some(expected_state_history) = &self.expected_state_history {
-                assert!(
-                    new_state == expected_state_history[self.n_rounds as usize],
-                    "Fiat-Shamir transcript mismatch"
-                );
+                assert_eq!(new_state, expected_state_history[self.n_rounds as usize], "Fiat-Shamir transcript mismatch");
             }
             self.state_history.push(new_state);
         }
