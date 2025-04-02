@@ -363,7 +363,7 @@ where
         let c = <P::G1 as VariableBaseMSM>::msm_field_elements(
             &pk.g1_powers()[offset..offset + coeffs.len()],
             pk.gpu_g1().map(|g| &g[offset..offset + coeffs.len()]),
-            &coeffs,
+            coeffs,
             None,
             use_icicle(),
         )?;

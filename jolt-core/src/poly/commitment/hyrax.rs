@@ -353,7 +353,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
 {
     // type State<'a> = HyraxCommitmentState<G>;
 
-    fn initialize(n: usize, generators: &PedersenGenerators<G>) -> HyraxCommitmentState<G> {
+    pub fn initialize(n: usize, generators: &PedersenGenerators<G>) -> HyraxCommitmentState<G> {
         let ell = n.log_2();
 
         let (L_size, R_size) = matrix_dimensions(ell, RATIO);
@@ -373,7 +373,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         }
     }
 
-    fn process<'a>(mut state: HyraxCommitmentState<G>, eval: F) -> HyraxCommitmentState<G> {
+    pub fn process(mut state: HyraxCommitmentState<G>, eval: F) -> HyraxCommitmentState<G> {
         state.current_row.push(eval);
 
         if state.current_row.len() == state.R_size {
@@ -387,7 +387,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F> + Icicle>
         state
     }
 
-    fn finalize<'a>(state: HyraxCommitmentState<G>) -> HyraxCommitment<RATIO, G> {
+    pub fn finalize(state: HyraxCommitmentState<G>) -> HyraxCommitment<RATIO, G> {
         assert_eq!(
             state.current_row.len(),
             0,
