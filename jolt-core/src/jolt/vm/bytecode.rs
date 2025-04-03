@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::rngs::StdRng;
 use rand::RngCore;
+use rand::rngs::StdRng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,10 @@ use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
 use tracer::RV32IM;
 
+use crate::{
+    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+    poly::identity_poly::IdentityPolynomial,
+};
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
@@ -24,10 +28,6 @@ use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::streaming::Oracle;
 use crate::utils::transcript::Transcript;
-use crate::{
-    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    poly::identity_poly::IdentityPolynomial,
-};
 
 use super::{JoltPolynomials, JoltTraceStep, TraceOracle};
 
@@ -105,7 +105,6 @@ pub type BytecodeProof<F, PCS, ProofTranscript> =
 pub struct BytecodeOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
     pub func: Box<dyn Fn(JoltTraceStep<InstructionSet>) -> BytecodeStuff<F> + 'a>,
-    // phantom: PhantomData<BytecodeStuff<F>>,
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F, InstructionSet> {
