@@ -28,7 +28,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<WO
         if j == 2 * WORD_SIZE - 1 {
             Some(r_y).into()
         } else {
-            Some(F::one().into()).into()
+            Some(F::one()).into()
         }
     }
 }

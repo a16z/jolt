@@ -282,7 +282,7 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     AssertValidDiv0(AssertValidDiv0Instruction<WORD_SIZE>),
     AssertHalfwordAlignment(AssertHalfwordAlignmentInstruction<WORD_SIZE>),
     Pow2(POW2Instruction<WORD_SIZE>),
-    // RightShiftPadding(RightShiftPaddingInstruction<WORD_SIZE>),
+    RightShiftPadding(RightShiftPaddingInstruction<WORD_SIZE>),
 }
 
 impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
@@ -317,7 +317,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.to_lookup_index(),
             LookupTables::AssertHalfwordAlignment(instr) => instr.to_lookup_index(),
             LookupTables::Pow2(instr) => instr.to_lookup_index(),
-            // LookupTables::RightShiftPadding(instr) => instr.to_lookup_index(),
+            LookupTables::RightShiftPadding(instr) => instr.to_lookup_index(),
         }
     }
 
@@ -347,7 +347,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.materialize(),
             LookupTables::AssertHalfwordAlignment(instr) => instr.materialize(),
             LookupTables::Pow2(instr) => instr.materialize(),
-            // LookupTables::RightShiftPadding(instr) => instr.materialize(),
+            LookupTables::RightShiftPadding(instr) => instr.materialize(),
         }
     }
 
@@ -376,7 +376,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.materialize_entry(index),
             LookupTables::AssertHalfwordAlignment(instr) => instr.materialize_entry(index),
             LookupTables::Pow2(instr) => instr.materialize_entry(index),
-            // LookupTables::RightShiftPadding(instr) => instr.materialize_entry(index),
+            LookupTables::RightShiftPadding(instr) => instr.materialize_entry(index),
         }
     }
 
@@ -405,7 +405,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.evaluate_mle(r),
             LookupTables::AssertHalfwordAlignment(instr) => instr.evaluate_mle(r),
             LookupTables::Pow2(instr) => instr.evaluate_mle(r),
-            // LookupTables::RightShiftPadding(instr) => instr.evaluate_mle(r),
+            LookupTables::RightShiftPadding(instr) => instr.evaluate_mle(r),
         }
     }
 
@@ -451,9 +451,9 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
                 LookupTables::AssertHalfwordAlignment(instr.random(rng))
             }
             LookupTables::Pow2(instr) => LookupTables::Pow2(instr.random(rng)),
-            // LookupTables::RightShiftPadding(instr) => {
-            //     LookupTables::RightShiftPadding(instr.random(rng))
-            // }
+            LookupTables::RightShiftPadding(instr) => {
+                LookupTables::RightShiftPadding(instr.random(rng))
+            }
         }
     }
 
@@ -482,7 +482,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.suffixes(),
             LookupTables::AssertHalfwordAlignment(instr) => instr.suffixes(),
             LookupTables::Pow2(instr) => instr.suffixes(),
-            // LookupTables::RightShiftPadding(instr) => instr.suffixes(),
+            LookupTables::RightShiftPadding(instr) => instr.suffixes(),
         }
     }
 
@@ -515,7 +515,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.combine(prefixes, suffixes),
             LookupTables::AssertHalfwordAlignment(instr) => instr.combine(prefixes, suffixes),
             LookupTables::Pow2(instr) => instr.combine(prefixes, suffixes),
-            // LookupTables::RightShiftPadding(instr) => instr.combine(prefixes, suffixes),
+            LookupTables::RightShiftPadding(instr) => instr.combine(prefixes, suffixes),
         }
     }
 }

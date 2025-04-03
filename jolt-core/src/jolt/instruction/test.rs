@@ -204,7 +204,7 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32>>() {
 
         let mut j = 0;
         let mut r: Vec<u8> = vec![];
-        for phase in 0..3 {
+        for phase in 0..4 {
             let suffix_len = (3 - phase) * 16;
             let (mut prefix_bits, suffix_bits) =
                 LookupBits::new(lookup_index, 64 - phase * 16).split(suffix_len);

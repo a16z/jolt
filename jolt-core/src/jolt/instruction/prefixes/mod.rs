@@ -8,6 +8,7 @@ use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
 use rayon::prelude::*;
+use right_shift_padding::RightShiftPaddingPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -43,6 +44,7 @@ pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
+pub mod right_shift_padding;
 pub mod upper_word;
 pub mod xor;
 
@@ -106,6 +108,7 @@ pub enum Prefixes {
     NegativeDivisorGreaterThanRemainder,
     Lsb,
     Pow2,
+    RightShiftPadding,
 }
 
 #[derive(Clone, Copy)]
@@ -200,6 +203,9 @@ impl Prefixes {
             }
             Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::RightShiftPadding => {
+                RightShiftPaddingPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
         };
         PrefixEval(eval)
     }
@@ -323,6 +329,14 @@ impl Prefixes {
             }
             Prefixes::Pow2 => {
                 Pow2Prefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightShiftPadding => {
+                RightShiftPaddingPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
             }
         }
     }

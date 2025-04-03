@@ -17,7 +17,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         j: usize,
     ) -> F {
         if current_suffix_len(2 * WORD_SIZE, j) != 0 {
-            // Pow2 is handled by suffix
+            // Handled by suffix
             return F::one();
         }
 
@@ -54,7 +54,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if current_suffix_len(2 * WORD_SIZE, j) != 0 {
-            return Some(F::one().into()).into();
+            return Some(F::one()).into();
         }
 
         // r_y is the highest bit of the shift amount
@@ -73,6 +73,6 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
             return Some(checkpoint).into();
         }
 
-        Some(F::one().into()).into()
+        Some(F::one()).into()
     }
 }

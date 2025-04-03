@@ -435,8 +435,6 @@ pub fn prove_single_instruction<
             let univariate_poly_evals =
                 I::compute_sumcheck_prover_message(&prefix_checkpoints, &suffix_polys, &r, j);
 
-            println!("round {_round}: {univariate_poly_evals:?}");
-
             #[cfg(test)]
             {
                 let expected: [F; 2] = (0..val_test.len() / 2)
@@ -612,8 +610,6 @@ pub fn prove_single_instruction<
                 || [F::zero(); 2],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
-
-        println!("round {_round}: {univariate_poly_evals:?}");
 
         let univariate_poly = UniPoly::from_evals(&[
             univariate_poly_evals[0],
@@ -844,8 +840,6 @@ pub fn prove_multiple_instructions<
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4], Vec<F>) {
     let log_K: usize = 2 * WORD_SIZE;
-    #[cfg(test)]
-    let K: u64 = 1 << log_K;
     let log_m = log_K / 4;
     let m = log_m.pow2();
 
@@ -886,39 +880,6 @@ pub fn prove_multiple_instructions<
     drop(span);
 
     let mut previous_claim = rv_claim;
-
-    #[cfg(test)]
-    let mut val_test: Vec<MultilinearPolynomial<F>> = LookupTables::<WORD_SIZE>::iter()
-        .map(|table| MultilinearPolynomial::from(table.materialize()))
-        .collect();
-    #[cfg(test)]
-    let mut ra_test: MultilinearPolynomial<F> = {
-        // We will be binding ra from high-to-low starting with
-        // the address variables
-        let mut ra: Vec<F> = unsafe_allocate_zero_vec(T * K as usize);
-        ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
-            for j in 0..T {
-                if u64::from(lookup_indices[j]) == k as u64 {
-                    ra_k[j] = F::one();
-                }
-            }
-        });
-        MultilinearPolynomial::from(ra)
-    };
-    #[cfg(test)]
-    let flags_test: Vec<MultilinearPolynomial<F>> = {
-        LookupTables::<WORD_SIZE>::iter()
-            .map(|table| {
-                let mut flags = vec![0u8; T];
-                for (j, instruction) in lookups.iter().enumerate() {
-                    if LookupTables::enum_index(instruction) == LookupTables::enum_index(&table) {
-                        flags[j] = 1;
-                    }
-                }
-                MultilinearPolynomial::from(flags)
-            })
-            .collect()
-    };
 
     let mut j: usize = 0;
     let mut ra: Vec<MultilinearPolynomial<F>> = Vec::with_capacity(4);
@@ -1008,34 +969,6 @@ pub fn prove_multiple_instructions<
                 j,
             );
 
-            println!("round {_round}: {univariate_poly_evals:?}");
-
-            // #[cfg(test)]
-            // {
-            //     let mut expected = [F::zero(), F::zero()];
-            //     for k in 0..(K >> _round) / 2 {
-            //         let val_evals: Vec<_> = val_test
-            //             .iter()
-            //             .map(|val_i| val_i.sumcheck_evals(k as usize, 2, BindingOrder::HighToLow))
-            //             .collect();
-            //         for j in 0..T {
-            //             let jk = j * (K as usize >> _round) / 2 + k as usize;
-            //             let ra_evals = ra_test.sumcheck_evals(jk, 2, BindingOrder::HighToLow);
-            //             let eq_eval = eq_r_prime[j];
-            //             for (flag_poly, val_i_evals) in flags_test.iter().zip(val_evals.iter()) {
-            //                 expected[0] +=
-            //                     eq_eval * ra_evals[0] * flag_poly.get_coeff(j) * val_i_evals[0];
-            //                 expected[1] +=
-            //                     eq_eval * ra_evals[1] * flag_poly.get_coeff(j) * val_i_evals[1];
-            //             }
-            //         }
-            //     }
-            //     assert_eq!(
-            //         expected, univariate_poly_evals,
-            //         "Sumcheck sanity check failed in phase {phase} round {_round}"
-            //     );
-            // }
-
             let univariate_poly = UniPoly::from_evals(&[
                 univariate_poly_evals[0],
                 previous_claim - univariate_poly_evals[0],
@@ -1070,14 +1003,6 @@ pub fn prove_multiple_instructions<
                         j,
                     );
                 }
-            }
-
-            #[cfg(test)]
-            {
-                ra_test.bind_parallel(r_j, BindingOrder::HighToLow);
-                val_test
-                    .par_iter_mut()
-                    .for_each(|val_i| val_i.bind_parallel(r_j, BindingOrder::HighToLow));
             }
 
             j += 1;
@@ -1300,7 +1225,7 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     const WORD_SIZE: usize = 8;
-    const LOG_K: usize = 16;
+    const LOG_K: usize = 2 * WORD_SIZE;
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
@@ -1617,10 +1542,10 @@ mod tests {
         test_multiple_instructions(LookupTables::Pow2(POW2Instruction::default()));
     }
 
-    // #[test]
-    // fn test_multiple_right_shift_padding() {
-    //     test_multiple_instructions(LookupTables::RightShiftPadding(
-    //         RightShiftPaddingInstruction::default(),
-    //     ));
-    // }
+    #[test]
+    fn test_multiple_right_shift_padding() {
+        test_multiple_instructions(LookupTables::RightShiftPadding(
+            RightShiftPaddingInstruction::default(),
+        ));
+    }
 }

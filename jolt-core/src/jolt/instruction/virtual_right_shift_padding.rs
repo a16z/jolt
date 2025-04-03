@@ -6,6 +6,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
+use crate::jolt::instruction::prefixes::Prefixes;
 use crate::jolt::subtable::LassoSubtable;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
@@ -83,13 +84,14 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for RightShiftPaddingInstruction<WORD_SIZE>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::RightShiftPadding]
+        vec![Suffixes::One, Suffixes::RightShiftPadding]
     }
 
-    fn combine<F: JoltField>(&self, _: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [right_shift_padding] = suffixes.try_into().unwrap();
-        right_shift_padding
+        let [one, right_shift_padding] = suffixes.try_into().unwrap();
+        F::from_u64(1 << WORD_SIZE) * one
+            - prefixes[Prefixes::RightShiftPadding] * right_shift_padding
     }
 }
 
