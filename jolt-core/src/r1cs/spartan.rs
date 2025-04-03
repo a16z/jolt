@@ -5,20 +5,14 @@ use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
 use thiserror::Error;
-use tracing::{Level, span};
+use tracing::{span, Level};
 
-use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-};
 use crate::field::JoltField;
+use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::JoltCommitments;
+use crate::jolt::vm::JoltOracle;
 use crate::jolt::vm::JoltPolynomials;
 use crate::jolt::vm::JoltStuff;
-use crate::jolt::vm::StreamingJoltPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -27,11 +21,19 @@ use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
+use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
+use crate::{
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+    },
+    subprotocols::sumcheck::SumcheckInstanceProof,
+};
 
-use super::builder::CombinedUniformBuilder;
 use super::builder::eval_offset_lc;
+use super::builder::CombinedUniformBuilder;
 use super::inputs::ConstraintInput;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -69,14 +71,55 @@ pub enum SpartanError {
     InvalidPCSProof,
 }
 
+#[derive(Debug)]
 pub struct SpartanWitness<F: JoltField> {
-    pub Z_step: Vec<F>,
+    pub z_step: Vec<F>,
+}
+pub struct SpartanWitnessOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+    pub func: Box<dyn Fn(JoltStuff<F>) -> SpartanWitness<F> + 'a>,
+    // phantom: PhantomData<BytecodeStuff<F>>,
 }
 
-pub struct StreamingSpartanWitness<'a, F: JoltField> {
-    /// Stream that builds the Z polynomial.
-    pub polynomial_stream: Box<dyn Iterator<Item = SpartanWitness<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
+    SpartanWitnessOracle<'a, F, InstructionSet>
+{
+    pub fn new<const C: usize, I: ConstraintInput>(
+        jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+    ) -> Self {
+        let polynomial_stream = (|step: JoltStuff<F>| SpartanWitness {
+            z_step: I::flatten::<C>()
+                .iter()
+                .map(|var| *(var.get_ref(&step)))
+                .collect(),
+        });
+
+        SpartanWitnessOracle {
+            jolt_oracle,
+            func: Box::new(polynomial_stream),
+        }
+    }
 }
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for SpartanWitnessOracle<'a, F, InstructionSet>
+{
+    type Item = SpartanWitness<F>;
+
+    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
+    fn next_eval(&mut self) -> Self::Item {
+        (self.func)(self.jolt_oracle.next_eval())
+    }
+
+    fn reset_oracle(&mut self) {
+        self.jolt_oracle.reset_oracle();
+    }
+}
+
+// pub struct StreamingSpartanWitness<'a, F: JoltField> {
+//     /// Stream that builds the Z polynomial.
+//     pub polynomial_stream: Box<dyn Iterator<Item = SpartanWitness<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+// }
 
 // pub struct AzBzCz<F: JoltField> {
 //     pub Az: Vec<(usize, F)>,
@@ -475,17 +518,26 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
-    pub fn streaming_prove<PCS>(
+    pub fn streaming_prove<PCS, InstructionSet>(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
-        streaming_polynomials: StreamingJoltPolynomials<F>,
+        jolt_oracle: JoltOracle<F, InstructionSet>,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     )
     //-> Result<Self, SpartanError>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        InstructionSet: JoltInstructionSet,
     {
+        let mut spartan_witness_oracle = SpartanWitnessOracle::new::<C, I>(jolt_oracle);
+
+        for i in 0..10 {
+            println!(
+                "z for {i}-th step = {:?}",
+                spartan_witness_oracle.next_eval()
+            );
+        }
         // let streaming_spartan_witness =
         //     StreamingSpartanWitness::new(streaming_polynomials.polynomial_stream);
 
@@ -497,7 +549,6 @@ where
         let num_rounds_x = key.num_rows_bits();
 
         /* ************************************* */
-
         /* Sumcheck 1: Outer sumcheck */
         // let tau = (0..num_rounds_x)
         //     .map(|_i| transcript.challenge_scalar())

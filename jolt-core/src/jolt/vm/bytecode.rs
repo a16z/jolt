@@ -29,7 +29,7 @@ use crate::{
     poly::identity_poly::IdentityPolynomial,
 };
 
-use super::{JoltPolynomials, JoltTraceStep};
+use super::{JoltPolynomials, JoltTraceStep, TraceOracle};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -46,8 +46,8 @@ pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub(crate) t_read: T,
     /// Final timestamps for offline memory-checking
     pub(crate) t_final: T,
-    a_init_final: VerifierComputedOpening<T>,
-    v_init_final: VerifierComputedOpening<[T; 6]>,
+    pub a_init_final: VerifierComputedOpening<T>,
+    pub v_init_final: VerifierComputedOpening<[T; 6]>,
 }
 
 /// Note –– F: JoltField bound is not enforced.
@@ -101,41 +101,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 
 pub type BytecodeProof<F, PCS, ProofTranscript> =
     MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings, ProofTranscript>;
-
-pub struct TraceOracle<'a, InstructionSet: JoltInstructionSet> {
-    pub length: usize,
-    pub counter: usize,
-    pub trace: &'a Vec<JoltTraceStep<InstructionSet>>,
-}
-
-impl<'a, InstructionSet: JoltInstructionSet> TraceOracle<'a, InstructionSet> {
-    pub fn new(trace: &'a Vec<JoltTraceStep<InstructionSet>>) -> Self {
-        Self {
-            length: trace.len(),
-            counter: 0,
-            trace: &trace,
-        }
-    }
-}
-
-impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, InstructionSet> {
-    type Item = JoltTraceStep<InstructionSet>;
-
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-    fn next_eval(&mut self) -> Self::Item {
-        let item = self.trace[self.counter].clone();
-        self.counter = (self.counter + 1) % self.length;
-        item
-    }
-
-    fn reset_oracle(&mut self) {
-        if self.counter == self.length - 1 {
-            self.counter = 0;
-        } else {
-            panic!("Can't reset, trace not exhausted.");
-        }
-    }
-}
 
 pub struct BytecodeOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
@@ -358,24 +323,25 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
+    // TODO (Bhargav): Made every field except bitflags public. See if this can be avoided.
     /// Memory address as read from the ELF.
-    address: usize,
+    pub address: usize,
     /// Packed instruction/circuit flags, used for r1cs
     pub bitflags: u64,
     /// Index of the destination register for this instruction (0 if register is unused).
-    rd: u8,
+    pub rd: u8,
     /// Index of the first source register for this instruction (0 if register is unused).
-    rs1: u8,
+    pub rs1: u8,
     /// Index of the second source register for this instruction (0 if register is unused).
-    rs2: u8,
+    pub rs2: u8,
     /// "Immediate" value for this instruction (0 if unused).
-    imm: i64,
+    pub imm: i64,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    virtual_sequence_remaining: Option<usize>,
+    pub virtual_sequence_remaining: Option<usize>,
 }
 
 impl BytecodeRow {
@@ -487,7 +453,8 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
-    virtual_address_map: BTreeMap<(usize, usize), usize>,
+    // TODO (Bhargav): Made public. See if this is required.
+    pub virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 
 impl<F: JoltField> BytecodePreprocessing<F> {

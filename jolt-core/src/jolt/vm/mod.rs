@@ -1,11 +1,21 @@
 #![allow(clippy::type_complexity)]
 #![allow(dead_code)]
 
+pub mod bytecode;
+pub mod instruction_lookups;
+pub mod read_write_memory;
+pub mod rv32i_vm;
+pub mod timestamp_range_check;
+
 use std::marker::PhantomData;
 use std::slice::Iter;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::log2;
 use bytecode::{BytecodeOracle, DerivedOracle};
+use instruction_lookups::InstructionLookupOracle;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use read_write_memory::ReadWriteMemoryOracle;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
@@ -40,6 +50,7 @@ use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -82,6 +93,42 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
+}
+
+pub struct TraceOracle<'a, InstructionSet: JoltInstructionSet> {
+    pub length: usize,
+    pub counter: usize,
+    pub trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+}
+
+impl<'a, InstructionSet: JoltInstructionSet> TraceOracle<'a, InstructionSet> {
+    pub fn new(trace: &'a Vec<JoltTraceStep<InstructionSet>>) -> Self {
+        Self {
+            length: trace.len(),
+            counter: 0,
+            trace: &trace,
+        }
+    }
+}
+
+impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, InstructionSet> {
+    type Item = JoltTraceStep<InstructionSet>;
+
+    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
+    fn next_eval(&mut self) -> Self::Item {
+        let item = self.trace[self.counter].clone();
+        self.counter = self.counter + 1;
+        item
+    }
+
+    fn reset_oracle(&mut self) {
+        if self.counter == self.length {
+            self.counter = 0;
+        } else {
+            println!("Trace length = {}, counter = {}", self.length, self.counter);
+            panic!("Can't reset, trace not exhausted.");
+        }
+    }
 }
 
 pub struct ProverDebugInfo<F, ProofTranscript>
@@ -152,10 +199,388 @@ pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) r1cs: R1CSStuff<T>,
 }
 
-pub struct StreamingJoltPolynomials<'a, F: JoltField> {
-    /// Stream that builds the jolt polynomial.
-    pub polynomial_stream: Box<dyn Iterator<Item = JoltStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+// pub struct JoltStuffTemp<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
+//     pub(crate) bytecode: BytecodeStuff<T>,
+//     pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
+//     pub(crate) instruction_lookups: InstructionLookupStuff<T>,
+//     pub(crate) r1cs: R1CSStuff<T>,
+// }
+
+pub struct JoltOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub trace_oracle: TraceOracle<'a, InstructionSet>,
+    pub bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>,
+    pub instruction_lookups_oracle: InstructionLookupOracle<'a, F, InstructionSet>,
+    pub read_write_memory_oracle: ReadWriteMemoryOracle<'a, F, InstructionSet>,
+    pub func: Box<
+        dyn Fn(
+                JoltTraceStep<InstructionSet>,
+                BytecodeStuff<F>,
+                InstructionLookupStuff<F>,
+                ReadWriteMemoryStuff<F>,
+            ) -> JoltStuff<F>
+            + 'a,
+    >,
+    // phantom: PhantomData<BytecodeStuff<F>>,
 }
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for JoltOracle<'a, F, InstructionSet>
+{
+    type Item = JoltStuff<F>;
+
+    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
+    fn next_eval(&mut self) -> Self::Item {
+        (self.func)(
+            self.trace_oracle.next_eval(),
+            self.bytecode_oracle.next_eval(),
+            self.instruction_lookups_oracle.next_eval(),
+            self.read_write_memory_oracle.next_eval(),
+        )
+    }
+
+    fn reset_oracle(&mut self) {
+        self.trace_oracle.reset_oracle();
+        self.bytecode_oracle.reset_oracle();
+        self.instruction_lookups_oracle.reset_oracle();
+        self.read_write_memory_oracle.reset_oracle();
+    }
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> JoltOracle<'a, F, InstructionSet> {
+    pub fn new<const C: usize, const M: usize, PCS, ProofTranscript>(
+        preprocessing: &'a JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        program_io: &'a JoltDevice,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+    ) -> Self
+    where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
+        let mut trace_oracle = TraceOracle::new(trace);
+
+        let mut bytecode_oracle = BytecodeOracle::new(&preprocessing.bytecode, trace);
+
+        let mut instruction_lookups_oracle =
+            InstructionLookupOracle::new::<C, M>(&preprocessing.instruction_lookups, trace);
+
+        // let program_io_clone = program_io.clone();
+        let mut read_write_memory_oracle = ReadWriteMemoryOracle::new(
+            &preprocessing.read_write_memory,
+            program_io,
+            trace,
+            PhantomData::<F>,
+        );
+
+        let polynomial_stream = Box::new(
+            |step: JoltTraceStep<InstructionSet>,
+             bytecode: BytecodeStuff<F>,
+             instruction_lookups: InstructionLookupStuff<F>,
+             read_write_memory: ReadWriteMemoryStuff<F>| {
+                let log_M = log2(M) as usize;
+                let length = trace.len();
+
+                let (chunks_x, chunks_y) = if let Some(instr) = &step.instruction_lookup {
+                    let (x, y) = instr.operand_chunks(C, log_M);
+                    let chunks_x = (0..C).map(|i| F::from_u8(x[i])).collect();
+                    let chunks_y = (0..C).map(|i| F::from_u8(y[i])).collect();
+
+                    (chunks_x, chunks_y)
+                } else {
+                    (vec![F::zero(); C], vec![F::zero(); C])
+                };
+
+                let circuit_flags = std::array::from_fn(|j| {
+                    if step.circuit_flags[j] {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                });
+
+                let r1cs = R1CSStuff {
+                    chunks_x,
+                    chunks_y,
+                    circuit_flags,
+                    aux: Default::default(),
+                };
+
+                JoltStuff {
+                    bytecode,
+                    instruction_lookups,
+                    read_write_memory,
+                    timestamp_range_check: Default::default(),
+                    r1cs,
+                }
+            },
+        );
+
+        JoltOracle {
+            trace_oracle,
+            bytecode_oracle,
+            instruction_lookups_oracle,
+            read_write_memory_oracle,
+            func: Box::new(polynomial_stream),
+        }
+    }
+}
+
+//  impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> JoltOracle<'a, F, InstructionSet> {
+//     pub fn new<const C: usize, const M: usize, PCS, ProofTranscript>(
+//         preprocessing: &'a JoltPreprocessing<C, F, PCS, ProofTranscript>,
+//         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+//     ) -> Self
+//     where
+//         PCS: CommitmentScheme<ProofTranscript, Field = F>,
+//         ProofTranscript: Transcript,
+//     {
+//         let mut trace_oracle = TraceOracle::new(trace);
+
+//         let max_trace_address = trace
+//             .into_iter()
+//             .map(|step| match step.memory_ops[RAM] {
+//                 MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
+//                 MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
+//             })
+//             .max()
+//             .unwrap();
+
+//         let memory_size = max_trace_address.next_power_of_two() as usize;
+//         let mut v_init: Vec<u32> = vec![0; memory_size];
+
+//         // Copy bytecode
+//         let mut v_init_index = memory_address_to_witness_index(
+//             preprocessing.min_bytecode_address,
+//             &program_io.memory_layout,
+//         );
+
+//         for word in preprocessing.bytecode_words.iter() {
+//             v_init[v_init_index] = *word;
+//             v_init_index += 1;
+//         }
+//         // Copy input bytes
+//         v_init_index = memory_address_to_witness_index(
+//             program_io.memory_layout.input_start,
+//             &program_io.memory_layout,
+//         );
+
+//         // Convert input bytes into words and populate `v_init`
+//         for chunk in program_io.inputs.chunks(4) {
+//             let mut word = [0u8; 4];
+//             for (i, byte) in chunk.iter().enumerate() {
+//                 word[i] = *byte;
+//             }
+//             let word = u32::from_le_bytes(word);
+//             v_init[v_init_index] = word;
+//             v_init_index += 1;
+//         }
+//         let v_final = v_init;
+
+//         let polynomial_stream = (|step: JoltTraceStep<InstructionSet>| {
+//             let virtual_address = preprocessing
+//                 .bytecode
+//                 .virtual_address_map
+//                 .get(&(
+//                     step.bytecode_row.address,
+//                     step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+//                 ))
+//                 .unwrap();
+//             let a_read_write = *virtual_address as u64;
+
+//             let address = F::from_u64(step.bytecode_row.address as u64);
+//             let bitflags = F::from_u64(step.bytecode_row.bitflags);
+//             let rd = F::from_u8(step.bytecode_row.rd);
+//             let rs1 = F::from_u8(step.bytecode_row.rs1);
+//             let rs2 = F::from_u8(step.bytecode_row.rs2);
+//             let imm = F::from_i64(step.bytecode_row.imm);
+
+//             let v_read_write = [address, bitflags, rd, rs1, rs2, imm];
+
+//             let bytecode = BytecodeStuff {
+//                 a_read_write: F::from_u64(a_read_write),
+//                 v_read_write,
+//                 // These are dummy values since they are not required for Twist + Shout.
+//                 t_read: -F::one(),
+//                 t_final: -F::one(),
+//                 a_init_final: None,
+//                 v_init_final: None,
+//             };
+
+//             let chunked_indices: Vec<u16> = if let Some(instr) = &step.instruction_lookup {
+//                 instr
+//                     .to_indices(C, M.log_2())
+//                     .iter()
+//                     .map(|i| *i as u16)
+//                     .collect()
+//             } else {
+//                 vec![0; C]
+//             };
+//             let mut subtable_lookup_indices: Vec<u16> = Vec::with_capacity(C);
+//             for i in 0..C {
+//                 subtable_lookup_indices.push(chunked_indices[i]);
+//             }
+
+//             //Computing dim
+//             let dim: Vec<F> = subtable_lookup_indices
+//                 .clone()
+//                 .into_par_iter()
+//                 .map(F::from_u16)
+//                 .collect();
+
+//             //Computing E_polys
+//             let E_polynomials: Vec<F> = (0..preprocessing.instruction_lookups.num_memories)
+//                 .into_par_iter()
+//                 .map(|memory_index| {
+//                     let dim_index =
+//                         preprocessing.instruction_lookups.memory_to_dimension_index[memory_index];
+//                     let subtable_index =
+//                         preprocessing.instruction_lookups.memory_to_subtable_index[memory_index];
+//                     let access_sequence = subtable_lookup_indices[dim_index];
+//                     let mut subtable_lookups: u32 = 0;
+//                     if let Some(instr) = &step.instruction_lookup {
+//                         let memories_used = &preprocessing
+//                             .instruction_lookups
+//                             .instruction_to_memory_indices[InstructionSet::enum_index(instr)];
+//                         if memories_used.contains(&memory_index) {
+//                             let memory_address = access_sequence as usize;
+//                             debug_assert!(memory_address < M);
+//                             subtable_lookups = preprocessing
+//                                 .instruction_lookups
+//                                 .materialized_subtables[subtable_index][memory_address];
+//                         }
+//                     }
+//                     F::from_u32(subtable_lookups)
+//                 })
+//                 .collect();
+
+//             // Computing instruction_flags
+//             let mut instruction_flag_bitvectors: Vec<F> = vec![
+//                 F::zero();
+//                 preprocessing
+//                     .instruction_lookups
+//                     .instruction_to_memory_indices
+//                     .len()
+//             ];
+//             if let Some(instr) = &step.instruction_lookup {
+//                 instruction_flag_bitvectors[InstructionSet::enum_index(instr)] = F::one();
+//             }
+
+//             // Computing instruction lookups
+//             let lookup_outputs = if let Some(instr) = &step.instruction_lookup {
+//                 F::from_u32(instr.lookup_entry() as u32)
+//             } else {
+//                 F::zero()
+//             };
+
+//             let instruction_lookup = InstructionLookupStuff {
+//                 dim,
+//                 E_polys: E_polynomials,
+//                 instruction_flags: instruction_flag_bitvectors,
+//                 lookup_outputs,
+//                 // These are dummy values since they are not required for Twist + Shout.
+//                 read_cts: vec![F::zero()],
+//                 final_cts: vec![F::zero()],
+//                 a_init_final: None,
+//                 v_init_final: None,
+//             };
+
+//             let a_ram;
+//             let v_read_rd;
+//             let v_read_rs1;
+//             let v_read_rs2;
+//             let v_read_ram;
+//             let v_write_rd;
+//             let v_write_ram;
+
+//             match step.memory_ops[RS1] {
+//                 MemoryOp::Read(a) => {
+//                     assert!(a < REGISTER_COUNT);
+//                     let a = a as usize;
+//                     let v = v_final[a];
+
+//                     v_read_rs1 = v;
+//                 }
+//                 MemoryOp::Write(a, v) => {
+//                     panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+//                 }
+//             };
+
+//             match step.memory_ops[RS2] {
+//                 MemoryOp::Read(a) => {
+//                     assert!(a < REGISTER_COUNT);
+//                     let a = a as usize;
+//                     let v = v_final[a];
+
+//                     v_read_rs2 = v;
+//                 }
+//                 MemoryOp::Write(a, v) => {
+//                     panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v)
+//                 }
+//             };
+
+//             match step.memory_ops[RD] {
+//                 MemoryOp::Read(a) => {
+//                     panic!("Unexpected rd MemoryOp::Read({})", a)
+//                 }
+//                 MemoryOp::Write(a, v_new) => {
+//                     assert!(a < REGISTER_COUNT);
+//                     let a = a as usize;
+//                     let v_old = v_final[a];
+
+//                     v_read_rd = v_old;
+//                     v_write_rd = v_new as u32;
+//                     v_final[a] = v_new as u32;
+//                 }
+//             };
+
+//             match step.memory_ops[RAM] {
+//                 MemoryOp::Read(a) => {
+//                     debug_assert!(a % 4 == 0);
+//                     let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+//                     let v = v_final[remapped_a];
+
+//                     a_ram = remapped_a as u32;
+//                     v_read_ram = v;
+//                     v_write_ram = v;
+//                 }
+//                 MemoryOp::Write(a, v_new) => {
+//                     debug_assert!(a % 4 == 0);
+//                     let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+//                     let v_old = v_final[remapped_a];
+
+//                     a_ram = remapped_a as u32;
+//                     v_read_ram = v_old;
+//                     v_write_ram = v_new as u32;
+//                     v_final[remapped_a] = v_new as u32;
+//                 }
+//             }
+
+//             ReadWriteMemoryStuff {
+//                 a_ram: F::from_u32(a_ram),
+//                 v_read_rd: F::from_u32(v_read_rd),
+//                 v_read_rs1: F::from_u32(v_read_rs1),
+//                 v_read_rs2: F::from_u32(v_read_rs2),
+//                 v_read_ram: F::from_u32(v_read_ram),
+//                 v_write_rd: F::from_u32(v_write_rd),
+//                 v_write_ram: F::from_u32(v_write_ram),
+//                 // These are dummy values since they are not required for Twist + Shout.
+//                 v_final: F::zero(),
+//                 t_read_rd: F::zero(),
+//                 t_read_rs1: F::zero(),
+//                 t_read_rs2: F::zero(),
+//                 t_read_ram: F::zero(),
+//                 t_final: F::zero(),
+//                 a_init_final: None,
+//                 v_init: None,
+//                 identity: None,
+//             }
+//         });
+
+//         // BytecodeOracle {
+//         //     trace_oracle,
+//         //     func: Box::new(polynomial_stream),
+//         // }
+//     }
+// }
 
 //TODO: Implment StreamingOracle for StreamingJoltStuff.
 
@@ -480,6 +905,17 @@ where
 
         let mut bytecode_oracle = BytecodeOracle::new(&preprocessing.bytecode, &trace_1);
 
+        let mut instruction_lookups_oracle =
+            InstructionLookupOracle::new::<C, M>(&preprocessing.instruction_lookups, &trace_1);
+
+        let program_io_clone = program_io.clone();
+        let mut read_write_memory_oracle = ReadWriteMemoryOracle::new(
+            &preprocessing.read_write_memory,
+            &program_io_clone,
+            &trace_1,
+            PhantomData::<F>,
+        );
+
         // for i in 0..10 {
         //     println!(
         //         "bytecode_oracle's {i}-th address = {}",
@@ -487,20 +923,108 @@ where
         //     );
         // }
 
+        let program_io_clone = program_io.clone();
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript>(
+            &preprocessing,
+            &program_io_clone,
+            &trace_1,
+        );
+
         for i in 0..trace_length {
-            let eval = bytecode_oracle.next_eval();
+            let eval = jolt_oracle.next_eval();
             assert_eq!(
-                eval.a_read_write,
+                eval.bytecode.a_read_write,
                 jolt_polynomials.bytecode.a_read_write.get_coeff(i)
             );
 
             for j in 0..6 {
                 assert_eq!(
                     jolt_polynomials.bytecode.v_read_write[j].get_coeff(i),
-                    eval.v_read_write[j]
+                    eval.bytecode.v_read_write[j]
                 );
             }
         }
+
+        jolt_oracle.reset_oracle();
+
+        // for i in 0..trace_length {
+        //     let eval = jolt_oracle.next_eval();
+        //     assert_eq!(
+        //         eval.bytecode.a_read_write,
+        //         jolt_polynomials.bytecode.a_read_write.get_coeff(i)
+        //     );
+
+        //     for j in 0..6 {
+        //         assert_eq!(
+        //             jolt_polynomials.bytecode.v_read_write[j].get_coeff(i),
+        //             eval.bytecode.v_read_write[j]
+        //         );
+        //     }
+        // }
+
+        // for i in 0..trace_length {
+        //     let eval = instruction_lookups_oracle.next_eval();
+        //     for j in 0..C {
+        //         assert_eq!(
+        //             eval.dim[j],
+        //             jolt_polynomials.instruction_lookups.dim[j].get_coeff(i)
+        //         );
+        //     }
+
+        //     for j in 0..jolt_polynomials.instruction_lookups.E_polys.len() {
+        //         assert_eq!(
+        //             eval.E_polys[j],
+        //             jolt_polynomials.instruction_lookups.E_polys[j].get_coeff(i)
+        //         );
+        //     }
+
+        //     for j in 0..jolt_polynomials.instruction_lookups.instruction_flags.len() {
+        //         assert_eq!(
+        //             eval.instruction_flags[j],
+        //             jolt_polynomials.instruction_lookups.instruction_flags[j].get_coeff(i)
+        //         );
+        //     }
+
+        //     assert_eq!(
+        //         eval.lookup_outputs,
+        //         jolt_polynomials
+        //             .instruction_lookups
+        //             .lookup_outputs
+        //             .get_coeff(i)
+        //     );
+        // }
+
+        // for i in 0..trace_length {
+        //     let eval = read_write_memory_oracle.next_eval();
+        //     assert_eq!(
+        //         eval.a_ram,
+        //         jolt_polynomials.read_write_memory.a_ram.get_coeff(i)
+        //     );
+        //     assert_eq!(
+        //         eval.v_read_rd,
+        //         jolt_polynomials.read_write_memory.v_read_rd.get_coeff(i)
+        //     );
+        //     assert_eq!(
+        //         eval.v_read_rs1,
+        //         jolt_polynomials.read_write_memory.v_read_rs1.get_coeff(i)
+        //     );
+        //     assert_eq!(
+        //         eval.v_read_rs2,
+        //         jolt_polynomials.read_write_memory.v_read_rs2.get_coeff(i)
+        //     );
+        //     assert_eq!(
+        //         eval.v_read_ram,
+        //         jolt_polynomials.read_write_memory.v_read_ram.get_coeff(i)
+        //     );
+        //     assert_eq!(
+        //         eval.v_write_rd,
+        //         jolt_polynomials.read_write_memory.v_write_rd.get_coeff(i)
+        //     );
+        //     assert_eq!(
+        //         eval.v_write_ram,
+        //         jolt_polynomials.read_write_memory.v_write_ram.get_coeff(i)
+        //     );
+        // }
 
         // let mut bytecode_oracle_new = BytecodeOracle::new(&preprocessing.bytecode, &trace_1);
 
@@ -606,6 +1130,19 @@ where
             &mut transcript,
         )
         .expect("r1cs proof failed");
+
+        UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            ProofTranscript,
+        >::streaming_prove::<PCS, Self::InstructionSet>(
+            &r1cs_builder,
+            &spartan_key,
+            jolt_oracle,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         // Batch-prove all openings
         let opening_proof =
@@ -849,9 +1386,3 @@ where
         transcript.append_u64(program_io.panic as u64);
     }
 }
-
-pub mod bytecode;
-pub mod instruction_lookups;
-pub mod read_write_memory;
-pub mod rv32i_vm;
-pub mod timestamp_range_check;

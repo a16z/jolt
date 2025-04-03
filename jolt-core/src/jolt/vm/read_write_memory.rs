@@ -6,6 +6,7 @@ use crate::lasso::memory_checking::{
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::utils::streaming::Oracle;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use rayon::prelude::*;
 #[cfg(test)]
@@ -31,7 +32,7 @@ use common::constants::{
 use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
-use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
+use super::{JoltPolynomials, JoltStuff, JoltTraceStep, TraceOracle};
 
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
@@ -210,6 +211,182 @@ pub type ReadWriteMemoryCommitments<
 impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
     Initializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
 {
+}
+
+pub struct ReadWriteMemoryOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub trace_oracle: TraceOracle<'a, InstructionSet>,
+    pub state: Vec<u32>,
+    pub func:
+        Box<dyn Fn(&mut Vec<u32>, JoltTraceStep<InstructionSet>) -> ReadWriteMemoryStuff<F> + 'a>,
+    // phantom: PhantomData<BytecodeStuff<F>>,
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
+    ReadWriteMemoryOracle<'a, F, InstructionSet>
+{
+    // TODO (Bhargav/Ashish): Here _marker is a hack to get around the problem of new being unable to 
+    // infer the type of F. Find a better solution.
+    pub fn new(
+        preprocessing: &'a ReadWriteMemoryPreprocessing,
+        program_io: &'a JoltDevice,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+        _marker: PhantomData<F>,
+    ) -> Self {
+        let mut trace_oracle = TraceOracle::new(trace);
+
+        let max_trace_address = trace
+            .into_iter()
+            .map(|step| match step.memory_ops[RAM] {
+                MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
+                MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
+            })
+            .max()
+            .unwrap();
+
+        let memory_size = max_trace_address.next_power_of_two() as usize;
+        let mut v_init: Vec<u32> = vec![0; memory_size];
+
+        // Copy bytecode
+        let mut v_init_index = memory_address_to_witness_index(
+            preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        );
+
+        for word in preprocessing.bytecode_words.iter() {
+            v_init[v_init_index] = *word;
+            v_init_index += 1;
+        }
+        // Copy input bytes
+        v_init_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        );
+
+        // Convert input bytes into words and populate `v_init`
+        for chunk in program_io.inputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            v_init[v_init_index] = word;
+            v_init_index += 1;
+        }
+        let v_final = v_init;
+        let polynomial_stream = (|v_final: &mut Vec<u32>, step: JoltTraceStep<InstructionSet>| {
+            let a_ram;
+            let v_read_rd;
+            let v_read_rs1;
+            let v_read_rs2;
+            let v_read_ram;
+            let v_write_rd;
+            let v_write_ram;
+
+            match step.memory_ops[RS1] {
+                MemoryOp::Read(a) => {
+                    assert!(a < REGISTER_COUNT);
+                    let a = a as usize;
+                    let v = v_final[a];
+
+                    v_read_rs1 = v;
+                }
+                MemoryOp::Write(a, v) => {
+                    panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+                }
+            };
+
+            match step.memory_ops[RS2] {
+                MemoryOp::Read(a) => {
+                    assert!(a < REGISTER_COUNT);
+                    let a = a as usize;
+                    let v = v_final[a];
+
+                    v_read_rs2 = v;
+                }
+                MemoryOp::Write(a, v) => {
+                    panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v)
+                }
+            };
+
+            match step.memory_ops[RD] {
+                MemoryOp::Read(a) => {
+                    panic!("Unexpected rd MemoryOp::Read({})", a)
+                }
+                MemoryOp::Write(a, v_new) => {
+                    assert!(a < REGISTER_COUNT);
+                    let a = a as usize;
+                    let v_old = v_final[a];
+
+                    v_read_rd = v_old;
+                    v_write_rd = v_new as u32;
+                    v_final[a] = v_new as u32;
+                }
+            };
+
+            match step.memory_ops[RAM] {
+                MemoryOp::Read(a) => {
+                    debug_assert!(a % 4 == 0);
+                    let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                    let v = v_final[remapped_a];
+
+                    a_ram = remapped_a as u32;
+                    v_read_ram = v;
+                    v_write_ram = v;
+                }
+                MemoryOp::Write(a, v_new) => {
+                    debug_assert!(a % 4 == 0);
+                    let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                    let v_old = v_final[remapped_a];
+
+                    a_ram = remapped_a as u32;
+                    v_read_ram = v_old;
+                    v_write_ram = v_new as u32;
+                    v_final[remapped_a] = v_new as u32;
+                }
+            }
+
+            ReadWriteMemoryStuff {
+                a_ram: F::from_u32(a_ram),
+                v_read_rd: F::from_u32(v_read_rd),
+                v_read_rs1: F::from_u32(v_read_rs1),
+                v_read_rs2: F::from_u32(v_read_rs2),
+                v_read_ram: F::from_u32(v_read_ram),
+                v_write_rd: F::from_u32(v_write_rd),
+                v_write_ram: F::from_u32(v_write_ram),
+                // These are dummy values since they are not required for Twist + Shout.
+                v_final: F::zero(),
+                t_read_rd: F::zero(),
+                t_read_rs1: F::zero(),
+                t_read_rs2: F::zero(),
+                t_read_ram: F::zero(),
+                t_final: F::zero(),
+                a_init_final: None,
+                v_init: None,
+                identity: None,
+            }
+        });
+
+        ReadWriteMemoryOracle {
+            trace_oracle,
+            state: v_final,
+            func: Box::new(polynomial_stream),
+        }
+    }
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for ReadWriteMemoryOracle<'a, F, InstructionSet>
+{
+    type Item = ReadWriteMemoryStuff<F>;
+
+    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
+    fn next_eval(&mut self) -> Self::Item {
+        (self.func)(&mut self.state, self.trace_oracle.next_eval())
+    }
+
+    fn reset_oracle(&mut self) {
+        self.trace_oracle.reset_oracle();
+    }
 }
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
