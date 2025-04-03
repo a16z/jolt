@@ -8,7 +8,7 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::CommitmentScheme,
+    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
@@ -496,6 +496,74 @@ where
     }
 }
 
+// #[derive(Clone, Debug)]
+pub struct HyperKZGState<'a, P: Pairing>
+where
+    P::G1: Icicle,
+{
+    acc: P::G1,
+    prover_key: &'a KZGProverKey<P>,
+    current_chunk: Vec<P::ScalarField>,
+    row_count: usize,
+}
+
+const CHUNK_SIZE: usize = 256;
+
+impl<P: Pairing, ProofTranscript: Transcript> StreamingCommitmentScheme<ProofTranscript>
+    for HyperKZG<P, ProofTranscript>
+where
+    <P as Pairing>::ScalarField: JoltField,
+    <P as Pairing>::G1: Icicle,
+{
+    type State<'a> = HyperKZGState<'a, P>;
+
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup) -> Self::State<'a> {
+        assert!(
+            setup.0.kzg_pk.g1_powers().len() >= size,
+            "COMMIT KEY LENGTH ERROR {}, {}",
+            setup.0.kzg_pk.g1_powers().len(),
+            size,
+        );
+
+        assert!(
+            size % CHUNK_SIZE == 0,
+            "CHUNK_SIZE ({}) must evenly divide the size ({})",
+            CHUNK_SIZE,
+            size,
+        );
+
+        let current_chunk = Vec::with_capacity(CHUNK_SIZE);
+
+        HyperKZGState {
+            acc: P::G1::zero(),
+            prover_key: &setup.0.kzg_pk,
+            current_chunk,
+            row_count: 0,
+        }
+    }
+
+    fn process<'a>(mut state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+        state.current_chunk.push(eval);
+
+        if state.current_chunk.len() == CHUNK_SIZE {
+            let offset = state.row_count * CHUNK_SIZE;
+            let c: P::G1 =
+                UnivariateKZG::commit_inner_helper(state.prover_key, &state.current_chunk, offset)
+                    .unwrap();
+
+            state.acc += c;
+            state.current_chunk.clear();
+            state.row_count += 1;
+        }
+
+        state
+    }
+
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment {
+        HyperKZGCommitment(state.acc.into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,16 +682,15 @@ mod tests {
     #[test]
     fn test_hyperkzg_large() {
         // test the hyperkzg prover and verifier with random instances (derived from a seed)
-        for ell in [4, 5, 6] {
+        for ell in [8, 9, 10] {
             let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(ell as u64);
 
             let n = 1 << ell; // n = 2^ell
 
-            let poly = MultilinearPolynomial::from(
-                (0..n)
-                    .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
-                    .collect::<Vec<_>>(),
-            );
+            let poly_raw = (0..n)
+                .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
+                .collect::<Vec<_>>();
+            let poly = MultilinearPolynomial::from(poly_raw.clone());
             let point = (0..ell)
                 .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
                 .collect::<Vec<_>>();
@@ -651,6 +718,18 @@ mod tests {
             let mut verifier_tr2 = KeccakTranscript::new(b"TestEval");
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
+            );
+
+            // Test the streaming implementation
+            let setup = (pk, vk);
+            let mut state = HyperKZG::<_, KeccakTranscript>::initialize(n, &setup);
+            for p in poly_raw {
+                state = HyperKZG::<_, KeccakTranscript>::process(state, p);
+            }
+            let C2 = HyperKZG::<_, KeccakTranscript>::finalize(state);
+            assert_eq!(
+                C, C2,
+                "Streaming commitment did not match non-streaming commitment"
             );
         }
     }
