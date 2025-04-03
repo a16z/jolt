@@ -27,7 +27,6 @@ use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
-use crate::utils::streaming::map_state;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 
@@ -79,133 +78,133 @@ pub struct StreamingSpartanWitness<'a, F: JoltField> {
     pub polynomial_stream: Box<dyn Iterator<Item = SpartanWitness<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
 }
 
-pub struct AzBzCz<F: JoltField> {
-    pub Az: Vec<(usize, F)>,
-    pub Bz: Vec<(usize, F)>,
-    pub Cz: Vec<(usize, F)>,
-}
+// pub struct AzBzCz<F: JoltField> {
+//     pub Az: Vec<(usize, F)>,
+//     pub Bz: Vec<(usize, F)>,
+//     pub Cz: Vec<(usize, F)>,
+// }
 
-pub struct StreamingAzBzCz<'a, F: JoltField> {
-    /// Stream that builds the Z polynomial.
-    pub polynomial_stream: Box<dyn Iterator<Item = AzBzCz<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
-}
+// pub struct StreamingAzBzCz<'a, F: JoltField> {
+//     /// Stream that builds the Z polynomial.
+//     pub polynomial_stream: Box<dyn Iterator<Item = AzBzCz<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
+// }
 
-impl<'a, F: JoltField> StreamingSpartanWitness<'a, F> {
-    #[tracing::instrument(skip_all, name = "StreamingSpartanWitness::new")]
-    pub fn new<
-        const C: usize,
-        I: ConstraintInput,
-        It: Iterator<Item = JoltStuff<F>> + Clone + 'a,
-    >(
-        jolt_polynomials_stream: It,
-    ) -> Self {
-        let polynomial_stream = map_state(jolt_polynomials_stream, |step| {
-            let Z_step: Vec<F> = I::flatten::<C>()
-                .iter()
-                .map(|var| *(var.get_ref(&step)))
-                .collect();
+// impl<'a, F: JoltField> StreamingSpartanWitness<'a, F> {
+//     #[tracing::instrument(skip_all, name = "StreamingSpartanWitness::new")]
+//     pub fn new<
+//         const C: usize,
+//         I: ConstraintInput,
+//         It: Iterator<Item = JoltStuff<F>> + Clone + 'a,
+//     >(
+//         jolt_polynomials_stream: It,
+//     ) -> Self {
+//         let polynomial_stream = map_state(jolt_polynomials_stream, |step| {
+//             let Z_step: Vec<F> = I::flatten::<C>()
+//                 .iter()
+//                 .map(|var| *(var.get_ref(&step)))
+//                 .collect();
 
-            SpartanWitness { Z_step }
-        });
+//             SpartanWitness { Z_step }
+//         });
 
-        StreamingSpartanWitness {
-            polynomial_stream: Box::new(polynomial_stream),
-        }
-    }
-}
+//         StreamingSpartanWitness {
+//             polynomial_stream: Box::new(polynomial_stream),
+//         }
+//     }
+// }
 
-impl<'a, F: JoltField> StreamingAzBzCz<'a, F> {
-    #[tracing::instrument(skip_all, name = "StreamingAzBzCz::new")]
-    pub fn new<
-        const C: usize,
-        I: ConstraintInput,
-        It: Iterator<Item = SpartanWitness<F>> + Clone + 'a,
-    >(
-        constraint_builder: &'a CombinedUniformBuilder<C, F, I>,
-        padded_num_constraints: usize,
-        spartan_witness_stream: It,
-    ) -> Self {
-        let polynomial_stream = map_state(spartan_witness_stream, |step| {
-            // TODO (Bhargav): Removed some #[cfg(test)]s. Add them back.
-            let mut Az = Vec::<(usize, F)>::new();
-            let mut Bz = Vec::<(usize, F)>::new();
-            let mut Cz = Vec::<(usize, F)>::new();
+// impl<'a, F: JoltField> StreamingAzBzCz<'a, F> {
+//     #[tracing::instrument(skip_all, name = "StreamingAzBzCz::new")]
+//     pub fn new<
+//         const C: usize,
+//         I: ConstraintInput,
+//         It: Iterator<Item = SpartanWitness<F>> + Clone + 'a,
+//     >(
+//         constraint_builder: &'a CombinedUniformBuilder<C, F, I>,
+//         padded_num_constraints: usize,
+//         spartan_witness_stream: It,
+//     ) -> Self {
+//         let polynomial_stream = map_state(spartan_witness_stream, |step| {
+//             // TODO (Bhargav): Removed some #[cfg(test)]s. Add them back.
+//             let mut Az = Vec::<(usize, F)>::new();
+//             let mut Bz = Vec::<(usize, F)>::new();
+//             let mut Cz = Vec::<(usize, F)>::new();
 
-            // TODO (Bhargav): Remove clone here.
-            let z_poly = &[&MultilinearPolynomial::from(step.Z_step.clone())];
+//             // TODO (Bhargav): Remove clone here.
+//             let z_poly = &[&MultilinearPolynomial::from(step.Z_step.clone())];
 
-            let uniform_constraints = &constraint_builder.uniform_builder.constraints;
-            let cross_step_constraints = &constraint_builder.offset_equality_constraints;
+//             let uniform_constraints = &constraint_builder.uniform_builder.constraints;
+//             let cross_step_constraints = &constraint_builder.offset_equality_constraints;
 
-            for (constraint_index, constraint) in uniform_constraints.iter().enumerate() {
-                // Az
-                let mut az_coeff = 0;
-                if !constraint.a.terms().is_empty() {
-                    az_coeff = constraint.a.evaluate_row(z_poly, 0);
-                    if !az_coeff.is_zero() {
-                        // TODO (Bhargav): This needs to be changed.
-                        // This should be the (shard_len * shard_idx + instruction_index_in_shard + constraint_index)
-                        Az.push((constraint_index, F::from_i128(az_coeff)));
-                    }
-                }
-                // Bz
-                let mut bz_coeff = 0;
-                if !constraint.b.terms().is_empty() {
-                    bz_coeff = constraint.b.evaluate_row(z_poly, 0);
-                    if !bz_coeff.is_zero() {
-                        // TODO (Bhargav): This needs to be changed.
-                        // This should be the (shard_len * shard_idx + instruction_index_in_shard + constraint_index)
-                        Bz.push((constraint_index, F::from_i128(bz_coeff)));
-                    }
-                }
-                // Cz = Az ⊙ Cz
-                if !az_coeff.is_zero() && !bz_coeff.is_zero() {
-                    let cz_coeff = az_coeff * bz_coeff;
-                    Cz.push((constraint_index, F::from_i128(az_coeff)));
-                }
-            }
+//             for (constraint_index, constraint) in uniform_constraints.iter().enumerate() {
+//                 // Az
+//                 let mut az_coeff = 0;
+//                 if !constraint.a.terms().is_empty() {
+//                     az_coeff = constraint.a.evaluate_row(z_poly, 0);
+//                     if !az_coeff.is_zero() {
+//                         // TODO (Bhargav): This needs to be changed.
+//                         // This should be the (shard_len * shard_idx + instruction_index_in_shard + constraint_index)
+//                         Az.push((constraint_index, F::from_i128(az_coeff)));
+//                     }
+//                 }
+//                 // Bz
+//                 let mut bz_coeff = 0;
+//                 if !constraint.b.terms().is_empty() {
+//                     bz_coeff = constraint.b.evaluate_row(z_poly, 0);
+//                     if !bz_coeff.is_zero() {
+//                         // TODO (Bhargav): This needs to be changed.
+//                         // This should be the (shard_len * shard_idx + instruction_index_in_shard + constraint_index)
+//                         Bz.push((constraint_index, F::from_i128(bz_coeff)));
+//                     }
+//                 }
+//                 // Cz = Az ⊙ Cz
+//                 if !az_coeff.is_zero() && !bz_coeff.is_zero() {
+//                     let cz_coeff = az_coeff * bz_coeff;
+//                     Cz.push((constraint_index, F::from_i128(az_coeff)));
+//                 }
+//             }
 
-            let uniform_constraints_len = uniform_constraints.len();
-            // TODO (Bhargav): Handle the last step correctly.
-            // TODO (Bhargav): Stream Z[step] and Z[next_step] both.
+//             let uniform_constraints_len = uniform_constraints.len();
+//             // TODO (Bhargav): Handle the last step correctly.
+//             // TODO (Bhargav): Stream Z[step] and Z[next_step] both.
 
-            let step_index = 0;
-            let next_step_index = Some(1);
+//             let step_index = 0;
+//             let next_step_index = Some(1);
 
-            for (constraint_index, constraint) in cross_step_constraints.iter().enumerate() {
-                // Az
-                let eq_a_eval = eval_offset_lc(&constraint.a, z_poly, step_index, next_step_index);
-                let eq_b_eval = eval_offset_lc(&constraint.b, z_poly, step_index, next_step_index);
-                let az_coeff = eq_a_eval - eq_b_eval;
-                if !az_coeff.is_zero() {
-                    // This should be the (shard_len * shard_idx + instruction_index_in_shard +
-                    // uniform_constraint_len + constraint_index)
-                    Az.push((
-                        uniform_constraints_len + constraint_index,
-                        F::from_i128(az_coeff),
-                    ));
-                } else {
-                    // Bz
-                    let bz_coeff =
-                        eval_offset_lc(&constraint.cond, z_poly, step_index, next_step_index);
-                    if !bz_coeff.is_zero() {
-                        Bz.push((
-                            uniform_constraints_len + constraint_index,
-                            F::from_i128(bz_coeff),
-                        ));
-                    }
-                }
-                // Cz is always 0 for cross-step constraints
-            }
+//             for (constraint_index, constraint) in cross_step_constraints.iter().enumerate() {
+//                 // Az
+//                 let eq_a_eval = eval_offset_lc(&constraint.a, z_poly, step_index, next_step_index);
+//                 let eq_b_eval = eval_offset_lc(&constraint.b, z_poly, step_index, next_step_index);
+//                 let az_coeff = eq_a_eval - eq_b_eval;
+//                 if !az_coeff.is_zero() {
+//                     // This should be the (shard_len * shard_idx + instruction_index_in_shard +
+//                     // uniform_constraint_len + constraint_index)
+//                     Az.push((
+//                         uniform_constraints_len + constraint_index,
+//                         F::from_i128(az_coeff),
+//                     ));
+//                 } else {
+//                     // Bz
+//                     let bz_coeff =
+//                         eval_offset_lc(&constraint.cond, z_poly, step_index, next_step_index);
+//                     if !bz_coeff.is_zero() {
+//                         Bz.push((
+//                             uniform_constraints_len + constraint_index,
+//                             F::from_i128(bz_coeff),
+//                         ));
+//                     }
+//                 }
+//                 // Cz is always 0 for cross-step constraints
+//             }
 
-            AzBzCz { Az, Bz, Cz }
-        });
+//             AzBzCz { Az, Bz, Cz }
+//         });
 
-        StreamingAzBzCz {
-            polynomial_stream: Box::new(polynomial_stream),
-        }
-    }
-}
+//         StreamingAzBzCz {
+//             polynomial_stream: Box::new(polynomial_stream),
+//         }
+//     }
+// }
 
 /// A succinct proof of knowledge of a witness to a relaxed R1CS instance
 /// The proof is produced using Spartan's combination of the sum-check and
