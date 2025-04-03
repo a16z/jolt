@@ -8,7 +8,7 @@ use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::sparse_dense_shout::{
-    prove_multiple_instructions, verify_multiple_instructions,
+    prove_sparse_dense_shout, verify_sparse_dense_shout,
 };
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
@@ -141,16 +141,15 @@ where
     let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
 
     let task = move || {
-        let (proof, rv_claim, ra_claims, flag_claims) =
-            prove_multiple_instructions::<WORD_SIZE, _, _>(
-                &instructions,
-                r_cycle,
-                &mut prover_transcript,
-            );
+        let (proof, rv_claim, ra_claims, flag_claims) = prove_sparse_dense_shout::<WORD_SIZE, _, _>(
+            &instructions,
+            r_cycle,
+            &mut prover_transcript,
+        );
 
         let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
         let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
-        let verification_result = verify_multiple_instructions::<WORD_SIZE, _, _>(
+        let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
             proof,
             LOG_K,
             LOG_T,
