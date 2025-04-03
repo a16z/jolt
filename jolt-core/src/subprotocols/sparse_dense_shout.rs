@@ -17,7 +17,7 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        thread::unsafe_allocate_zero_vec,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         transcript::{AppendToTranscript, Transcript},
         uninterleave_bits,
     },
@@ -777,6 +777,7 @@ pub fn verify_single_instruction<
     Ok(())
 }
 
+#[tracing::instrument(skip_all)]
 fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
     prefix_checkpoints: &[PrefixCheckpoint<F>],
     suffix_polys: &[Vec<DensePolynomial<F>>],
@@ -912,19 +913,29 @@ pub fn prove_multiple_instructions<
                     let k_bound: usize = prefix % m;
                     *u *= v[k_bound];
                 });
-            drop(_guard);
-            drop(span);
         }
 
         let suffix_len = (3 - phase) * log_m;
 
         // Initialize suffix poly for each suffix
-        let span = tracing::span!(tracing::Level::INFO, "Compute suffix polys");
-        let _guard = span.enter();
+        let suffix_poly_span = tracing::span!(tracing::Level::INFO, "Compute suffix polys");
+        let _suffix_poly_guard = suffix_poly_span.enter();
         lookup_tables
             .par_iter()
             .zip(suffix_polys.par_iter_mut())
             .for_each(|(table, polys)| {
+                let table_lookups: Vec<_> = lookups
+                    .iter()
+                    .zip(lookup_indices.iter())
+                    .zip(u_evals.iter())
+                    .filter_map(|((lookup, k), u)| {
+                        if LookupTables::enum_index(lookup) == LookupTables::enum_index(table) {
+                            Some((k, u))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 table
                     .suffixes()
                     .par_iter()
@@ -937,16 +948,7 @@ pub fn prove_multiple_instructions<
                             poly.Z.par_iter_mut().for_each(|eval| *eval = F::zero());
                         }
 
-                        for ((instruction, k), u) in lookups
-                            .iter()
-                            .zip(lookup_indices.iter())
-                            .zip(u_evals.iter())
-                        {
-                            if LookupTables::enum_index(instruction)
-                                != LookupTables::enum_index(table)
-                            {
-                                continue;
-                            }
+                        for (k, u) in table_lookups.iter() {
                             let (prefix_bits, suffix_bits) = k.split(suffix_len);
                             let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                             if t != 0 {
@@ -955,6 +957,8 @@ pub fn prove_multiple_instructions<
                         }
                     });
             });
+        drop(_suffix_poly_guard);
+        drop(suffix_poly_span);
 
         v.reset(F::one());
 
@@ -984,6 +988,9 @@ pub fn prove_multiple_instructions<
 
             previous_claim = univariate_poly.evaluate(&r_j);
 
+            let binding_span = tracing::span!(tracing::Level::INFO, "binding");
+            let _binding_guard = binding_span.enter();
+
             suffix_polys.par_iter_mut().for_each(|polys| {
                 polys
                     .par_iter_mut()
@@ -993,9 +1000,6 @@ pub fn prove_multiple_instructions<
 
             {
                 if r.len() % 2 == 0 {
-                    let span = tracing::span!(tracing::Level::INFO, "Update prefix checkpoints");
-                    let _guard = span.enter();
-
                     Prefixes::update_checkpoints::<WORD_SIZE, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
@@ -1022,31 +1026,58 @@ pub fn prove_multiple_instructions<
         ra.push(MultilinearPolynomial::from(ra_i));
     }
 
+    drop_in_background_thread((lookup_indices, suffix_polys));
+
     let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
 
-    let span = tracing::span!(tracing::Level::INFO, "compute instruction val");
+    let span = tracing::span!(tracing::Level::INFO, "compute instruction flags");
     let _guard = span.enter();
+
+    let mut instruction_flags: Vec<Vec<u8>> = vec![vec![0; T]; LookupTables::<WORD_SIZE>::COUNT];
+    instruction_flags
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(instruction_index, poly)| {
+            for (j, table) in lookups.iter().enumerate() {
+                if instruction_index == LookupTables::enum_index(table) {
+                    poly[j] = 1;
+                }
+            }
+        });
+    let mut instruction_flags_polys: Vec<MultilinearPolynomial<F>> = instruction_flags
+        .into_iter()
+        .map(MultilinearPolynomial::from)
+        .collect();
+
+    drop(_guard);
+    drop(span);
+
+    let span = tracing::span!(
+        tracing::Level::INFO,
+        "compute combined_instruction_val_poly"
+    );
+    let _guard = span.enter();
+
     let prefixes: Vec<_> = prefix_checkpoints
         .into_iter()
         .map(|checkpoint| checkpoint.unwrap())
         .collect();
 
-    let mut instruction_val: Vec<Vec<F>> =
-        vec![unsafe_allocate_zero_vec(T); LookupTables::<WORD_SIZE>::COUNT];
-    for (j, table) in lookups.iter().enumerate() {
-        let instruction_index = LookupTables::enum_index(table);
-        let suffixes: Vec<_> = table
-            .suffixes()
-            .iter()
-            .map(|suffix| F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0))))
-            .collect();
-        instruction_val[instruction_index][j] = table.combine(&prefixes, &suffixes);
-    }
+    let mut combined_instruction_val_poly: Vec<F> = unsafe_allocate_zero_vec(T);
+    combined_instruction_val_poly
+        .par_iter_mut()
+        .zip(lookups.par_iter())
+        .for_each(|(val, table)| {
+            let suffixes: Vec<_> = table
+                .suffixes()
+                .iter()
+                .map(|suffix| F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0))))
+                .collect();
+            *val = table.combine(&prefixes, &suffixes);
+        });
+    let mut combined_instruction_val_poly =
+        MultilinearPolynomial::from(combined_instruction_val_poly);
 
-    let mut instruction_val_polys: Vec<MultilinearPolynomial<F>> = instruction_val
-        .into_par_iter()
-        .map(MultilinearPolynomial::from)
-        .collect();
     drop(_guard);
     drop(span);
 
@@ -1065,19 +1096,8 @@ pub fn prove_multiple_instructions<
                 let ra_1_evals = ra[1].sumcheck_evals(i, 6, BindingOrder::HighToLow);
                 let ra_2_evals = ra[2].sumcheck_evals(i, 6, BindingOrder::HighToLow);
                 let ra_3_evals = ra[3].sumcheck_evals(i, 6, BindingOrder::HighToLow);
-                let val_evals = instruction_val_polys
-                    .iter()
-                    .map(|poly| poly.sumcheck_evals(i, 6, BindingOrder::HighToLow))
-                    .fold([F::zero(); 6], |running, new| {
-                        [
-                            running[0] + new[0],
-                            running[1] + new[1],
-                            running[2] + new[2],
-                            running[3] + new[3],
-                            running[4] + new[4],
-                            running[5] + new[5],
-                        ]
-                    });
+                let val_evals =
+                    combined_instruction_val_poly.sumcheck_evals(i, 6, BindingOrder::HighToLow);
 
                 std::array::from_fn(|i| {
                     eq_evals[i]
@@ -1128,33 +1148,34 @@ pub fn prove_multiple_instructions<
         let _guard = span.enter();
 
         ra.par_iter_mut()
-            .chain(instruction_val_polys.par_iter_mut())
+            .chain(instruction_flags_polys.par_iter_mut())
+            .chain([&mut combined_instruction_val_poly].into_par_iter())
             .chain([&mut eq_r_prime].into_par_iter())
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
     }
 
-    let flag_claims = instruction_val_polys
-        .par_iter()
-        .zip(lookup_tables.par_iter())
-        .map(|(poly, table)| {
-            let suffixes: Vec<_> = table
-                .suffixes()
-                .iter()
-                .map(|suffix| F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0))))
-                .collect();
-            poly.final_sumcheck_claim() * table.combine(&prefixes, &suffixes).inverse().unwrap()
-        })
+    let flag_claims = instruction_flags_polys
+        .iter()
+        .map(|poly| poly.final_sumcheck_claim())
         .collect();
+    let ra_claims = [
+        ra[0].final_sumcheck_claim(),
+        ra[1].final_sumcheck_claim(),
+        ra[2].final_sumcheck_claim(),
+        ra[3].final_sumcheck_claim(),
+    ];
+
+    drop_in_background_thread((
+        instruction_flags_polys,
+        combined_instruction_val_poly,
+        eq_r_prime,
+        ra,
+    ));
 
     (
         SumcheckInstanceProof::new(compressed_polys),
         rv_claim,
-        [
-            ra[0].final_sumcheck_claim(),
-            ra[1].final_sumcheck_claim(),
-            ra[2].final_sumcheck_claim(),
-            ra[3].final_sumcheck_claim(),
-        ],
+        ra_claims,
         flag_claims,
     )
 }
