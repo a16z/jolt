@@ -2,10 +2,12 @@ use std::any::Any;
 use std::panic;
 use std::time::Instant;
 
-use jolt_sdk::JoltHyperKZGProof;
-
 pub fn main() {
-    let prove_overflow_stack = build_overflow_stack();
+    // An overflowing stack should fail to prove.
+    let target_dir = "/tmp/jolt-guest-targets";
+    let program = guest::compile_overflow_stack(target_dir);
+    let prover_preprocessing = guest::preprocess_prover_overflow_stack(&program);
+    let prove_overflow_stack = guest::build_prover_overflow_stack(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
         // trying to allocate 1024 elems array and sum it up
@@ -15,7 +17,9 @@ pub fn main() {
     handle_result(res);
 
     // now lets try to overflow the heap, should also panic
-    let prove_overflow_heap = build_overflow_heap();
+    let program = guest::compile_overflow_heap(target_dir);
+    let prover_preprocessing = guest::preprocess_prover_overflow_heap(&program);
+    let prove_overflow_heap = guest::build_prover_overflow_heap(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
         let (_, _) = prove_overflow_heap();
@@ -24,8 +28,17 @@ pub fn main() {
 
     // valid case for stack allocation, calls overflow_stack() under the hood
     // but with stack_size=8192
-    let (prove_allocate_stack_with_increased_size, verify_allocate_stack_with_increased_size) =
-        build_allocate_stack_with_increased_size();
+    let program = guest::compile_allocate_stack_with_increased_size(target_dir);
+
+    let prover_preprocessing =
+        guest::preprocess_prover_allocate_stack_with_increased_size(&program);
+    let verifier_preprocessing =
+        guest::preprocess_verifier_allocate_stack_with_increased_size(&program);
+
+    let prove_allocate_stack_with_increased_size =
+        guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);
+    let verify_allocate_stack_with_increased_size =
+        guest::build_verifier_allocate_stack_with_increased_size(verifier_preprocessing);
 
     let now = Instant::now();
     let (output, proof) = prove_allocate_stack_with_increased_size();
@@ -42,41 +55,4 @@ fn handle_result(res: Result<(), Box<dyn Any + Send>>) {
             println!("--> Panic occurred with message: {}\n", msg);
         }
     }
-}
-
-fn build_overflow_stack() -> impl Fn() -> (u32, JoltHyperKZGProof) + Sync + Send {
-    let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_overflow_stack(target_dir);
-    let prover_preprocessing = guest::preprocess_prover_overflow_stack(&program);
-    let prove = guest::build_prover_overflow_stack(program, prover_preprocessing);
-
-    prove
-}
-
-fn build_overflow_heap() -> impl Fn() -> (u32, JoltHyperKZGProof) + Sync + Send {
-    let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_overflow_heap(target_dir);
-    let prover_preprocessing = guest::preprocess_prover_overflow_heap(&program);
-    let prove = guest::build_prover_overflow_heap(program, prover_preprocessing);
-
-    prove
-}
-
-fn build_allocate_stack_with_increased_size() -> (
-    impl Fn() -> (u32, JoltHyperKZGProof) + Sync + Send,
-    impl Fn(u32, JoltHyperKZGProof) -> bool + Sync + Send,
-) {
-    let target_dir = "/tmp/jolt-guest-targets";
-    let program = guest::compile_allocate_stack_with_increased_size(target_dir);
-
-    let prover_preprocessing =
-        guest::preprocess_prover_allocate_stack_with_increased_size(&program);
-    let verifier_preprocessing =
-        guest::preprocess_verifier_allocate_stack_with_increased_size(&program);
-
-    let prove =
-        guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);
-    let verify = guest::build_verifier_allocate_stack_with_increased_size(verifier_preprocessing);
-
-    (prove, verify)
 }
