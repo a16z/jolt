@@ -104,8 +104,9 @@ pub type BytecodeProof<F, PCS, ProofTranscript> =
 
 pub struct BytecodeOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
-    pub func: Box<dyn Fn(JoltTraceStep<InstructionSet>) -> BytecodeStuff<F> + 'a>,
-    // phantom: PhantomData<BytecodeStuff<F>>,
+    pub func: Box<
+        dyn Fn(&[JoltTraceStep<InstructionSet>]) -> BytecodeStuff<MultilinearPolynomial<F>> + 'a,
+    >,
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F, InstructionSet> {
@@ -115,31 +116,51 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
     ) -> Self {
         let mut trace_oracle = TraceOracle::new(trace);
 
-        let polynomial_stream = (|step: JoltTraceStep<InstructionSet>| {
-            let virtual_address = preprocessing
-                .virtual_address_map
-                .get(&(
-                    step.bytecode_row.address,
-                    step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
-                ))
-                .unwrap();
-            let a_read_write = *virtual_address as u64;
+        let polynomial_stream = (|shard: &[JoltTraceStep<InstructionSet>]| {
+            let shard_len = shard.len();
+            let mut a_read_write = vec![];
+            let mut address = vec![];
+            let mut bitflags = vec![];
+            let mut rd = vec![];
+            let mut rs1 = vec![];
+            let mut rs2 = vec![];
+            let mut imm = vec![];
 
-            let address = F::from_u64(step.bytecode_row.address as u64);
-            let bitflags = F::from_u64(step.bytecode_row.bitflags);
-            let rd = F::from_u8(step.bytecode_row.rd);
-            let rs1 = F::from_u8(step.bytecode_row.rs1);
-            let rs2 = F::from_u8(step.bytecode_row.rs2);
-            let imm = F::from_i64(step.bytecode_row.imm);
+            for i in 0..shard_len {
+                let step = &shard[i];
+                let virtual_address = preprocessing
+                    .virtual_address_map
+                    .get(&(
+                        step.bytecode_row.address,
+                        step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                    ))
+                    .unwrap();
 
-            let v_read_write = [address, bitflags, rd, rs1, rs2, imm];
+                a_read_write.push(*virtual_address as u64);
+
+                address.push(step.bytecode_row.address as u64);
+                bitflags.push(step.bytecode_row.bitflags);
+                rd.push(step.bytecode_row.rd);
+                rs1.push(step.bytecode_row.rs1);
+                rs2.push(step.bytecode_row.rs2);
+                imm.push(step.bytecode_row.imm);
+            }
+
+            let v_read_write = [
+                MultilinearPolynomial::from(address),
+                MultilinearPolynomial::from(bitflags),
+                MultilinearPolynomial::from(rd),
+                MultilinearPolynomial::from(rs1),
+                MultilinearPolynomial::from(rs2),
+                MultilinearPolynomial::from(imm),
+            ];
 
             BytecodeStuff {
-                a_read_write: F::from_u64(a_read_write),
+                a_read_write: MultilinearPolynomial::from(a_read_write),
                 v_read_write,
                 // These are dummy values since they are not required for Twist + Shout.
-                t_read: -F::one(),
-                t_final: -F::one(),
+                t_read: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
                 a_init_final: None,
                 v_init_final: None,
             }
@@ -176,15 +197,28 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     for BytecodeOracle<'a, F, InstructionSet>
 {
-    type Item = BytecodeStuff<F>;
+    type Item = BytecodeStuff<MultilinearPolynomial<F>>;
 
     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-    fn next_eval(&mut self) -> Self::Item {
-        (self.func)(self.trace_oracle.next_eval())
+    fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+        (self.func)(self.trace_oracle.next_shard(shard_len))
     }
 
     fn reset_oracle(&mut self) {
         self.trace_oracle.reset_oracle();
+    }
+
+    fn peek(&mut self) -> Self::Item {
+        (self.func)(
+            self.trace_oracle.peek())
+    }
+
+    fn get_len(&self) -> usize {
+        self.trace_oracle.get_len()
+    }
+
+    fn get_step(&self) -> usize {
+        self.trace_oracle.get_step()
     }
 }
 
@@ -213,20 +247,28 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> DerivedOracle<'a, F, 
     }
 }
 
-impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-    for DerivedOracle<'a, F, InstructionSet>
-{
-    type Item = Derived<F>;
+// impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+//     for DerivedOracle<'a, F, InstructionSet>
+// {
+//     type Item = Derived<F>;
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-    fn next_eval(&mut self) -> Self::Item {
-        (self.func)(self.bytecode_oracle.next_eval())
-    }
+//     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
+//     fn next_eval(&mut self) -> Self::Item {
+//         (self.func)(self.bytecode_oracle.next_eval())
+//     }
 
-    fn reset_oracle(&mut self) {
-        self.bytecode_oracle.reset_oracle();
-    }
-}
+//     fn reset_oracle(&mut self) {
+//         self.bytecode_oracle.reset_oracle();
+//     }
+
+//     fn get_len(&self) -> usize {
+//         self.bytecode_oracle.get_len()
+//     }
+
+//     fn get_step(&self) -> usize {
+//         self.bytecode_oracle.get_step()
+//     }
+// }
 
 // pub struct StreamingBytecodePolynomials<'a, F: JoltField> {
 //     /// Stream that builds the bytecode polynomial.

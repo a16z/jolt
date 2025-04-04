@@ -540,6 +540,18 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         }
     }
 
+    pub fn streaming_compute_aux(
+        &self,
+        jolt_polynomials: &mut JoltPolynomials<F>,
+        shard_len: usize,
+    ) {
+        let flattened_vars = I::flatten::<C>();
+        for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
+            *flattened_vars[*aux_index].get_ref_mut(jolt_polynomials) =
+                aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, shard_len);
+        }
+    }
+
     /// Number of constraint rows per step, padded to the next power of two.
     pub(super) fn padded_rows_per_step(&self) -> usize {
         let num_constraints =

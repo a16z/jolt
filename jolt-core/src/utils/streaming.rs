@@ -1,11 +1,18 @@
+use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
+
 pub trait Oracle {
-        type Item;
+    type Item;
 
-        fn next_eval(&mut self) -> Self::Item;
+    fn next_shard(&mut self, shard_len: usize) -> Self::Item;
 
-        fn reset_oracle(&mut self);
-    }
-    
+    fn reset_oracle(&mut self);
+
+    fn peek(&mut self) -> Self::Item;
+
+    fn get_len(&self) -> usize;
+
+    fn get_step(&self) -> usize;
+}
 
 // // An iterator that maps over the values of `iter` with `f`, which modifies its accumulated state.
 // pub struct MapState<I, F> {
@@ -108,9 +115,6 @@ pub trait Oracle {
 //         Some((self.f)(self.iter.next().unwrap()))
 //     }
 // }
-
-
-
 
 // #[cfg(test)]
 // mod tests {
