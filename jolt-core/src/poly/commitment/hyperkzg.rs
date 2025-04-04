@@ -52,7 +52,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGProverKey<P: Pairing>
 where
     P::G1: Icicle,
@@ -60,7 +60,7 @@ where
     pub kzg_pk: KZGProverKey<P>,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyperKZGVerifierKey<P: Pairing> {
     pub kzg_vk: KZGVerifierKey<P>,
 }
