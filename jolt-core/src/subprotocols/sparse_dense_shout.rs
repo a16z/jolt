@@ -258,10 +258,8 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
                 .iter()
                 .zip(suffix_polys.iter())
                 .map(move |(table, suffixes)| {
-                    let suffixes_left: Vec<_> = suffixes
-                        .iter()
-                        .map(|suffix| suffix[b.into()])
-                        .collect();
+                    let suffixes_left: Vec<_> =
+                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
                     let suffixes_right: Vec<_> = suffixes
                         .iter()
                         .map(|suffix| suffix[usize::from(b) + len / 2])
