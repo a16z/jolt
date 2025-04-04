@@ -1,29 +1,23 @@
 #![allow(clippy::type_complexity)]
 #![allow(dead_code)]
 
-pub mod bytecode;
-pub mod instruction_lookups;
-pub mod read_write_memory;
-pub mod rv32i_vm;
-pub mod timestamp_range_check;
-
 use std::marker::PhantomData;
 use std::slice::Iter;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use bytecode::{BytecodeOracle, DerivedOracle};
-use instruction_lookups::InstructionLookupOracle;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use read_write_memory::ReadWriteMemoryOracle;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
-use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
+use bytecode::{BytecodeOracle, DerivedOracle};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
+use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
+use instruction_lookups::InstructionLookupOracle;
+use read_write_memory::ReadWriteMemoryOracle;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
 use crate::field::JoltField;
@@ -58,22 +52,28 @@ use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 
+use super::instruction::JoltInstructionSet;
 use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
 use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
-use super::instruction::JoltInstructionSet;
 
 use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
 use self::instruction_lookups::{
-    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
+    InstructionLookupsPreprocessing, InstructionLookupsProof, InstructionLookupStuff,
 };
 use self::read_write_memory::{
     ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
     ReadWriteMemoryStuff,
 };
+
+pub mod bytecode;
+pub mod instruction_lookups;
+pub mod read_write_memory;
+pub mod rv32i_vm;
+pub mod timestamp_range_check;
 
 #[derive(Clone)]
 pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
@@ -1204,138 +1204,6 @@ where
         // }
 
         // jolt_oracle.reset_oracle();
-
-        // for i in 0..trace_length {
-        //     let eval = jolt_oracle.next_eval();
-        //     assert_eq!(
-        //         eval.bytecode.a_read_write,
-        //         jolt_polynomials.bytecode.a_read_write.get_coeff(i)
-        //     );
-
-        //     for j in 0..6 {
-        //         assert_eq!(
-        //             jolt_polynomials.bytecode.v_read_write[j].get_coeff(i),
-        //             eval.bytecode.v_read_write[j]
-        //         );
-        //     }
-        // }
-
-        // for i in 0..trace_length {
-        //     let eval = instruction_lookups_oracle.next_eval();
-        //     for j in 0..C {
-        //         assert_eq!(
-        //             eval.dim[j],
-        //             jolt_polynomials.instruction_lookups.dim[j].get_coeff(i)
-        //         );
-        //     }
-
-        //     for j in 0..jolt_polynomials.instruction_lookups.E_polys.len() {
-        //         assert_eq!(
-        //             eval.E_polys[j],
-        //             jolt_polynomials.instruction_lookups.E_polys[j].get_coeff(i)
-        //         );
-        //     }
-
-        //     for j in 0..jolt_polynomials.instruction_lookups.instruction_flags.len() {
-        //         assert_eq!(
-        //             eval.instruction_flags[j],
-        //             jolt_polynomials.instruction_lookups.instruction_flags[j].get_coeff(i)
-        //         );
-        //     }
-
-        //     assert_eq!(
-        //         eval.lookup_outputs,
-        //         jolt_polynomials
-        //             .instruction_lookups
-        //             .lookup_outputs
-        //             .get_coeff(i)
-        //     );
-        // }
-
-        // for i in 0..trace_length {
-        //     let eval = read_write_memory_oracle.next_eval();
-        //     assert_eq!(
-        //         eval.a_ram,
-        //         jolt_polynomials.read_write_memory.a_ram.get_coeff(i)
-        //     );
-        //     assert_eq!(
-        //         eval.v_read_rd,
-        //         jolt_polynomials.read_write_memory.v_read_rd.get_coeff(i)
-        //     );
-        //     assert_eq!(
-        //         eval.v_read_rs1,
-        //         jolt_polynomials.read_write_memory.v_read_rs1.get_coeff(i)
-        //     );
-        //     assert_eq!(
-        //         eval.v_read_rs2,
-        //         jolt_polynomials.read_write_memory.v_read_rs2.get_coeff(i)
-        //     );
-        //     assert_eq!(
-        //         eval.v_read_ram,
-        //         jolt_polynomials.read_write_memory.v_read_ram.get_coeff(i)
-        //     );
-        //     assert_eq!(
-        //         eval.v_write_rd,
-        //         jolt_polynomials.read_write_memory.v_write_rd.get_coeff(i)
-        //     );
-        //     assert_eq!(
-        //         eval.v_write_ram,
-        //         jolt_polynomials.read_write_memory.v_write_ram.get_coeff(i)
-        //     );
-        // }
-
-        // let mut bytecode_oracle_new = BytecodeOracle::new(&preprocessing.bytecode, &trace_1);
-
-        // let mut derived_oracle = DerivedOracle::new(bytecode_oracle_new);
-
-        // for i in 0..10 {
-        //     println!(
-        //         "derived_oracle's {i}-th address = {}",
-        //         derived_oracle.next_eval().sum
-        //     );
-        // }
-
-        // for i in 0..trace_length {
-
-        // StreamingBytecodePolynomials::<F>::update_trace(&mut trace_1);
-
-        // let mut streaming_bytecode_polynomails =
-        //     StreamingBytecodePolynomials::new(&preprocessing.bytecode, &trace_1);
-
-        // let mut a = streaming_bytecode_polynomails.polynomial_stream;
-
-        // for i in 0..trace_length {
-        //     let eval = streaming_bytecode_polynomails
-        //         .polynomial_stream
-        //         .next()
-        //         .unwrap();
-        //     assert_eq!(
-        //         eval.a_read_write,
-        //         jolt_polynomials.bytecode.a_read_write.get_coeff(i)
-        //     );
-
-        //     for j in 0..6 {
-        //         assert_eq!(
-        //             jolt_polynomials.bytecode.v_read_write[j].get_coeff(i),
-        //             eval.v_read_write[j]
-        //         );
-        //     }
-        // }
-
-        // let mut streaming_bytecode_polynomails =
-        //     StreamingBytecodePolynomials::new(&preprocessing.bytecode, trace_1.iter());
-        // let derived: Box<dyn Oracle<Item = BytecodeStuff<F>> + 'a> = streaming_bytecode_polynomails
-        //     .polynomial_stream
-        //     as Box<dyn Oracle<Item = BytecodeStuff<F>> + 'a>;
-        // let streaming_derived =
-        //     StreamingDerived::new(streaming_bytecode_polynomails.polynomial_stream);
-
-        // let mut a = streaming_derived.polynomial_stream;
-
-        // for i in 0..10 {
-        //     let eval = a.next().unwrap();
-        //     println!("a = {}", eval.sum);
-        // }
 
         jolt_commitments
             .read_write_values()
