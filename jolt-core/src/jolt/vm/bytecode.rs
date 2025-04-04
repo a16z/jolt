@@ -161,13 +161,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
                     + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
                         / BYTES_PER_INSTRUCTION;
             }
-
-            // if step_idx < 10 {
-            //     println!(
-            //         "step.bytecode_row.address[{step_idx}] = {}",
-            //         step.bytecode_row.address
-            //     );
-            // }
         }
     }
 }
@@ -194,13 +187,10 @@ pub struct Derived<F: JoltField> {
 pub struct DerivedOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>,
     pub func: Box<dyn Fn(BytecodeStuff<F>) -> Derived<F> + 'a>,
-    // phantom: PhantomData<BytecodeStuff<F>>,
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> DerivedOracle<'a, F, InstructionSet> {
     pub fn new(bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>) -> Self {
-        // let mut trace_oracle = TraceOracle::new(trace);
-
         let polynomial_stream = (|step: BytecodeStuff<F>| Derived {
             sum: step.a_read_write + step.v_read_write[0],
         });
@@ -226,99 +216,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.bytecode_oracle.reset_oracle();
     }
 }
-
-// pub struct StreamingBytecodePolynomials<'a, F: JoltField> {
-//     /// Stream that builds the bytecode polynomial.
-//     pub polynomial_stream: Box<dyn Oracle<Item = BytecodeStuff<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
-// }
-
-// pub struct Derived<T> {
-//     pub sum: T,
-// }
-
-// pub struct StreamingDerived<'a, F: JoltField> {
-//     /// Stream that builds the bytecode polynomial.
-//     pub polynomial_stream: Box<dyn Oracle<Item = Derived<F>> + 'a>, // MapState<Vec<usize>, I, FN>,
-// }
-
-// impl<'a, F: JoltField> StreamingBytecodePolynomials<'a, F> {
-//     #[tracing::instrument(skip_all, name = "StreamingBytecodePolynomials::new")]
-//     pub fn new<InstructionSet: 'a + JoltInstructionSet>(
-//         preprocessing: &'a BytecodePreprocessing<F>,
-//         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
-//     ) -> Self {
-//         let stream_trace = StreamTrace::new(trace);
-//         let polynomial_stream = test_map_state(stream_trace, |step| {
-//             let virtual_address = preprocessing
-//                 .virtual_address_map
-//                 .get(&(
-//                     step.bytecode_row.address,
-//                     step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
-//                 ))
-//                 .unwrap();
-//             let a_read_write = *virtual_address as u64;
-
-//             let address = F::from_u64(step.bytecode_row.address as u64);
-//             let bitflags = F::from_u64(step.bytecode_row.bitflags);
-//             let rd = F::from_u8(step.bytecode_row.rd);
-//             let rs1 = F::from_u8(step.bytecode_row.rs1);
-//             let rs2 = F::from_u8(step.bytecode_row.rs2);
-//             let imm = F::from_i64(step.bytecode_row.imm);
-
-//             let v_read_write = [address, bitflags, rd, rs1, rs2, imm];
-
-//             BytecodeStuff {
-//                 a_read_write: F::from_u64(a_read_write),
-//                 v_read_write,
-//                 // These are dummy values since they are not required for Twist + Shout.
-//                 t_read: -F::one(),
-//                 t_final: -F::one(),
-//                 a_init_final: None,
-//                 v_init_final: None,
-//             }
-//         });
-
-//         StreamingBytecodePolynomials {
-//             polynomial_stream: Box::new(polynomial_stream),
-//         }
-//     }
-
-//     pub fn update_trace<InstructionSet: JoltInstructionSet>(
-//         trace: &mut [JoltTraceStep<InstructionSet>],
-//     ) {
-//         for (step_idx, step) in trace.iter_mut().enumerate() {
-//             if !step.bytecode_row.address.is_zero() {
-//                 // println!("step.bytecode_row.address = {}", step.bytecode_row.address);
-//                 assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
-//                 assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
-//                 // Compress instruction address for more efficient commitment:
-//                 step.bytecode_row.address = 1
-//                     + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
-//                         / BYTES_PER_INSTRUCTION;
-//             }
-
-//             // if step_idx < 10 {
-//             //     println!(
-//             //         "step.bytecode_row.address[{step_idx}] = {}",
-//             //         step.bytecode_row.address
-//             //     );
-//             // }
-//         }
-//     }
-// }
-
-// impl<'a, F: JoltField> StreamingDerived<'a, F> {
-//     #[tracing::instrument(skip_all, name = "StreamingDerived::new")]
-//     pub fn new<O: Oracle<Item = BytecodeStuff<F>> + 'a>(bytecode_stream: O) -> Self {
-//         let polynomial_stream = test_map_state(bytecode_stream, |step| Derived {
-//             sum: step.a_read_write + step.v_read_write[0],
-//         });
-
-//         StreamingDerived {
-//             polynomial_stream: Box::new(polynomial_stream),
-//         }
-//     }
-// }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
