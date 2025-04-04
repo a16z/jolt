@@ -260,11 +260,11 @@ fn compute_sumcheck_prover_message<const WORD_SIZE: usize, F: JoltField>(
                 .map(move |(table, suffixes)| {
                     let suffixes_left: Vec<_> = suffixes
                         .iter()
-                        .map(|suffix| suffix[b.into()].into())
+                        .map(|suffix| suffix[b.into()])
                         .collect();
                     let suffixes_right: Vec<_> = suffixes
                         .iter()
-                        .map(|suffix| suffix[usize::from(b) + len / 2].into())
+                        .map(|suffix| suffix[usize::from(b) + len / 2])
                         .collect();
                     (
                         table.combine(&prefixes_c0, &suffixes_left),

@@ -26,7 +26,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         // Shift amount is the last WORD_SIZE bits of b
         if b.len() >= WORD_SIZE.log_2() {
             let shift = b % WORD_SIZE;
-            return F::from_u64(1 << (WORD_SIZE - shift as usize));
+            return F::from_u64(1 << (WORD_SIZE - shift));
         }
 
         let mut result = F::from_u64(1 << (WORD_SIZE - usize::from(b)));
