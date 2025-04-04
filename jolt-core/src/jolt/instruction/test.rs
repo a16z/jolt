@@ -3,7 +3,7 @@ use crate::{
     jolt::{
         instruction::{
             prefixes::{PrefixCheckpoint, Prefixes},
-            suffixes::{SuffixEval, Suffixes},
+            suffixes::SuffixEval,
         },
         vm::rv32i_vm::RV32I,
     },
@@ -192,7 +192,7 @@ pub fn materialize_entry_test<F: JoltField, I: JoltInstruction + Default>() {
     }
 }
 
-pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {
+pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32>>() {
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {
@@ -204,12 +204,14 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {
 
         let mut j = 0;
         let mut r: Vec<u8> = vec![];
-        for phase in 0..3 {
+        for phase in 0..4 {
             let suffix_len = (3 - phase) * 16;
             let (mut prefix_bits, suffix_bits) =
                 LookupBits::new(lookup_index, 64 - phase * 16).split(suffix_len);
 
-            let suffix_evals: Vec<_> = Suffixes::iter()
+            let suffix_evals: Vec<_> = instr
+                .suffixes()
+                .iter()
                 .map(|suffix| SuffixEval::from(F::from_u32(suffix.suffix_mle::<32>(suffix_bits))))
                 .collect();
 
@@ -234,7 +236,7 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32, F>>() {
                     })
                     .collect();
 
-                let combined = I::combine(&prefix_evals, &suffix_evals);
+                let combined = instr.combine(&prefix_evals, &suffix_evals);
                 if combined != result {
                     println!("{instr:?} -> {lookup_index}");
                     println!("{j} {prefix_bits} {suffix_bits}");

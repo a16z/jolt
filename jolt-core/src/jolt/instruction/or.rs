@@ -73,19 +73,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for ORInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
-    for ORInstruction<WORD_SIZE>
-{
-    fn prefixes() -> Vec<Prefixes> {
-        vec![Prefixes::Or]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for ORInstruction<WORD_SIZE> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::Or]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        prefixes[Prefixes::Or] * suffixes[Suffixes::One] + suffixes[Suffixes::Or]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, or] = suffixes.try_into().unwrap();
+        prefixes[Prefixes::Or] * one + or
     }
 }
 

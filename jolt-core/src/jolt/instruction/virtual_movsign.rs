@@ -123,20 +123,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for MOVSIGNInstruction<WORD_SIZE>
 {
-    fn prefixes() -> Vec<Prefixes> {
-        vec![Prefixes::LeftOperandMsb]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one] = suffixes.try_into().unwrap();
         let ones: u64 = (1 << WORD_SIZE) - 1;
-        F::from_u64(ones) * prefixes[Prefixes::LeftOperandMsb] * suffixes[Suffixes::One]
+        F::from_u64(ones) * prefixes[Prefixes::LeftOperandMsb] * one
     }
 }
 

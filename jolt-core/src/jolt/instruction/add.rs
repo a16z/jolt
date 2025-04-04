@@ -92,19 +92,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
-    for ADDInstruction<WORD_SIZE>
-{
-    fn prefixes() -> Vec<Prefixes> {
-        vec![Prefixes::LowerWord]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for ADDInstruction<WORD_SIZE> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LowerWord]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        prefixes[Prefixes::LowerWord] * suffixes[Suffixes::One] + suffixes[Suffixes::LowerWord]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, lower_word] = suffixes.try_into().unwrap();
+        prefixes[Prefixes::LowerWord] * one + lower_word
     }
 }
 

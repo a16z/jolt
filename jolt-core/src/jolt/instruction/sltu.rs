@@ -98,20 +98,15 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLTUInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
-    for SLTUInstruction<WORD_SIZE>
-{
-    fn prefixes() -> Vec<Prefixes> {
-        vec![Prefixes::LessThan, Prefixes::Eq]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for SLTUInstruction<WORD_SIZE> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LessThan]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
-            + prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, less_than] = suffixes.try_into().unwrap();
+        prefixes[Prefixes::LessThan] * one + prefixes[Prefixes::Eq] * less_than
     }
 }
 
