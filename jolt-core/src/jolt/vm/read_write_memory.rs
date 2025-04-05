@@ -33,7 +33,7 @@ use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
 use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryPreprocessing {
     min_bytecode_address: u64,
     bytecode_words: Vec<u32>,

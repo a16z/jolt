@@ -190,7 +190,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "ark-ff 0.4.2",
  "ark-poly",
@@ -225,7 +225,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "ark-ff-asm 0.4.2",
  "ark-ff-macros 0.4.2",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -276,7 +276,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -288,7 +288,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "ark-ff 0.4.2",
  "ark-serialize 0.4.2",
@@ -310,7 +310,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "ark-serialize-derive",
  "ark-std 0.4.0",
@@ -321,7 +321,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.4.2"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#ccd64e513d16e627c782a4f4519475d691977fc5"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=optimize%2Ffield-from-u64#4e67e70d9896e20ca956d456483a45961685e179"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1609,7 +1609,10 @@ dependencies = [
  "indicatif",
  "itertools 0.10.5",
  "memory-stats",
+ "num",
+ "num-derive",
  "num-integer",
+ "num-traits",
  "once_cell",
  "postcard",
  "rand 0.7.3",
@@ -1629,9 +1632,7 @@ dependencies = [
  "tracer",
  "tracing",
  "tracing-chrome",
- "tracing-flame",
  "tracing-subscriber",
- "tracing-texray",
 ]
 
 [[package]]
@@ -1717,16 +1718,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 
 [[package]]
-name = "lock_api"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
-dependencies = [
- "autocfg",
- "scopeguard",
-]
-
-[[package]]
 name = "log"
 version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1802,6 +1793,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "num"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
+dependencies = [
+ "num-bigint",
+ "num-complex",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1812,11 +1817,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-iter"
+version = "0.1.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
+dependencies = [
+ "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-bigint",
+ "num-integer",
  "num-traits",
 ]
 
@@ -1944,29 +1991,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.100",
-]
-
-[[package]]
-name = "parking_lot"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
-dependencies = [
- "lock_api",
- "parking_lot_core",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.9.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
-dependencies = [
- "cfg-if",
- "libc",
- "redox_syscall",
- "smallvec",
- "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -2258,15 +2282,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_syscall"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b8c0c260b63a8219631167be35e6a988e9554dbd323f8bd08439c8ed1302bd1"
-dependencies = [
- "bitflags",
-]
-
-[[package]]
 name = "redox_users"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2519,12 +2534,6 @@ checksum = "1f29ebaa345f945cec9fbbc532eb307f0fdad8161f281b6369539c8d84876b3d"
 dependencies = [
  "windows-sys 0.59.0",
 ]
-
-[[package]]
-name = "scopeguard"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "script"
@@ -2904,16 +2913,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "term_size"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e4129646ca0ed8f45d09b929036bafad5377103edd06e50bf574b353d2b08d9"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3128,17 +3127,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-flame"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bae117ee14789185e129aaee5d93750abe67fdc5a9a62650452bfe4e122a3a9"
-dependencies = [
- "lazy_static",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tracing-log"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3161,19 +3149,6 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "tracing-texray"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07b7943a21ef76920e7250b59946b0068221c323bf1077baab36164477d63efc"
-dependencies = [
- "lazy_static",
- "parking_lot",
- "term_size",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
