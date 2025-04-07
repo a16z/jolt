@@ -214,13 +214,6 @@ pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) r1cs: R1CSStuff<T>,
 }
 
-// pub struct JoltStuffTemp<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
-//     pub(crate) bytecode: BytecodeStuff<T>,
-//     pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
-//     pub(crate) instruction_lookups: InstructionLookupStuff<T>,
-//     pub(crate) r1cs: R1CSStuff<T>,
-// }
-
 pub struct JoltOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
     pub bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>,
