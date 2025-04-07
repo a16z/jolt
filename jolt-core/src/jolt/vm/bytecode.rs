@@ -4,32 +4,35 @@ use std::collections::HashSet;
 use std::marker::PhantomData;
 
 use ark_ff::Zero;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{ CanonicalDeserialize, CanonicalSerialize };
 use rand::RngCore;
 use rand::rngs::StdRng;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use common::constants::{ BYTES_PER_INSTRUCTION, RAM_START_ADDRESS };
 use common::rv_trace::ELFInstruction;
 use tracer::RV32IM;
 
 use crate::{
-    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+    lasso::memory_checking::{ MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier },
     poly::identity_poly::IdentityPolynomial,
 };
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
-    Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
+    Initializable,
+    NoExogenousOpenings,
+    StructuredPolynomialData,
+    VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::compact_polynomial::{ CompactPolynomial, SmallScalar };
+use crate::poly::multilinear_polynomial::{ MultilinearPolynomial, PolynomialEvaluation };
 use crate::utils::streaming::Oracle;
 use crate::utils::transcript::Transcript;
 
-use super::{JoltPolynomials, JoltTraceStep, TraceOracle};
+use super::{ JoltPolynomials, JoltTraceStep, TraceOracle };
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -65,17 +68,19 @@ pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
-    BytecodeStuff<PCS::Commitment>;
+pub type BytecodeCommitments<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript
+> = BytecodeStuff<PCS::Commitment>;
 
-impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
-    Initializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
-{
-}
+impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<
+    T,
+    BytecodePreprocessing<F>
+>
+for BytecodeStuff<T> {}
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
-    for BytecodeStuff<T>
-{
+for BytecodeStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
         let mut values = vec![&self.a_read_write];
         values.extend(self.v_read_write.iter());
@@ -99,24 +104,29 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
     }
 }
 
-pub type BytecodeProof<F, PCS, ProofTranscript> =
-    MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings, ProofTranscript>;
+pub type BytecodeProof<F, PCS, ProofTranscript> = MemoryCheckingProof<
+    F,
+    PCS,
+    BytecodeOpenings<F>,
+    NoExogenousOpenings,
+    ProofTranscript
+>;
 
 pub struct BytecodeOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
     pub func: Box<
-        dyn Fn(&[JoltTraceStep<InstructionSet>]) -> BytecodeStuff<MultilinearPolynomial<F>> + 'a,
+        dyn (Fn(&[JoltTraceStep<InstructionSet>]) -> BytecodeStuff<MultilinearPolynomial<F>>) + 'a
     >,
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F, InstructionSet> {
     pub fn new(
         preprocessing: &'a BytecodePreprocessing<F>,
-        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>
     ) -> Self {
         let mut trace_oracle = TraceOracle::new(trace);
 
-        let polynomial_stream = (|shard: &[JoltTraceStep<InstructionSet>]| {
+        let polynomial_stream = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
             let mut a_read_write = vec![];
             let mut address = vec![];
@@ -128,12 +138,13 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
 
             for i in 0..shard_len {
                 let step = &shard[i];
-                let virtual_address = preprocessing
-                    .virtual_address_map
-                    .get(&(
-                        step.bytecode_row.address,
-                        step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
-                    ))
+                let virtual_address = preprocessing.virtual_address_map
+                    .get(
+                        &(
+                            step.bytecode_row.address,
+                            step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                        )
+                    )
                     .unwrap();
 
                 a_read_write.push(*virtual_address as u64);
@@ -164,7 +175,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
                 a_init_final: None,
                 v_init_final: None,
             }
-        });
+        };
 
         BytecodeOracle {
             trace_oracle,
@@ -176,20 +187,20 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
         for (step_idx, step) in trace.iter_mut().enumerate() {
             if !step.bytecode_row.address.is_zero() {
                 // println!("step.bytecode_row.address = {}", step.bytecode_row.address);
-                assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
+                assert!(step.bytecode_row.address >= (RAM_START_ADDRESS as usize));
                 assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
                 // Compress instruction address for more efficient commitment:
-                step.bytecode_row.address = 1
-                    + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
-                        / BYTES_PER_INSTRUCTION;
+                step.bytecode_row.address =
+                    1 +
+                    (step.bytecode_row.address - (RAM_START_ADDRESS as usize)) /
+                        BYTES_PER_INSTRUCTION;
             }
         }
     }
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-    for BytecodeOracle<'a, F, InstructionSet>
-{
+for BytecodeOracle<'a, F, InstructionSet> {
     type Item = BytecodeStuff<MultilinearPolynomial<F>>;
 
     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
@@ -201,9 +212,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.trace_oracle.reset_oracle();
     }
 
-    fn peek(&mut self) -> Self::Item {
-        (self.func)(
-            self.trace_oracle.peek())
+    fn peek(&mut self) -> Option<Self::Item> {
+        if self.trace_oracle.peek().is_some() {
+            Some((self.func)(self.trace_oracle.peek().unwrap()))
+        } else {
+            None
+        }
     }
 
     fn get_len(&self) -> usize {
@@ -221,14 +235,14 @@ pub struct Derived<F: JoltField> {
 
 pub struct DerivedOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>,
-    pub func: Box<dyn Fn(BytecodeStuff<F>) -> Derived<F> + 'a>,
+    pub func: Box<dyn (Fn(BytecodeStuff<F>) -> Derived<F>) + 'a>,
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> DerivedOracle<'a, F, InstructionSet> {
     pub fn new(bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>) -> Self {
-        let polynomial_stream = (|step: BytecodeStuff<F>| Derived {
+        let polynomial_stream = |step: BytecodeStuff<F>| Derived {
             sum: step.a_read_write + step.v_read_write[0],
-        });
+        };
 
         DerivedOracle {
             bytecode_oracle,
@@ -314,8 +328,7 @@ impl BytecodeRow {
     /// where instruction flags is a one-hot bitvector corresponding to the instruction's
     /// index in the `InstructionSet` enum.
     pub fn bitflags<InstructionSet>(instruction: &ELFInstruction) -> u64
-    where
-        InstructionSet: JoltInstructionSet,
+        where InstructionSet: JoltInstructionSet
     {
         let mut bitvector = 0;
         for flag in instruction.to_circuit_flags() {
@@ -337,15 +350,14 @@ impl BytecodeRow {
     }
 
     pub fn from_instruction<InstructionSet>(instruction: &ELFInstruction) -> Self
-    where
-        InstructionSet: JoltInstructionSet,
+        where InstructionSet: JoltInstructionSet
     {
         // The load, store, and branch instructions need to do
         // field arithmetic with `imm` in constraints.rs,
         // whereas all other instructions operate on the raw bits
         // of `imm` (via lookup queries).
         let imm = match instruction.opcode {
-            RV32IM::LW
+            | RV32IM::LW
             | RV32IM::SW
             | RV32IM::BEQ
             | RV32IM::BNE
@@ -353,7 +365,7 @@ impl BytecodeRow {
             | RV32IM::BGE
             | RV32IM::BLTU
             | RV32IM::BGEU => instruction.imm.unwrap_or(0),
-            _ => instruction.imm.unwrap_or(0) & u32::MAX as i64,
+            _ => instruction.imm.unwrap_or(0) & (u32::MAX as i64),
         };
 
         Self {
@@ -371,11 +383,11 @@ impl BytecodeRow {
 pub fn random_bytecode_trace(
     bytecode: &[BytecodeRow],
     num_ops: usize,
-    rng: &mut StdRng,
+    rng: &mut StdRng
 ) -> Vec<BytecodeRow> {
     let mut trace: Vec<BytecodeRow> = Vec::with_capacity(num_ops);
     for _ in 0..num_ops {
-        trace.push(bytecode[rng.next_u64() as usize % bytecode.len()].clone());
+        trace.push(bytecode[(rng.next_u64() as usize) % bytecode.len()].clone());
     }
     trace
 }
@@ -402,17 +414,14 @@ impl<F: JoltField> BytecodePreprocessing<F> {
         let mut virtual_address_map = BTreeMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter_mut() {
-            assert!(instruction.address >= RAM_START_ADDRESS as usize);
+            assert!(instruction.address >= (RAM_START_ADDRESS as usize));
             assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
             // Compress instruction address for more efficient commitment:
             instruction.address =
-                1 + (instruction.address - RAM_START_ADDRESS as usize) / BYTES_PER_INSTRUCTION;
+                1 + (instruction.address - (RAM_START_ADDRESS as usize)) / BYTES_PER_INSTRUCTION;
             assert_eq!(
                 virtual_address_map.insert(
-                    (
-                        instruction.address,
-                        instruction.virtual_sequence_remaining.unwrap_or(0)
-                    ),
+                    (instruction.address, instruction.virtual_sequence_remaining.unwrap_or(0)),
                     virtual_address
                 ),
                 None
@@ -462,15 +471,15 @@ impl<F: JoltField> BytecodePreprocessing<F> {
 }
 
 impl<F, PCS, ProofTranscript> BytecodeProof<F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript
 {
     #[tracing::instrument(skip_all, name = "BytecodeProof::generate_witness")]
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         preprocessing: &BytecodePreprocessing<F>,
-        trace: &mut Vec<JoltTraceStep<InstructionSet>>,
+        trace: &mut Vec<JoltTraceStep<InstructionSet>>
     ) -> BytecodePolynomials<F> {
         let num_ops = trace.len();
 
@@ -480,20 +489,22 @@ where
 
         for (step_index, step) in trace.iter_mut().enumerate() {
             if !step.bytecode_row.address.is_zero() {
-                assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
+                assert!(step.bytecode_row.address >= (RAM_START_ADDRESS as usize));
                 assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
                 // Compress instruction address for more efficient commitment:
-                step.bytecode_row.address = 1
-                    + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
-                        / BYTES_PER_INSTRUCTION;
+                step.bytecode_row.address =
+                    1 +
+                    (step.bytecode_row.address - (RAM_START_ADDRESS as usize)) /
+                        BYTES_PER_INSTRUCTION;
             }
 
-            let virtual_address = preprocessing
-                .virtual_address_map
-                .get(&(
-                    step.bytecode_row.address,
-                    step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
-                ))
+            let virtual_address = preprocessing.virtual_address_map
+                .get(
+                    &(
+                        step.bytecode_row.address,
+                        step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                    )
+                )
                 .unwrap();
 
             a_read_write[step_index] = *virtual_address as u32;
@@ -626,9 +637,7 @@ where
 
         for trace_row in trace {
             assert_eq!(
-                **bytecode_map
-                    .get(&trace_row.address)
-                    .expect("couldn't find in bytecode"),
+                **bytecode_map.get(&trace_row.address).expect("couldn't find in bytecode"),
                 *trace_row
             );
         }
@@ -637,10 +646,10 @@ where
 
 impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
     for BytecodeProof<F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript
 {
     type Polynomials = BytecodePolynomials<F>;
     type Openings = BytecodeOpenings<F>;
@@ -666,7 +675,7 @@ where
         polynomials: &Self::Polynomials,
         _: &JoltPolynomials<F>,
         gamma: &F,
-        tau: &F,
+        tau: &F
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
@@ -679,10 +688,12 @@ where
         }
 
         let a: &CompactPolynomial<u32, F> = (&polynomials.a_read_write).try_into().unwrap();
-        let v_address: &CompactPolynomial<u64, F> =
-            (&polynomials.v_read_write[0]).try_into().unwrap();
-        let v_bitflags: &CompactPolynomial<u64, F> =
-            (&polynomials.v_read_write[1]).try_into().unwrap();
+        let v_address: &CompactPolynomial<u64, F> = (&polynomials.v_read_write[0])
+            .try_into()
+            .unwrap();
+        let v_bitflags: &CompactPolynomial<u64, F> = (&polynomials.v_read_write[1])
+            .try_into()
+            .unwrap();
         let v_rd: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[2]).try_into().unwrap();
         let v_rs1: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[3]).try_into().unwrap();
         let v_rs2: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[4]).try_into().unwrap();
@@ -692,15 +703,15 @@ where
         let read_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                F::from_i64(v_imm[i])
-                    + a[i].field_mul(gamma_terms[0])
-                    + v_address[i].field_mul(gamma_terms[1])
-                    + v_bitflags[i].field_mul(gamma_terms[2])
-                    + v_rd[i].field_mul(gamma_terms[3])
-                    + v_rs1[i].field_mul(gamma_terms[4])
-                    + v_rs2[i].field_mul(gamma_terms[5])
-                    + t[i].field_mul(gamma_terms[6])
-                    - tau
+                F::from_i64(v_imm[i]) +
+                    a[i].field_mul(gamma_terms[0]) +
+                    v_address[i].field_mul(gamma_terms[1]) +
+                    v_bitflags[i].field_mul(gamma_terms[2]) +
+                    v_rd[i].field_mul(gamma_terms[3]) +
+                    v_rs1[i].field_mul(gamma_terms[4]) +
+                    v_rs2[i].field_mul(gamma_terms[5]) +
+                    t[i].field_mul(gamma_terms[6]) -
+                    tau
             })
             .collect();
 
@@ -708,40 +719,43 @@ where
         let write_leaves: Vec<F> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                F::from_i64(v_imm[i])
-                    + a[i].field_mul(gamma_terms[0])
-                    + v_address[i].field_mul(gamma_terms[1])
-                    + v_bitflags[i].field_mul(gamma_terms[2])
-                    + v_rd[i].field_mul(gamma_terms[3])
-                    + v_rs1[i].field_mul(gamma_terms[4])
-                    + v_rs2[i].field_mul(gamma_terms[5])
-                    + (t[i] + 1).field_mul(gamma_terms[6])
-                    - tau
+                F::from_i64(v_imm[i]) +
+                    a[i].field_mul(gamma_terms[0]) +
+                    v_address[i].field_mul(gamma_terms[1]) +
+                    v_bitflags[i].field_mul(gamma_terms[2]) +
+                    v_rd[i].field_mul(gamma_terms[3]) +
+                    v_rs1[i].field_mul(gamma_terms[4]) +
+                    v_rs2[i].field_mul(gamma_terms[5]) +
+                    (t[i] + 1).field_mul(gamma_terms[6]) -
+                    tau
             })
             .collect();
 
-        let v_address: &CompactPolynomial<u64, F> =
-            (&preprocessing.v_init_final[0]).try_into().unwrap();
-        let v_bitflags: &CompactPolynomial<u64, F> =
-            (&preprocessing.v_init_final[1]).try_into().unwrap();
+        let v_address: &CompactPolynomial<u64, F> = (&preprocessing.v_init_final[0])
+            .try_into()
+            .unwrap();
+        let v_bitflags: &CompactPolynomial<u64, F> = (&preprocessing.v_init_final[1])
+            .try_into()
+            .unwrap();
         let v_rd: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[2]).try_into().unwrap();
         let v_rs1: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[3]).try_into().unwrap();
         let v_rs2: &CompactPolynomial<u8, F> = (&preprocessing.v_init_final[4]).try_into().unwrap();
-        let v_imm: &CompactPolynomial<i64, F> =
-            (&preprocessing.v_init_final[5]).try_into().unwrap();
+        let v_imm: &CompactPolynomial<i64, F> = (&preprocessing.v_init_final[5])
+            .try_into()
+            .unwrap();
 
         let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                F::from_i64(v_imm[i])
-                    + (i as u64).field_mul(gamma_terms[0])
-                    + v_address[i].field_mul(gamma_terms[1])
-                    + v_bitflags[i].field_mul(gamma_terms[2])
-                    + v_rd[i].field_mul(gamma_terms[3])
-                    + v_rs1[i].field_mul(gamma_terms[4])
-                    + v_rs2[i].field_mul(gamma_terms[5])
+                F::from_i64(v_imm[i]) +
+                    (i as u64).field_mul(gamma_terms[0]) +
+                    v_address[i].field_mul(gamma_terms[1]) +
+                    v_bitflags[i].field_mul(gamma_terms[2]) +
+                    v_rd[i].field_mul(gamma_terms[3]) +
+                    v_rs1[i].field_mul(gamma_terms[4]) +
+                    v_rs2[i].field_mul(gamma_terms[5]) -
                     // + gamma_terms[6] * 0
-                    - tau
+                    tau
             })
             .collect();
 
@@ -750,23 +764,20 @@ where
         let final_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                F::from_i64(v_imm[i])
-                    + (i as u64).field_mul(gamma_terms[0])
-                    + v_address[i].field_mul(gamma_terms[1])
-                    + v_bitflags[i].field_mul(gamma_terms[2])
-                    + v_rd[i].field_mul(gamma_terms[3])
-                    + v_rs1[i].field_mul(gamma_terms[4])
-                    + v_rs2[i].field_mul(gamma_terms[5])
-                    + t_final[i].field_mul(gamma_terms[6])
-                    - tau
+                F::from_i64(v_imm[i]) +
+                    (i as u64).field_mul(gamma_terms[0]) +
+                    v_address[i].field_mul(gamma_terms[1]) +
+                    v_bitflags[i].field_mul(gamma_terms[2]) +
+                    v_rd[i].field_mul(gamma_terms[3]) +
+                    v_rs1[i].field_mul(gamma_terms[4]) +
+                    v_rs2[i].field_mul(gamma_terms[5]) +
+                    t_final[i].field_mul(gamma_terms[6]) -
+                    tau
             })
             .collect();
 
         // TODO(moodlezoup): avoid concat
-        (
-            ([read_leaves, write_leaves].concat(), 2),
-            ([init_leaves, final_leaves].concat(), 2),
-        )
+        (([read_leaves, write_leaves].concat(), 2), ([init_leaves, final_leaves].concat(), 2))
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -776,35 +787,35 @@ where
 
 impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
     for BytecodeProof<F, PCS, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript
 {
     fn compute_verifier_openings(
         openings: &mut BytecodeOpenings<F>,
         preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
-        r_init_final: &[F],
+        r_init_final: &[F]
     ) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
+        openings.a_init_final = Some(
+            IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final)
+        );
 
         openings.v_init_final = Some(
             MultilinearPolynomial::batch_evaluate(
                 &preprocessing.v_init_final.iter().collect::<Vec<_>>(),
-                r_init_final,
+                r_init_final
             )
-            .0
-            .try_into()
-            .unwrap(),
+                .0.try_into()
+                .unwrap()
         );
     }
 
     fn read_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.v_read_write[5], // imm
@@ -820,7 +831,7 @@ where
     fn write_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.v_read_write[5], // imm
@@ -836,7 +847,7 @@ where
     fn init_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
@@ -853,7 +864,7 @@ where
     fn final_tuples(
         _: &BytecodePreprocessing<F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
@@ -877,7 +888,7 @@ mod tests {
 
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
-        rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
+        rv_trace::{ MemoryOp, NUM_CIRCUIT_FLAGS },
     };
 
     use crate::jolt::vm::rv32i_vm::RV32I;
@@ -900,7 +911,7 @@ mod tests {
     }
 
     fn to_ram_address(index: usize) -> usize {
-        index * BYTES_PER_INSTRUCTION + RAM_START_ADDRESS as usize
+        index * BYTES_PER_INSTRUCTION + (RAM_START_ADDRESS as usize)
     }
 
     #[test]
@@ -909,7 +920,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(0), 2, 2, 2, 2, 2),
             BytecodeRow::new(to_ram_address(1), 4, 4, 4, 4, 4),
             BytecodeRow::new(to_ram_address(2), 8, 8, 8, 8, 8),
-            BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16),
+            BytecodeRow::new(to_ram_address(3), 16, 16, 16, 16, 16)
         ];
         let preprocessing = BytecodePreprocessing::<Fr>::preprocess(program);
         BytecodeOpenings::<Fr>::test_ordering_consistency(&preprocessing);

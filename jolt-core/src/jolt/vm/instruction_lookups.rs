@@ -1,41 +1,47 @@
-use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
+use crate::poly::compact_polynomial::{ CompactPolynomial, SmallScalar };
 use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    BindingOrder,
+    MultilinearPolynomial,
+    PolynomialBinding,
+    PolynomialEvaluation,
 };
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::{ ProverOpeningAccumulator, VerifierOpeningAccumulator };
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{interleave, Itertools};
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use ark_serialize::{ CanonicalDeserialize, CanonicalSerialize };
+use itertools::{ interleave, Itertools };
+use rayon::iter::{ IndexedParallelIterator, IntoParallelIterator, ParallelIterator };
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
 
 use crate::field::JoltField;
-use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
+use crate::jolt::instruction::{ JoltInstructionSet, SubtableIndices };
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::{
-    Initializable, MultisetHashes, NoExogenousOpenings, StructuredPolynomialData,
+    Initializable,
+    MultisetHashes,
+    NoExogenousOpenings,
+    StructuredPolynomialData,
     VerifierComputedOpening,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::Transcript;
 use crate::{
-    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+    lasso::memory_checking::{ MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier },
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
-        unipoly::{CompressedUniPoly, UniPoly},
+        unipoly::{ CompressedUniPoly, UniPoly },
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math, transcript::AppendToTranscript},
+    utils::{ errors::ProofVerifyError, math::Math, transcript::AppendToTranscript },
 };
 
-use super::{JoltCommitments, JoltPolynomials, JoltTraceStep, TraceOracle};
+use super::{ JoltCommitments, JoltPolynomials, JoltTraceStep, TraceOracle };
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -69,8 +75,9 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
 /// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
 /// `alloy_sol_types`.
-pub type InstructionLookupPolynomials<F: JoltField> =
-    InstructionLookupStuff<MultilinearPolynomial<F>>;
+pub type InstructionLookupPolynomials<
+    F: JoltField
+> = InstructionLookupStuff<MultilinearPolynomial<F>>;
 /// Note –– F: JoltField bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -84,25 +91,34 @@ pub type InstructionLookupOpenings<F: JoltField> = InstructionLookupStuff<F>;
 /// `alloy_sol_types`.
 pub type InstructionLookupCommitments<
     PCS: CommitmentScheme<ProofTranscript>,
-    ProofTranscript: Transcript,
+    ProofTranscript: Transcript
 > = InstructionLookupStuff<PCS::Commitment>;
 
-impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
-    Initializable<T, InstructionLookupsPreprocessing<C, F>> for InstructionLookupStuff<T>
-{
+impl<
+    const C: usize,
+    F: JoltField,
+    T: CanonicalSerialize + CanonicalDeserialize + Default
+> Initializable<T, InstructionLookupsPreprocessing<C, F>> for InstructionLookupStuff<T> {
     fn initialize(preprocessing: &InstructionLookupsPreprocessing<C, F>) -> Self {
         Self {
-            dim: std::iter::repeat_with(|| T::default()).take(C).collect(),
-            read_cts: std::iter::repeat_with(|| T::default())
+            dim: std::iter
+                ::repeat_with(|| T::default())
+                .take(C)
+                .collect(),
+            read_cts: std::iter
+                ::repeat_with(|| T::default())
                 .take(preprocessing.num_memories)
                 .collect(),
-            final_cts: std::iter::repeat_with(|| T::default())
+            final_cts: std::iter
+                ::repeat_with(|| T::default())
                 .take(preprocessing.num_memories)
                 .collect(),
-            E_polys: std::iter::repeat_with(|| T::default())
+            E_polys: std::iter
+                ::repeat_with(|| T::default())
                 .take(preprocessing.num_memories)
                 .collect(),
-            instruction_flags: std::iter::repeat_with(|| T::default())
+            instruction_flags: std::iter
+                ::repeat_with(|| T::default())
                 .take(preprocessing.instruction_to_memory_indices.len())
                 .collect(),
             lookup_outputs: T::default(),
@@ -113,8 +129,7 @@ impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize 
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
-    for InstructionLookupStuff<T>
-{
+for InstructionLookupStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
         self.dim
             .iter()
@@ -147,21 +162,25 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 pub struct InstructionLookupOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
     pub func: Box<
-        dyn Fn(&[JoltTraceStep<InstructionSet>]) -> InstructionLookupStuff<MultilinearPolynomial<F>>
-            + 'a,
+        dyn (Fn(
+            &[JoltTraceStep<InstructionSet>]
+        ) -> InstructionLookupStuff<MultilinearPolynomial<F>>) +
+            'a
     >,
 }
 
-impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
-    InstructionLookupOracle<'a, F, InstructionSet>
-{
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> InstructionLookupOracle<
+    'a,
+    F,
+    InstructionSet
+> {
     pub fn new<const C: usize, const M: usize>(
         preprocessing: &'a InstructionLookupsPreprocessing<C, F>,
-        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>
     ) -> Self {
         let mut trace_oracle = TraceOracle::new(trace);
 
-        let polynomial_stream = (|shard: &[JoltTraceStep<InstructionSet>]| {
+        let polynomial_stream = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
             let chunked_indices: Vec<Vec<u16>> = shard
                 .iter()
@@ -180,8 +199,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
 
             let mut subtable_lookup_indices: Vec<Vec<u16>> = Vec::with_capacity(C);
             for i in 0..C {
-                subtable_lookup_indices
-                    .push(chunked_indices.iter().map(|chunks| chunks[i]).collect());
+                subtable_lookup_indices.push(
+                    chunked_indices
+                        .iter()
+                        .map(|chunks| chunks[i])
+                        .collect()
+                );
             }
 
             let E_polys: Vec<MultilinearPolynomial<F>> = (0..preprocessing.num_memories)
@@ -195,14 +218,16 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
 
                     for (j, op) in shard.iter().enumerate() {
                         if let Some(instr) = &op.instruction_lookup {
-                            let memories_used = &preprocessing.instruction_to_memory_indices
-                                [InstructionSet::enum_index(instr)];
+                            let memories_used =
+                                &preprocessing.instruction_to_memory_indices
+                                    [InstructionSet::enum_index(instr)];
                             if memories_used.contains(&memory_index) {
                                 let memory_address = access_sequence[j] as usize;
                                 debug_assert!(memory_address < M);
 
-                                subtable_lookups[j] = preprocessing.materialized_subtables
-                                    [subtable_index][memory_address];
+                                subtable_lookups[j] = preprocessing.materialized_subtables[
+                                    subtable_index
+                                ][memory_address];
                             }
                         }
                     }
@@ -233,11 +258,13 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
 
             for i in 0..shard_len {
                 let step = &shard[i];
-                lookup_outputs.push(if let Some(instr) = &step.instruction_lookup {
-                    instr.lookup_entry() as u32
-                } else {
-                    0u32
-                });
+                lookup_outputs.push(
+                    if let Some(instr) = &step.instruction_lookup {
+                        instr.lookup_entry() as u32
+                    } else {
+                        0u32
+                    }
+                );
             }
 
             InstructionLookupStuff {
@@ -251,7 +278,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
                 a_init_final: None,
                 v_init_final: None,
             }
-        });
+        };
 
         InstructionLookupOracle {
             trace_oracle,
@@ -261,8 +288,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-    for InstructionLookupOracle<'a, F, InstructionSet>
-{
+for InstructionLookupOracle<'a, F, InstructionSet> {
     type Item = InstructionLookupStuff<MultilinearPolynomial<F>>;
 
     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
@@ -275,9 +301,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.trace_oracle.reset_oracle();
     }
 
-    fn peek(&mut self) -> Self::Item {
-        (self.func)(
-            self.trace_oracle.peek())
+    fn peek(&mut self) -> Option<Self::Item> {
+        if self.trace_oracle.peek().is_some() {
+            Some((self.func)(self.trace_oracle.peek().unwrap()))
+        } else {
+            None
+        }
     }
 
     fn get_len(&self) -> usize {
@@ -291,10 +320,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
-struct PrimarySumcheckOpenings<F>
-where
-    F: JoltField,
-{
+struct PrimarySumcheckOpenings<F> where F: JoltField {
     /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     E_poly_openings: Vec<F>,
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
@@ -303,15 +329,22 @@ where
     lookup_outputs_opening: F,
 }
 
-impl<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables, ProofTranscript>
-    MemoryCheckingProver<F, PCS, ProofTranscript>
+impl<
+    const C: usize,
+    const M: usize,
+    F,
+    PCS,
+    InstructionSet,
+    Subtables,
+    ProofTranscript
+    > MemoryCheckingProver<F, PCS, ProofTranscript>
     for InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet,
-    Subtables: JoltSubtableSet<F>,
-    ProofTranscript: Transcript,
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        InstructionSet: JoltInstructionSet,
+        Subtables: JoltSubtableSet<F>,
+        ProofTranscript: Transcript
 {
     type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
 
@@ -334,7 +367,7 @@ where
         polynomials: &Self::Polynomials,
         _: &JoltPolynomials<F>,
         gamma: &F,
-        tau: &F,
+        tau: &F
     ) -> (
         <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
         <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
@@ -356,12 +389,15 @@ where
             .flat_map_iter(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
 
-                let dim: &CompactPolynomial<u16, F> =
-                    (&polynomials.dim[dim_index]).try_into().unwrap();
-                let E_poly: &CompactPolynomial<u32, F> =
-                    (&polynomials.E_polys[memory_index]).try_into().unwrap();
-                let read_cts: &CompactPolynomial<u32, F> =
-                    (&polynomials.read_cts[memory_index]).try_into().unwrap();
+                let dim: &CompactPolynomial<u16, F> = (&polynomials.dim[dim_index])
+                    .try_into()
+                    .unwrap();
+                let E_poly: &CompactPolynomial<u32, F> = (&polynomials.E_polys[memory_index])
+                    .try_into()
+                    .unwrap();
+                let read_cts: &CompactPolynomial<u32, F> = (&polynomials.read_cts[memory_index])
+                    .try_into()
+                    .unwrap();
 
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
@@ -371,7 +407,7 @@ where
                         t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
-                let t_adjustment = 1u64.field_mul(gamma_squared);
+                let t_adjustment = (1u64).field_mul(gamma_squared);
                 let write_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| read_fingerprints[i] + t_adjustment)
                     .collect();
@@ -379,13 +415,12 @@ where
             })
             .collect();
 
-        let init_final_leaves: Vec<F> = preprocessing
-            .materialized_subtables
+        let init_final_leaves: Vec<F> = preprocessing.materialized_subtables
             .par_iter()
             .enumerate()
             .flat_map_iter(|(subtable_index, subtable)| {
                 let mut leaves: Vec<F> = unsafe_allocate_zero_vec(
-                    M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1),
+                    M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1)
                 );
                 // Init leaves
                 (0..M).for_each(|i| {
@@ -398,8 +433,10 @@ where
                 // Final leaves
                 let mut leaf_index = M;
                 for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
-                    let final_cts: &CompactPolynomial<u32, F> =
-                        (&polynomials.final_cts[*memory_index]).try_into().unwrap();
+                    let final_cts: &CompactPolynomial<u32, F> = (&polynomials.final_cts
+                        [*memory_index])
+                        .try_into()
+                        .unwrap();
                     (0..M).for_each(|i| {
                         leaves[leaf_index] = leaves[i] + final_cts[i].field_mul(gamma_squared);
                         leaf_index += 1;
@@ -412,11 +449,10 @@ where
 
         let memory_flags = Self::memory_flag_indices(
             preprocessing,
-            polynomials
-                .instruction_flags
+            polynomials.instruction_flags
                 .iter()
                 .map(|poly| poly.try_into().unwrap())
-                .collect(),
+                .collect()
         );
 
         (
@@ -434,7 +470,7 @@ where
         read_values: &Vec<T>,
         write_values: &Vec<T>,
         init_values: &Vec<T>,
-        final_values: &Vec<T>,
+        final_values: &Vec<T>
     ) -> (Vec<T>, Vec<T>) {
         // R W R W R W ...
         let read_write_values = interleave(read_values.clone(), write_values.clone()).collect();
@@ -444,9 +480,7 @@ where
         for subtable_index in 0..Self::NUM_SUBTABLES {
             init_final_values.push(init_values[subtable_index]);
             let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
-            memory_indices
-                .iter()
-                .for_each(|i| init_final_values.push(final_values[*i]));
+            memory_indices.iter().for_each(|i| init_final_values.push(final_values[*i]));
         }
 
         (read_write_values, init_final_values)
@@ -455,13 +489,10 @@ where
     fn uninterleave_hashes(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         read_write_hashes: Vec<F>,
-        init_final_hashes: Vec<F>,
+        init_final_hashes: Vec<F>
     ) -> MultisetHashes<F> {
         assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
-        assert_eq!(
-            init_final_hashes.len(),
-            Self::NUM_SUBTABLES + preprocessing.num_memories
-        );
+        assert_eq!(init_final_hashes.len(), Self::NUM_SUBTABLES + preprocessing.num_memories);
 
         let mut read_hashes = Vec::with_capacity(preprocessing.num_memories);
         let mut write_hashes = Vec::with_capacity(preprocessing.num_memories);
@@ -493,35 +524,23 @@ where
 
     fn check_multiset_equality(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        multiset_hashes: &MultisetHashes<F>,
+        multiset_hashes: &MultisetHashes<F>
     ) {
         assert_eq!(multiset_hashes.init_hashes.len(), Self::NUM_SUBTABLES);
-        assert_eq!(
-            multiset_hashes.read_hashes.len(),
-            preprocessing.num_memories
-        );
-        assert_eq!(
-            multiset_hashes.write_hashes.len(),
-            preprocessing.num_memories
-        );
-        assert_eq!(
-            multiset_hashes.final_hashes.len(),
-            preprocessing.num_memories
-        );
-        (0..preprocessing.num_memories)
-            .into_par_iter()
-            .for_each(|i| {
-                let read_hash = multiset_hashes.read_hashes[i];
-                let write_hash = multiset_hashes.write_hashes[i];
-                let init_hash =
-                    multiset_hashes.init_hashes[preprocessing.memory_to_subtable_index[i]];
-                let final_hash = multiset_hashes.final_hashes[i];
-                assert_eq!(
-                    init_hash * write_hash,
-                    final_hash * read_hash,
-                    "Multiset hashes don't match"
-                );
-            });
+        assert_eq!(multiset_hashes.read_hashes.len(), preprocessing.num_memories);
+        assert_eq!(multiset_hashes.write_hashes.len(), preprocessing.num_memories);
+        assert_eq!(multiset_hashes.final_hashes.len(), preprocessing.num_memories);
+        (0..preprocessing.num_memories).into_par_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[i];
+            let write_hash = multiset_hashes.write_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[preprocessing.memory_to_subtable_index[i]];
+            let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -529,35 +548,43 @@ where
     }
 }
 
-impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTranscript>
-    MemoryCheckingVerifier<F, PCS, ProofTranscript>
+impl<
+    F,
+    PCS,
+    InstructionSet,
+    Subtables,
+    const C: usize,
+    const M: usize,
+    ProofTranscript
+    > MemoryCheckingVerifier<F, PCS, ProofTranscript>
     for InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet,
-    Subtables: JoltSubtableSet<F>,
-    ProofTranscript: Transcript,
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        InstructionSet: JoltInstructionSet,
+        Subtables: JoltSubtableSet<F>,
+        ProofTranscript: Transcript
 {
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
         _preprocessing: &Self::Preprocessing,
         _r_read_write: &[F],
-        r_init_final: &[F],
+        r_init_final: &[F]
     ) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
+        openings.a_init_final = Some(
+            IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final)
+        );
         openings.v_init_final = Some(
             Subtables::iter()
                 .map(|subtable| subtable.evaluate_mle(r_init_final))
-                .collect(),
+                .collect()
         );
     }
 
     fn read_tuples(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         let memory_flags = Self::memory_flags(preprocessing, &openings.instruction_flags);
         (0..preprocessing.num_memories)
@@ -575,7 +602,7 @@ where
     fn write_tuples(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         Self::read_tuples(preprocessing, openings, &NoExogenousOpenings)
             .iter()
@@ -585,7 +612,7 @@ where
     fn init_tuples(
         _preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -597,7 +624,7 @@ where
     fn final_tuples(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         openings: &Self::Openings,
-        _: &NoExogenousOpenings,
+        _: &NoExogenousOpenings
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
@@ -630,7 +657,7 @@ where
         openings: &Self::Openings,
         exogenous_openings: &NoExogenousOpenings,
         gamma: &F,
-        tau: &F,
+        tau: &F
     ) {
         let read_tuples: Vec<_> = Self::read_tuples(preprocessing, openings, exogenous_openings);
         let write_tuples: Vec<_> = Self::write_tuples(preprocessing, openings, exogenous_openings);
@@ -642,12 +669,12 @@ where
             &read_tuples,
             &write_tuples,
             &init_tuples,
-            &final_tuples,
+            &final_tuples
         );
 
         assert_eq!(
             read_write_tuples.len().next_power_of_two(),
-            r_read_write_batch_index.len().pow2(),
+            r_read_write_batch_index.len().pow2()
         );
         assert_eq!(
             init_final_tuples.len().next_power_of_two(),
@@ -725,14 +752,14 @@ pub struct InstructionLookupsProof<
     PCS,
     InstructionSet,
     Subtables,
-    ProofTranscript,
-> where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    Subtables: JoltSubtableSet<F>,
-    InstructionSet: JoltInstructionSet,
-    ProofTranscript: Transcript,
-{
+    ProofTranscript
+>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        Subtables: JoltSubtableSet<F>,
+        InstructionSet: JoltInstructionSet,
+        ProofTranscript: Transcript {
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
     primary_sumcheck: PrimarySumcheck<F, ProofTranscript>,
@@ -741,7 +768,7 @@ pub struct InstructionLookupsProof<
         PCS,
         InstructionLookupOpenings<F>,
         NoExogenousOpenings,
-        ProofTranscript,
+        ProofTranscript
     >,
 }
 
@@ -768,9 +795,7 @@ pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
 impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
     pub fn preprocess<const M: usize, InstructionSet, Subtables>() -> Self
-    where
-        InstructionSet: JoltInstructionSet,
-        Subtables: JoltSubtableSet<F>,
+        where InstructionSet: JoltInstructionSet, Subtables: JoltSubtableSet<F>
     {
         let materialized_subtables = Self::materialize_subtables::<M, Subtables>();
 
@@ -789,8 +814,9 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
 
         let mut memory_index = 0;
         for (subtable_index, dimension_indices) in subtable_indices.iter().enumerate() {
-            subtable_to_memory_indices
-                .push((memory_index..memory_index + dimension_indices.len()).collect_vec());
+            subtable_to_memory_indices.push(
+                (memory_index..memory_index + dimension_indices.len()).collect_vec()
+            );
             memory_to_subtable_index.extend(vec![subtable_index; dimension_indices.len()]);
             memory_to_dimension_index.extend(dimension_indices.iter());
             memory_index += dimension_indices.len();
@@ -800,15 +826,17 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
         let mut instruction_to_memory_indices = vec![vec![]; InstructionSet::COUNT];
         for instruction in InstructionSet::iter() {
             for (subtable, dimension_indices) in instruction.subtables::<F>(C, M) {
-                let memory_indices: Vec<_> = subtable_to_memory_indices
-                    [Subtables::enum_index(subtable)]
-                .iter()
-                .filter(|memory_index| {
-                    dimension_indices.contains(memory_to_dimension_index[**memory_index])
-                })
-                .collect();
-                instruction_to_memory_indices[InstructionSet::enum_index(&instruction)]
-                    .extend(memory_indices);
+                let memory_indices: Vec<_> = subtable_to_memory_indices[
+                    Subtables::enum_index(subtable)
+                ]
+                    .iter()
+                    .filter(|memory_index| {
+                        dimension_indices.contains(memory_to_dimension_index[**memory_index])
+                    })
+                    .collect();
+                instruction_to_memory_indices[InstructionSet::enum_index(&instruction)].extend(
+                    memory_indices
+                );
             }
         }
 
@@ -826,8 +854,7 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
     /// Materializes all subtables used by this Jolt instance.
     #[tracing::instrument(skip_all)]
     fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<u32>>
-    where
-        Subtables: JoltSubtableSet<F>,
+        where Subtables: JoltSubtableSet<F>
     {
         let mut subtables = Vec::with_capacity(Subtables::COUNT);
         for subtable in Subtables::iter() {
@@ -837,14 +864,21 @@ impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
     }
 }
 
-impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTranscript>
-    InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet,
-    Subtables: JoltSubtableSet<F>,
-    ProofTranscript: Transcript,
+impl<
+    F,
+    PCS,
+    InstructionSet,
+    Subtables,
+    const C: usize,
+    const M: usize,
+    ProofTranscript
+> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        InstructionSet: JoltInstructionSet,
+        Subtables: JoltSubtableSet<F>,
+        ProofTranscript: Transcript
 {
     const NUM_SUBTABLES: usize = Subtables::COUNT;
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
@@ -855,7 +889,7 @@ where
         polynomials: &'a mut JoltPolynomials<F>,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -876,7 +910,7 @@ where
                 &mut polynomials.instruction_lookups.E_polys,
                 &mut polynomials.instruction_lookups.instruction_flags,
                 &mut polynomials.instruction_lookups.lookup_outputs.clone(),
-                transcript,
+                transcript
             );
         r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
 
@@ -887,9 +921,7 @@ where
             lookup_outputs_opening: outputs_eval,
         };
 
-        let primary_sumcheck_polys = polynomials
-            .instruction_lookups
-            .E_polys
+        let primary_sumcheck_polys = polynomials.instruction_lookups.E_polys
             .iter()
             .chain(polynomials.instruction_lookups.instruction_flags.iter())
             .chain([&polynomials.instruction_lookups.lookup_outputs].into_iter())
@@ -898,8 +930,7 @@ where
         let mut primary_sumcheck_openings: Vec<F> = [
             sumcheck_openings.E_poly_openings.as_slice(),
             sumcheck_openings.flag_openings.as_slice(),
-        ]
-        .concat();
+        ].concat();
         primary_sumcheck_openings.push(outputs_eval);
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
@@ -908,7 +939,7 @@ where
             eq_primary_sumcheck,
             r_primary_sumcheck,
             &primary_sumcheck_openings,
-            transcript,
+            transcript
         );
 
         let primary_sumcheck = PrimarySumcheck {
@@ -924,7 +955,7 @@ where
             &polynomials.instruction_lookups,
             polynomials,
             opening_accumulator,
-            transcript,
+            transcript
         );
 
         InstructionLookupsProof {
@@ -941,7 +972,7 @@ where
         proof: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
         commitments: &JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> Result<(), ProofVerifyError> {
         let protocol_name = Self::protocol_name();
         transcript.append_message(protocol_name);
@@ -953,35 +984,31 @@ where
             F::zero(),
             proof.primary_sumcheck.num_rounds,
             Self::sumcheck_poly_degree(),
-            transcript,
+            transcript
         )?;
         r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
 
         // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
         assert_eq!(
-            eq_eval
-                * (Self::combine_lookups(
+            eq_eval *
+                (Self::combine_lookups(
                     preprocessing,
                     &proof.primary_sumcheck.openings.E_poly_openings,
-                    &proof.primary_sumcheck.openings.flag_openings,
-                ) - proof.primary_sumcheck.openings.lookup_outputs_opening),
+                    &proof.primary_sumcheck.openings.flag_openings
+                ) -
+                    proof.primary_sumcheck.openings.lookup_outputs_opening),
             claim_last,
             "Primary sumcheck check failed."
         );
 
-        let primary_sumcheck_commitments = commitments
-            .instruction_lookups
-            .E_polys
+        let primary_sumcheck_commitments = commitments.instruction_lookups.E_polys
             .iter()
             .chain(commitments.instruction_lookups.instruction_flags.iter())
             .chain([&commitments.instruction_lookups.lookup_outputs])
             .collect::<Vec<_>>();
 
-        let primary_sumcheck_openings = proof
-            .primary_sumcheck
-            .openings
-            .E_poly_openings
+        let primary_sumcheck_openings = proof.primary_sumcheck.openings.E_poly_openings
             .iter()
             .chain(proof.primary_sumcheck.openings.flag_openings.iter())
             .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
@@ -991,7 +1018,7 @@ where
             &primary_sumcheck_commitments,
             r_primary_sumcheck.clone(),
             &primary_sumcheck_openings,
-            transcript,
+            transcript
         );
 
         Self::verify_memory_checking(
@@ -1001,7 +1028,7 @@ where
             &commitments.instruction_lookups,
             commitments,
             opening_accumulator,
-            transcript,
+            transcript
         )?;
 
         Ok(())
@@ -1011,17 +1038,15 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness")]
     pub fn generate_witness(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        ops: &Vec<JoltTraceStep<InstructionSet>>,
+        ops: &Vec<JoltTraceStep<InstructionSet>>
     ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
 
         let subtable_lookup_indices: Vec<Vec<u16>> = Self::subtable_lookup_indices(ops);
 
-        let polys: Vec<(
-            MultilinearPolynomial<F>,
-            MultilinearPolynomial<F>,
-            MultilinearPolynomial<F>,
-        )> = (0..preprocessing.num_memories)
+        let polys: Vec<
+            (MultilinearPolynomial<F>, MultilinearPolynomial<F>, MultilinearPolynomial<F>)
+        > = (0..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
@@ -1034,8 +1059,9 @@ where
 
                 for (j, op) in ops.iter().enumerate() {
                     if let Some(instr) = &op.instruction_lookup {
-                        let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(instr)];
+                        let memories_used =
+                            &preprocessing.instruction_to_memory_indices
+                                [InstructionSet::enum_index(instr)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = access_sequence[j] as usize;
                             debug_assert!(memory_address < M);
@@ -1043,8 +1069,9 @@ where
                             let counter = final_cts_i[memory_address];
                             read_cts_i[j] = counter;
                             final_cts_i[memory_address] = counter + 1;
-                            subtable_lookups[j] = preprocessing.materialized_subtables
-                                [subtable_index][memory_address];
+                            subtable_lookups[j] = preprocessing.materialized_subtables[
+                                subtable_index
+                            ][memory_address];
                         }
                     }
                 }
@@ -1063,15 +1090,17 @@ where
             Vec<MultilinearPolynomial<F>>,
             Vec<MultilinearPolynomial<F>>,
             Vec<MultilinearPolynomial<F>>,
-        ) = polys.into_iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
-                read_acc.push(read);
-                final_acc.push(f);
-                E_acc.push(E);
-                (read_acc, final_acc, E_acc)
-            },
-        );
+        ) = polys
+            .into_iter()
+            .fold(
+                (Vec::new(), Vec::new(), Vec::new()),
+                |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
+                    read_acc.push(read);
+                    final_acc.push(f);
+                    E_acc.push(E);
+                    (read_acc, final_acc, E_acc)
+                }
+            );
 
         let dim: Vec<MultilinearPolynomial<F>> = subtable_lookup_indices
             .into_par_iter()
@@ -1131,22 +1160,12 @@ where
         memory_polys: &mut [MultilinearPolynomial<F>],
         flag_polys: &mut [MultilinearPolynomial<F>],
         lookup_outputs_poly: &mut MultilinearPolynomial<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
-        Vec<F>,
-        Vec<F>,
-        Vec<F>,
-        F,
-    ) {
+        transcript: &mut ProofTranscript
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, Vec<F>, F) {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
-        memory_polys
-            .iter()
-            .for_each(|E_poly| debug_assert_eq!(E_poly.len(), poly_len));
-        flag_polys
-            .iter()
-            .for_each(|flag_poly| debug_assert_eq!(flag_poly.len(), poly_len));
+        memory_polys.iter().for_each(|E_poly| debug_assert_eq!(E_poly.len(), poly_len));
+        flag_polys.iter().for_each(|flag_poly| debug_assert_eq!(flag_poly.len(), poly_len));
         debug_assert_eq!(lookup_outputs_poly.len(), poly_len);
 
         let mut previous_claim = F::zero();
@@ -1160,7 +1179,7 @@ where
                 flag_polys,
                 memory_polys,
                 lookup_outputs_poly,
-                previous_claim,
+                previous_claim
             );
 
             let compressed_poly = univariate_poly.compress();
@@ -1198,13 +1217,7 @@ where
             .collect();
         let outputs_eval = lookup_outputs_poly.final_sumcheck_claim();
 
-        (
-            SumcheckInstanceProof::new(compressed_polys),
-            r,
-            flag_evals,
-            memory_evals,
-            outputs_eval,
-        )
+        (SumcheckInstanceProof::new(compressed_polys), r, flag_evals, memory_evals, outputs_eval)
     }
 
     #[tracing::instrument(skip_all)]
@@ -1214,7 +1227,7 @@ where
         flag_polys: &[MultilinearPolynomial<F>],
         subtable_polys: &[MultilinearPolynomial<F>],
         lookup_outputs_poly: &MultilinearPolynomial<F>,
-        previous_claim: F,
+        previous_claim: F
     ) -> UniPoly<F> {
         let degree = Self::sumcheck_poly_degree();
         let mle_len = eq_poly.len();
@@ -1224,8 +1237,11 @@ where
             .into_par_iter()
             .map(|i| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                let output_evals =
-                    lookup_outputs_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                let output_evals = lookup_outputs_poly.sumcheck_evals(
+                    i,
+                    degree,
+                    BindingOrder::LowToHigh
+                );
                 let flag_evals: Vec<Vec<F>> = flag_polys
                     .iter()
                     .map(|poly| poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh))
@@ -1243,21 +1259,25 @@ where
                         let flag_eval = flag_evals[instruction_index][j];
                         if flag_eval.is_zero() {
                             continue;
-                        }; // Early exit if no contribution.
+                        } // Early exit if no contribution.
 
                         let subtable_terms: Vec<F> = memory_indices
                             .iter()
                             .map(|memory_index| {
                                 if subtable_evals[*memory_index].is_empty() {
-                                    subtable_evals[*memory_index] = subtable_polys[*memory_index]
-                                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                                    subtable_evals[*memory_index] = subtable_polys[
+                                        *memory_index
+                                    ].sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                                 }
                                 subtable_evals[*memory_index][j]
                             })
                             .collect();
 
-                        let instruction_collation_eval =
-                            instruction.combine_lookups(&subtable_terms, C, M);
+                        let instruction_collation_eval = instruction.combine_lookups(
+                            &subtable_terms,
+                            C,
+                            M
+                        );
                         inner_sum[j] += flag_eval * instruction_collation_eval;
                     }
                 }
@@ -1278,7 +1298,7 @@ where
                         .zip(new.iter())
                         .map(|(r, n)| *r + *n)
                         .collect()
-                },
+                }
             );
 
         evaluations.insert(1, previous_claim - evaluations[0]);
@@ -1293,7 +1313,7 @@ where
     fn combine_lookups(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         vals: &[F],
-        flags: &[F],
+        flags: &[F]
     ) -> F {
         assert_eq!(vals.len(), preprocessing.num_memories);
         assert_eq!(flags.len(), Self::NUM_INSTRUCTIONS);
@@ -1302,7 +1322,10 @@ where
         for instruction in InstructionSet::iter() {
             let instruction_index = InstructionSet::enum_index(&instruction);
             let memory_indices = &preprocessing.instruction_to_memory_indices[instruction_index];
-            let filtered_operands: Vec<F> = memory_indices.iter().map(|i| vals[*i]).collect();
+            let filtered_operands: Vec<F> = memory_indices
+                .iter()
+                .map(|i| vals[*i])
+                .collect();
             sum += flags[instruction_index] * instruction.combine_lookups(&filtered_operands, C, M);
         }
 
@@ -1314,7 +1337,7 @@ where
     /// accesses the memory, it must be executing exactly one of those instructions.
     fn memory_flags(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        instruction_flags: &[F],
+        instruction_flags: &[F]
     ) -> Vec<F> {
         debug_assert_eq!(instruction_flags.len(), Self::NUM_INSTRUCTIONS);
         let mut memory_flags = vec![F::zero(); preprocessing.num_memories];
@@ -1331,7 +1354,7 @@ where
     /// given execution step accesses the memory, it must be executing exactly one of those instructions.
     fn memory_flag_indices(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
+        instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>
     ) -> Vec<Vec<usize>> {
         let m = instruction_flag_polys[0].coeffs.len();
 
@@ -1340,8 +1363,9 @@ where
             .map(|memory_index| {
                 let instruction_indices: Vec<_> = (0..Self::NUM_INSTRUCTIONS)
                     .filter(|instruction_index| {
-                        preprocessing.instruction_to_memory_indices[*instruction_index]
-                            .contains(&memory_index)
+                        preprocessing.instruction_to_memory_indices[*instruction_index].contains(
+                            &memory_index
+                        )
                     })
                     .collect();
                 let mut memory_flag_indices = vec![];
@@ -1365,8 +1389,7 @@ where
         InstructionSet::iter()
             .map(|instruction| instruction.g_poly_degree(C))
             .max()
-            .unwrap()
-            + 2 // eq and flag
+            .unwrap() + 2 // eq and flag
     }
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
@@ -1391,8 +1414,10 @@ where
 
         let mut subtable_lookup_indices: Vec<Vec<u16>> = Vec::with_capacity(C);
         for i in 0..C {
-            let mut access_sequence: Vec<u16> =
-                chunked_indices.iter().map(|chunks| chunks[i]).collect();
+            let mut access_sequence: Vec<u16> = chunked_indices
+                .iter()
+                .map(|chunks| chunks[i])
+                .collect();
             access_sequence.resize(m, 0);
             subtable_lookup_indices.push(access_sequence);
         }
@@ -1422,7 +1447,7 @@ where
 mod tests {
     use ark_bn254::Fr;
 
-    use crate::jolt::vm::rv32i_vm::{RV32ISubtables, RV32I};
+    use crate::jolt::vm::rv32i_vm::{ RV32ISubtables, RV32I };
 
     use super::*;
 
@@ -1430,8 +1455,11 @@ mod tests {
     fn instruction_lookup_stuff_ordering() {
         const C: usize = 4;
         const M: usize = 1 << 16;
-        let preprocessing =
-            InstructionLookupsPreprocessing::<C, Fr>::preprocess::<M, RV32I, RV32ISubtables<Fr>>();
+        let preprocessing = InstructionLookupsPreprocessing::<C, Fr>::preprocess::<
+            M,
+            RV32I,
+            RV32ISubtables<Fr>
+        >();
         InstructionLookupOpenings::<Fr>::test_ordering_consistency(&preprocessing);
     }
 }

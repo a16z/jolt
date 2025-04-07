@@ -1,4 +1,4 @@
-use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
+use crate::{ field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial };
 
 pub trait Oracle {
     type Item;
@@ -7,7 +7,7 @@ pub trait Oracle {
 
     fn reset_oracle(&mut self);
 
-    fn peek(&mut self) -> Self::Item;
+    fn peek(&mut self) -> Option<Self::Item>;
 
     fn get_len(&self) -> usize;
 
