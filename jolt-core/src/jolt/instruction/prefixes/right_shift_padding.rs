@@ -6,6 +6,16 @@ use crate::{
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
+/// RightShiftPaddingPrefix and RightShiftPaddingSuffix are used to compute
+///  a bitmask for the padding bits obtained from an arithmetic right shift.
+/// `shift` := the lower log_2(WORD_SIZE) bits of the second operand.
+/// The bitmask has 1s in the upper `shift` bits and 0s in the lower bits.
+///
+/// Together, `RightShiftPaddingPrefix and RightShiftPaddingSuffix` compute:
+/// - 2^WORD_SIZE if shift == 0
+/// - 2^shift otherwise
+///
+/// This gets subtracted from 2^WORD_SIZE to obtain the desired bitmask.
 pub enum RightShiftPaddingPrefix<const WORD_SIZE: usize> {}
 
 impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
@@ -19,7 +29,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         j: usize,
     ) -> F {
         if current_suffix_len(2 * WORD_SIZE, j) != 0 {
-            // Handled by suffix
+            // Suffix is off by a factor of 2 to avoid shift overflow
             return F::from_u8(2);
         }
 

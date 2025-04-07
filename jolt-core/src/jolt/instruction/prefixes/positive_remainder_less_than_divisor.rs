@@ -40,6 +40,9 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderLessThanDivisorPref
         let mut lt = checkpoints[Prefixes::PositiveRemainderLessThanDivisor].unwrap();
         let mut eq = checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
 
+        // For j=2 and j=3, the two checkpoints are the same (they both store isNegative(divisor))
+        // so to avoid double-counting we multiply `lt` by (1 - x) * y instead of adding
+        // eq * (1 - x) * y as we do in subsequent rounds.
         if j == 2 {
             let c = F::from_u32(c);
             let y_msb = F::from_u8(b.pop_msb());

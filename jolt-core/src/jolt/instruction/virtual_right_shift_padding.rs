@@ -90,6 +90,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, right_shift_padding] = suffixes.try_into().unwrap();
+        // 2^WORD_SIZE - 2^shift = 0b11...100..0
         F::from_u64(1 << WORD_SIZE) * one
             - prefixes[Prefixes::RightShiftPadding] * right_shift_padding
     }

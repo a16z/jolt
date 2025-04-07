@@ -225,6 +225,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, less_than, greater_than, left_operand_is_zero, right_operand_is_zero] =
             suffixes.try_into().unwrap();
+        // divisor == 0 || (isPositive(remainder) && remainder <= diviisor) || (isNegative(divisor) && divisor >= remainder)
         prefixes[Prefixes::RightOperandIsZero] * right_operand_is_zero
             + prefixes[Prefixes::PositiveRemainderEqualsDivisor] * less_than
             + prefixes[Prefixes::PositiveRemainderLessThanDivisor] * one

@@ -98,6 +98,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for BGEInstruc
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, less_than] = suffixes.try_into().unwrap();
+        // 1 - LT(x, y) = 1 - (isNegative(x) && isPositive(y)) - LTU(x, y)
         one + prefixes[Prefixes::RightOperandMsb] * one
             - prefixes[Prefixes::LeftOperandMsb] * one
             - prefixes[Prefixes::LessThan] * one

@@ -124,6 +124,13 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, left_operand_is_zero, div_by_zero] = suffixes.try_into().unwrap();
+        // If the divisor is *not* zero, both:
+        // `prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero` and
+        // `prefixes[Prefixes::DivByZero] * div_by_zero`
+        // will be zero.
+        //
+        // If the divisor *is* zero, returns 1 (on the Boolean hypercube)
+        // iff the quotient is valid (i.e. 2^WORD_SIZE - 1).
         one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero
             + prefixes[Prefixes::DivByZero] * div_by_zero
     }
