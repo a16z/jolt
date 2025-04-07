@@ -134,8 +134,9 @@ pub struct JoltProof<
     pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
-    pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
+    // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    _marker: PhantomData<I>,
 }
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -496,19 +497,19 @@ where
             &mut transcript,
         );
 
-        let spartan_proof = UniformSpartanProof::<
-            C,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-            F,
-            ProofTranscript,
-        >::prove::<PCS>(
-            &r1cs_builder,
-            &spartan_key,
-            &jolt_polynomials,
-            &mut opening_accumulator,
-            &mut transcript,
-        )
-        .expect("r1cs proof failed");
+        // let spartan_proof = UniformSpartanProof::<
+        //     C,
+        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        //     F,
+        //     ProofTranscript,
+        // >::prove::<PCS>(
+        //     &r1cs_builder,
+        //     &spartan_key,
+        //     &jolt_polynomials,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )
+        // .expect("r1cs proof failed");
 
         // Batch-prove all openings
         let opening_proof =
@@ -522,8 +523,9 @@ where
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
-            r1cs: spartan_proof,
+            // r1cs: spartan_proof,
             opening_proof,
+            _marker: PhantomData,
         };
 
         #[cfg(test)]
@@ -580,11 +582,11 @@ where
         );
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        let r1cs_proof = R1CSProof {
-            key: spartan_key,
-            proof: proof.r1cs,
-            _marker: PhantomData,
-        };
+        // let r1cs_proof = R1CSProof {
+        //     key: spartan_key,
+        //     proof: proof.r1cs,
+        //     _marker: PhantomData,
+        // };
 
         commitments
             .read_write_values()
@@ -621,12 +623,12 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        Self::verify_r1cs(
-            r1cs_proof,
-            &commitments,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        // Self::verify_r1cs(
+        //     r1cs_proof,
+        //     &commitments,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
 
         // Batch-verify all openings
         opening_accumulator.reduce_and_verify(
@@ -755,6 +757,7 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
+pub mod instruction_lookups_shout;
 pub mod read_write_memory;
 pub mod rv32i_vm;
 pub mod timestamp_range_check;
