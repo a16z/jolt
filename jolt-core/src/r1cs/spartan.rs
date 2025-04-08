@@ -810,9 +810,19 @@ where
             transcript,
         );
 
+        jolt_oracle.reset_oracle();
+
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
+
+
+        let shift_sumcheck_witness_evals2  =
+            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(jolt_oracle, &shift_sumcheck_r, num_shards, shard_length);
+
+        for i in 0..shift_sumcheck_witness_evals.len() {
+            assert_eq!(shift_sumcheck_witness_evals[i], shift_sumcheck_witness_evals2[i], "mismatch at index {}", i);
+        }
 
         opening_accumulator.append(
             &flattened_polys,
