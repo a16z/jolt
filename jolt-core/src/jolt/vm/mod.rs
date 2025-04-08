@@ -969,7 +969,7 @@ pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
             PhantomData::<F>
         );
 
-        let shard_len = padded_trace_length / 2;
+        let shard_len = 1024;
         let no_of_shards = padded_trace_length / shard_len;
 
         for n in 0..no_of_shards {

@@ -104,12 +104,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
             extra_eval: JoltStuff<MultilinearPolynomial<F>>
         | {
             let shard_length = shard.bytecode.a_read_write.len();
-            println!(
-                "total_num_steps = {}, shard_length = {}, shard_idx = {}",
-                total_num_steps,
-                shard_length,
-                shard_idx
-            );
+            // println!(
+            //     "total_num_steps = {}, shard_length = {}, shard_idx = {}",
+            //     total_num_steps,
+            //     shard_length,
+            //     shard_idx
+            // );
 
             let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                 .iter()
@@ -201,7 +201,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
 
                         // println!("step_index = {}, Uniform constraint end index = {}", step_index);
 
-                        if step_index + 1 < total_num_steps {
+                        if step_index + shard_idx * shard_length + 1 < total_num_steps {
                             let next_step_index = step_index + 1;
 
                             for (constraint_index, constraint) in cross_step_constraints
@@ -272,19 +272,19 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                         }
                                     }
                                 } else {
-                                    println!("step_index = {}", step_index);
+                                    // println!("step_index = {}", step_index);
                                     let extra_eval_z: Vec<&MultilinearPolynomial<F>> =
                                         I::flatten::<C>()
                                             .iter()
                                             .map(|var| var.get_ref(&extra_eval))
                                             .collect();
-                                    println!(
-                                        "Extra eval z = {:?}",
-                                        extra_eval_z
-                                            .iter()
-                                            .map(|poly| F::from(poly.get_coeff(0)))
-                                            .collect::<Vec<F>>()
-                                    );
+                                    // println!(
+                                    //     "Extra eval z = {:?}",
+                                    //     extra_eval_z
+                                    //         .iter()
+                                    //         .map(|poly| F::from(poly.get_coeff(0)))
+                                    //         .collect::<Vec<F>>()
+                                    // );
 
                                     let eq_a_eval = streaming_eval_offset_lc(
                                         &constraint.a,
@@ -363,7 +363,7 @@ for AzBzCzOracle<'a, F, InstructionSet> {
             let jolt_peek = self.jolt_oracle.peek().unwrap();
             (self.func)(shard_idx, jolt_shard, jolt_peek)
         } else {
-            println!("Done");
+            // println!("Done");
             (self.func)(shard_idx, jolt_shard, Default::default())
         }
     }
@@ -826,13 +826,13 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
 
         // println!("Flattened polys size = {}", flattened_polys.len());
 
-        println!(
-            "Flattened polys = {:?}",
-            flattened_polys
-                .iter()
-                .map(|poly| F::from(poly.get_coeff(256)))
-                .collect::<Vec<F>>()
-        );
+        // println!(
+        //     "Flattened polys = {:?}",
+        //     flattened_polys
+        //         .iter()
+        //         .map(|poly| F::from(poly.get_coeff(256)))
+        //         .collect::<Vec<F>>()
+        // );
 
         // println!("HERE");
 
@@ -848,7 +848,7 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
 
         let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
         for n in 0..no_of_shards {
-            println!("n = {}", n);
+            // println!("n = {}", n);
             let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_len);
             streamed_polys_vec.push(streamed_polys);
         }
@@ -857,18 +857,18 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
         for n in 0..no_of_shards {
             let len = streamed_polys_vec[n].Az_Bz_Cz.len();
             for i in 0..len {
-                println!(
-                    "Streamed: {} {} {} {}",
-                    streamed_polys_vec[n].Az_Bz_Cz[i].0,
-                    streamed_polys_vec[n].Az_Bz_Cz[i].1,
-                    streamed_polys_vec[n].Az_Bz_Cz[i].2,
-                    streamed_polys_vec[n].Az_Bz_Cz[i].3
-                );
-                println!(
-                    "Stored: {}, {}",
-                    az_bz_cz_poly.unbound_coeffs[j].index,
-                    az_bz_cz_poly.unbound_coeffs[j].value
-                );
+                // println!(
+                //     "Streamed: {} {} {} {}",
+                //     streamed_polys_vec[n].Az_Bz_Cz[i].0,
+                //     streamed_polys_vec[n].Az_Bz_Cz[i].1,
+                //     streamed_polys_vec[n].Az_Bz_Cz[i].2,
+                //     streamed_polys_vec[n].Az_Bz_Cz[i].3
+                // );
+                // println!(
+                //     "Stored: {}, {}",
+                //     az_bz_cz_poly.unbound_coeffs[j].index,
+                //     az_bz_cz_poly.unbound_coeffs[j].value
+                // );
 
                 assert_eq!(
                     streamed_polys_vec[n].Az_Bz_Cz[i].0,
@@ -883,6 +883,7 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
                 j += 1;
             }
         }
+        println!("AzBz - Cz streamed.");
     }
 
     // assert_eq!(
