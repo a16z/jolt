@@ -1,4 +1,8 @@
-use crate::utils::{compute_dotproduct, math::Math};
+use crate::{
+    jolt::{instruction::JoltInstructionSet, vm::JoltOracle},
+    r1cs::inputs::ConstraintInput,
+    utils::{compute_dotproduct, math::Math, streaming::Oracle},
+};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -8,7 +12,7 @@ use strum_macros::EnumIter;
 use super::{
     compact_polynomial::{CompactPolynomial, SmallScalar},
     dense_mlpoly::DensePolynomial,
-    eq_poly::EqPolynomial,
+    eq_poly::{EqPolynomial, StreamingEqPolynomial},
 };
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -491,6 +495,18 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
+
+    fn stream_batch_evaluate<
+        'a,
+        const C: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput,
+    >(
+        jolt_oracle: &mut JoltOracle<'a, F, InstructionSet>,
+        r: &[F],
+        no_shard: usize,
+        num_vars: usize,
+    ) -> Vec<F>;
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
@@ -626,7 +642,121 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         };
         evals
     }
+
+    fn stream_batch_evaluate<
+        'a,
+        const C: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput,
+    >(
+        jolt_oracle: &mut JoltOracle<'a, F, InstructionSet>,
+        r: &[F],
+        num_shards: usize,
+        num_vars: usize,
+    ) -> Vec<F> {
+        let rev_r = r.iter().rev().copied().collect::<Vec<_>>();
+        let mut eq_stream =
+            StreamingEqPolynomial::new(rev_r.to_vec(), num_vars, None);
+        let mut eq_r2_stream = StreamingEqPolynomial::new(rev_r.to_vec(), num_vars, F::montgomery_r2());
+
+        let shard_len = 1 << (num_vars - num_shards);
+
+        let partial_evals: Vec<Vec<F>> = (0..num_shards)
+            .map(|_| {
+                let jolt_polynomials = jolt_oracle.next_shard(shard_len);
+                let polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                    .iter()
+                    .map(|var| var.get_ref(&jolt_polynomials))
+                    .collect();
+
+                let eq_shard = eq_stream.next_shard(shard_len);
+
+                let partial_eval = if polys
+                    .iter()
+                    .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
+                {
+                    // If any of the polynomials contain non-Montgomery form coefficients,
+                    // we need to compute the R^2-adjusted EQ table.
+                    // let eq_r2 = EqPolynomial::evals_with_r2(r);
+                    let eq_r2_shard = eq_r2_stream.next_shard(shard_len);
+
+                    let evals: Vec<F> = polys
+                        .into_par_iter()
+                        .map(|poly| match poly {
+                            MultilinearPolynomial::LargeScalars(poly) => {
+                                poly.evaluate_at_chi_low_optimized(&eq_shard)
+                            }
+                            _ => poly.dot_product(None, Some(&eq_r2_shard)),
+                        })
+                        .collect();
+                    evals
+                } else {
+                    let evals: Vec<F> = polys
+                        .into_par_iter()
+                        .map(|poly| {
+                            let poly: &DensePolynomial<F> = poly.try_into().unwrap();
+                            poly.evaluate_at_chi_low_optimized(&eq_shard)
+                        })
+                        .collect();
+                    evals
+                };
+                partial_eval
+            })
+            .collect();
+        let len = partial_evals[0].len();
+        let evals =
+            partial_evals
+                .iter()
+                .map(|eval| eval)
+                .fold(vec![F::zero(); len], |acc, eval| {
+                    acc.into_par_iter()
+                        .zip_eq(eval.into_par_iter())
+                        .map(|(a, b)| a + b)
+                        .collect()
+                });
+        evals
+    }
 }
+
+// fn stream_batch_evaluate<'a, F: JoltField, InstructionSet: JoltInstructionSet>(jolt_oracle: &JoltOracle<'a, F, InstructionSet>, r: &[F], no_shard: usize) -> Vec<F> {
+
+//         // let eq = StreamingEqPolynomial::new(r.to_vec(), num_vars, F::montgomery_r2());
+//         // let eq = EqPolynomial::evals(r);
+//         for i in 0..no_shard{
+//             // let eq = StreamingEqPolynomial
+//             let polys = jolt_oracle.next_shard(256); //not fixed
+//             let flattened_polys = polys::flatten();
+//         }
+
+//         unimplemented!();
+//         // if polys
+//         //     .iter()
+//         //     .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
+//         // {
+//         //     // If any of the polynomials contain non-Montgomery form coefficients,
+//         //     // we need to compute the R^2-adjusted EQ table.
+//         //     let eq_r2 = EqPolynomial::evals_with_r2(r);
+//         //     let evals: Vec<F> = polys
+//         //         .into_par_iter()
+//         //         .map(|&poly| match poly {
+//         //             MultilinearPolynomial::LargeScalars(poly) => {
+//         //                 poly.evaluate_at_chi_low_optimized(&eq)
+//         //             }
+//         //             _ => poly.dot_product(None, Some(&eq_r2)),
+//         //         })
+//         //         .collect();
+//         //     (evals, eq)
+//         // } else {
+//         //     let evals: Vec<F> = polys
+//         //         .into_par_iter()
+//         //         .map(|&poly| {
+//         //             let poly: &DensePolynomial<F> = poly.try_into().unwrap();
+//         //             poly.evaluate_at_chi_low_optimized(&eq)
+//         //         })
+//         //         .collect();
+//         //     (evals, eq)
+//         // }
+// }
 
 #[cfg(test)]
 mod tests {

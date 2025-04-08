@@ -765,7 +765,6 @@ where
     //     //     _marker: PhantomData,
     //     // })
     // }
-
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,

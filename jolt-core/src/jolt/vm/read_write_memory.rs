@@ -401,7 +401,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.trace_oracle.reset_oracle();
     }
 
-    
     fn peek(&mut self) -> Self::Item {
         (self.func)(&mut self.state, self.trace_oracle.peek())
     }

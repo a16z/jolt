@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
 use bytecode::{BytecodeOracle, DerivedOracle};
+use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
-use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use instruction_lookups::InstructionLookupOracle;
 use read_write_memory::ReadWriteMemoryOracle;
 use timestamp_range_check::TimestampRangeCheckStuff;
@@ -52,17 +52,17 @@ use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 
-use super::instruction::JoltInstructionSet;
 use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
 use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
+use super::instruction::JoltInstructionSet;
 
 use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
 use self::instruction_lookups::{
-    InstructionLookupsPreprocessing, InstructionLookupsProof, InstructionLookupStuff,
+    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
 use self::read_write_memory::{
     ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,

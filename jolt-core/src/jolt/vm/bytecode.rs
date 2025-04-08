@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::RngCore;
 use rand::rngs::StdRng;
+use rand::RngCore;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -14,10 +14,6 @@ use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
 use tracer::RV32IM;
 
-use crate::{
-    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    poly::identity_poly::IdentityPolynomial,
-};
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
@@ -28,6 +24,10 @@ use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::streaming::Oracle;
 use crate::utils::transcript::Transcript;
+use crate::{
+    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+    poly::identity_poly::IdentityPolynomial,
+};
 
 use super::{JoltPolynomials, JoltTraceStep, TraceOracle};
 
@@ -202,8 +202,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     }
 
     fn peek(&mut self) -> Self::Item {
-        (self.func)(
-            self.trace_oracle.peek())
+        (self.func)(self.trace_oracle.peek())
     }
 
     fn get_len(&self) -> usize {

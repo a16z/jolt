@@ -276,8 +276,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     }
 
     fn peek(&mut self) -> Self::Item {
-        (self.func)(
-            self.trace_oracle.peek())
+        (self.func)(self.trace_oracle.peek())
     }
 
     fn get_len(&self) -> usize {
