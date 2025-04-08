@@ -45,8 +45,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         padded_num_constraints: usize
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
-        println!("num_steps = {}", num_steps);
-        // println!("Padded num constraints = {}", padded_num_constraints);
 
         let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
         let chunk_size = num_steps.div_ceil(num_chunks);

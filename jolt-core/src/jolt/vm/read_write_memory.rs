@@ -228,6 +228,7 @@ for ReadWriteMemoryStuff<T> {}
 
 pub struct ReadWriteMemoryOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
+    pub init_state: Vec<u32>,
     pub state: Vec<u32>,
     pub func: Box<
         dyn (Fn(
@@ -294,7 +295,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
             v_init_index += 1;
         }
 
-        let v_final = v_init;
+        let v_final = v_init.clone();
 
         let polynomial_stream = |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
@@ -396,6 +397,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
 
         ReadWriteMemoryOracle {
             trace_oracle,
+            init_state: v_init,
             state: v_final,
             func: Box::new(polynomial_stream),
         }
@@ -413,11 +415,17 @@ for ReadWriteMemoryOracle<'a, F, InstructionSet> {
 
     fn reset_oracle(&mut self) {
         self.trace_oracle.reset_oracle();
+        for i in 0..self.state.len() {
+            self.state[i] = self.init_state[i];
+        }
     }
 
     fn peek(&mut self) -> Option<Self::Item> {
         if self.trace_oracle.peek().is_some() {
-            Some((self.func)(&mut self.state, self.trace_oracle.peek().unwrap()))
+            let mut temp_state = self.state.clone();
+            let res = Some((self.func)(&mut temp_state, self.trace_oracle.peek().unwrap()));
+            drop(temp_state);
+            res
         } else {
             None
         }

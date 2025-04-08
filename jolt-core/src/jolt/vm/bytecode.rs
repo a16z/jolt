@@ -186,7 +186,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
     pub fn update_trace(trace: &mut [JoltTraceStep<InstructionSet>]) {
         for (step_idx, step) in trace.iter_mut().enumerate() {
             if !step.bytecode_row.address.is_zero() {
-                // println!("step.bytecode_row.address = {}", step.bytecode_row.address);
                 assert!(step.bytecode_row.address >= (RAM_START_ADDRESS as usize));
                 assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
                 // Compress instruction address for more efficient commitment:

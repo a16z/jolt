@@ -74,7 +74,7 @@ pub enum SpartanError {
 
 #[derive(Debug)]
 pub struct AzBzCz {
-    pub Az_Bz_Cz: Vec<(usize, i128)>,
+    pub Az_Bz_Cz: Vec<(usize, i128, usize, bool)>,
 }
 
 pub struct AzBzCzOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
@@ -111,7 +111,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                 shard_idx
             );
 
-            // let padded_num_constraints = 10;
             let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                 .iter()
                 .map(|var| var.get_ref(&shard))
@@ -122,9 +121,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
 
             let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
             let chunk_size = num_steps.div_ceil(num_chunks);
-            // let padded_num_constraints = jolt_oracle.get_len();
 
-            let Az_Bz_Cz: Vec<(usize, i128)> = (0..num_chunks)
+            let Az_Bz_Cz: Vec<(usize, i128, usize, bool)> = (0..num_chunks)
                 .into_par_iter()
                 .flat_map_iter(|chunk_index| {
                     let mut coeffs = Vec::with_capacity(3 * chunk_size * padded_num_constraints);
@@ -144,7 +142,14 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.a.terms().is_empty() {
                                 az_coeff = constraint.a.evaluate_row(&streaming_z, step_index);
                                 if !az_coeff.is_zero() {
-                                    coeffs.push((global_index, az_coeff).into());
+                                    coeffs.push(
+                                        (
+                                            global_index,
+                                            az_coeff,
+                                            step_index + shard_idx * shard_length,
+                                            false,
+                                        ).into()
+                                    );
                                 }
                             }
                             // Bz
@@ -152,33 +157,49 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.b.terms().is_empty() {
                                 bz_coeff = constraint.b.evaluate_row(&streaming_z, step_index);
                                 if !bz_coeff.is_zero() {
-                                    coeffs.push((global_index + 1, bz_coeff).into());
+                                    coeffs.push(
+                                        (
+                                            global_index + 1,
+                                            bz_coeff,
+                                            step_index + shard_idx * shard_length,
+                                            false,
+                                        ).into()
+                                    );
                                 }
                             }
                             // Cz = Az ⊙ Cz
                             if !az_coeff.is_zero() && !bz_coeff.is_zero() {
                                 let cz_coeff = az_coeff * bz_coeff;
-                                // #[cfg(test)]
-                                // {
-                                //     if
-                                //         cz_coeff !=
-                                //         constraint.c.evaluate_row(&streaming_z, step_index)
-                                //     {
-                                //         let mut constraint_string = String::new();
-                                //         let _ = constraint.pretty_fmt::<4, JoltR1CSInputs, F>(
-                                //             &mut constraint_string,
-                                //             &streaming_z,
-                                //             step_index
-                                //         );
-                                //         println!("{constraint_string}");
-                                //         panic!(
-                                //             "Uniform constraint {constraint_index} violated at step {step_index}"
-                                //         );
-                                //     }
-                                // }
-                                coeffs.push((global_index + 2, cz_coeff).into());
+                                #[cfg(test)]
+                                {
+                                    if
+                                        cz_coeff !=
+                                        constraint.c.evaluate_row(&streaming_z, step_index)
+                                    {
+                                        let mut constraint_string = String::new();
+                                        let _ = constraint.pretty_fmt::<4, JoltR1CSInputs, F>(
+                                            &mut constraint_string,
+                                            &streaming_z,
+                                            step_index
+                                        );
+                                        println!("{constraint_string}");
+                                        panic!(
+                                            "Uniform constraint {constraint_index} violated at step {step_index}"
+                                        );
+                                    }
+                                }
+                                coeffs.push(
+                                    (
+                                        global_index + 2,
+                                        cz_coeff,
+                                        step_index + shard_idx * shard_length,
+                                        false,
+                                    ).into()
+                                );
                             }
                         }
+
+                        // println!("step_index = {}, Uniform constraint end index = {}", step_index);
 
                         if step_index + 1 < total_num_steps {
                             let next_step_index = step_index + 1;
@@ -209,7 +230,14 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                     );
                                     let az_coeff = eq_a_eval - eq_b_eval;
                                     if !az_coeff.is_zero() {
-                                        coeffs.push((global_index, az_coeff).into());
+                                        coeffs.push(
+                                            (
+                                                global_index,
+                                                az_coeff,
+                                                step_index + shard_idx * shard_length,
+                                                true,
+                                            ).into()
+                                        );
                                         // If Az != 0, then the condition must be false (i.e. Bz = 0)
                                         #[cfg(test)]
                                         {
@@ -233,15 +261,30 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             Some(next_step_index)
                                         );
                                         if !bz_coeff.is_zero() {
-                                            coeffs.push((global_index + 1, bz_coeff).into());
+                                            coeffs.push(
+                                                (
+                                                    global_index + 1,
+                                                    bz_coeff,
+                                                    step_index + shard_idx * shard_length,
+                                                    true,
+                                                ).into()
+                                            );
                                         }
                                     }
                                 } else {
+                                    println!("step_index = {}", step_index);
                                     let extra_eval_z: Vec<&MultilinearPolynomial<F>> =
                                         I::flatten::<C>()
                                             .iter()
                                             .map(|var| var.get_ref(&extra_eval))
                                             .collect();
+                                    println!(
+                                        "Extra eval z = {:?}",
+                                        extra_eval_z
+                                            .iter()
+                                            .map(|poly| F::from(poly.get_coeff(0)))
+                                            .collect::<Vec<F>>()
+                                    );
 
                                     let eq_a_eval = streaming_eval_offset_lc(
                                         &constraint.a,
@@ -260,7 +303,14 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
 
                                     let az_coeff = eq_a_eval - eq_b_eval;
                                     if !az_coeff.is_zero() {
-                                        coeffs.push((global_index, az_coeff).into());
+                                        coeffs.push(
+                                            (
+                                                global_index,
+                                                az_coeff,
+                                                step_index + shard_idx * shard_length,
+                                                true,
+                                            ).into()
+                                        );
                                     } else {
                                         let bz_coeff = streaming_eval_offset_lc(
                                             &constraint.cond,
@@ -270,133 +320,19 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             Some(next_step_index)
                                         );
                                         if !bz_coeff.is_zero() {
-                                            coeffs.push((global_index + 1, bz_coeff).into());
+                                            coeffs.push(
+                                                (
+                                                    global_index + 1,
+                                                    bz_coeff,
+                                                    step_index + shard_idx * shard_length,
+                                                    true,
+                                                ).into()
+                                            );
                                         }
                                     }
                                 }
                             }
                         }
-
-                        // // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-                        // let next_step_index = if step_index + 1 < total_num_steps {
-                        //     Some(step_index + 1)
-                        // } else {
-                        //     None
-                        // };
-
-                        // // Cross-step constraints
-                        // for (constraint_index, constraint) in cross_step_constraints
-                        //     .iter()
-                        //     .enumerate() {
-                        //     let global_index =
-                        //         3 *
-                        //         (step_index * padded_num_constraints +
-                        //             uniform_constraints.len() +
-                        //             constraint_index);
-
-                        //     if
-                        //         next_step_index.is_some() &&
-                        //         next_step_index.unwrap() < shard_length
-                        //     {
-                        //         // Az
-                        //         let eq_a_eval = eval_offset_lc(
-                        //             &constraint.a,
-                        //             &streaming_z,
-                        //             step_index,
-                        //             next_step_index
-                        //         );
-                        //         let eq_b_eval = eval_offset_lc(
-                        //             &constraint.b,
-                        //             &streaming_z,
-                        //             step_index,
-                        //             next_step_index
-                        //         );
-                        //         let az_coeff = eq_a_eval - eq_b_eval;
-                        //         if !az_coeff.is_zero() {
-                        //             coeffs.push((global_index, az_coeff).into());
-                        //             // If Az != 0, then the condition must be false (i.e. Bz = 0)
-                        //             #[cfg(test)]
-                        //             {
-                        //                 let bz_coeff = eval_offset_lc(
-                        //                     &constraint.cond,
-                        //                     &streaming_z,
-                        //                     step_index,
-                        //                     next_step_index
-                        //                 );
-                        //                 assert_eq!(
-                        //                     bz_coeff,
-                        //                     0,
-                        //                     "Cross-step constraint {constraint_index} violated at step {step_index}"
-                        //                 );
-                        //             }
-                        //         } else if next_step_index.is_some() {
-                        //             // Bz
-                        //             let bz_coeff = eval_offset_lc(
-                        //                 &constraint.cond,
-                        //                 &streaming_z,
-                        //                 step_index,
-                        //                 next_step_index
-                        //             );
-                        //             if !bz_coeff.is_zero() {
-                        //                 coeffs.push((global_index + 1, bz_coeff).into());
-                        //             }
-                        //         }
-                        //     } else {
-                        //         let extra_eval_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-                        //             .iter()
-                        //             .map(|var| var.get_ref(&extra_eval))
-                        //             .collect();
-
-                        //         let eq_a_eval = streaming_eval_offset_lc(
-                        //             &constraint.a,
-                        //             &streaming_z,
-                        //             &extra_eval_z,
-                        //             step_index,
-                        //             next_step_index
-                        //         );
-                        //         let eq_b_eval = streaming_eval_offset_lc(
-                        //             &constraint.b,
-                        //             &streaming_z,
-                        //             &extra_eval_z,
-                        //             step_index,
-                        //             next_step_index
-                        //         );
-
-                        //         let az_coeff = eq_a_eval - eq_b_eval;
-                        //         if !az_coeff.is_zero() {
-                        //             coeffs.push((global_index, az_coeff).into());
-                        //             // If Az != 0, then the condition must be false (i.e. Bz = 0)
-                        //             #[cfg(test)]
-                        //             {
-                        //                 let bz_coeff = streaming_eval_offset_lc(
-                        //                     &constraint.cond,
-                        //                     &streaming_z,
-                        //                     &extra_eval_z,
-                        //                     step_index,
-                        //                     next_step_index
-                        //                 );
-                        //                 assert_eq!(
-                        //                     bz_coeff,
-                        //                     0,
-                        //                     "Cross-step constraint {constraint_index} violated at step {step_index}"
-                        //                 );
-                        //             }
-                        //         } else {
-                        //             // Bz
-                        //             let bz_coeff = streaming_eval_offset_lc(
-                        //                 &constraint.cond,
-                        //                 &streaming_z,
-                        //                 &extra_eval_z,
-                        //                 step_index,
-                        //                 next_step_index
-                        //             );
-                        //             if !bz_coeff.is_zero() {
-                        //                 coeffs.push((global_index + 1, bz_coeff).into());
-                        //             }
-                        //         }
-                        //     }
-                        //     // Cz is always 0 for cross-step constraints
-                        // }
                     }
                     coeffs
                 })
@@ -420,19 +356,15 @@ for AzBzCzOracle<'a, F, InstructionSet> {
 
     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+        let shard_idx = self.jolt_oracle.get_step() / shard_len;
+        let jolt_shard = self.jolt_oracle.next_shard(shard_len);
+
         if self.jolt_oracle.peek().is_some() {
-            let a = self.jolt_oracle.peek().unwrap();
-            (self.func)(
-                self.jolt_oracle.get_step() / shard_len,
-                self.jolt_oracle.next_shard(shard_len),
-                a
-            )
+            let jolt_peek = self.jolt_oracle.peek().unwrap();
+            (self.func)(shard_idx, jolt_shard, jolt_peek)
         } else {
-            (self.func)(
-                self.jolt_oracle.get_step() / shard_len,
-                self.jolt_oracle.next_shard(shard_len),
-                Default::default()
-            )
+            println!("Done");
+            (self.func)(shard_idx, jolt_shard, Default::default())
         }
     }
 
@@ -871,7 +803,7 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
         shard_len: usize,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
-        jolt_oracle: JoltOracle<F, InstructionSet>,
+        mut jolt_oracle: JoltOracle<F, InstructionSet>,
         polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript
@@ -886,7 +818,23 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
         let tau = (0..num_rounds_x).map(|_i| transcript.challenge_scalar()).collect::<Vec<F>>();
         let mut eq_tau = SplitEqPolynomial::new(&tau);
         let num_padded_rows = constraint_builder.padded_rows_per_step();
-        println!("Padded rows per step = {}", num_padded_rows);
+
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+            .iter()
+            .map(|var| var.get_ref(polynomials))
+            .collect();
+
+        // println!("Flattened polys size = {}", flattened_polys.len());
+
+        println!(
+            "Flattened polys = {:?}",
+            flattened_polys
+                .iter()
+                .map(|poly| F::from(poly.get_coeff(256)))
+                .collect::<Vec<F>>()
+        );
+
+        // println!("HERE");
 
         let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
             &constraint_builder.uniform_builder.constraints,
@@ -894,12 +842,6 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
             num_padded_rows,
             jolt_oracle
         );
-
-        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-            .iter()
-            .map(|var| var.get_ref(polynomials))
-            .collect();
-
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
@@ -916,9 +858,11 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
             let len = streamed_polys_vec[n].Az_Bz_Cz.len();
             for i in 0..len {
                 println!(
-                    "Streamed: {} {}",
+                    "Streamed: {} {} {} {}",
                     streamed_polys_vec[n].Az_Bz_Cz[i].0,
-                    streamed_polys_vec[n].Az_Bz_Cz[i].1
+                    streamed_polys_vec[n].Az_Bz_Cz[i].1,
+                    streamed_polys_vec[n].Az_Bz_Cz[i].2,
+                    streamed_polys_vec[n].Az_Bz_Cz[i].3
                 );
                 println!(
                     "Stored: {}, {}",
@@ -936,7 +880,6 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
                     az_bz_cz_poly.unbound_coeffs[j].value,
                     "n = {n}, i = {i}"
                 );
-
                 j += 1;
             }
         }
@@ -1334,3 +1277,128 @@ impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTr
 //             .expect("Spartan verifier failed");
 //     }
 // }
+
+// // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
+// let next_step_index = if step_index + 1 < total_num_steps {
+//     Some(step_index + 1)
+// } else {
+//     None
+// };
+
+// // Cross-step constraints
+// for (constraint_index, constraint) in cross_step_constraints
+//     .iter()
+//     .enumerate() {
+//     let global_index =
+//         3 *
+//         (step_index * padded_num_constraints +
+//             uniform_constraints.len() +
+//             constraint_index);
+
+//     if
+//         next_step_index.is_some() &&
+//         next_step_index.unwrap() < shard_length
+//     {
+//         // Az
+//         let eq_a_eval = eval_offset_lc(
+//             &constraint.a,
+//             &streaming_z,
+//             step_index,
+//             next_step_index
+//         );
+//         let eq_b_eval = eval_offset_lc(
+//             &constraint.b,
+//             &streaming_z,
+//             step_index,
+//             next_step_index
+//         );
+//         let az_coeff = eq_a_eval - eq_b_eval;
+//         if !az_coeff.is_zero() {
+//             coeffs.push((global_index, az_coeff).into());
+//             // If Az != 0, then the condition must be false (i.e. Bz = 0)
+//             #[cfg(test)]
+//             {
+//                 let bz_coeff = eval_offset_lc(
+//                     &constraint.cond,
+//                     &streaming_z,
+//                     step_index,
+//                     next_step_index
+//                 );
+//                 assert_eq!(
+//                     bz_coeff,
+//                     0,
+//                     "Cross-step constraint {constraint_index} violated at step {step_index}"
+//                 );
+//             }
+//         } else if next_step_index.is_some() {
+//             // Bz
+//             let bz_coeff = eval_offset_lc(
+//                 &constraint.cond,
+//                 &streaming_z,
+//                 step_index,
+//                 next_step_index
+//             );
+//             if !bz_coeff.is_zero() {
+//                 coeffs.push((global_index + 1, bz_coeff).into());
+//             }
+//         }
+//     } else {
+//         let extra_eval_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+//             .iter()
+//             .map(|var| var.get_ref(&extra_eval))
+//             .collect();
+
+//         let eq_a_eval = streaming_eval_offset_lc(
+//             &constraint.a,
+//             &streaming_z,
+//             &extra_eval_z,
+//             step_index,
+//             next_step_index
+//         );
+//         let eq_b_eval = streaming_eval_offset_lc(
+//             &constraint.b,
+//             &streaming_z,
+//             &extra_eval_z,
+//             step_index,
+//             next_step_index
+//         );
+
+//         let az_coeff = eq_a_eval - eq_b_eval;
+//             //         if !az_coeff.is_zero() {
+//             //             coeffs.push((global_index, az_coeff).into());
+//             //             // If Az != 0, then the condition must be false (i.e. Bz = 0)
+//             //             #[cfg(test)]
+//             //             {
+//             //                 let bz_coeff = streaming_eval_offset_lc(
+//             //                     &constraint.cond,
+//             //                     &streaming_z,
+//             //                     &extra_eval_z,
+//             //                     step_index,
+//             //                     next_step_index
+//             //                 );
+//             //                 assert_eq!(
+//             //                     bz_coeff,
+//             //                     0,
+//             //                     "Cross-step constraint {constraint_index} violated at step {step_index}"
+//             //                 );
+//             //             }
+//             //         } else {
+//             //             // Bz
+//             //             let bz_coeff = streaming_eval_offset_lc(
+//             //                 &constraint.cond,
+//             //                 &streaming_z,
+//             //                 &extra_eval_z,
+//             //                 step_index,
+//             //                 next_step_index
+//             //             );
+//             //             if !bz_coeff.is_zero() {
+//             //                 coeffs.push((global_index + 1, bz_coeff).into());
+//             //             }
+//             //         }
+//             //     }
+//             //     // Cz is always 0 for cross-step constraints
+//             // }
+//         }
+//         coeffs
+//     })
+//     .collect();

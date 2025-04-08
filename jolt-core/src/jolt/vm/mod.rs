@@ -21,7 +21,7 @@ use read_write_memory::ReadWriteMemoryOracle;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
 use crate::field::JoltField;
-use crate::join_conditional;
+use crate::{ join_conditional, jolt };
 use crate::jolt::{
     instruction::{
         div::DIVInstruction,
@@ -71,7 +71,7 @@ use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
-use super::instruction::JoltInstructionSet;
+use super::instruction::{ self, JoltInstructionSet };
 
 use self::bytecode::{ BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff };
 use self::instruction_lookups::{
@@ -138,7 +138,6 @@ impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, Instruct
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         let shard_start = self.step;
         self.step += shard_len;
-        println!("self.step = {}", self.step);
         &self.trace[shard_start..self.step]
     }
 
@@ -146,7 +145,6 @@ impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, Instruct
         if self.step == self.length {
             self.step = 0;
         } else {
-            println!("Trace length = {}, step = {}", self.length, self.step);
             panic!("Can't reset, trace not exhausted.");
         }
     }
@@ -160,7 +158,6 @@ impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, Instruct
     }
 
     fn get_step(&self) -> usize {
-        println!("In get step, self.step = {}", self.step);
         self.step
     }
 }
@@ -888,7 +885,6 @@ pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
         icicle::icicle_init();
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
-        println!("Trace length: {}", trace_length);
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
@@ -993,7 +989,6 @@ pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
                     );
                 }
             }
-            println!("Streaming for bytecode_polynomials  passing for {n}th shard");
         }
 
         for n in 0..no_of_shards {
@@ -1026,7 +1021,6 @@ pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
                     instruction_polynomials.lookup_outputs.get_coeff(n * shard_len + i)
                 );
             }
-            println!("Streaming for Instruction polynomials passing for {n}th shard");
         }
 
         // testing the streaming polynomials for memory_polynomials
@@ -1062,7 +1056,6 @@ pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
                     memory_polynomials.v_write_ram.get_coeff(n * shard_len + i)
                 );
             }
-            println!("Streaming for Memory polynomials passing for {n}th shard");
         }
 
         let mut jolt_polynomials = JoltPolynomials {
@@ -1084,76 +1077,7 @@ pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs
         >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
-        for n in 0..no_of_shards {
-            let streamed_polys = jolt_oracle.next_shard(shard_len);
-            for shard in 0..shard_len {
-                for i in 0..C {
-                    assert_eq!(
-                        streamed_polys.r1cs.chunks_x[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.chunks_x[i].get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.chunks_y[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.chunks_y[i].get_coeff(n * shard_len + shard)
-                    );
-                }
-                for i in 0..NUM_CIRCUIT_FLAGS {
-                    assert_eq!(
-                        streamed_polys.r1cs.circuit_flags[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.circuit_flags[i].get_coeff(n * shard_len + shard)
-                    );
-                }
-                for i in 0..jolt_polynomials.r1cs.aux.relevant_y_chunks.len() {
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.relevant_y_chunks[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.relevant_y_chunks[i].get_coeff(
-                            n * shard_len + shard
-                        )
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.left_lookup_operand.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.left_lookup_operand.get_coeff(
-                            n * shard_len + shard
-                        )
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.right_lookup_operand.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.right_lookup_operand.get_coeff(
-                            n * shard_len + shard
-                        )
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.product.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.product.get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.write_lookup_output_to_rd.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.write_lookup_output_to_rd.get_coeff(
-                            n * shard_len + shard
-                        )
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.write_pc_to_rd.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.write_pc_to_rd.get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.next_pc_jump.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.next_pc_jump.get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.should_branch.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.should_branch.get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.next_pc.get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.next_pc.get_coeff(n * shard_len + shard)
-                    );
-                }
-            }
-            println!("Streaming for R1CS polynomials passing for {n}th shard");
-        }
-
-        jolt_oracle.reset_oracle();
+        // jolt_oracle.reset_oracle();
 
         let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
 
