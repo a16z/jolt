@@ -9,11 +9,14 @@ use crate::poly::opening_proof::{
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
+use common::instruction::{NUM_CIRCUIT_FLAGS, RV32IM};
+use common::memory::MemoryLayout;
+use instruction_lookups::LookupsProof;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use strum::EnumCount;
 use timestamp_range_check::TimestampRangeCheckStuff;
+use tracer::{ELFInstruction, JoltDevice};
 
 use crate::join_conditional;
 use crate::jolt::{
@@ -34,15 +37,9 @@ use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
-};
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, memory::MemoryOp};
 
 use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
-use self::instruction_lookups::{
-    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
-};
 use self::read_write_memory::{
     ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
     ReadWriteMemoryStuff,
@@ -54,7 +51,7 @@ use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
-use super::instruction::JoltInstructionSet;
+use super::instruction::{JoltInstructionSet, LookupTables};
 
 #[derive(Clone)]
 pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
@@ -64,7 +61,6 @@ where
     ProofTranscript: Transcript,
 {
     pub generators: PCS::Setup,
-    pub instruction_lookups: InstructionLookupsPreprocessing<C, F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
@@ -72,8 +68,8 @@ where
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
-    pub instruction_lookup: Option<InstructionSet>,
+pub struct JoltTraceStep<const WORD_SIZE: usize> {
+    pub instruction_lookup: Option<LookupTables<WORD_SIZE>>,
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
@@ -88,8 +84,8 @@ where
     pub(crate) opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
 }
 
-impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
-    fn no_op() -> Self {
+impl<const WORD_SIZE: usize> JoltTraceStep<WORD_SIZE> {
+    pub fn no_op() -> Self {
         JoltTraceStep {
             instruction_lookup: None,
             bytecode_row: BytecodeRow::no_op(0),
@@ -112,28 +108,24 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<
+    const WORD_SIZE: usize,
     const C: usize,
     const M: usize,
     I,
     F,
     PCS,
-    InstructionSet,
-    Subtables,
     ProofTranscript,
 > where
     I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet,
-    Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
     pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
-    pub instruction_lookups:
-        InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
+    pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     _marker: PhantomData<I>,
@@ -143,7 +135,6 @@ pub struct JoltProof<
 pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) bytecode: BytecodeStuff<T>,
     pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
-    pub(crate) instruction_lookups: InstructionLookupStuff<T>,
     pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
     pub(crate) r1cs: R1CSStuff<T>,
 }
@@ -156,7 +147,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .read_write_values()
             .into_iter()
             .chain(self.read_write_memory.read_write_values())
-            .chain(self.instruction_lookups.read_write_values())
             .chain(self.timestamp_range_check.read_write_values())
             .chain(self.r1cs.read_write_values())
             .collect()
@@ -167,7 +157,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .init_final_values()
             .into_iter()
             .chain(self.read_write_memory.init_final_values())
-            .chain(self.instruction_lookups.init_final_values())
             .chain(self.timestamp_range_check.init_final_values())
             .chain(self.r1cs.init_final_values())
             .collect()
@@ -178,7 +167,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .read_write_values_mut()
             .into_iter()
             .chain(self.read_write_memory.read_write_values_mut())
-            .chain(self.instruction_lookups.read_write_values_mut())
             .chain(self.timestamp_range_check.read_write_values_mut())
             .chain(self.r1cs.read_write_values_mut())
             .collect()
@@ -189,7 +177,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .init_final_values_mut()
             .into_iter()
             .chain(self.read_write_memory.init_final_values_mut())
-            .chain(self.instruction_lookups.init_final_values_mut())
             .chain(self.timestamp_range_check.init_final_values_mut())
             .chain(self.r1cs.init_final_values_mut())
             .collect()
@@ -221,9 +208,6 @@ impl<
         Self {
             bytecode: BytecodeStuff::initialize(&preprocessing.bytecode),
             read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
-            instruction_lookups: InstructionLookupStuff::initialize(
-                &preprocessing.instruction_lookups,
-            ),
             timestamp_range_check: TimestampRangeCheckStuff::initialize(
                 &crate::lasso::memory_checking::NoPreprocessing,
             ),
@@ -273,10 +257,6 @@ impl<F: JoltField> JoltPolynomials<F> {
             || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
             || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators)
         );
-        commitments.instruction_lookups.final_cts = PCS::batch_commit(
-            &self.instruction_lookups.final_cts,
-            &preprocessing.generators,
-        );
         drop(_guard);
         drop(span);
 
@@ -284,7 +264,7 @@ impl<F: JoltField> JoltPolynomials<F> {
     }
 }
 
-pub trait Jolt<F, PCS, const C: usize, const M: usize, ProofTranscript>
+pub trait Jolt<const C: usize, const M: usize, const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -307,29 +287,23 @@ where
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
         icicle::icicle_init();
 
-        let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
-            M,
-            Self::InstructionSet,
-            Self::Subtables,
-        >();
-
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .into_iter()
             .flat_map(|instruction| match instruction.opcode {
-                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
-                tracer::RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
+                RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
                 _ => vec![instruction],
             })
             .map(|instruction| BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction))
@@ -350,7 +324,6 @@ where
         JoltPreprocessing {
             generators,
             memory_layout,
-            instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
             field: small_value_lookup_tables,
@@ -360,17 +333,16 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         program_io: JoltDevice,
-        mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
+        mut trace: Vec<JoltTraceStep<WORD_SIZE>>,
         mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
+            WORD_SIZE,
             C,
             M,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
             PCS,
-            Self::InstructionSet,
-            Self::Subtables,
             ProofTranscript,
         >,
         JoltCommitments<PCS, ProofTranscript>,
@@ -395,17 +367,6 @@ where
             &program_io.memory_layout,
             trace_length,
         );
-
-        let instruction_polynomials =
-            InstructionLookupsProof::<
-                C,
-                M,
-                F,
-                PCS,
-                Self::InstructionSet,
-                Self::Subtables,
-                ProofTranscript,
-            >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
         let memory_polynomials = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
@@ -441,6 +402,7 @@ where
         let r1cs_polynomials = R1CSPolynomials::new::<
             C,
             M,
+            WORD_SIZE,
             Self::InstructionSet,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         >(&trace);
@@ -449,7 +411,6 @@ where
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
             timestamp_range_check: range_check_polys,
-            instruction_lookups: instruction_polynomials,
             r1cs: r1cs_polynomials,
         };
 
@@ -480,10 +441,9 @@ where
             &mut transcript,
         );
 
-        let instruction_proof = InstructionLookupsProof::prove(
+        let instruction_proof = LookupsProof::prove(
             &preprocessing.generators,
-            &mut jolt_polynomials,
-            &preprocessing.instruction_lookups,
+            &trace,
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -542,13 +502,12 @@ where
     fn verify(
         mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
         proof: JoltProof<
+            WORD_SIZE,
             C,
             M,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
             PCS,
-            Self::InstructionSet,
-            Self::Subtables,
             ProofTranscript,
         >,
         commitments: JoltCommitments<PCS, ProofTranscript>,
@@ -606,7 +565,6 @@ where
             &mut transcript,
         )?;
         Self::verify_instruction_lookups(
-            &preprocessing.instruction_lookups,
             &preprocessing.generators,
             proof.instruction_lookups,
             &commitments,
@@ -642,29 +600,13 @@ where
 
     #[tracing::instrument(skip_all)]
     fn verify_instruction_lookups<'a>(
-        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         generators: &PCS::Setup,
-        proof: InstructionLookupsProof<
-            C,
-            M,
-            F,
-            PCS,
-            Self::InstructionSet,
-            Self::Subtables,
-            ProofTranscript,
-        >,
+        proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
         commitments: &'a JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        InstructionLookupsProof::verify(
-            preprocessing,
-            generators,
-            proof,
-            commitments,
-            opening_accumulator,
-            transcript,
-        )
+        proof.verify(opening_accumulator, transcript)
     }
 
     #[tracing::instrument(skip_all)]
@@ -743,8 +685,7 @@ where
         trace_length: usize,
     ) {
         transcript.append_u64(trace_length as u64);
-        transcript.append_u64(C as u64);
-        transcript.append_u64(M as u64);
+        transcript.append_u64(WORD_SIZE as u64);
         transcript.append_u64(Self::InstructionSet::COUNT as u64);
         transcript.append_u64(Self::Subtables::COUNT as u64);
         transcript.append_u64(memory_layout.max_input_size);
@@ -757,7 +698,6 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
-pub mod instruction_lookups_shout;
 pub mod read_write_memory;
 pub mod rv32i_vm;
 pub mod timestamp_range_check;

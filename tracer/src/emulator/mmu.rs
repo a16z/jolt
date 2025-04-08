@@ -9,7 +9,7 @@ extern crate fnv;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
-use common::rv_trace::{JoltDevice, MemoryState};
+use common::memory::{JoltDevice, MemoryState};
 
 use self::fnv::FnvHashMap;
 

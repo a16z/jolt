@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::trace::Tracer;
-use common::rv_trace::*;
+use common::instruction::*;
 
 use self::fnv::FnvHashMap;
 

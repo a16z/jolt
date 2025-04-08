@@ -13,7 +13,7 @@ use or::ORInstruction;
 use prefixes::PrefixEval;
 use rand::rngs::StdRng;
 use rand::RngCore;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use slt::SLTInstruction;
 use sltu::SLTUInstruction;
 use std::marker::Sync;
@@ -22,7 +22,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use sub::SUBInstruction;
 use suffixes::{SuffixEval, Suffixes};
-use tracer::{RVTraceRow, RegisterState};
+use tracer::{ELFInstruction, RVTraceRow, RegisterState};
 use virtual_advice::ADVICEInstruction;
 use virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction;
 use virtual_assert_lte::ASSERTLTEInstruction;
@@ -40,7 +40,6 @@ use crate::jolt::subtable::LassoSubtable;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::instruction_utils::chunk_operand;
 use crate::utils::interleave_bits;
-use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;
 
 #[enum_dispatch]
@@ -256,7 +255,7 @@ pub mod xor;
 #[cfg(test)]
 pub mod test;
 
-#[derive(Copy, Clone, Debug, Serialize, EnumIter, EnumCountMacro)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, EnumIter, EnumCountMacro)]
 #[repr(u8)]
 pub enum LookupTables<const WORD_SIZE: usize> {
     Add(ADDInstruction<WORD_SIZE>),

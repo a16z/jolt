@@ -25,7 +25,8 @@ use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInst
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, virtual_movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
-use common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
+use common::instruction::{ELFInstruction, RV32IM};
+use common::rv_trace::RVTraceRow;
 
 impl TryFrom<&ELFInstruction> for RV32I {
     type Error = &'static str;

@@ -17,7 +17,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use common::rv_trace::ELFInstruction;
+use common::instruction::ELFInstruction;
 
 use rayon::prelude::*;
 
@@ -306,9 +306,9 @@ where
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "BytecodeProof::generate_witness")]
-    pub fn generate_witness<InstructionSet: JoltInstructionSet>(
+    pub fn generate_witness<const WORD_SIZE: usize>(
         preprocessing: &BytecodePreprocessing<F>,
-        trace: &mut Vec<JoltTraceStep<InstructionSet>>,
+        trace: &mut Vec<JoltTraceStep<WORD_SIZE>>,
     ) -> BytecodePolynomials<F> {
         let num_ops = trace.len();
 
@@ -708,13 +708,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::jolt::vm::rv32i_vm::RV32I;
-
     use super::*;
     use ark_bn254::Fr;
     use common::{
-        constants::MEMORY_OPS_PER_INSTRUCTION,
-        rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
+        constants::MEMORY_OPS_PER_INSTRUCTION, instruction::NUM_CIRCUIT_FLAGS, memory::MemoryOp,
     };
     use std::collections::HashSet;
 
@@ -724,7 +721,7 @@ mod tests {
         set1.symmetric_difference(&set2).cloned().collect()
     }
 
-    fn trace_step(bytecode_row: BytecodeRow) -> JoltTraceStep<RV32I> {
+    fn trace_step(bytecode_row: BytecodeRow) -> JoltTraceStep<32> {
         JoltTraceStep {
             instruction_lookup: None,
             memory_ops: [MemoryOp::noop_read(); MEMORY_OPS_PER_INSTRUCTION],

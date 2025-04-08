@@ -171,7 +171,7 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, PCS, ProofTranscript> Jolt<F, PCS, C, M, ProofTranscript> for RV32IJoltVM
+impl<F, PCS, ProofTranscript> Jolt<C, M, 32, F, PCS, ProofTranscript> for RV32IJoltVM
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -183,7 +183,7 @@ where
 }
 
 pub type RV32IJoltProof<F, PCS, ProofTranscript> =
-    JoltProof<C, M, JoltR1CSInputs, F, PCS, RV32I, RV32ISubtables<F>, ProofTranscript>;
+    JoltProof<32, C, M, JoltR1CSInputs, F, PCS, ProofTranscript>;
 
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use eyre::Result;
@@ -266,20 +266,38 @@ mod tests {
         ProofTranscript: Transcript,
     {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in
-            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::InstructionSet::iter()
+        for instruction in <RV32IJoltVM as Jolt<
+            C,
+            M,
+            32,
+            Fr,
+            HyperKZG<Bn254, KeccakTranscript>,
+            KeccakTranscript,
+        >>::InstructionSet::iter()
         {
             for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::Subtables::from(
-                    subtable.subtable_id(),
-                );
+                let _ = <RV32IJoltVM as Jolt<
+                    C,
+                    M,
+                    32,
+                    Fr,
+                    HyperKZG<Bn254, KeccakTranscript>,
+                    KeccakTranscript,
+                >>::Subtables::from(subtable.subtable_id());
                 subtable_set.insert(subtable.subtable_id());
             }
         }
         assert_eq!(
             subtable_set.len(),
-            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::Subtables::COUNT,
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::Subtables::COUNT,
             "Unused enum variants in Subtables"
         );
     }
@@ -312,11 +330,14 @@ mod tests {
             1 << 20,
         );
         let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<F, PCS, C, M, ProofTranscript>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
         let verification_result =
             RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
         assert!(
@@ -366,15 +387,15 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
-            _,
-            Zeromorph<Bn254, KeccakTranscript>,
-            C,
-            M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (jolt_proof, jolt_commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
@@ -403,15 +424,15 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
-            _,
-            HyperKZG<Bn254, KeccakTranscript>,
-            C,
-            M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (jolt_proof, jolt_commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
@@ -436,15 +457,15 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (jolt_proof, jolt_commitments, debug_info) = <RV32IJoltVM as Jolt<
-            _,
-            HyperKZG<Bn254, KeccakTranscript>,
-            C,
-            M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (jolt_proof, jolt_commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result =
             RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
@@ -475,15 +496,15 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            C,
-            M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
         let _verification_result =
             RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
     }
@@ -514,15 +535,15 @@ mod tests {
             1 << 20,
             1 << 20,
         );
-        let (proof, commitments, debug_info) = <RV32IJoltVM as Jolt<
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            C,
-            M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+        let (proof, commitments, debug_info) =
+            <RV32IJoltVM as Jolt<
+                C,
+                M,
+                32,
+                Fr,
+                HyperKZG<Bn254, KeccakTranscript>,
+                KeccakTranscript,
+            >>::prove(io_device, trace, preprocessing.clone());
         let _verification_result =
             RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
     }

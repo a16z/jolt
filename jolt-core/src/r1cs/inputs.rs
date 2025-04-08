@@ -6,7 +6,6 @@
 
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -19,8 +18,7 @@ use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::log2;
-use common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
+use common::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use strum::IntoEnumIterator;
@@ -91,8 +89,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
-    pub chunks_x: Vec<T>,
-    pub chunks_y: Vec<T>,
+    // pub chunks_x: Vec<T>,
+    // pub chunks_y: Vec<T>,
     pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
     pub aux: AuxVariableStuff<T>,
 }
@@ -102,8 +100,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, us
 {
     fn initialize(C: &usize) -> Self {
         Self {
-            chunks_x: std::iter::repeat_with(|| T::default()).take(*C).collect(),
-            chunks_y: std::iter::repeat_with(|| T::default()).take(*C).collect(),
+            // chunks_x: std::iter::repeat_with(|| T::default()).take(*C).collect(),
+            // chunks_y: std::iter::repeat_with(|| T::default()).take(*C).collect(),
             circuit_flags: std::array::from_fn(|_| T::default()),
             aux: AuxVariableStuff::initialize(C),
         }
@@ -112,19 +110,15 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, us
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
-        self.chunks_x
+        self.circuit_flags
             .iter()
-            .chain(self.chunks_y.iter())
-            .chain(self.circuit_flags.iter())
             .chain(self.aux.read_write_values())
             .collect()
     }
 
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        self.chunks_x
+        self.circuit_flags
             .iter_mut()
-            .chain(self.chunks_y.iter_mut())
-            .chain(self.circuit_flags.iter_mut())
             .chain(self.aux.read_write_values_mut())
             .collect()
     }
@@ -161,27 +155,16 @@ impl<F: JoltField> R1CSPolynomials<F> {
     pub fn new<
         const C: usize,
         const M: usize,
+        const WORD_SIZE: usize,
         InstructionSet: JoltInstructionSet,
         I: ConstraintInput,
     >(
-        trace: &[JoltTraceStep<InstructionSet>],
+        trace: &[JoltTraceStep<WORD_SIZE>],
     ) -> Self {
-        let log_M = log2(M) as usize;
-
-        let mut chunks_x = vec![vec![0u8; trace.len()]; C];
-        let mut chunks_y = vec![vec![0u8; trace.len()]; C];
         let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
 
         // TODO(moodlezoup): Can be parallelized
         for (step_index, step) in trace.iter().enumerate() {
-            if let Some(instr) = &step.instruction_lookup {
-                let (x, y) = instr.operand_chunks(C, log_M);
-                for i in 0..C {
-                    chunks_x[i][step_index] = x[i];
-                    chunks_y[i][step_index] = y[i];
-                }
-            }
-
             for j in 0..NUM_CIRCUIT_FLAGS {
                 if step.circuit_flags[j] {
                     circuit_flags[j][step_index] = 1;
@@ -190,14 +173,6 @@ impl<F: JoltField> R1CSPolynomials<F> {
         }
 
         Self {
-            chunks_x: chunks_x
-                .into_iter()
-                .map(MultilinearPolynomial::from)
-                .collect(),
-            chunks_y: chunks_y
-                .into_iter()
-                .map(MultilinearPolynomial::from)
-                .collect(),
             circuit_flags: circuit_flags
                 .into_iter()
                 .map(MultilinearPolynomial::from)
@@ -302,13 +277,12 @@ pub enum JoltR1CSInputs {
     RD_Write,
     RAM_Write,
 
-    ChunksQuery(usize),
-    LookupOutput,
-    ChunksX(usize),
-    ChunksY(usize),
-
+    // ChunksQuery(usize),
+    // LookupOutput,
+    // ChunksX(usize),
+    // ChunksY(usize),
     OpFlags(CircuitFlags),
-    InstructionFlags(RV32I),
+    // InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
 
@@ -331,11 +305,8 @@ impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
-                Self::ChunksQuery(_) => (0..C).map(Self::ChunksQuery).collect(),
-                Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
-                Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
-                Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
+                // Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
                         AuxVariable::RelevantYChunk(_) => (0..C)
@@ -369,14 +340,10 @@ impl ConstraintInput for JoltR1CSInputs {
             JoltR1CSInputs::RAM_Read => &jolt.read_write_memory.v_read_ram,
             JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
             JoltR1CSInputs::RAM_Write => &jolt.read_write_memory.v_write_ram,
-            JoltR1CSInputs::ChunksQuery(i) => &jolt.instruction_lookups.dim[*i],
-            JoltR1CSInputs::LookupOutput => &jolt.instruction_lookups.lookup_outputs,
-            JoltR1CSInputs::ChunksX(i) => &jolt.r1cs.chunks_x[*i],
-            JoltR1CSInputs::ChunksY(i) => &jolt.r1cs.chunks_y[*i],
             JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
-            JoltR1CSInputs::InstructionFlags(i) => {
-                &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
-            }
+            // JoltR1CSInputs::InstructionFlags(i) => {
+            //     &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
+            // }
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,
                 AuxVariable::RightLookupOperand => &aux_polynomials.right_lookup_operand,

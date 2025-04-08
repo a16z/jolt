@@ -16,9 +16,9 @@ mod decode;
 mod emulator;
 mod trace;
 
-pub use common::rv_trace::{
-    ELFInstruction, JoltDevice, MemoryState, RVTraceRow, RegisterState, RV32IM,
-};
+pub use common::instruction::{ELFInstruction, RV32IM};
+pub use common::memory::{JoltDevice, MemoryState};
+pub use common::rv_trace::{RVTraceRow, RegisterState};
 
 use crate::decode::decode_raw;
 

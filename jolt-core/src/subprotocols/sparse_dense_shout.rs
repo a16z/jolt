@@ -1,10 +1,13 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::instruction::{
-        prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
-        suffixes::{SuffixEval, Suffixes},
-        JoltInstruction, LookupTables,
+    jolt::{
+        instruction::{
+            prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
+            suffixes::{SuffixEval, Suffixes},
+            JoltInstruction, LookupTables,
+        },
+        vm::JoltTraceStep,
     },
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -284,7 +287,7 @@ pub fn prove_sparse_dense_shout<
     F: JoltField,
     ProofTranscript: Transcript,
 >(
-    lookups: &[LookupTables<WORD_SIZE>],
+    trace: &[JoltTraceStep<WORD_SIZE>],
     r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4], Vec<F>) {
@@ -292,7 +295,7 @@ pub fn prove_sparse_dense_shout<
     let log_m = log_K / 4;
     let m = log_m.pow2();
 
-    let T = lookups.len();
+    let T = trace.len();
     let log_T = T.log_2();
     debug_assert_eq!(r_cycle.len(), log_T);
 
@@ -302,9 +305,15 @@ pub fn prove_sparse_dense_shout<
 
     let span = tracing::span!(tracing::Level::INFO, "compute lookup indices");
     let _guard = span.enter();
-    let lookup_indices: Vec<_> = lookups
+    let lookup_indices: Vec<_> = trace
         .par_iter()
-        .map(|instruction| LookupBits::new(instruction.to_lookup_index(), log_K))
+        .map(|steo| {
+            let lookup_index = match steo.instruction_lookup {
+                Some(lookup) => lookup.to_lookup_index(),
+                None => 0,
+            };
+            LookupBits::new(lookup_index, log_K)
+        })
         .collect();
     drop(_guard);
     drop(span);
@@ -319,11 +328,14 @@ pub fn prove_sparse_dense_shout<
 
     let span = tracing::span!(tracing::Level::INFO, "compute rv_claim");
     let _guard = span.enter();
-    let rv_claim = lookups
+    let rv_claim = trace
         .par_iter()
         .zip(lookup_indices.par_iter())
         .zip(u_evals.par_iter())
-        .map(|((instruction, k), u)| u.mul_u64_unchecked(instruction.materialize_entry(k.into())))
+        .map(|((step, k), u)| match step.instruction_lookup {
+            Some(lookup) => u.mul_u64_unchecked(lookup.materialize_entry(k.into())),
+            None => F::zero(),
+        })
         .sum();
     drop(_guard);
     drop(span);
@@ -372,16 +384,20 @@ pub fn prove_sparse_dense_shout<
             .par_iter()
             .zip(suffix_polys.par_iter_mut())
             .for_each(|(table, polys)| {
-                let table_lookups: Vec<_> = lookups
+                let table_lookups: Vec<_> = trace
                     .iter()
                     .zip(lookup_indices.iter())
                     .zip(u_evals.iter())
-                    .filter_map(|((lookup, k), u)| {
-                        if LookupTables::enum_index(lookup) == LookupTables::enum_index(table) {
-                            Some((k, u))
-                        } else {
-                            None
+                    .filter_map(|((step, k), u)| match step.instruction_lookup {
+                        Some(lookup) => {
+                            if LookupTables::enum_index(&lookup) == LookupTables::enum_index(table)
+                            {
+                                Some((k, u))
+                            } else {
+                                None
+                            }
                         }
+                        None => None,
                     })
                     .collect();
                 table
@@ -492,14 +508,18 @@ pub fn prove_sparse_dense_shout<
     let mut combined_instruction_val_poly: Vec<F> = unsafe_allocate_zero_vec(T);
     combined_instruction_val_poly
         .par_iter_mut()
-        .zip(lookups.par_iter())
-        .for_each(|(val, table)| {
-            let suffixes: Vec<_> = table
-                .suffixes()
-                .iter()
-                .map(|suffix| F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0))))
-                .collect();
-            *val = table.combine(&prefixes, &suffixes);
+        .zip(trace.par_iter())
+        .for_each(|(val, step)| {
+            if let Some(table) = step.instruction_lookup {
+                let suffixes: Vec<_> = table
+                    .suffixes()
+                    .iter()
+                    .map(|suffix| {
+                        F::from_u32(suffix.suffix_mle::<WORD_SIZE>(LookupBits::new(0, 0)))
+                    })
+                    .collect();
+                *val = table.combine(&prefixes, &suffixes);
+            }
         });
     let mut combined_instruction_val_poly =
         MultilinearPolynomial::from(combined_instruction_val_poly);
@@ -590,11 +610,17 @@ pub fn prove_sparse_dense_shout<
     let flag_claims: Vec<_> = (0..LookupTables::<WORD_SIZE>::COUNT)
         .into_par_iter()
         .map(|table_index| {
-            lookups
+            trace
                 .iter()
                 .enumerate()
-                .filter(|(_, lookup)| LookupTables::enum_index(lookup) == table_index)
-                .map(|(j, _)| eq_r_cycle_prime[j])
+                .filter_map(|(j, step)| {
+                    if let Some(lookup) = step.instruction_lookup {
+                        if LookupTables::enum_index(&lookup) == table_index {
+                            return Some(eq_r_cycle_prime[j]);
+                        }
+                    }
+                    None
+                })
                 .sum::<F>()
         })
         .collect();
@@ -623,15 +649,15 @@ pub fn verify_sparse_dense_shout<
     F: JoltField,
     ProofTranscript: Transcript,
 >(
-    proof: SumcheckInstanceProof<F, ProofTranscript>,
-    log_K: usize,
+    proof: &SumcheckInstanceProof<F, ProofTranscript>,
     log_T: usize,
     r_cycle: Vec<F>,
     rv_claim: F,
     ra_claims: [F; 4],
-    flag_claims: Vec<F>,
+    flag_claims: &[F],
     transcript: &mut ProofTranscript,
 ) -> Result<(), ProofVerifyError> {
+    let log_K = 2 * WORD_SIZE;
     let first_log_K_rounds = SumcheckInstanceProof::new(proof.compressed_polys[..log_K].to_vec());
     let last_log_T_rounds = SumcheckInstanceProof::new(proof.compressed_polys[log_K..].to_vec());
     // The first log(K) rounds' univariate polynomials are degree 2
@@ -691,30 +717,30 @@ mod tests {
     fn test_sparse_dense_shout(instruction: Option<LookupTables<WORD_SIZE>>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
-        let instructions: Vec<_> = (0..T)
-            .map(|_| LookupTables::random(&mut rng, instruction))
+        let trace: Vec<_> = (0..T)
+            .map(|_| {
+                let mut step = JoltTraceStep::no_op();
+                step.instruction_lookup = Some(LookupTables::random(&mut rng, instruction));
+                step
+            })
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        let (proof, rv_claim, ra_claims, flag_claims) = prove_sparse_dense_shout::<WORD_SIZE, _, _>(
-            &instructions,
-            r_cycle,
-            &mut prover_transcript,
-        );
+        let (proof, rv_claim, ra_claims, flag_claims) =
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
         let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(LOG_T);
         let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
-            proof,
-            LOG_K,
+            &proof,
             LOG_T,
             r_cycle,
             rv_claim,
             ra_claims,
-            flag_claims,
+            &flag_claims,
             &mut verifier_transcript,
         );
         assert!(

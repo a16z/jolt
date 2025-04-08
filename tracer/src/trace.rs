@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 
-use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
+use common::instruction::ELFInstruction;
+use common::memory::MemoryState;
+use common::rv_trace::{RVTraceRow, RegisterState};
 
 use crate::emulator::cpu::Xlen;
 

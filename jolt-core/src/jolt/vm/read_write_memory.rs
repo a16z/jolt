@@ -28,7 +28,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
 };
-use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
+use common::memory::{JoltDevice, MemoryLayout, MemoryOp};
 
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
 use super::{JoltPolynomials, JoltStuff, JoltTraceStep};
@@ -251,10 +251,10 @@ fn map_to_polys<F: JoltField, const N: usize>(
 
 impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryPolynomials::generate_witness")]
-    pub fn generate_witness<InstructionSet: JoltInstructionSet>(
+    pub fn generate_witness<const WORD_SIZE: usize>(
         program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        trace: &[JoltTraceStep<InstructionSet>],
+        trace: &[JoltTraceStep<WORD_SIZE>],
     ) -> Self {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);

@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::jolt::instruction::LookupTables;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
-use crate::jolt::vm::Jolt;
+use crate::jolt::vm::{Jolt, JoltTraceStep};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
@@ -133,30 +133,30 @@ where
 
     let mut rng = StdRng::seed_from_u64(12345);
 
-    let instructions: Vec<_> = (0..T)
-        .map(|_| LookupTables::random(&mut rng, None))
+    let trace: Vec<_> = (0..T)
+        .map(|_| {
+            let mut step = JoltTraceStep::no_op();
+            step.instruction_lookup = Some(LookupTables::random(&mut rng, None));
+            step
+        })
         .collect();
 
     let mut prover_transcript = ProofTranscript::new(b"test_transcript");
     let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
 
     let task = move || {
-        let (proof, rv_claim, ra_claims, flag_claims) = prove_sparse_dense_shout::<WORD_SIZE, _, _>(
-            &instructions,
-            r_cycle,
-            &mut prover_transcript,
-        );
+        let (proof, rv_claim, ra_claims, flag_claims) =
+            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
         let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
         let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
-            proof,
-            LOG_K,
+            &proof,
             LOG_T,
             r_cycle,
             rv_claim,
             ra_claims,
-            flag_claims,
+            &flag_claims,
             &mut verifier_transcript,
         );
         assert!(
@@ -308,7 +308,7 @@ where
             );
 
         let (jolt_proof, jolt_commitments, _) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
+            <RV32IJoltVM as Jolt<C, M, 32, _, PCS, ProofTranscript>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),
@@ -371,7 +371,7 @@ where
             );
 
         let (jolt_proof, jolt_commitments, _) =
-            <RV32IJoltVM as Jolt<_, PCS, C, M, ProofTranscript>>::prove(
+            <RV32IJoltVM as Jolt<C, M, 32, _, PCS, ProofTranscript>>::prove(
                 io_device,
                 trace,
                 preprocessing.clone(),

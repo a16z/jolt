@@ -16,7 +16,8 @@ use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    rv_trace::JoltDevice,
+    instruction::RV32IM,
+    memory::JoltDevice,
 };
 pub use tracer::ELFInstruction;
 
@@ -182,7 +183,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
+    pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<32>>) {
         self.build();
         let elf = self.elf.clone().unwrap();
         let (raw_trace, io_device) =
@@ -191,18 +192,18 @@ impl Program {
         let trace: Vec<_> = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
-                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
+                RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
+                RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
+                RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
+                RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
+                RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
+                RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
+                RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {
@@ -211,7 +212,7 @@ impl Program {
                 JoltTraceStep {
                     instruction_lookup,
                     bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
-                    memory_ops: (&row).into(),
+                    memory_ops: row.to_memory_ops(),
                     circuit_flags: row.instruction.to_circuit_flags(),
                 }
             })
