@@ -18,7 +18,7 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof) = prove_fib(50);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_fib(10, output, proof);
+    let is_valid = verify_fib(50, output, proof);
 
     println!("output: {}", output);
     println!("valid: {}", is_valid);
