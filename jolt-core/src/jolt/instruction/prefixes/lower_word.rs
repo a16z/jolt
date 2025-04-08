@@ -15,6 +15,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPre
         mut b: LookupBits,
         j: usize,
     ) -> F {
+        // Ignore high-order variables
         if j < WORD_SIZE {
             return F::zero();
         }
@@ -35,6 +36,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPre
             result += F::from_u64(1 << y_shift) * F::from_u8(y_msb);
         }
 
+        // Add in low-order bits from `b`
         let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
         result += F::from_u64(u64::from(b) << suffix_len);
 

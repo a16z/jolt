@@ -180,7 +180,11 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
             .collect();
         for (i, (ptr, ptr_mut)) in zip_eq(read_write_pointers, read_write_pointers_mut).enumerate()
         {
-            assert!(ptr == ptr_mut, "Read-write pointer mismatch at index {}", i);
+            assert!(
+                std::ptr::eq(ptr, ptr_mut),
+                "Read-write pointer mismatch at index {}",
+                i
+            );
         }
 
         let init_final_pointers: Vec<_> = data
@@ -195,7 +199,11 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
             .collect();
         for (i, (ptr, ptr_mut)) in zip_eq(init_final_pointers, init_final_pointers_mut).enumerate()
         {
-            assert!(ptr == ptr_mut, "Init-final pointer mismatch at index {}", i);
+            assert!(
+                std::ptr::eq(ptr, ptr_mut),
+                "Init-final pointer mismatch at index {}",
+                i
+            );
         }
     }
 }

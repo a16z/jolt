@@ -13,6 +13,7 @@ impl<F: JoltField> SparseDensePrefix<F> for RightOperandIsZeroPrefix {
         _: usize,
     ) -> F {
         let (_, y) = b.uninterleave();
+        // Short-circuit if low-order bits of `y` are not 0s
         if u64::from(y) != 0 {
             return F::zero();
         }

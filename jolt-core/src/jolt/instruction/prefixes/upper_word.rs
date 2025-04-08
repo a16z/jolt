@@ -17,6 +17,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPre
         j: usize,
     ) -> F {
         let mut result = checkpoints[Prefixes::UpperWord].unwrap_or(F::zero());
+        // Ignore low-order variables
         if j >= WORD_SIZE {
             return result;
         }
@@ -36,6 +37,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPre
             result += F::from_u64(1 << y_shift) * F::from_u8(y_msb);
         }
 
+        // Add in bits of `b` that fall in upper word
         let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
         if suffix_len > WORD_SIZE {
             result += F::from_u64(u64::from(b) << (suffix_len - WORD_SIZE));

@@ -17,6 +17,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for XorPrefix<WO
     ) -> F {
         let mut result = checkpoints[Prefixes::Xor].unwrap_or(F::zero());
 
+        // XOR high-order variables of x and y
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
             let shift = WORD_SIZE - 1 - j / 2;
@@ -27,6 +28,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for XorPrefix<WO
             let shift = WORD_SIZE - 1 - j / 2;
             result += F::from_u32(1 << shift) * ((F::one() - x) * y_msb + x * (F::one() - y_msb));
         }
+        // XOR remaining x and y bits
         let (x, y) = b.uninterleave();
         let suffix_len = current_suffix_len(2 * WORD_SIZE, j);
         result += F::from_u32((u32::from(x) ^ u32::from(y)) << (suffix_len / 2));

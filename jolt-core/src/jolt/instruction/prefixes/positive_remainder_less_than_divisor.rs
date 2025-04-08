@@ -40,15 +40,17 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderLessThanDivisorPref
         let mut lt = checkpoints[Prefixes::PositiveRemainderLessThanDivisor].unwrap();
         let mut eq = checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
 
+        // For j=2 and j=3, the two checkpoints are the same (they both store isNegative(divisor))
+        // so to avoid double-counting we multiply `lt` by (1 - x) * y instead of adding
+        // eq * (1 - x) * y as we do in subsequent rounds.
         if j == 2 {
             let c = F::from_u32(c);
             let y_msb = F::from_u8(b.pop_msb());
             let (x, y) = b.uninterleave();
+            lt *= (F::one() - c) * y_msb;
             if u64::from(x) < u64::from(y) {
                 eq *= c * y_msb + (F::one() - c) * (F::one() - y_msb);
-                lt *= eq + (F::one() - c) * y_msb;
-            } else {
-                lt *= (F::one() - c) * y_msb;
+                lt += eq;
             }
             return lt;
         }
@@ -56,11 +58,10 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderLessThanDivisorPref
             let r_x = r_x.unwrap();
             let c = F::from_u32(c);
             let (x, y) = b.uninterleave();
+            lt *= (F::one() - r_x) * c;
             if u64::from(x) < u64::from(y) {
                 eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
-                lt *= eq + (F::one() - r_x) * c;
-            } else {
-                lt *= (F::one() - r_x) * c;
+                lt += eq;
             }
             return lt;
         }
