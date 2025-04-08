@@ -421,7 +421,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
             // Initializing the witness eval of l * l+1
             let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
-            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds);
+            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None);
             for shard in 0..num_shards {
                 let shards = stream_polys.next_shard(shard_length);
                 let polys = extract_poly_fn(&shards);
