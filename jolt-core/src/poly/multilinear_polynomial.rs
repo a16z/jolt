@@ -652,14 +652,12 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         jolt_oracle: &mut JoltOracle<'a, F, InstructionSet>,
         r: &[F],
         num_shards: usize,
-        num_vars: usize,
+        shard_len: usize,
     ) -> Vec<F> {
         let rev_r = r.iter().rev().copied().collect::<Vec<_>>();
-        let mut eq_stream =
-            StreamingEqPolynomial::new(rev_r.to_vec(), num_vars, None);
-        let mut eq_r2_stream = StreamingEqPolynomial::new(rev_r.to_vec(), num_vars, F::montgomery_r2());
-
-        let shard_len = 1 << (num_vars - num_shards);
+        let mut eq_stream = StreamingEqPolynomial::new(rev_r.to_vec(), rev_r.len(), None);
+        let mut eq_r2_stream =
+            StreamingEqPolynomial::new(rev_r.to_vec(), rev_r.len(), F::montgomery_r2());
 
         let partial_evals: Vec<Vec<F>> = (0..num_shards)
             .map(|_| {
@@ -704,6 +702,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             })
             .collect();
         let len = partial_evals[0].len();
+        
         let evals =
             partial_evals
                 .iter()

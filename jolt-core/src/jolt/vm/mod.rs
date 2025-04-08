@@ -368,266 +368,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     }
 }
 
-//  impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> JoltOracle<'a, F, InstructionSet> {
-//     pub fn new<const C: usize, const M: usize, PCS, ProofTranscript>(
-//         preprocessing: &'a JoltPreprocessing<C, F, PCS, ProofTranscript>,
-//         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
-//     ) -> Self
-//     where
-//         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//         ProofTranscript: Transcript,
-//     {
-//         let mut trace_oracle = TraceOracle::new(trace);
-
-//         let max_trace_address = trace
-//             .into_iter()
-//             .map(|step| match step.memory_ops[RAM] {
-//                 MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
-//                 MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
-//             })
-//             .max()
-//             .unwrap();
-
-//         let memory_size = max_trace_address.next_power_of_two() as usize;
-//         let mut v_init: Vec<u32> = vec![0; memory_size];
-
-//         // Copy bytecode
-//         let mut v_init_index = memory_address_to_witness_index(
-//             preprocessing.min_bytecode_address,
-//             &program_io.memory_layout,
-//         );
-
-//         for word in preprocessing.bytecode_words.iter() {
-//             v_init[v_init_index] = *word;
-//             v_init_index += 1;
-//         }
-//         // Copy input bytes
-//         v_init_index = memory_address_to_witness_index(
-//             program_io.memory_layout.input_start,
-//             &program_io.memory_layout,
-//         );
-
-//         // Convert input bytes into words and populate `v_init`
-//         for chunk in program_io.inputs.chunks(4) {
-//             let mut word = [0u8; 4];
-//             for (i, byte) in chunk.iter().enumerate() {
-//                 word[i] = *byte;
-//             }
-//             let word = u32::from_le_bytes(word);
-//             v_init[v_init_index] = word;
-//             v_init_index += 1;
-//         }
-//         let v_final = v_init;
-
-//         let polynomial_stream = (|step: JoltTraceStep<InstructionSet>| {
-//             let virtual_address = preprocessing
-//                 .bytecode
-//                 .virtual_address_map
-//                 .get(&(
-//                     step.bytecode_row.address,
-//                     step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
-//                 ))
-//                 .unwrap();
-//             let a_read_write = *virtual_address as u64;
-
-//             let address = F::from_u64(step.bytecode_row.address as u64);
-//             let bitflags = F::from_u64(step.bytecode_row.bitflags);
-//             let rd = F::from_u8(step.bytecode_row.rd);
-//             let rs1 = F::from_u8(step.bytecode_row.rs1);
-//             let rs2 = F::from_u8(step.bytecode_row.rs2);
-//             let imm = F::from_i64(step.bytecode_row.imm);
-
-//             let v_read_write = [address, bitflags, rd, rs1, rs2, imm];
-
-//             let bytecode = BytecodeStuff {
-//                 a_read_write: F::from_u64(a_read_write),
-//                 v_read_write,
-//                 // These are dummy values since they are not required for Twist + Shout.
-//                 t_read: -F::one(),
-//                 t_final: -F::one(),
-//                 a_init_final: None,
-//                 v_init_final: None,
-//             };
-
-//             let chunked_indices: Vec<u16> = if let Some(instr) = &step.instruction_lookup {
-//                 instr
-//                     .to_indices(C, M.log_2())
-//                     .iter()
-//                     .map(|i| *i as u16)
-//                     .collect()
-//             } else {
-//                 vec![0; C]
-//             };
-//             let mut subtable_lookup_indices: Vec<u16> = Vec::with_capacity(C);
-//             for i in 0..C {
-//                 subtable_lookup_indices.push(chunked_indices[i]);
-//             }
-
-//             //Computing dim
-//             let dim: Vec<F> = subtable_lookup_indices
-//                 .clone()
-//                 .into_par_iter()
-//                 .map(F::from_u16)
-//                 .collect();
-
-//             //Computing E_polys
-//             let E_polynomials: Vec<F> = (0..preprocessing.instruction_lookups.num_memories)
-//                 .into_par_iter()
-//                 .map(|memory_index| {
-//                     let dim_index =
-//                         preprocessing.instruction_lookups.memory_to_dimension_index[memory_index];
-//                     let subtable_index =
-//                         preprocessing.instruction_lookups.memory_to_subtable_index[memory_index];
-//                     let access_sequence = subtable_lookup_indices[dim_index];
-//                     let mut subtable_lookups: u32 = 0;
-//                     if let Some(instr) = &step.instruction_lookup {
-//                         let memories_used = &preprocessing
-//                             .instruction_lookups
-//                             .instruction_to_memory_indices[InstructionSet::enum_index(instr)];
-//                         if memories_used.contains(&memory_index) {
-//                             let memory_address = access_sequence as usize;
-//                             debug_assert!(memory_address < M);
-//                             subtable_lookups = preprocessing
-//                                 .instruction_lookups
-//                                 .materialized_subtables[subtable_index][memory_address];
-//                         }
-//                     }
-//                     F::from_u32(subtable_lookups)
-//                 })
-//                 .collect();
-
-//             // Computing instruction_flags
-//             let mut instruction_flag_bitvectors: Vec<F> = vec![
-//                 F::zero();
-//                 preprocessing
-//                     .instruction_lookups
-//                     .instruction_to_memory_indices
-//                     .len()
-//             ];
-//             if let Some(instr) = &step.instruction_lookup {
-//                 instruction_flag_bitvectors[InstructionSet::enum_index(instr)] = F::one();
-//             }
-
-//             // Computing instruction lookups
-//             let lookup_outputs = if let Some(instr) = &step.instruction_lookup {
-//                 F::from_u32(instr.lookup_entry() as u32)
-//             } else {
-//                 F::zero()
-//             };
-
-//             let instruction_lookup = InstructionLookupStuff {
-//                 dim,
-//                 E_polys: E_polynomials,
-//                 instruction_flags: instruction_flag_bitvectors,
-//                 lookup_outputs,
-//                 // These are dummy values since they are not required for Twist + Shout.
-//                 read_cts: vec![F::zero()],
-//                 final_cts: vec![F::zero()],
-//                 a_init_final: None,
-//                 v_init_final: None,
-//             };
-
-//             let a_ram;
-//             let v_read_rd;
-//             let v_read_rs1;
-//             let v_read_rs2;
-//             let v_read_ram;
-//             let v_write_rd;
-//             let v_write_ram;
-
-//             match step.memory_ops[RS1] {
-//                 MemoryOp::Read(a) => {
-//                     assert!(a < REGISTER_COUNT);
-//                     let a = a as usize;
-//                     let v = v_final[a];
-
-//                     v_read_rs1 = v;
-//                 }
-//                 MemoryOp::Write(a, v) => {
-//                     panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
-//                 }
-//             };
-
-//             match step.memory_ops[RS2] {
-//                 MemoryOp::Read(a) => {
-//                     assert!(a < REGISTER_COUNT);
-//                     let a = a as usize;
-//                     let v = v_final[a];
-
-//                     v_read_rs2 = v;
-//                 }
-//                 MemoryOp::Write(a, v) => {
-//                     panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v)
-//                 }
-//             };
-
-//             match step.memory_ops[RD] {
-//                 MemoryOp::Read(a) => {
-//                     panic!("Unexpected rd MemoryOp::Read({})", a)
-//                 }
-//                 MemoryOp::Write(a, v_new) => {
-//                     assert!(a < REGISTER_COUNT);
-//                     let a = a as usize;
-//                     let v_old = v_final[a];
-
-//                     v_read_rd = v_old;
-//                     v_write_rd = v_new as u32;
-//                     v_final[a] = v_new as u32;
-//                 }
-//             };
-
-//             match step.memory_ops[RAM] {
-//                 MemoryOp::Read(a) => {
-//                     debug_assert!(a % 4 == 0);
-//                     let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
-//                     let v = v_final[remapped_a];
-
-//                     a_ram = remapped_a as u32;
-//                     v_read_ram = v;
-//                     v_write_ram = v;
-//                 }
-//                 MemoryOp::Write(a, v_new) => {
-//                     debug_assert!(a % 4 == 0);
-//                     let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
-//                     let v_old = v_final[remapped_a];
-
-//                     a_ram = remapped_a as u32;
-//                     v_read_ram = v_old;
-//                     v_write_ram = v_new as u32;
-//                     v_final[remapped_a] = v_new as u32;
-//                 }
-//             }
-
-//             ReadWriteMemoryStuff {
-//                 a_ram: F::from_u32(a_ram),
-//                 v_read_rd: F::from_u32(v_read_rd),
-//                 v_read_rs1: F::from_u32(v_read_rs1),
-//                 v_read_rs2: F::from_u32(v_read_rs2),
-//                 v_read_ram: F::from_u32(v_read_ram),
-//                 v_write_rd: F::from_u32(v_write_rd),
-//                 v_write_ram: F::from_u32(v_write_ram),
-//                 // These are dummy values since they are not required for Twist + Shout.
-//                 v_final: F::zero(),
-//                 t_read_rd: F::zero(),
-//                 t_read_rs1: F::zero(),
-//                 t_read_rs2: F::zero(),
-//                 t_read_ram: F::zero(),
-//                 t_final: F::zero(),
-//                 a_init_final: None,
-//                 v_init: None,
-//                 identity: None,
-//             }
-//         });
-
-//         // BytecodeOracle {
-//         //     trace_oracle,
-//         //     func: Box::new(polynomial_stream),
-//         // }
-//     }
-// }
-
-//TODO: Implment StreamingOracle for StreamingJoltStuff.
-
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
     for JoltStuff<T>
 {
@@ -945,100 +685,100 @@ where
             PhantomData::<F>,
         );
 
-        let shard_len = padded_trace_length / 2;
-        let no_of_shards = padded_trace_length / shard_len;
+        // let shard_len = padded_trace_length / 2;
+        // let no_of_shards = padded_trace_length / shard_len;
 
-        for n in 0..no_of_shards {
-            let streamed_polys = bytecode_oracle.next_shard(shard_len);
-            for i in 0..shard_len {
-                assert_eq!(
-                    streamed_polys.a_read_write.get_coeff(i),
-                    bytecode_polynomials
-                        .a_read_write
-                        .get_coeff(n * shard_len + i)
-                );
-            }
-
-            for j in 0..6 {
-                for i in 0..shard_len {
-                    assert_eq!(
-                        streamed_polys.v_read_write[j].get_coeff(i),
-                        bytecode_polynomials.v_read_write[j].get_coeff(n * shard_len + i)
-                    );
-                }
-            }
-            println!("Streaming for bytecode_polynomials  passing for {n}th shard");
-        }
-
-        for n in 0..no_of_shards {
-            let streamed_polys = instruction_lookups_oracle.next_shard(shard_len);
-            for i in 0..shard_len {
-                for poly_index in 0..instruction_polynomials.dim.len() {
-                    assert_eq!(
-                        streamed_polys.dim[poly_index].get_coeff(i),
-                        instruction_polynomials.dim[poly_index].get_coeff(n * shard_len + i)
-                    );
-                }
-                for poly_index in 0..instruction_polynomials.E_polys.len() {
-                    assert_eq!(
-                        streamed_polys.E_polys[poly_index].get_coeff(i),
-                        instruction_polynomials.E_polys[poly_index].get_coeff(n * shard_len + i)
-                    );
-                }
-                for poly_index in 0..instruction_polynomials.instruction_flags.len() {
-                    assert_eq!(
-                        streamed_polys.instruction_flags[poly_index].get_coeff(i),
-                        instruction_polynomials.instruction_flags[poly_index]
-                            .get_coeff(n * shard_len + i)
-                    );
-                }
-            }
-            for i in 0..shard_len {
-                assert_eq!(
-                    streamed_polys.lookup_outputs.get_coeff(i),
-                    instruction_polynomials
-                        .lookup_outputs
-                        .get_coeff(n * shard_len + i)
-                );
-            }
-            println!("Streaming for Instruction polynomials passing for {n}th shard");
-        }
-
-        // testing the streaming polynomials for memory_polynomials
-        for n in 0..no_of_shards {
-            let streamed_polys = read_write_memory_oracle.next_shard(shard_len);
-            for i in 0..shard_len {
-                assert_eq!(
-                    streamed_polys.a_ram.get_coeff(i),
-                    memory_polynomials.a_ram.get_coeff(n * shard_len + i)
-                );
-                assert_eq!(
-                    streamed_polys.v_read_rs1.get_coeff(i),
-                    memory_polynomials.v_read_rs1.get_coeff(n * shard_len + i)
-                );
-                assert_eq!(
-                    streamed_polys.v_read_rs2.get_coeff(i),
-                    memory_polynomials.v_read_rs2.get_coeff(n * shard_len + i)
-                );
-                assert_eq!(
-                    streamed_polys.v_read_rd.get_coeff(i),
-                    memory_polynomials.v_read_rd.get_coeff(n * shard_len + i)
-                );
-                assert_eq!(
-                    streamed_polys.v_write_rd.get_coeff(i),
-                    memory_polynomials.v_write_rd.get_coeff(n * shard_len + i)
-                );
-                assert_eq!(
-                    streamed_polys.v_read_ram.get_coeff(i),
-                    memory_polynomials.v_read_ram.get_coeff(n * shard_len + i)
-                );
-                assert_eq!(
-                    streamed_polys.v_write_ram.get_coeff(i),
-                    memory_polynomials.v_write_ram.get_coeff(n * shard_len + i)
-                );
-            }
-            println!("Streaming for Memory polynomials passing for {n}th shard");
-        }
+        // for n in 0..no_of_shards {
+        //     let streamed_polys = bytecode_oracle.next_shard(shard_len);
+        //     for i in 0..shard_len {
+        //         assert_eq!(
+        //             streamed_polys.a_read_write.get_coeff(i),
+        //             bytecode_polynomials
+        //                 .a_read_write
+        //                 .get_coeff(n * shard_len + i)
+        //         );
+        //     }
+        //
+        //     for j in 0..6 {
+        //         for i in 0..shard_len {
+        //             assert_eq!(
+        //                 streamed_polys.v_read_write[j].get_coeff(i),
+        //                 bytecode_polynomials.v_read_write[j].get_coeff(n * shard_len + i)
+        //             );
+        //         }
+        //     }
+        //     println!("Streaming for bytecode_polynomials  passing for {n}th shard");
+        // }
+        //
+        // for n in 0..no_of_shards {
+        //     let streamed_polys = instruction_lookups_oracle.next_shard(shard_len);
+        //     for i in 0..shard_len {
+        //         for poly_index in 0..instruction_polynomials.dim.len() {
+        //             assert_eq!(
+        //                 streamed_polys.dim[poly_index].get_coeff(i),
+        //                 instruction_polynomials.dim[poly_index].get_coeff(n * shard_len + i)
+        //             );
+        //         }
+        //         for poly_index in 0..instruction_polynomials.E_polys.len() {
+        //             assert_eq!(
+        //                 streamed_polys.E_polys[poly_index].get_coeff(i),
+        //                 instruction_polynomials.E_polys[poly_index].get_coeff(n * shard_len + i)
+        //             );
+        //         }
+        //         for poly_index in 0..instruction_polynomials.instruction_flags.len() {
+        //             assert_eq!(
+        //                 streamed_polys.instruction_flags[poly_index].get_coeff(i),
+        //                 instruction_polynomials.instruction_flags[poly_index]
+        //                     .get_coeff(n * shard_len + i)
+        //             );
+        //         }
+        //     }
+        //     for i in 0..shard_len {
+        //         assert_eq!(
+        //             streamed_polys.lookup_outputs.get_coeff(i),
+        //             instruction_polynomials
+        //                 .lookup_outputs
+        //                 .get_coeff(n * shard_len + i)
+        //         );
+        //     }
+        //     println!("Streaming for Instruction polynomials passing for {n}th shard");
+        // }
+        //
+        // // testing the streaming polynomials for memory_polynomials
+        // for n in 0..no_of_shards {
+        //     let streamed_polys = read_write_memory_oracle.next_shard(shard_len);
+        //     for i in 0..shard_len {
+        //         assert_eq!(
+        //             streamed_polys.a_ram.get_coeff(i),
+        //             memory_polynomials.a_ram.get_coeff(n * shard_len + i)
+        //         );
+        //         assert_eq!(
+        //             streamed_polys.v_read_rs1.get_coeff(i),
+        //             memory_polynomials.v_read_rs1.get_coeff(n * shard_len + i)
+        //         );
+        //         assert_eq!(
+        //             streamed_polys.v_read_rs2.get_coeff(i),
+        //             memory_polynomials.v_read_rs2.get_coeff(n * shard_len + i)
+        //         );
+        //         assert_eq!(
+        //             streamed_polys.v_read_rd.get_coeff(i),
+        //             memory_polynomials.v_read_rd.get_coeff(n * shard_len + i)
+        //         );
+        //         assert_eq!(
+        //             streamed_polys.v_write_rd.get_coeff(i),
+        //             memory_polynomials.v_write_rd.get_coeff(n * shard_len + i)
+        //         );
+        //         assert_eq!(
+        //             streamed_polys.v_read_ram.get_coeff(i),
+        //             memory_polynomials.v_read_ram.get_coeff(n * shard_len + i)
+        //         );
+        //         assert_eq!(
+        //             streamed_polys.v_write_ram.get_coeff(i),
+        //             memory_polynomials.v_write_ram.get_coeff(n * shard_len + i)
+        //         );
+        //     }
+        //     println!("Streaming for Memory polynomials passing for {n}th shard");
+        // }
 
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
@@ -1058,145 +798,114 @@ where
             ProofTranscript,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
+        //
+        // for n in 0..no_of_shards {
+        //     let streamed_polys = jolt_oracle.next_shard(shard_len);
+        //     for shard in 0..shard_len {
+        //         for i in 0..C {
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.chunks_x[i].get_coeff(shard),
+        //                 jolt_polynomials.r1cs.chunks_x[i].get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.chunks_y[i].get_coeff(shard),
+        //                 jolt_polynomials.r1cs.chunks_y[i].get_coeff(n * shard_len + shard)
+        //             );
+        //         }
+        //         for i in 0..NUM_CIRCUIT_FLAGS {
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.circuit_flags[i].get_coeff(shard),
+        //                 jolt_polynomials.r1cs.circuit_flags[i].get_coeff(n * shard_len + shard)
+        //             );
+        //         }
+        //         for i in 0..jolt_polynomials.r1cs.aux.relevant_y_chunks.len() {
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.relevant_y_chunks[i].get_coeff(shard),
+        //                 jolt_polynomials.r1cs.aux.relevant_y_chunks[i]
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.left_lookup_operand.get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .left_lookup_operand
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys
+        //                     .r1cs
+        //                     .aux
+        //                     .right_lookup_operand
+        //                     .get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .right_lookup_operand
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.product.get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .product
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys
+        //                     .r1cs
+        //                     .aux
+        //                     .write_lookup_output_to_rd
+        //                     .get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .write_lookup_output_to_rd
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.write_pc_to_rd.get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .write_pc_to_rd
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.next_pc_jump.get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .next_pc_jump
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.should_branch.get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .should_branch
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //             assert_eq!(
+        //                 streamed_polys.r1cs.aux.next_pc.get_coeff(shard),
+        //                 jolt_polynomials
+        //                     .r1cs
+        //                     .aux
+        //                     .next_pc
+        //                     .get_coeff(n * shard_len + shard)
+        //             );
+        //         }
+        //     }
+        //     println!("Streaming for R1CS polynomials passing for {n}th shard");
+        // }
 
-        for n in 0..no_of_shards {
-            let streamed_polys = jolt_oracle.next_shard(shard_len);
-            for shard in 0..shard_len {
-                for i in 0..C {
-                    assert_eq!(
-                        streamed_polys.r1cs.chunks_x[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.chunks_x[i].get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.chunks_y[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.chunks_y[i].get_coeff(n * shard_len + shard)
-                    );
-                }
-                for i in 0..NUM_CIRCUIT_FLAGS {
-                    assert_eq!(
-                        streamed_polys.r1cs.circuit_flags[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.circuit_flags[i].get_coeff(n * shard_len + shard)
-                    );
-                }
-                for i in 0..jolt_polynomials.r1cs.aux.relevant_y_chunks.len() {
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.relevant_y_chunks[i].get_coeff(shard),
-                        jolt_polynomials.r1cs.aux.relevant_y_chunks[i]
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.left_lookup_operand.get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .left_lookup_operand
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys
-                            .r1cs
-                            .aux
-                            .right_lookup_operand
-                            .get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .right_lookup_operand
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.product.get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .product
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys
-                            .r1cs
-                            .aux
-                            .write_lookup_output_to_rd
-                            .get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .write_lookup_output_to_rd
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.write_pc_to_rd.get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .write_pc_to_rd
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.next_pc_jump.get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .next_pc_jump
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.should_branch.get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .should_branch
-                            .get_coeff(n * shard_len + shard)
-                    );
-                    assert_eq!(
-                        streamed_polys.r1cs.aux.next_pc.get_coeff(shard),
-                        jolt_polynomials
-                            .r1cs
-                            .aux
-                            .next_pc
-                            .get_coeff(n * shard_len + shard)
-                    );
-                }
-            }
-            println!("Streaming for R1CS polynomials passing for {n}th shard");
-        }
-
-        jolt_oracle.reset_oracle();
+        // jolt_oracle.reset_oracle();
 
         let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
 
         transcript.append_scalar(&spartan_key.vk_digest);
-
-        // for i in 0..10 {
-        //     println!(
-        //         "bytecode_oracle's {i}-th address = {}",
-        //         bytecode_oracle.next_eval().a_read_write
-        //     );
-        // }
-
-        // let program_io_clone = program_io.clone();
-        // let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript>(
-        //     &preprocessing,
-        //     &program_io_clone,
-        //     &trace_1,
-        // );
-
-        // for i in 0..trace_length {
-        //     let eval = jolt_oracle.next_eval();
-        //     assert_eq!(
-        //         eval.bytecode.a_read_write,
-        //         jolt_polynomials.bytecode.a_read_write.get_coeff(i)
-        //     );
-
-        //     for j in 0..6 {
-        //         assert_eq!(
-        //             jolt_polynomials.bytecode.v_read_write[j].get_coeff(i),
-        //             eval.bytecode.v_read_write[j]
-        //         );
-        //     }
-        // }
-
-        // jolt_oracle.reset_oracle();
 
         jolt_commitments
             .read_write_values()
@@ -1236,32 +945,34 @@ where
             &mut transcript,
         );
 
+        // let spartan_proof = UniformSpartanProof::<
+        //     C,
+        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        //     F,
+        //     ProofTranscript,
+        // >::prove::<PCS>(
+        //     &r1cs_builder,
+        //     &spartan_key,
+        //     &jolt_polynomials,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )
+        // .expect("r1cs proof failed");
+
         let spartan_proof = UniformSpartanProof::<
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
             ProofTranscript,
-        >::prove::<PCS>(
+        >::streaming_prove::<PCS, Self::InstructionSet>(
             &r1cs_builder,
             &spartan_key,
             &jolt_polynomials,
+            &mut jolt_oracle,
             &mut opening_accumulator,
             &mut transcript,
         )
         .expect("r1cs proof failed");
-
-        // UniformSpartanProof::<
-        //     C,
-        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        //     F,
-        //     ProofTranscript,
-        // >::streaming_prove::<PCS, Self::InstructionSet>(
-        //     &r1cs_builder,
-        //     &spartan_key,
-        //     jolt_oracle,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // );
 
         // Batch-prove all openings
         let opening_proof =
