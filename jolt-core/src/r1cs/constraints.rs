@@ -6,8 +6,7 @@ use crate::{
     jolt::{
         instruction::{
             add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
-            mulu::MULUInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction,
-            sub::SUBInstruction,
+            mulu::MULUInstruction, sub::SUBInstruction,
             virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
             virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
         },

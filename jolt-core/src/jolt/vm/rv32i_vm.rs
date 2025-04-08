@@ -5,9 +5,6 @@ use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertVal
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::virtual_pow2::POW2Instruction;
 use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInstruction;
-use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
-use crate::jolt::subtable::low_bit::LowBitSubtable;
-use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -16,7 +13,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
@@ -24,19 +20,11 @@ use super::{Jolt, JoltCommitments, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
-    mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
-    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    mulu::MULUInstruction, or::ORInstruction, slt::SLTInstruction, sltu::SLTUInstruction,
+    sub::SUBInstruction, virtual_advice::ADVICEInstruction,
+    virtual_assert_lte::ASSERTLTEInstruction,
     virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
     virtual_movsign::MOVSIGNInstruction, xor::XORInstruction, JoltInstruction, JoltInstructionSet,
-    SubtableIndices,
-};
-use crate::jolt::subtable::{
-    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
-    left_is_zero::LeftIsZeroSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
-    ltu::LtuSubtable, or::OrSubtable, right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable,
-    sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
@@ -73,37 +61,6 @@ macro_rules! instruction_set {
     };
 }
 
-/// Generates an enum out of a list of LassoSubtable types. All LassoSubtable methods
-/// are callable on the enum type via enum_dispatch.
-macro_rules! subtable_enum {
-    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[allow(non_camel_case_types)]
-        #[repr(u8)]
-        #[enum_dispatch(LassoSubtable<F>)]
-        #[derive(EnumCountMacro, EnumIter)]
-        pub enum $enum_name<F: JoltField> { $($alias($struct)),+ }
-        impl<F: JoltField> From<SubtableId> for $enum_name<F> {
-          fn from(subtable_id: SubtableId) -> Self {
-            $(
-              if subtable_id == TypeId::of::<$struct>() {
-                $enum_name::from(<$struct>::new())
-              } else
-            )+
-            { panic!("Unexpected subtable id {:?}", subtable_id) } // TODO(moodlezoup): better error handling
-          }
-        }
-
-        impl<F: JoltField> From<$enum_name<F>> for usize {
-            fn from(subtable: $enum_name<F>) -> usize {
-                // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-                let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
-                byte as usize
-            }
-        }
-        impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
-    };
-}
-
 const WORD_SIZE: usize = 32;
 
 instruction_set!(
@@ -119,9 +76,6 @@ instruction_set!(
   BNE: BNEInstruction<WORD_SIZE>,
   SLT: SLTInstruction<WORD_SIZE>,
   SLTU: SLTUInstruction<WORD_SIZE>,
-  SLL: SLLInstruction<WORD_SIZE>,
-  SRA: SRAInstruction<WORD_SIZE>,
-  SRL: SRLInstruction<WORD_SIZE>,
   MOVSIGN: MOVSIGNInstruction<WORD_SIZE>,
   MUL: MULInstruction<WORD_SIZE>,
   MULU: MULUInstruction<WORD_SIZE>,
@@ -136,33 +90,6 @@ instruction_set!(
   VIRTUAL_POW2: POW2Instruction<WORD_SIZE>,
   VIRTUAL_SRA_PADDING: RightShiftPaddingInstruction<WORD_SIZE>
 );
-subtable_enum!(
-  RV32ISubtables,
-  AND: AndSubtable<F>,
-  EQ_ABS: EqAbsSubtable<F>,
-  EQ: EqSubtable<F>,
-  LEFT_MSB: LeftMSBSubtable<F>,
-  RIGHT_MSB: RightMSBSubtable<F>,
-  IDENTITY: IdentitySubtable<F>,
-  LT_ABS: LtAbsSubtable<F>,
-  LTU: LtuSubtable<F>,
-  OR: OrSubtable<F>,
-  SIGN_EXTEND_16: SignExtendSubtable<F, 16>,
-  SLL0: SllSubtable<F, 0, WORD_SIZE>,
-  SLL1: SllSubtable<F, 1, WORD_SIZE>,
-  SLL2: SllSubtable<F, 2, WORD_SIZE>,
-  SLL3: SllSubtable<F, 3, WORD_SIZE>,
-  SRA_SIGN: SraSignSubtable<F, WORD_SIZE>,
-  SRL0: SrlSubtable<F, 0, WORD_SIZE>,
-  SRL1: SrlSubtable<F, 1, WORD_SIZE>,
-  SRL2: SrlSubtable<F, 2, WORD_SIZE>,
-  SRL3: SrlSubtable<F, 3, WORD_SIZE>,
-  XOR: XorSubtable<F>,
-  LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
-  RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
-  DIV_BY_ZERO: DivByZeroSubtable<F>,
-  LSB: LowBitSubtable<F>
-);
 
 // ==================== JOLT ====================
 
@@ -171,19 +98,18 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, PCS, ProofTranscript> Jolt<C, M, 32, F, PCS, ProofTranscript> for RV32IJoltVM
+impl<F, PCS, ProofTranscript> Jolt<C, M, WORD_SIZE, F, PCS, ProofTranscript> for RV32IJoltVM
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
     type InstructionSet = RV32I;
-    type Subtables = RV32ISubtables<F>;
     type Constraints = JoltRV32IMConstraints;
 }
 
 pub type RV32IJoltProof<F, PCS, ProofTranscript> =
-    JoltProof<32, C, M, JoltR1CSInputs, F, PCS, ProofTranscript>;
+    JoltProof<WORD_SIZE, C, M, JoltR1CSInputs, F, PCS, ProofTranscript>;
 
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use eyre::Result;
@@ -242,11 +168,8 @@ impl Serializable for JoltHyperKZGProof {}
 mod tests {
     use ark_bn254::{Bn254, Fr};
 
-    use std::collections::HashSet;
-
     use crate::field::JoltField;
     use crate::host;
-    use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
@@ -254,59 +177,10 @@ mod tests {
     use crate::poly::commitment::zeromorph::Zeromorph;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use std::sync::{LazyLock, Mutex};
-    use strum::{EnumCount, IntoEnumIterator};
 
     // If multiple tests try to read the same trace artifacts simultaneously, they will fail
     static FIB_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SHA3_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-    fn test_instruction_set_subtables<PCS, ProofTranscript>()
-    where
-        PCS: CommitmentScheme<ProofTranscript>,
-        ProofTranscript: Transcript,
-    {
-        let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in <RV32IJoltVM as Jolt<
-            C,
-            M,
-            32,
-            Fr,
-            HyperKZG<Bn254, KeccakTranscript>,
-            KeccakTranscript,
-        >>::InstructionSet::iter()
-        {
-            for (subtable, _) in instruction.subtables::<Fr>(C, M) {
-                // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<
-                    C,
-                    M,
-                    32,
-                    Fr,
-                    HyperKZG<Bn254, KeccakTranscript>,
-                    KeccakTranscript,
-                >>::Subtables::from(subtable.subtable_id());
-                subtable_set.insert(subtable.subtable_id());
-            }
-        }
-        assert_eq!(
-            subtable_set.len(),
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::Subtables::COUNT,
-            "Unused enum variants in Subtables"
-        );
-    }
-
-    #[test]
-    fn instruction_set_subtables() {
-        test_instruction_set_subtables::<Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
-        test_instruction_set_subtables::<HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
-    }
 
     fn fib_e2e<F, PCS, ProofTranscript>()
     where

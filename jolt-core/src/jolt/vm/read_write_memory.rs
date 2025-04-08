@@ -1,5 +1,4 @@
 use crate::field::JoltField;
-use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
     ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };

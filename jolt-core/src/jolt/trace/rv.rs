@@ -7,11 +7,8 @@ use crate::jolt::instruction::mul::MULInstruction;
 use crate::jolt::instruction::mulhu::MULHUInstruction;
 use crate::jolt::instruction::mulu::MULUInstruction;
 use crate::jolt::instruction::or::ORInstruction;
-use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::slt::SLTInstruction;
 use crate::jolt::instruction::sltu::SLTUInstruction;
-use crate::jolt::instruction::sra::SRAInstruction;
-use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::instruction::virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction;
@@ -39,9 +36,6 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::XOR  => Ok(XORInstruction::default().into()),
             RV32IM::OR   => Ok(ORInstruction::default().into()),
             RV32IM::AND  => Ok(ANDInstruction::default().into()),
-            RV32IM::SLL  => Ok(SLLInstruction::default().into()),
-            RV32IM::SRL  => Ok(SRLInstruction::default().into()),
-            RV32IM::SRA  => Ok(SRAInstruction::default().into()),
             RV32IM::SLT  => Ok(SLTInstruction::default().into()),
             RV32IM::SLTU => Ok(SLTUInstruction::default().into()),
 
@@ -49,9 +43,6 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::XORI  => Ok(XORInstruction::default().into()),
             RV32IM::ORI   => Ok(ORInstruction::default().into()),
             RV32IM::ANDI  => Ok(ANDInstruction::default().into()),
-            RV32IM::SLLI  => Ok(SLLInstruction::default().into()),
-            RV32IM::SRLI  => Ok(SRLInstruction::default().into()),
-            RV32IM::SRAI  => Ok(SRAInstruction::default().into()),
             RV32IM::SLTI  => Ok(SLTInstruction::default().into()),
             RV32IM::SLTIU => Ok(SLTUInstruction::default().into()),
 
@@ -101,9 +92,6 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::XOR => Ok(XORInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::OR  => Ok(ORInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::AND => Ok(ANDInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SLL => Ok(SLLInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SRL => Ok(SRLInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SRA => Ok(SRAInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::SLT  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::SLTU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
@@ -111,9 +99,6 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::XORI  => Ok(XORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::ORI   => Ok(ORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::ANDI  => Ok(ANDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
-            RV32IM::SLLI  => Ok(SLLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
-            RV32IM::SRLI  => Ok(SRLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
-            RV32IM::SRAI  => Ok(SRAInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::SLTI  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::SLTIU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
 

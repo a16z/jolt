@@ -1,182 +1,356 @@
-use crate::field::JoltField;
-use crate::utils::uninterleave_bits;
-use rand::prelude::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use common::constants::virtual_register_index;
+use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
-use super::{JoltInstruction, SubtableIndices};
-use crate::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
-use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
+use super::{
+    virtual_right_shift_padding::RightShiftPaddingInstruction, JoltInstruction,
+    VirtualInstructionSequence,
+};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SRAInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
+/// Performs an arithmetic right shift using (untrusted) advice, and various
+/// arithmetic and bitwise manipulations to check that the advice is correct.
+pub struct SRAVirtualSequence<const WORD_SIZE: usize>;
 
-impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
-    fn operands(&self) -> (u64, u64) {
-        (self.0, self.1)
+impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<WORD_SIZE> {
+    const SEQUENCE_LENGTH: usize = 11;
+
+    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
+        let mut virtual_trace = vec![];
+        let v0 = Some(virtual_register_index(0));
+        let v1 = Some(virtual_register_index(1));
+        let v2 = Some(virtual_register_index(2));
+        let v3 = Some(virtual_register_index(3));
+        let v_bitmask = Some(virtual_register_index(4));
+        let v_result = Some(virtual_register_index(5));
+
+        let (x, shift, bitmask) = match trace_row.instruction.opcode {
+            RV32IM::SRA => {
+                let x = trace_row.register_state.rs1_val.unwrap();
+                let y = trace_row.register_state.rs2_val.unwrap();
+                let shift = y as usize % WORD_SIZE;
+
+                let bitmask = RightShiftPaddingInstruction::<WORD_SIZE>(y).lookup_entry();
+                virtual_trace.push(RVTraceRow {
+                    instruction: ELFInstruction {
+                        address: trace_row.instruction.address,
+                        opcode: RV32IM::VIRTUAL_SRA_PAD,
+                        rs1: trace_row.instruction.rs2,
+                        rs2: None,
+                        rd: v_bitmask,
+                        imm: None,
+                        virtual_sequence_remaining: Some(
+                            Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
+                        ),
+                    },
+                    register_state: RegisterState {
+                        rs1_val: trace_row.register_state.rs2_val,
+                        rs2_val: None,
+                        rd_post_val: Some(bitmask),
+                    },
+                    memory_state: None,
+                    advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
+                });
+
+                let shift_pow2: u64 = 1 << shift;
+                virtual_trace.push(RVTraceRow {
+                    instruction: ELFInstruction {
+                        address: trace_row.instruction.address,
+                        opcode: RV32IM::VIRTUAL_POW2,
+                        rs1: trace_row.instruction.rs2,
+                        rs2: None,
+                        rd: v0,
+                        imm: None,
+                        virtual_sequence_remaining: Some(
+                            Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
+                        ),
+                    },
+                    register_state: RegisterState {
+                        rs1_val: trace_row.register_state.rs2_val,
+                        rs2_val: None,
+                        rd_post_val: Some(shift_pow2),
+                    },
+                    memory_state: None,
+                    advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
+                });
+
+                (x, shift, bitmask)
+            }
+            RV32IM::SRAI => {
+                let x = trace_row.register_state.rs1_val.unwrap();
+                let imm = trace_row.instruction.imm.unwrap() as u64;
+                let shift = imm as usize % WORD_SIZE;
+
+                let bitmask = RightShiftPaddingInstruction::<WORD_SIZE>(imm).lookup_entry();
+                virtual_trace.push(RVTraceRow {
+                    instruction: ELFInstruction {
+                        address: trace_row.instruction.address,
+                        opcode: RV32IM::VIRTUAL_SRA_PADI,
+                        rs1: None,
+                        rs2: None,
+                        rd: v_bitmask,
+                        imm: trace_row.instruction.imm,
+                        virtual_sequence_remaining: Some(
+                            Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
+                        ),
+                    },
+                    register_state: RegisterState {
+                        rs1_val: None,
+                        rs2_val: None,
+                        rd_post_val: Some(bitmask),
+                    },
+                    memory_state: None,
+                    advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
+                });
+
+                let shift_pow2: u64 = 1 << shift;
+                virtual_trace.push(RVTraceRow {
+                    instruction: ELFInstruction {
+                        address: trace_row.instruction.address,
+                        opcode: RV32IM::VIRTUAL_POW2I,
+                        rs1: None,
+                        rs2: None,
+                        rd: v0,
+                        imm: trace_row.instruction.imm,
+                        virtual_sequence_remaining: Some(
+                            Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
+                        ),
+                    },
+                    register_state: RegisterState {
+                        rs1_val: None,
+                        rs2_val: None,
+                        rd_post_val: Some(shift_pow2),
+                    },
+                    memory_state: None,
+                    advice_value: None,
+                    precompile_input: None,
+                    precompile_output_address: None,
+                });
+
+                (x, shift, bitmask)
+            }
+            _ => panic!("Unexpected opcode {:?}", trace_row.instruction.opcode),
+        };
+
+        let result = Self::sequence_output(x, shift as u64);
+
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ADVICE,
+                rs1: None,
+                rs2: None,
+                rd: v_result,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: None,
+                rs2_val: None,
+                rd_post_val: Some(result),
+            },
+            memory_state: None,
+            advice_value: Some(result),
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        let masked_advice = bitmask & result;
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::AND,
+                rs1: v_bitmask,
+                rs2: v_result,
+                rd: v1,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(bitmask),
+                rs2_val: Some(result),
+                rd_post_val: Some(masked_advice),
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        let is_negative = x >> (WORD_SIZE - 1);
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::SLT,
+                rs1: trace_row.instruction.rs1,
+                rs2: Some(0), // zero register
+                rd: v3,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: trace_row.register_state.rs1_val,
+                rs2_val: Some(0),
+                rd_post_val: Some(is_negative),
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::MUL,
+                rs1: v_bitmask,
+                rs2: v3,
+                rd: v_bitmask,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(bitmask),
+                rs2_val: Some(is_negative),
+                rd_post_val: Some(is_negative * bitmask),
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_EQ,
+                rs1: v1,
+                rs2: v_bitmask,
+                rd: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(masked_advice),
+                rs2_val: Some(is_negative * bitmask),
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        let shift_pow2: u64 = 1 << shift;
+        let shifted_advice = (result * shift_pow2) % (1 << WORD_SIZE);
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::MUL,
+                rs1: v_result,
+                rs2: v0,
+                rd: v2,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(result),
+                rs2_val: Some(shift_pow2),
+                rd_post_val: Some(shifted_advice),
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::AND,
+                rs1: trace_row.instruction.rs1,
+                rs2: v2,
+                rd: v3,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(x),
+                rs2_val: Some(shifted_advice),
+                rd_post_val: Some(x & shifted_advice),
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_EQ,
+                rs1: v2,
+                rs2: v3,
+                rd: None,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(shifted_advice),
+                rs2_val: Some(x & shifted_advice),
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        virtual_trace.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_MOVE,
+                rs1: v_result,
+                rs2: None,
+                rd: trace_row.instruction.rd,
+                imm: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(result),
+                rs2_val: None,
+                rd_post_val: Some(result),
+            },
+            memory_state: None,
+            advice_value: None,
+            precompile_input: None,
+            precompile_output_address: None,
+        });
+
+        virtual_trace
     }
 
-    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, _: usize) -> F {
-        assert!(C <= 10);
-        assert_eq!(vals.len(), C + 1);
-        vals.iter().sum()
-    }
-
-    fn g_poly_degree(&self, _: usize) -> usize {
-        1
-    }
-
-    fn subtables<F: JoltField>(
-        &self,
-        C: usize,
-        _: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
-        // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
-        // which only happens at runtime).
-        let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-            Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 2, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 3, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 4, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 5, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 6, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 7, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 8, WORD_SIZE>::new()),
-            Box::new(SrlSubtable::<F, 9, WORD_SIZE>::new()),
-        ];
-        subtables.truncate(C);
-        subtables.reverse();
-        let indices = (0..C).map(SubtableIndices::from);
-        let mut subtables_and_indices: Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> =
-            subtables.into_iter().zip(indices).collect();
-
-        subtables_and_indices.push((
-            Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
-            SubtableIndices::from(0),
-        ));
-
-        subtables_and_indices
-    }
-
-    fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-        assert_valid_parameters(WORD_SIZE, C, log_M);
-        chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
-    }
-
-    fn lookup_entry(&self) -> u64 {
-        if WORD_SIZE == 32 {
-            let x = self.0 as i32;
-            let y = self.1 as u32 % 32;
-            (x.wrapping_shr(y) as u32).into()
-        } else if WORD_SIZE == 64 {
-            let x = self.0 as i64;
-            let y = (self.1 % 64) as u32;
-            x.wrapping_shr(y) as u64
-        } else {
-            panic!("SRA is only implemented for 32-bit or 64-bit word sizes")
-        }
-    }
-
-    fn materialize_entry(&self, index: u64) -> u64 {
-        let (x, y) = uninterleave_bits(index);
+    fn sequence_output(x: u64, y: u64) -> u64 {
         match WORD_SIZE {
-            #[cfg(test)]
-            8 => ((x as i8).wrapping_shr(y % 8)) as u8 as u64,
-            32 => ((x as i32).wrapping_shr(y % 32)) as u32 as u64,
+            8 => ((x as i8).wrapping_shr(y as u32 % 8)) as u8 as u64,
+            32 => ((x as i32).wrapping_shr(y as u32 % 32)) as u32 as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
-    }
-
-    fn random(&self, rng: &mut StdRng) -> Self {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
-            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
-            64 => Self(rng.next_u64(), rng.next_u64()),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, _: &[F]) -> F {
-        todo!("Placeholder; will use virtual sequence when we switch to Shout")
     }
 }
 
 #[cfg(test)]
 mod test {
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
+    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-
-    use super::SRAInstruction;
+    use super::*;
 
     #[test]
-    fn sra_instruction_32_e2e() {
-        let mut rng = test_rng();
-        const C: usize = 4;
-        const M: usize = 1 << 16;
-        const WORD_SIZE: usize = 32;
-
-        // Random
-        for _ in 0..256 {
-            let (x, y) = (rng.next_u32(), rng.next_u32());
-            let instruction = SRAInstruction::<WORD_SIZE>(x as u64, y as u64);
-            jolt_instruction_test!(instruction);
-        }
-
-        // Edge cases
-        let u32_max: u64 = u32::MAX as u64;
-        let instructions = vec![
-            SRAInstruction::<WORD_SIZE>(100, 0),
-            SRAInstruction::<WORD_SIZE>(0, 2),
-            SRAInstruction::<WORD_SIZE>(1, 2),
-            SRAInstruction::<WORD_SIZE>(0, 32),
-            SRAInstruction::<WORD_SIZE>(u32_max, 0),
-            SRAInstruction::<WORD_SIZE>(u32_max, 31),
-            SRAInstruction::<WORD_SIZE>(u32_max, 1 << 8),
-            SRAInstruction::<WORD_SIZE>(1 << 8, 1 << 16),
-        ];
-        for instruction in instructions {
-            jolt_instruction_test!(instruction);
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn sra_instruction_64_e2e() {
-        let mut rng = test_rng();
-        const C: usize = 8;
-        const M: usize = 1 << 16;
-        const WORD_SIZE: usize = 64;
-
-        // Random
-        for _ in 0..256 {
-            let (x, y) = (rng.next_u64(), rng.next_u64());
-            let instruction = SRAInstruction::<WORD_SIZE>(x, y);
-            jolt_instruction_test!(instruction);
-        }
-
-        // Edge cases
-        let u64_max: u64 = u64::MAX;
-        let instructions = vec![
-            SRAInstruction::<WORD_SIZE>(100, 0),
-            SRAInstruction::<WORD_SIZE>(0, 2),
-            SRAInstruction::<WORD_SIZE>(1, 2),
-            SRAInstruction::<WORD_SIZE>(0, 64),
-            SRAInstruction::<WORD_SIZE>(u64_max, 0),
-            SRAInstruction::<WORD_SIZE>(u64_max, 63),
-            SRAInstruction::<WORD_SIZE>(u64_max, 1 << 8),
-            SRAInstruction::<WORD_SIZE>(1 << 32, 1 << 16),
-            SRAInstruction::<WORD_SIZE>(1 << 63, 1),
-            SRAInstruction::<WORD_SIZE>((1 << 63) - 1, 1),
-        ];
-
-        for instruction in instructions {
-            jolt_instruction_test!(instruction);
-        }
+    fn sra_virtual_sequence_32() {
+        jolt_virtual_sequence_test::<SRAVirtualSequence<32>>(RV32IM::SRA);
     }
 }

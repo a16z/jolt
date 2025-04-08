@@ -25,7 +25,6 @@ use crate::jolt::{
         mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
         VirtualInstructionSequence,
     },
-    subtable::JoltSubtableSet,
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{
@@ -271,7 +270,6 @@ where
     ProofTranscript: Transcript,
 {
     type InstructionSet: JoltInstructionSet;
-    type Subtables: JoltSubtableSet<F>;
     type Constraints: R1CSConstraints<C, F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
@@ -687,7 +685,6 @@ where
         transcript.append_u64(trace_length as u64);
         transcript.append_u64(WORD_SIZE as u64);
         transcript.append_u64(Self::InstructionSet::COUNT as u64);
-        transcript.append_u64(Self::Subtables::COUNT as u64);
         transcript.append_u64(memory_layout.max_input_size);
         transcript.append_u64(memory_layout.max_output_size);
         transcript.append_bytes(&program_io.inputs);

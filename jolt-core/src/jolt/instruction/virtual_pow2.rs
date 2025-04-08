@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
-use super::{JoltInstruction, SubtableIndices};
+use super::JoltInstruction;
 use crate::field::JoltField;
 use crate::jolt::instruction::prefixes::Prefixes;
-use crate::jolt::subtable::LassoSubtable;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::utils::math::Math;
 
@@ -21,26 +20,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for POW2Instruction<WORD_SIZE> {
 
     fn operands(&self) -> (u64, u64) {
         (self.0, 0)
-    }
-
-    fn combine_lookups<F: JoltField>(&self, _: &[F], _: usize, _: usize) -> F {
-        F::zero()
-    }
-
-    fn g_poly_degree(&self, _: usize) -> usize {
-        1
-    }
-
-    fn subtables<F: JoltField>(
-        &self,
-        _: usize,
-        _: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        vec![]
-    }
-
-    fn to_indices(&self, C: usize, _: usize) -> Vec<usize> {
-        vec![0; C]
     }
 
     fn lookup_entry(&self) -> u64 {
