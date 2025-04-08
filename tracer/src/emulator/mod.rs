@@ -37,12 +37,12 @@ pub struct Emulator {
     /// Stores mapping from symbol to virtual address
     symbol_map: FnvHashMap<String, u64>,
 
-    /// [`riscv-tests`](https://github.com/riscv/riscv-tests) program specific
+    /// [`riscv-tests`](https://github.com/riscv-software-src/riscv-tests) program specific
     /// properties. Whether the program set by `setup_program()` is
-    /// [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
+    /// [`riscv-tests`](https://github.com/riscv-software-src/riscv-tests) program.
     is_test: bool,
 
-    /// [`riscv-tests`](https://github.com/riscv/riscv-tests) specific properties.
+    /// [`riscv-tests`](https://github.com/riscv-software-src/riscv-tests) specific properties.
     /// The address where data will be sent to terminal
     tohost_addr: u64,
 }
