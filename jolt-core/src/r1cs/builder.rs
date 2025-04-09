@@ -186,7 +186,6 @@ impl<F: JoltField> AuxComputation<F> {
 
 pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
     _inputs: PhantomData<I>,
-    // TODO (Bhargav): pub added. Remove it.
     pub constraints: Vec<Constraint>,
     aux_computations: BTreeMap<usize, AuxComputation<F>>,
 }
@@ -518,7 +517,7 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
     }
 }
 
-pub(crate) fn streaming_eval_offset_lc<F: JoltField>(
+pub(crate) fn shard_last_step_eval_offset_lc<F: JoltField>(
     offset: &OffsetLC,
     flattened_polynomials: &[&MultilinearPolynomial<F>],
     flattened_eval: &[&MultilinearPolynomial<F>],
@@ -527,7 +526,7 @@ pub(crate) fn streaming_eval_offset_lc<F: JoltField>(
 ) -> i128 {
     if !offset.0 {
         offset.1.evaluate_row(flattened_polynomials, step)
-    } else if let Some(next_step) = next_step_m {
+    } else if next_step_m.is_some() {
         offset.1.evaluate_row(flattened_eval, 0)
     } else {
         offset.1.constant_term_field()
@@ -536,13 +535,11 @@ pub(crate) fn streaming_eval_offset_lc<F: JoltField>(
 
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
-    // TODO (Bhargav): pub added. Remove it.
     pub uniform_builder: R1CSBuilder<C, F, I>,
 
     /// Padded to the nearest power of 2
     uniform_repeat: usize, // TODO(JP): Remove padding of steps
 
-    // TODO (Bhargav): pub added. Remove it.
     pub offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 

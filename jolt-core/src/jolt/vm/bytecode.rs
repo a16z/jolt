@@ -126,7 +126,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
     ) -> Self {
         let mut trace_oracle = TraceOracle::new(trace);
 
-        let polynomial_stream = |shard: &[JoltTraceStep<InstructionSet>]| {
+        let func = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
             let mut a_read_write = vec![];
             let mut address = vec![];
@@ -179,7 +179,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
 
         BytecodeOracle {
             trace_oracle,
-            func: Box::new(polynomial_stream),
+            func: Box::new(func),
         }
     }
 
@@ -202,13 +202,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 for BytecodeOracle<'a, F, InstructionSet> {
     type Item = BytecodeStuff<MultilinearPolynomial<F>>;
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         (self.func)(self.trace_oracle.next_shard(shard_len))
     }
 
-    fn reset_oracle(&mut self) {
-        self.trace_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
     }
 
     fn peek(&mut self) -> Option<Self::Item> {
@@ -219,8 +218,8 @@ for BytecodeOracle<'a, F, InstructionSet> {
         }
     }
 
-    fn get_len(&self) -> usize {
-        self.trace_oracle.get_len()
+    fn get_length(&self) -> usize {
+        self.trace_oracle.get_length()
     }
 
     fn get_step(&self) -> usize {
@@ -228,54 +227,8 @@ for BytecodeOracle<'a, F, InstructionSet> {
     }
 }
 
-pub struct Derived<F: JoltField> {
-    pub sum: F,
-}
-
-pub struct DerivedOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
-    pub bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>,
-    pub func: Box<dyn (Fn(BytecodeStuff<F>) -> Derived<F>) + 'a>,
-}
-
-impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> DerivedOracle<'a, F, InstructionSet> {
-    pub fn new(bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>) -> Self {
-        let polynomial_stream = |step: BytecodeStuff<F>| Derived {
-            sum: step.a_read_write + step.v_read_write[0],
-        };
-
-        DerivedOracle {
-            bytecode_oracle,
-            func: Box::new(polynomial_stream),
-        }
-    }
-}
-
-// impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-//     for DerivedOracle<'a, F, InstructionSet>
-// {
-//     type Item = Derived<F>;
-
-//     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-//     fn next_eval(&mut self) -> Self::Item {
-//         (self.func)(self.bytecode_oracle.next_eval())
-//     }
-
-//     fn reset_oracle(&mut self) {
-//         self.bytecode_oracle.reset_oracle();
-//     }
-
-//     fn get_len(&self) -> usize {
-//         self.bytecode_oracle.get_len()
-//     }
-
-//     fn get_step(&self) -> usize {
-//         self.bytecode_oracle.get_step()
-//     }
-// }
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
-    // TODO (Bhargav): Made every field except bitflags public. See if this can be avoided.
     /// Memory address as read from the ELF.
     pub address: usize,
     /// Packed instruction/circuit flags, used for r1cs
@@ -403,7 +356,6 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
-    // TODO (Bhargav): Made public. See if this is required.
     pub virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 

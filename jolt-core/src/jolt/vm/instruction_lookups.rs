@@ -45,7 +45,6 @@ use super::{ JoltCommitments, JoltPolynomials, JoltTraceStep, TraceOracle };
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
-    // TODO (Bhargav): Made fields public. See if this can be avoided.
     /// `C`-sized vector of polynomials/commitments/openings corresponding to the
     /// indices at which subtables are queried.
     pub(crate) dim: Vec<T>,
@@ -180,7 +179,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> InstructionLookupOrac
     ) -> Self {
         let mut trace_oracle = TraceOracle::new(trace);
 
-        let polynomial_stream = |shard: &[JoltTraceStep<InstructionSet>]| {
+        let func = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
             let chunked_indices: Vec<Vec<u16>> = shard
                 .iter()
@@ -282,7 +281,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> InstructionLookupOrac
 
         InstructionLookupOracle {
             trace_oracle,
-            func: Box::new(polynomial_stream),
+            func: Box::new(func),
         }
     }
 }
@@ -291,14 +290,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 for InstructionLookupOracle<'a, F, InstructionSet> {
     type Item = InstructionLookupStuff<MultilinearPolynomial<F>>;
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         (self.func)(self.trace_oracle.next_shard(shard_len))
     }
 
-    fn reset_oracle(&mut self) {
-        self.trace_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
     }
 
     fn peek(&mut self) -> Option<Self::Item> {
@@ -309,8 +306,8 @@ for InstructionLookupOracle<'a, F, InstructionSet> {
         }
     }
 
-    fn get_len(&self) -> usize {
-        self.trace_oracle.get_len()
+    fn get_length(&self) -> usize {
+        self.trace_oracle.get_length()
     }
 
     fn get_step(&self) -> usize {

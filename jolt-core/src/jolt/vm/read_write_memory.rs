@@ -245,7 +245,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
     InstructionSet
 > {
     // TODO (Bhargav/Ashish): Here _marker is a hack to get around the problem of new being unable to
-    // infer the type of F. Find a better solution.
+    // infer the type of F. Is there a better solution?
     pub fn new(
         preprocessing: &'a ReadWriteMemoryPreprocessing,
         program_io: &'a JoltDevice,
@@ -297,7 +297,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
 
         let v_final = v_init.clone();
 
-        let polynomial_stream = |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
+        let func = |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
             let mut a_ram = vec![];
             let mut v_read_rd = vec![];
@@ -399,7 +399,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
             trace_oracle,
             init_state: v_init,
             state: v_final,
-            func: Box::new(polynomial_stream),
+            func: Box::new(func),
         }
     }
 }
@@ -408,13 +408,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 for ReadWriteMemoryOracle<'a, F, InstructionSet> {
     type Item = ReadWriteMemoryStuff<MultilinearPolynomial<F>>;
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         (self.func)(&mut self.state, self.trace_oracle.next_shard(shard_len))
     }
 
-    fn reset_oracle(&mut self) {
-        self.trace_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
         for i in 0..self.state.len() {
             self.state[i] = self.init_state[i];
         }
@@ -431,8 +430,8 @@ for ReadWriteMemoryOracle<'a, F, InstructionSet> {
         }
     }
 
-    fn get_len(&self) -> usize {
-        self.trace_oracle.get_len()
+    fn get_length(&self) -> usize {
+        self.trace_oracle.get_length()
     }
 
     fn get_step(&self) -> usize {

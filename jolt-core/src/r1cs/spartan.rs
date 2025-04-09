@@ -5,7 +5,7 @@ use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
 use thiserror::Error;
-use tracing::{span, Level};
+use tracing::{ span, Level };
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
@@ -26,15 +26,12 @@ use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
+    poly::{ dense_mlpoly::DensePolynomial, eq_poly::{ EqPlusOnePolynomial, EqPolynomial } },
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
 
 use super::builder::eval_offset_lc;
-use super::builder::streaming_eval_offset_lc;
+use super::builder::shard_last_step_eval_offset_lc;
 use super::builder::CombinedUniformBuilder;
 use super::builder::Constraint;
 use super::builder::OffsetEqConstraint;
@@ -77,18 +74,18 @@ pub enum SpartanError {
 
 #[derive(Debug)]
 pub struct AzBzCz {
-    pub Az_Bz_Cz: Vec<(usize, i128, usize, bool)>,
+    pub interleaved_az_bz_cz: Vec<(usize, i128)>,
 }
 
 pub struct AzBzCzOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub jolt_oracle: JoltOracle<'a, F, InstructionSet>,
     pub func: Box<
         dyn (Fn(
-                usize,
-                JoltStuff<MultilinearPolynomial<F>>,
-                JoltStuff<MultilinearPolynomial<F>>,
-            ) -> AzBzCz)
-            + 'a,
+            usize,
+            JoltStuff<MultilinearPolynomial<F>>,
+            JoltStuff<MultilinearPolynomial<F>>
+        ) -> AzBzCz) +
+            'a
     >,
 }
 
@@ -97,34 +94,29 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
         uniform_constraints: &'a [Constraint],
         cross_step_constraints: &'a [OffsetEqConstraint],
         padded_num_constraints: usize,
-        jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+        jolt_oracle: JoltOracle<'a, F, InstructionSet>
     ) -> Self {
-        let total_num_steps = jolt_oracle.get_len();
+        let total_num_steps = jolt_oracle.get_length();
 
-        let polynomial_stream =
-            move |shard_idx: usize,
-                  shard: JoltStuff<MultilinearPolynomial<F>>,
-                  extra_eval: JoltStuff<MultilinearPolynomial<F>>| {
-                let shard_length = shard.bytecode.a_read_write.len();
-                // println!(
-                //     "total_num_steps = {}, shard_length = {}, shard_idx = {}",
-                //     total_num_steps,
-                //     shard_length,
-                //     shard_idx
-                // );
+        let polynomial_stream = move |
+            shard_idx: usize,
+            shard: JoltStuff<MultilinearPolynomial<F>>,
+            extra_eval: JoltStuff<MultilinearPolynomial<F>>
+        | {
+            let shard_length = shard.bytecode.a_read_write.len();
 
-                let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-                    .iter()
-                    .map(|var| var.get_ref(&shard))
-                    .collect();
+            let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                .iter()
+                .map(|var| var.get_ref(&shard))
+                .collect();
 
-                // TODO: Put in a seperate function.
-                let num_steps = streaming_z[0].len();
+            // TODO: Put in a seperate function.
+            let num_steps = streaming_z[0].len();
 
-                let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
-                let chunk_size = num_steps.div_ceil(num_chunks);
+            let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
+            let chunk_size = num_steps.div_ceil(num_chunks);
 
-                let Az_Bz_Cz: Vec<(usize, i128, usize, bool)> = (0..num_chunks)
+            let interleaved_az_bz_cz: Vec<(usize, i128)> = (0..num_chunks)
                 .into_par_iter()
                 .flat_map_iter(|chunk_index| {
                     let mut coeffs = Vec::with_capacity(3 * chunk_size * padded_num_constraints);
@@ -144,14 +136,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.a.terms().is_empty() {
                                 az_coeff = constraint.a.evaluate_row(&streaming_z, step_index);
                                 if !az_coeff.is_zero() {
-                                    coeffs.push(
-                                        (
-                                            global_index,
-                                            az_coeff,
-                                            step_index + shard_idx * shard_length,
-                                            false,
-                                        ).into()
-                                    );
+                                    coeffs.push((global_index, az_coeff));
                                 }
                             }
                             // Bz
@@ -159,17 +144,10 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.b.terms().is_empty() {
                                 bz_coeff = constraint.b.evaluate_row(&streaming_z, step_index);
                                 if !bz_coeff.is_zero() {
-                                    coeffs.push(
-                                        (
-                                            global_index + 1,
-                                            bz_coeff,
-                                            step_index + shard_idx * shard_length,
-                                            false,
-                                        ).into()
-                                    );
+                                    coeffs.push((global_index + 1, bz_coeff));
                                 }
                             }
-                            // Cz = Az ⊙ Cz
+                            // Cz = Az ⊙ Bz
                             if !az_coeff.is_zero() && !bz_coeff.is_zero() {
                                 let cz_coeff = az_coeff * bz_coeff;
                                 #[cfg(test)]
@@ -190,19 +168,11 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                         );
                                     }
                                 }
-                                coeffs.push(
-                                    (
-                                        global_index + 2,
-                                        cz_coeff,
-                                        step_index + shard_idx * shard_length,
-                                        false,
-                                    ).into()
-                                );
+                                coeffs.push((global_index + 2, cz_coeff));
                             }
                         }
 
-                        // println!("step_index = {}, Uniform constraint end index = {}", step_index);
-
+                        // Cross step constraints
                         if step_index + shard_idx * shard_length + 1 < total_num_steps {
                             let next_step_index = step_index + 1;
 
@@ -232,14 +202,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                     );
                                     let az_coeff = eq_a_eval - eq_b_eval;
                                     if !az_coeff.is_zero() {
-                                        coeffs.push(
-                                            (
-                                                global_index,
-                                                az_coeff,
-                                                step_index + shard_idx * shard_length,
-                                                true,
-                                            ).into()
-                                        );
+                                        coeffs.push((global_index, az_coeff));
                                         // If Az != 0, then the condition must be false (i.e. Bz = 0)
                                         #[cfg(test)]
                                         {
@@ -263,39 +226,24 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             Some(next_step_index)
                                         );
                                         if !bz_coeff.is_zero() {
-                                            coeffs.push(
-                                                (
-                                                    global_index + 1,
-                                                    bz_coeff,
-                                                    step_index + shard_idx * shard_length,
-                                                    true,
-                                                ).into()
-                                            );
+                                            coeffs.push((global_index + 1, bz_coeff));
                                         }
                                     }
                                 } else {
-                                    // println!("step_index = {}", step_index);
                                     let extra_eval_z: Vec<&MultilinearPolynomial<F>> =
                                         I::flatten::<C>()
                                             .iter()
                                             .map(|var| var.get_ref(&extra_eval))
                                             .collect();
-                                    // println!(
-                                    //     "Extra eval z = {:?}",
-                                    //     extra_eval_z
-                                    //         .iter()
-                                    //         .map(|poly| F::from(poly.get_coeff(0)))
-                                    //         .collect::<Vec<F>>()
-                                    // );
 
-                                    let eq_a_eval = streaming_eval_offset_lc(
+                                    let eq_a_eval = shard_last_step_eval_offset_lc(
                                         &constraint.a,
                                         &streaming_z,
                                         &extra_eval_z,
                                         step_index,
                                         Some(next_step_index)
                                     );
-                                    let eq_b_eval = streaming_eval_offset_lc(
+                                    let eq_b_eval = shard_last_step_eval_offset_lc(
                                         &constraint.b,
                                         &streaming_z,
                                         &extra_eval_z,
@@ -305,16 +253,9 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
 
                                     let az_coeff = eq_a_eval - eq_b_eval;
                                     if !az_coeff.is_zero() {
-                                        coeffs.push(
-                                            (
-                                                global_index,
-                                                az_coeff,
-                                                step_index + shard_idx * shard_length,
-                                                true,
-                                            ).into()
-                                        );
+                                        coeffs.push((global_index, az_coeff));
                                     } else {
-                                        let bz_coeff = streaming_eval_offset_lc(
+                                        let bz_coeff = shard_last_step_eval_offset_lc(
                                             &constraint.cond,
                                             &streaming_z,
                                             &extra_eval_z,
@@ -322,14 +263,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             Some(next_step_index)
                                         );
                                         if !bz_coeff.is_zero() {
-                                            coeffs.push(
-                                                (
-                                                    global_index + 1,
-                                                    bz_coeff,
-                                                    step_index + shard_idx * shard_length,
-                                                    true,
-                                                ).into()
-                                            );
+                                            coeffs.push((global_index + 1, bz_coeff));
                                         }
                                     }
                                 }
@@ -340,8 +274,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                 })
                 .collect();
 
-                AzBzCz { Az_Bz_Cz }
-            };
+            AzBzCz { interleaved_az_bz_cz }
+        };
 
         AzBzCzOracle {
             jolt_oracle,
@@ -351,11 +285,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-    for AzBzCzOracle<'a, F, InstructionSet>
-{
+for AzBzCzOracle<'a, F, InstructionSet> {
     type Item = AzBzCz;
-
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         let shard_idx = self.jolt_oracle.get_step() / shard_len;
         let jolt_shard = self.jolt_oracle.next_shard(shard_len);
@@ -364,17 +295,16 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
             let jolt_peek = self.jolt_oracle.peek().unwrap();
             (self.func)(shard_idx, jolt_shard, jolt_peek)
         } else {
-            // println!("Done");
             (self.func)(shard_idx, jolt_shard, Default::default())
         }
     }
 
-    fn reset_oracle(&mut self) {
-        self.jolt_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.jolt_oracle.reset();
     }
 
-    fn get_len(&self) -> usize {
-        self.jolt_oracle.get_len()
+    fn get_length(&self) -> usize {
+        self.jolt_oracle.get_length()
     }
 
     fn get_step(&self) -> usize {
@@ -386,7 +316,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     }
 }
 
-
 /// A succinct proof of knowledge of a witness to a relaxed R1CS instance
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
@@ -395,7 +324,7 @@ pub struct UniformSpartanProof<
     const C: usize,
     I: ConstraintInput,
     F: JoltField,
-    ProofTranscript: Transcript,
+    ProofTranscript: Transcript
 > {
     _inputs: PhantomData<I>,
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -409,20 +338,14 @@ pub struct UniformSpartanProof<
 }
 
 impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTranscript>
-where
-    I: ConstraintInput,
-    F: JoltField,
-    ProofTranscript: Transcript,
+    where I: ConstraintInput, F: JoltField, ProofTranscript: Transcript
 {
     #[tracing::instrument(skip_all, name = "Spartan::setup")]
     pub fn setup(
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
-        padded_num_steps: usize,
+        padded_num_steps: usize
     ) -> UniformSpartanKey<C, I, F> {
-        assert_eq!(
-            padded_num_steps,
-            constraint_builder.uniform_repeat().next_power_of_two()
-        );
+        assert_eq!(padded_num_steps, constraint_builder.uniform_repeat().next_power_of_two());
         UniformSpartanKey::from_builder(constraint_builder)
     }
 
@@ -432,10 +355,9 @@ where
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> Result<Self, SpartanError>
-    where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        where PCS: CommitmentScheme<ProofTranscript, Field = F>
     {
         let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
@@ -446,27 +368,17 @@ where
 
         /* Sumcheck 1: Outer sumcheck */
 
-        let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar())
-            .collect::<Vec<F>>();
+        let tau = (0..num_rounds_x).map(|_i| transcript.challenge_scalar()).collect::<Vec<F>>();
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
-
-        // for i in 0..az_bz_cz_poly.unbound_coeffs.len() {
-        //     println!(
-        //         "Stored: {}, {}",
-        //         az_bz_cz_poly.unbound_coeffs[i].index,
-        //         az_bz_cz_poly.unbound_coeffs[i].value
-        //     );
-        // }
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
                 num_rounds_x,
                 &mut eq_tau,
                 &mut az_bz_cz_poly,
-                transcript,
+                transcript
             );
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
         drop_in_background_thread((az_bz_cz_poly, eq_tau));
@@ -494,26 +406,27 @@ where
         let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-        let claim_inner_joint = claim_Az
-            + inner_sumcheck_RLC * claim_Bz
-            + inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
+        let claim_inner_joint =
+            claim_Az +
+            inner_sumcheck_RLC * claim_Bz +
+            inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
         let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
-        let (eq_rx_step_r2, eq_plus_one_rx_step_r2) =
-            EqPlusOnePolynomial::evals(rx_step, F::montgomery_r2());
+        let (eq_rx_step_r2, eq_plus_one_rx_step_r2) = EqPlusOnePolynomial::evals(
+            rx_step,
+            F::montgomery_r2()
+        );
 
         /* Compute the two polynomials provided as input to the second sumcheck:
            - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
            - poly_z: z(y_var || rx_step), z_shift(..)
         */
 
-        let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
-            rx_constr,
-            rx_step,
-            inner_sumcheck_RLC,
-        ));
+        let poly_ABC = DensePolynomial::new(
+            key.evaluate_matrix_mle_partial(rx_constr, rx_step, inner_sumcheck_RLC)
+        );
 
         // Binding z and z_shift polynomials at point rx_step
         let span = span!(Level::INFO, "binding_z_and_shift_z");
@@ -527,8 +440,10 @@ where
             .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
             .for_each(|(poly, (eval, eval_shifted))| {
                 *eval = poly.dot_product(Some(&eq_rx_step), Some(&eq_rx_step_r2));
-                *eval_shifted =
-                    poly.dot_product(Some(&eq_plus_one_rx_step), Some(&eq_plus_one_rx_step_r2));
+                *eval_shifted = poly.dot_product(
+                    Some(&eq_plus_one_rx_step),
+                    Some(&eq_plus_one_rx_step_r2)
+                );
             });
 
         bind_z[num_vars_uniform] = F::one();
@@ -536,15 +451,16 @@ where
         drop(_guard);
         drop(span);
 
-        let poly_z =
-            DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
+        let poly_z = DensePolynomial::new(
+            bind_z.into_iter().chain(bind_shift_z.into_iter()).collect()
+        );
         assert_eq!(poly_z.len(), poly_ABC.len());
 
         let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
 
         let mut polys = vec![
             MultilinearPolynomial::LargeScalars(poly_ABC),
-            MultilinearPolynomial::LargeScalars(poly_z),
+            MultilinearPolynomial::LargeScalars(poly_z)
         ];
 
         let comb_func = |poly_evals: &[F]| -> F {
@@ -559,7 +475,7 @@ where
                 &mut polys,
                 comb_func,
                 2,
-                transcript,
+                transcript
             );
 
         drop_in_background_thread(polys);
@@ -595,7 +511,7 @@ where
 
         let mut shift_sumcheck_polys = vec![
             MultilinearPolynomial::from(bind_z_ry_var),
-            MultilinearPolynomial::from(eq_plus_one_rx_step),
+            MultilinearPolynomial::from(eq_plus_one_rx_step)
         ];
 
         let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
@@ -607,7 +523,10 @@ where
                     .collect();
                 comb_func(&params)
             })
-            .reduce(|| F::zero(), |acc, x| acc + x);
+            .reduce(
+                || F::zero(),
+                |acc, x| acc + x
+            );
 
         let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
@@ -616,33 +535,37 @@ where
                 &mut shift_sumcheck_polys,
                 comb_func,
                 2,
-                transcript,
+                transcript
             );
 
         drop_in_background_thread(shift_sumcheck_polys);
 
         // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
+        let (claimed_witness_evals, chis) = MultilinearPolynomial::batch_evaluate(
+            &flattened_polys,
+            rx_step
+        );
 
         opening_accumulator.append(
             &flattened_polys,
             DensePolynomial::new(chis),
             rx_step.to_vec(),
             &claimed_witness_evals,
-            transcript,
+            transcript
         );
 
         // Shift sumcheck evaluations: evaluate z on ry_var
-        let (shift_sumcheck_witness_evals, chis2) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
+        let (shift_sumcheck_witness_evals, chis2) = MultilinearPolynomial::batch_evaluate(
+            &flattened_polys,
+            &shift_sumcheck_r
+        );
 
         opening_accumulator.append(
             &flattened_polys,
             DensePolynomial::new(chis2),
             shift_sumcheck_r.to_vec(),
             &shift_sumcheck_witness_evals,
-            transcript,
+            transcript
         );
 
         // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
@@ -664,6 +587,7 @@ where
         })
     }
 
+    // TODO: Change the return type back to Result<Self, SpartanError>.
     #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
     pub fn streaming_prove<PCS, InstructionSet>(
         no_of_shards: usize,
@@ -673,292 +597,55 @@ where
         mut jolt_oracle: JoltOracle<F, InstructionSet>,
         polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        InstructionSet: JoltInstructionSet,
+        transcript: &mut ProofTranscript
+    )
+        where PCS: CommitmentScheme<ProofTranscript, Field = F>, InstructionSet: JoltInstructionSet
     {
-        //-> Result<Self, SpartanError>
         let num_rounds_x = key.num_rows_bits();
-
-        /* ************************************* */
-        /* Sumcheck 1: Outer sumcheck */
-        let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar())
-            .collect::<Vec<F>>();
-        let mut eq_tau = SplitEqPolynomial::new(&tau);
         let num_padded_rows = constraint_builder.padded_rows_per_step();
-
-        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-            .iter()
-            .map(|var| var.get_ref(polynomials))
-            .collect();
-
-        // println!("Flattened polys size = {}", flattened_polys.len());
-
-        // println!(
-        //     "Flattened polys = {:?}",
-        //     flattened_polys
-        //         .iter()
-        //         .map(|poly| F::from(poly.get_coeff(256)))
-        //         .collect::<Vec<F>>()
-        // );
-
-        // println!("HERE");
 
         let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
             &constraint_builder.uniform_builder.constraints,
             &constraint_builder.offset_equality_constraints,
             num_padded_rows,
-            jolt_oracle,
+            jolt_oracle
         );
-        let mut eq_tau = SplitEqPolynomial::new(&tau);
 
-        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+        #[cfg(test)]
+        {
+            let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                .iter()
+                .map(|var| var.get_ref(polynomials))
+                .collect();
 
-        let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
-        for n in 0..no_of_shards {
-            // println!("n = {}", n);
-            let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_len);
-            streamed_polys_vec.push(streamed_polys);
-        }
+            let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
 
-        let mut j = 0;
-        for n in 0..no_of_shards {
-            let len = streamed_polys_vec[n].Az_Bz_Cz.len();
-            for i in 0..len {
-                // println!(
-                //     "Streamed: {} {} {} {}",
-                //     streamed_polys_vec[n].Az_Bz_Cz[i].0,
-                //     streamed_polys_vec[n].Az_Bz_Cz[i].1,
-                //     streamed_polys_vec[n].Az_Bz_Cz[i].2,
-                //     streamed_polys_vec[n].Az_Bz_Cz[i].3
-                // );
-                // println!(
-                //     "Stored: {}, {}",
-                //     az_bz_cz_poly.unbound_coeffs[j].index,
-                //     az_bz_cz_poly.unbound_coeffs[j].value
-                // );
-
-                assert_eq!(
-                    streamed_polys_vec[n].Az_Bz_Cz[i].0, az_bz_cz_poly.unbound_coeffs[j].index,
-                    "n = {n}, i = {i}"
-                );
-                assert_eq!(
-                    streamed_polys_vec[n].Az_Bz_Cz[i].1, az_bz_cz_poly.unbound_coeffs[j].value,
-                    "n = {n}, i = {i}"
-                );
-                j += 1;
+            let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
+            for n in 0..no_of_shards {
+                let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_len);
+                streamed_polys_vec.push(streamed_polys);
             }
+
+            let mut j = 0;
+            for n in 0..no_of_shards {
+                let len = streamed_polys_vec[n].interleaved_az_bz_cz.len();
+                for i in 0..len {
+                    assert_eq!(
+                        streamed_polys_vec[n].interleaved_az_bz_cz[i].0,
+                        az_bz_cz_poly.unbound_coeffs[j].index
+                    );
+                    assert_eq!(
+                        streamed_polys_vec[n].interleaved_az_bz_cz[i].1,
+                        az_bz_cz_poly.unbound_coeffs[j].value
+                    );
+                    j += 1;
+                }
+            }
+            println!("AzBzCz oracle test passing.");
         }
-        println!("AzBz - Cz streamed.");
+
+        // TODO: Add outer sum-check, inner sum-check, and pc-next sum-check.
     }
-
-    // assert_eq!(
-    //     streamed_polys.Az_Bz_Cz[i].1,
-    //     az_bz_cz_poly.unbound_coeffs[n * shard_len + i].value,
-    //     "i = {i}, 1"
-    // );
-
-    // let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
-    // let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-    //     SumcheckInstanceProof::streaming_prove_spartan_cubic(
-    //         num_rounds_x,
-    //         &mut eq_tau,
-    //         &mut az_bz_cz_poly,
-    //         transcript,
-    //     );
-    // let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-    // drop_in_background_thread((az_bz_cz_poly, eq_tau));
-
-    // ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
-    // // claims from the end of sum-check
-    // // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
-    // let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
-    //     outer_sumcheck_claims[0],
-    //     outer_sumcheck_claims[1],
-    //     outer_sumcheck_claims[2],
-    // );
-
-    // /* Sumcheck 2: Inner sumcheck
-    //     RLC of claims Az, Bz, Cz
-    //     where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-    //                         + A_shift(..) * z_shift(..)
-    //     and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
-    //     - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-    //     - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
-    // */
-    // let num_steps = key.num_steps;
-    // let num_steps_bits = num_steps.ilog2() as usize;
-    // let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
-
-    // let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-    // let claim_inner_joint = claim_Az
-    //     + inner_sumcheck_RLC * claim_Bz
-    //     + inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
-
-    // let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
-
-    // let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
-    // let (eq_rx_step_r2, eq_plus_one_rx_step_r2) =
-    //     EqPlusOnePolynomial::evals(rx_step, F::montgomery_r2());
-
-    // /* Compute the two polynomials provided as input to the second sumcheck:
-    //    - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
-    //    - poly_z: z(y_var || rx_step), z_shift(..)
-    // */
-    // let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
-    //     rx_constr,
-    //     rx_step,
-    //     inner_sumcheck_RLC,
-    // ));
-
-    // // Binding z and z_shift polynomials at point rx_step
-    // let span = span!(Level::INFO, "binding_z_and_shift_z");
-    // let _guard = span.enter();
-
-    // let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
-    // let mut bind_shift_z = vec![F::zero(); num_vars_uniform * 2];
-
-    // flattened_polys
-    //     .par_iter()
-    //     .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
-    //     .for_each(|(poly, (eval, eval_shifted))| {
-    //         *eval = poly.dot_product(Some(&eq_rx_step), Some(&eq_rx_step_r2));
-    //         *eval_shifted =
-    //             poly.dot_product(Some(&eq_plus_one_rx_step), Some(&eq_plus_one_rx_step_r2));
-    //     });
-
-    // bind_z[num_vars_uniform] = F::one();
-
-    // drop(_guard);
-    // drop(span);
-
-    // let poly_z =
-    //     DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
-    // assert_eq!(poly_z.len(), poly_ABC.len());
-
-    // let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
-
-    // let mut polys = vec![
-    //     MultilinearPolynomial::LargeScalars(poly_ABC),
-    //     MultilinearPolynomial::LargeScalars(poly_z),
-    // ];
-
-    // let comb_func = |poly_evals: &[F]| -> F {
-    //     assert_eq!(poly_evals.len(), 2);
-    //     poly_evals[0] * poly_evals[1]
-    // };
-
-    // let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-    //     SumcheckInstanceProof::prove_arbitrary(
-    //         &claim_inner_joint,
-    //         num_rounds_inner_sumcheck,
-    //         &mut polys,
-    //         comb_func,
-    //         2,
-    //         transcript,
-    //     );
-
-    // drop_in_background_thread(polys);
-
-    // /*  Sumcheck 3: Shift sumcheck
-    //     sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
-    // */
-    // let ry_var = inner_sumcheck_r[1..].to_vec();
-    // let eq_ry_var = EqPolynomial::evals(&ry_var);
-    // let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
-
-    // let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
-
-    // let span = span!(Level::INFO, "bind_z_ry_var");
-    // let _guard = span.enter();
-    // let num_steps_unpadded = constraint_builder.uniform_repeat();
-    // (0..num_steps_unpadded) // unpadded number of steps is sufficient
-    //     .into_par_iter()
-    //     .map(|t| {
-    //         flattened_polys
-    //             .iter()
-    //             .enumerate()
-    //             .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
-    //             .sum()
-    //     })
-    //     .collect_into_vec(&mut bind_z_ry_var);
-    // drop(_guard);
-    // drop(span);
-
-    // let num_rounds_shift_sumcheck = num_steps_bits;
-    // assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
-
-    // let mut shift_sumcheck_polys = vec![
-    //     MultilinearPolynomial::from(bind_z_ry_var),
-    //     MultilinearPolynomial::from(eq_plus_one_rx_step),
-    // ];
-
-    // let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
-    //     .into_par_iter()
-    //     .map(|i| {
-    //         let params: Vec<F> = shift_sumcheck_polys
-    //             .iter()
-    //             .map(|poly| poly.get_coeff(i))
-    //             .collect();
-    //         comb_func(&params)
-    //     })
-    //     .reduce(|| F::zero(), |acc, x| acc + x);
-
-    // let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
-    //     SumcheckInstanceProof::prove_arbitrary(
-    //         &shift_sumcheck_claim,
-    //         num_rounds_shift_sumcheck,
-    //         &mut shift_sumcheck_polys,
-    //         comb_func,
-    //         2,
-    //         transcript,
-    //     );
-
-    // drop_in_background_thread(shift_sumcheck_polys);
-
-    // // Inner sumcheck evaluations: evaluate z on rx_step
-    // let (claimed_witness_evals, chis) =
-    //     MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
-
-    // opening_accumulator.append(
-    //     &flattened_polys,
-    //     DensePolynomial::new(chis),
-    //     rx_step.to_vec(),
-    //     &claimed_witness_evals,
-    //     transcript,
-    // );
-
-    // // Shift sumcheck evaluations: evaluate z on ry_var
-    // let (shift_sumcheck_witness_evals, chis2) =
-    //     MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
-
-    // opening_accumulator.append(
-    //     &flattened_polys,
-    //     DensePolynomial::new(chis2),
-    //     shift_sumcheck_r.to_vec(),
-    //     &shift_sumcheck_witness_evals,
-    //     transcript,
-    // );
-
-    // // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
-    // let outer_sumcheck_claims = (
-    //     outer_sumcheck_claims[0],
-    //     outer_sumcheck_claims[1],
-    //     outer_sumcheck_claims[2],
-    // );
-    // Ok(UniformSpartanProof {
-    //     _inputs: PhantomData,
-    //     outer_sumcheck_proof,
-    //     outer_sumcheck_claims,
-    //     inner_sumcheck_proof,
-    //     shift_sumcheck_proof,
-    //     shift_sumcheck_claim,
-    //     claimed_witness_evals,
-    //     shift_sumcheck_witness_evals,
-    //     _marker: PhantomData,
-    // }
 
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
@@ -966,22 +653,18 @@ where
         key: &UniformSpartanKey<C, I, F>,
         commitments: &JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError>
-    where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
+        transcript: &mut ProofTranscript
+    )
+        -> Result<(), SpartanError>
+        where PCS: CommitmentScheme<ProofTranscript, Field = F>, ProofTranscript: Transcript
     {
         let num_rounds_x = key.num_rows_total().log_2();
 
         /* Sumcheck 1: Outer sumcheck
          */
-        let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar())
-            .collect::<Vec<F>>();
+        let tau = (0..num_rounds_x).map(|_i| transcript.challenge_scalar()).collect::<Vec<F>>();
 
-        let (claim_outer_final, outer_sumcheck_r) = self
-            .outer_sumcheck_proof
+        let (claim_outer_final, outer_sumcheck_r) = self.outer_sumcheck_proof
             .verify(F::zero(), num_rounds_x, 3, transcript)
             .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
 
@@ -1000,8 +683,7 @@ where
                 self.outer_sumcheck_claims.0,
                 self.outer_sumcheck_claims.1,
                 self.outer_sumcheck_claims.2,
-            ]
-            .as_slice(),
+            ].as_slice()
         );
 
         /* Sumcheck 2: Inner sumcheck
@@ -1011,13 +693,13 @@ where
            - verifying it involves computing each term with randomness ry_var
         */
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-        let claim_inner_joint = self.outer_sumcheck_claims.0
-            + inner_sumcheck_RLC * self.outer_sumcheck_claims.1
-            + inner_sumcheck_RLC * inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
+        let claim_inner_joint =
+            self.outer_sumcheck_claims.0 +
+            inner_sumcheck_RLC * self.outer_sumcheck_claims.1 +
+            inner_sumcheck_RLC * inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
 
         let num_rounds_inner_sumcheck = (2 * key.num_vars_uniform_padded()).log_2() + 1; // +1 for shift evals
-        let (claim_inner_final, inner_sumcheck_r) = self
-            .inner_sumcheck_proof
+        let (claim_inner_final, inner_sumcheck_r) = self.inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
@@ -1027,11 +709,17 @@ where
 
         let r_is_cross_step = inner_sumcheck_r[0];
         let ry_var = inner_sumcheck_r[1..].to_vec();
-        let eval_z =
-            key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
+        let eval_z = key.evaluate_z_mle_with_segment_evals(
+            &self.claimed_witness_evals,
+            &ry_var,
+            true
+        );
 
-        let (eval_a, eval_b, eval_c) =
-            key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_is_cross_step);
+        let (eval_a, eval_b, eval_c) = key.evaluate_matrix_mle_full(
+            rx_constr,
+            &ry_var,
+            &r_is_cross_step
+        );
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;
@@ -1050,23 +738,18 @@ where
         */
 
         let num_rounds_shift_sumcheck = num_steps_bits;
-        let (claim_shift_sumcheck, shift_sumcheck_r) = self
-            .shift_sumcheck_proof
-            .verify(
-                self.shift_sumcheck_claim,
-                num_rounds_shift_sumcheck,
-                2,
-                transcript,
-            )
+        let (claim_shift_sumcheck, shift_sumcheck_r) = self.shift_sumcheck_proof
+            .verify(self.shift_sumcheck_claim, num_rounds_shift_sumcheck, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         let eval_z_shift_sumcheck = key.evaluate_z_mle_with_segment_evals(
             &self.shift_sumcheck_witness_evals,
             &ry_var,
-            false,
+            false
         );
-        let eq_plus_one_shift_sumcheck =
-            EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
+        let eq_plus_one_shift_sumcheck = EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(
+            &shift_sumcheck_r
+        );
         let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
@@ -1082,14 +765,14 @@ where
             &flattened_commitments,
             rx_step.to_vec(),
             &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
-            transcript,
+            transcript
         );
 
         opening_accumulator.append(
             &flattened_commitments,
             shift_sumcheck_r.to_vec(),
             &self.shift_sumcheck_witness_evals.iter().collect::<Vec<_>>(),
-            transcript,
+            transcript
         );
 
         Ok(())
@@ -1101,7 +784,7 @@ where
 //     use ark_bn254::Fr;
 //     use ark_std::One;
 
-//     use crate::poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme};
+//     use crate::poly::commitment::{ commitment_scheme::CommitShape, hyrax::HyraxScheme };
 
 //     use super::*;
 
@@ -1109,9 +792,9 @@ where
 //     fn integration() {
 //         let (builder, key) = simp_test_builder_key();
 //         let witness_segments: Vec<Vec<Fr>> = vec![
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* Q */,
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* R */,
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* S */
 //         ];
 
 //         // Create a witness and commit
@@ -1120,158 +803,29 @@ where
 //             .map(|segment| segment.as_slice())
 //             .collect();
 //         let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
-//         let witness_commitment =
-//             HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+//         let witness_commitment = HyraxScheme::batch_commit(
+//             &witness_segments_ref,
+//             &gens,
+//             BatchType::Small
+//         );
 
 //         // Prove spartan!
 //         let mut prover_transcript = ProofTranscript::new(b"stuff");
-//         let proof =
-//             UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
-//                 SimpTestIn,
-//             >(
+//         let proof = UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>
+//             ::prove_precommitted::<SimpTestIn>(
 //                 &gens,
 //                 builder,
 //                 &key,
 //                 witness_segments,
 //                 todo!("opening accumulator"),
-//                 &mut prover_transcript,
+//                 &mut prover_transcript
 //             )
 //             .unwrap();
 
 //         let mut verifier_transcript = ProofTranscript::new(b"stuff");
 //         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
 //         proof
-//             .verify_precommitted(
-//                 &key,
-//                 witness_commitment_ref,
-//                 &gens,
-//                 &mut verifier_transcript,
-//             )
+//             .verify_precommitted(&key, witness_commitment_ref, &gens, &mut verifier_transcript)
 //             .expect("Spartan verifier failed");
 //     }
 // }
-
-// // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-// let next_step_index = if step_index + 1 < total_num_steps {
-//     Some(step_index + 1)
-// } else {
-//     None
-// };
-
-// // Cross-step constraints
-// for (constraint_index, constraint) in cross_step_constraints
-//     .iter()
-//     .enumerate() {
-//     let global_index =
-//         3 *
-//         (step_index * padded_num_constraints +
-//             uniform_constraints.len() +
-//             constraint_index);
-
-//     if
-//         next_step_index.is_some() &&
-//         next_step_index.unwrap() < shard_length
-//     {
-//         // Az
-//         let eq_a_eval = eval_offset_lc(
-//             &constraint.a,
-//             &streaming_z,
-//             step_index,
-//             next_step_index
-//         );
-//         let eq_b_eval = eval_offset_lc(
-//             &constraint.b,
-//             &streaming_z,
-//             step_index,
-//             next_step_index
-//         );
-//         let az_coeff = eq_a_eval - eq_b_eval;
-//         if !az_coeff.is_zero() {
-//             coeffs.push((global_index, az_coeff).into());
-//             // If Az != 0, then the condition must be false (i.e. Bz = 0)
-//             #[cfg(test)]
-//             {
-//                 let bz_coeff = eval_offset_lc(
-//                     &constraint.cond,
-//                     &streaming_z,
-//                     step_index,
-//                     next_step_index
-//                 );
-//                 assert_eq!(
-//                     bz_coeff,
-//                     0,
-//                     "Cross-step constraint {constraint_index} violated at step {step_index}"
-//                 );
-//             }
-//         } else if next_step_index.is_some() {
-//             // Bz
-//             let bz_coeff = eval_offset_lc(
-//                 &constraint.cond,
-//                 &streaming_z,
-//                 step_index,
-//                 next_step_index
-//             );
-//             if !bz_coeff.is_zero() {
-//                 coeffs.push((global_index + 1, bz_coeff).into());
-//             }
-//         }
-//     } else {
-//         let extra_eval_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-//             .iter()
-//             .map(|var| var.get_ref(&extra_eval))
-//             .collect();
-
-//         let eq_a_eval = streaming_eval_offset_lc(
-//             &constraint.a,
-//             &streaming_z,
-//             &extra_eval_z,
-//             step_index,
-//             next_step_index
-//         );
-//         let eq_b_eval = streaming_eval_offset_lc(
-//             &constraint.b,
-//             &streaming_z,
-//             &extra_eval_z,
-//             step_index,
-//             next_step_index
-//         );
-
-//         let az_coeff = eq_a_eval - eq_b_eval;
-//             //         if !az_coeff.is_zero() {
-//             //             coeffs.push((global_index, az_coeff).into());
-//             //             // If Az != 0, then the condition must be false (i.e. Bz = 0)
-//             //             #[cfg(test)]
-//             //             {
-//             //                 let bz_coeff = streaming_eval_offset_lc(
-//             //                     &constraint.cond,
-//             //                     &streaming_z,
-//             //                     &extra_eval_z,
-//             //                     step_index,
-//             //                     next_step_index
-//             //                 );
-//             //                 assert_eq!(
-//             //                     bz_coeff,
-//             //                     0,
-//             //                     "Cross-step constraint {constraint_index} violated at step {step_index}"
-//             //                 );
-//             //             }
-//             //         } else {
-//             //             // Bz
-//             //             let bz_coeff = streaming_eval_offset_lc(
-//             //                 &constraint.cond,
-//             //                 &streaming_z,
-//             //                 &extra_eval_z,
-//             //                 step_index,
-//             //                 next_step_index
-//             //             );
-//             //             if !bz_coeff.is_zero() {
-//             //                 coeffs.push((global_index + 1, bz_coeff).into());
-//             //             }
-//             //         }
-//             //     }
-//             //     // Cz is always 0 for cross-step constraints
-//             // }
-//         }
-//         coeffs
-//     })
-//     .collect();
