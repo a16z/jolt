@@ -1,26 +1,16 @@
 use std::marker::PhantomData;
 
-use ark_ff::Zero;
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
-use itertools::Itertools;
-use rayon::prelude::*;
-use thiserror::Error;
-use tracing::{Level, span};
-
-use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-};
+use super::builder::eval_offset_lc;
+use super::builder::streaming_eval_offset_lc;
+use super::builder::CombinedUniformBuilder;
+use super::builder::Constraint;
+use super::builder::OffsetEqConstraint;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltOracle;
 use crate::jolt::vm::JoltPolynomials;
 use crate::jolt::vm::JoltStuff;
+use crate::jolt::vm::{JoltCommitments, JoltPreprocessing, JoltTraceStep};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::StreamingEqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -28,18 +18,28 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
-
-use super::builder::eval_offset_lc;
-use super::builder::streaming_eval_offset_lc;
-use super::builder::CombinedUniformBuilder;
-use super::builder::Constraint;
-use super::builder::OffsetEqConstraint;
+use crate::{
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+    },
+    subprotocols::sumcheck::SumcheckInstanceProof,
+};
+use ark_ff::Zero;
+use ark_serialize::CanonicalDeserialize;
+use ark_serialize::CanonicalSerialize;
+use common::rv_trace::JoltDevice;
+use itertools::Itertools;
+use rayon::prelude::*;
+use thiserror::Error;
+use tracing::{span, Level};
 
 use super::inputs::ConstraintInput;
 
@@ -84,7 +84,7 @@ pub struct AzBzCz {
 }
 
 pub struct AzBzCzOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
-    pub jolt_oracle:  JoltOracle<'a, F, InstructionSet>,
+    pub jolt_oracle: JoltOracle<'a, F, InstructionSet>,
     pub func: Box<
         dyn (Fn(
                 usize,
@@ -733,13 +733,16 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
-    pub fn streaming_prove<PCS, InstructionSet>(
-        no_of_shards: usize,
-        shard_len: usize,
+    pub fn streaming_prove<PCS, InstructionSet, const M: usize>(
+        num_shards: usize,
+        shard_length: usize,
+        preprocessing: &JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        program_io: &JoltDevice,
+        trace: &Vec<JoltTraceStep<InstructionSet>>,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &JoltPolynomials<F>,
-        jolt_oracle: &mut JoltOracle<F, InstructionSet>,
+
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
@@ -754,23 +757,29 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        /* Sumcheck 1: Outer sumcheck */
-
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
-        let mut eq_tau = SplitEqPolynomial::new(&tau);
+
         let num_padded_rows = constraint_builder.padded_rows_per_step();
 
-        // let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
-        //     &constraint_builder.uniform_builder.constraints,
-        //     &constraint_builder.offset_equality_constraints,
-        //     num_padded_rows,
-        //     jolt_oracle,
-        // );
+        let jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
+
+        let  streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
+            &constraint_builder.uniform_builder.constraints,
+            &constraint_builder.offset_equality_constraints,
+            num_padded_rows,
+            jolt_oracle,
+        );
+
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
-        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+        // let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         //
         // let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
         // for n in 0..no_of_shards {
@@ -805,6 +814,7 @@ where
                 &mut az_bz_cz_poly,
                 transcript,
             );
+
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
         drop_in_background_thread((az_bz_cz_poly, eq_tau));
 
@@ -856,12 +866,17 @@ where
         let span = span!(Level::INFO, "binding_z_and_shift_z");
         let _guard = span.enter();
 
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
+
         let mut bind_z_stream = vec![F::zero(); num_vars_uniform * 2];
         let mut bind_shift_z_stream = vec![F::zero(); num_vars_uniform * 2];
 
-        let num_shards = 4;
         let reverse_rx_step = rx_step.iter().rev().map(|elem| *elem).collect_vec();
-        let shard_length = flattened_polys[0].len() / num_shards;
         let mut eq_rx_step_stream =
             StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None);
         let mut eq_rx_step_r2_stream = StreamingEqPolynomial::new(
@@ -922,29 +937,9 @@ where
         }
         bind_z_stream[num_vars_uniform] = F::one();
 
-        // let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
-        // let mut bind_shift_z = vec![F::zero(); num_vars_uniform * 2];
-        //
-        // flattened_polys
-        //     .par_iter()
-        //     .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
-        //     .for_each(|(poly, (eval, eval_shifted))| {
-        //         *eval = poly.dot_product(Some(&eq_rx_step), Some(&eq_rx_step_r2));
-        //         *eval_shifted =
-        //             poly.dot_product(Some(&eq_plus_one_rx_step), Some(&eq_plus_one_rx_step_r2));
-        //     });
-        //
-        // bind_z[num_vars_uniform] = F::one();
-        // assert_eq!(bind_z, bind_z_stream, "bind z not matching");
-        // assert_eq!(
-        //     bind_shift_z, bind_shift_z_stream,
-        //     "bind shift z not matching"
-        // );
         drop(_guard);
         drop(span);
 
-        // let poly_z =
-        //     DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
         let poly_z = DensePolynomial::new(
             bind_z_stream
                 .into_iter()
@@ -984,7 +979,7 @@ where
         let ry_var = inner_sumcheck_r[1..].to_vec();
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
-
+        let bind_z_ry_var_oracle = BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var,& eq_ry_var_r2);
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
 
         let span = span!(Level::INFO, "bind_z_ry_var");

@@ -1,4 +1,4 @@
-use crate::{ field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial };
+use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 
 pub trait Oracle {
     type Item;

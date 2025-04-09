@@ -602,7 +602,7 @@ mod test {
                 }
             }
 
-            fn peek(&mut self) -> Option<Self::Item>{
+            fn peek(&mut self) -> Option<Self::Item> {
                 Some(&self.trace[self.counter..self.counter + 1])
             }
 

@@ -1,8 +1,8 @@
 use rayon::prelude::*;
 
 use crate::field::JoltField;
-use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use crate::utils::streaming::Oracle;
+use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
 pub struct EqPolynomial<F> {
     r: Vec<F>,
@@ -234,11 +234,11 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
         (0..shard_len).map(|_| self.next_eval()).collect()
     }
 }
-impl <F: JoltField> Oracle for StreamingEqPolynomial<F>{
+impl<F: JoltField> Oracle for StreamingEqPolynomial<F> {
     type Item = Vec<F>;
 
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
-    self.next_shard(shard_len)
+        self.next_shard(shard_len)
     }
 
     fn reset_oracle(&mut self) {
@@ -259,7 +259,7 @@ impl <F: JoltField> Oracle for StreamingEqPolynomial<F>{
 }
 mod test {
     use ark_bn254::Fr;
-    use rand::{Rng, thread_rng};
+    use rand::{thread_rng, Rng};
 
     use super::*;
 

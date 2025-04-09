@@ -60,14 +60,16 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
     type Inputs = JoltR1CSInputs;
 
     fn uniform_constraints(cs: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64) {
-        for flag in RV32I::iter() {                                         // 27
+        for flag in RV32I::iter() {
+            // 27
             cs.constrain_binary(JoltR1CSInputs::InstructionFlags(flag));
         }
-        for flag in CircuitFlags::iter() {                                  // 11
+        for flag in CircuitFlags::iter() {
+            // 11
             cs.constrain_binary(JoltR1CSInputs::OpFlags(flag));
         }
 
-        let flags = CircuitFlags::iter()                    // 27 + 11
+        let flags = CircuitFlags::iter() // 27 + 11
             .map(|flag| JoltR1CSInputs::OpFlags(flag).into())
             .chain(RV32I::iter().map(|flag| JoltR1CSInputs::InstructionFlags(flag).into()))
             .collect();

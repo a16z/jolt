@@ -1,14 +1,11 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::lasso::memory_checking::{
-    ExogenousOpenings,
-    Initializable,
-    StructuredPolynomialData,
-    VerifierComputedOpening,
+    ExogenousOpenings, Initializable, StructuredPolynomialData, VerifierComputedOpening,
 };
-use crate::poly::compact_polynomial::{ CompactPolynomial, SmallScalar };
-use crate::poly::multilinear_polynomial::{ MultilinearPolynomial, PolynomialEvaluation };
-use crate::poly::opening_proof::{ ProverOpeningAccumulator, VerifierOpeningAccumulator };
+use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use rayon::prelude::*;
@@ -21,30 +18,22 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::Transcript;
 use crate::{
     lasso::memory_checking::{
-        MemoryCheckingProof,
-        MemoryCheckingProver,
-        MemoryCheckingVerifier,
-        MultisetHashes,
+        MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
     },
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{ errors::ProofVerifyError, math::Math },
+    utils::{errors::ProofVerifyError, math::Math},
 };
-use ark_serialize::{ CanonicalDeserialize, CanonicalSerialize };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
-    BYTES_PER_INSTRUCTION,
-    MEMORY_OPS_PER_INSTRUCTION,
-    RAM_START_ADDRESS,
-    REGISTER_COUNT,
+    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
 };
-use common::rv_trace::{ JoltDevice, MemoryLayout, MemoryOp };
+use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
-use super::{ timestamp_range_check::TimestampValidityProof, JoltCommitments };
-use super::{ JoltPolynomials, JoltStuff, JoltTraceStep, TraceOracle };
+use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
+use super::{JoltPolynomials, JoltStuff, JoltTraceStep, TraceOracle};
 
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
@@ -67,20 +56,19 @@ impl ReadWriteMemoryPreprocessing {
             .min()
             .unwrap_or(0);
 
-        let max_bytecode_address =
-            memory_init
-                .iter()
-                .map(|(address, _)| *address)
-                .max()
-                .unwrap_or(0) +
-            ((BYTES_PER_INSTRUCTION as u64) - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+        let max_bytecode_address = memory_init
+            .iter()
+            .map(|(address, _)| *address)
+            .max()
+            .unwrap_or(0)
+            + ((BYTES_PER_INSTRUCTION as u64) - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
 
         let num_words = max_bytecode_address.next_multiple_of(4) / 4 - min_bytecode_address / 4 + 1;
         let mut bytecode_words = vec![0u32; num_words as usize];
         // Convert bytes into words and populate `bytecode_words`
-        for chunk in memory_init.chunk_by(
-            |(address_a, _), (address_b, _)| address_a / 4 == address_b / 4
-        ) {
+        for chunk in
+            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 4 == address_b / 4)
+        {
             let mut word = [0u8; 4];
             for (address, byte) in chunk {
                 word[(address % 4) as usize] = *byte;
@@ -156,7 +144,8 @@ pub struct ReadWriteMemoryStuff<T: CanonicalSerialize + CanonicalDeserialize> {
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
-for ReadWriteMemoryStuff<T> {
+    for ReadWriteMemoryStuff<T>
+{
     fn read_write_values(&self) -> Vec<&T> {
         vec![
             &self.a_ram,
@@ -169,7 +158,7 @@ for ReadWriteMemoryStuff<T> {
             &self.t_read_rd,
             &self.t_read_rs1,
             &self.t_read_rs2,
-            &self.t_read_ram
+            &self.t_read_ram,
         ]
     }
 
@@ -185,7 +174,7 @@ for ReadWriteMemoryStuff<T> {
             &mut self.t_read_rd,
             &mut self.t_read_rs1,
             &mut self.t_read_rs2,
-            &mut self.t_read_ram
+            &mut self.t_read_ram,
         ]
     }
 
@@ -217,14 +206,13 @@ pub type ReadWriteMemoryOpenings<F: JoltField> = ReadWriteMemoryStuff<F>;
 /// `alloy_sol_types`.
 pub type ReadWriteMemoryCommitments<
     PCS: CommitmentScheme<ProofTranscript>,
-    ProofTranscript: Transcript
+    ProofTranscript: Transcript,
 > = ReadWriteMemoryStuff<PCS::Commitment>;
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<
-    T,
-    ReadWriteMemoryPreprocessing
->
-for ReadWriteMemoryStuff<T> {}
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
+    Initializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
+{
+}
 
 pub struct ReadWriteMemoryOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub trace_oracle: TraceOracle<'a, InstructionSet>,
@@ -232,35 +220,31 @@ pub struct ReadWriteMemoryOracle<'a, F: JoltField, InstructionSet: JoltInstructi
     pub state: Vec<u32>,
     pub func: Box<
         dyn (Fn(
-            &mut Vec<u32>,
-            &[JoltTraceStep<InstructionSet>]
-        ) -> ReadWriteMemoryStuff<MultilinearPolynomial<F>>) +
-            'a
+                &mut Vec<u32>,
+                &[JoltTraceStep<InstructionSet>],
+            ) -> ReadWriteMemoryStuff<MultilinearPolynomial<F>>)
+            + 'a,
     >,
 }
 
-impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle<
-    'a,
-    F,
-    InstructionSet
-> {
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
+    ReadWriteMemoryOracle<'a, F, InstructionSet>
+{
     // TODO (Bhargav/Ashish): Here _marker is a hack to get around the problem of new being unable to
     // infer the type of F. Find a better solution.
     pub fn new(
         preprocessing: &'a ReadWriteMemoryPreprocessing,
         program_io: &'a JoltDevice,
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
-        _marker: PhantomData<F>
+        _marker: PhantomData<F>,
     ) -> Self {
         let mut trace_oracle = TraceOracle::new(trace);
 
         let max_trace_address = trace
             .into_iter()
-            .map(|step| {
-                match step.memory_ops[RAM] {
-                    MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
-                    MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
-                }
+            .map(|step| match step.memory_ops[RAM] {
+                MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
+                MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
             })
             .max()
             .unwrap();
@@ -271,7 +255,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
         // Copy bytecode
         let mut v_init_index = memory_address_to_witness_index(
             preprocessing.min_bytecode_address,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         );
 
         for word in preprocessing.bytecode_words.iter() {
@@ -281,7 +265,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
         // Copy input bytes
         v_init_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         );
 
         // Convert input bytes into words and populate `v_init`
@@ -297,103 +281,104 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
 
         let v_final = v_init.clone();
 
-        let polynomial_stream = |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
-            let shard_len = shard.len();
-            let mut a_ram = vec![];
-            let mut v_read_rd = vec![];
-            let mut v_read_rs1 = vec![];
-            let mut v_read_rs2 = vec![];
-            let mut v_read_ram = vec![];
-            let mut v_write_rd = vec![];
-            let mut v_write_ram = vec![];
+        let polynomial_stream =
+            |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
+                let shard_len = shard.len();
+                let mut a_ram = vec![];
+                let mut v_read_rd = vec![];
+                let mut v_read_rs1 = vec![];
+                let mut v_read_rs2 = vec![];
+                let mut v_read_ram = vec![];
+                let mut v_write_rd = vec![];
+                let mut v_write_ram = vec![];
 
-            for i in 0..shard_len {
-                let step = &shard[i];
+                for i in 0..shard_len {
+                    let step = &shard[i];
 
-                match step.memory_ops[RS1] {
-                    MemoryOp::Read(a) => {
-                        assert!(a < REGISTER_COUNT);
-                        let a = a as usize;
-                        let v = v_final[a];
+                    match step.memory_ops[RS1] {
+                        MemoryOp::Read(a) => {
+                            assert!(a < REGISTER_COUNT);
+                            let a = a as usize;
+                            let v = v_final[a];
 
-                        v_read_rs1.push(v);
+                            v_read_rs1.push(v);
+                        }
+                        MemoryOp::Write(a, v) => {
+                            panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+                        }
                     }
-                    MemoryOp::Write(a, v) => {
-                        panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+
+                    match step.memory_ops[RS2] {
+                        MemoryOp::Read(a) => {
+                            assert!(a < REGISTER_COUNT);
+                            let a = a as usize;
+                            let v = v_final[a];
+
+                            v_read_rs2.push(v);
+                        }
+                        MemoryOp::Write(a, v) => {
+                            panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v);
+                        }
+                    }
+
+                    match step.memory_ops[RD] {
+                        MemoryOp::Read(a) => {
+                            panic!("Unexpected rd MemoryOp::Read({})", a);
+                        }
+                        MemoryOp::Write(a, v_new) => {
+                            assert!(a < REGISTER_COUNT);
+                            let a = a as usize;
+                            let v_old = v_final[a];
+
+                            v_read_rd.push(v_old);
+                            v_write_rd.push(v_new as u32);
+                            v_final[a] = v_new as u32;
+                        }
+                    }
+
+                    match step.memory_ops[RAM] {
+                        MemoryOp::Read(a) => {
+                            debug_assert!(a % 4 == 0);
+                            let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                            let v = v_final[remapped_a];
+
+                            a_ram.push(remapped_a as u32);
+                            v_read_ram.push(v);
+                            v_write_ram.push(v);
+                        }
+                        MemoryOp::Write(a, v_new) => {
+                            debug_assert!(a % 4 == 0);
+                            let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                            let v_old = v_final[remapped_a];
+
+                            a_ram.push(remapped_a as u32);
+                            v_read_ram.push(v_old);
+                            v_write_ram.push(v_new as u32);
+                            v_final[remapped_a] = v_new as u32;
+                        }
                     }
                 }
 
-                match step.memory_ops[RS2] {
-                    MemoryOp::Read(a) => {
-                        assert!(a < REGISTER_COUNT);
-                        let a = a as usize;
-                        let v = v_final[a];
-
-                        v_read_rs2.push(v);
-                    }
-                    MemoryOp::Write(a, v) => {
-                        panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v);
-                    }
+                ReadWriteMemoryStuff {
+                    a_ram: MultilinearPolynomial::from(a_ram),
+                    v_read_rd: MultilinearPolynomial::from(v_read_rd),
+                    v_read_rs1: MultilinearPolynomial::from(v_read_rs1),
+                    v_read_rs2: MultilinearPolynomial::from(v_read_rs2),
+                    v_read_ram: MultilinearPolynomial::from(v_read_ram),
+                    v_write_rd: MultilinearPolynomial::from(v_write_rd),
+                    v_write_ram: MultilinearPolynomial::from(v_write_ram),
+                    // These are dummy values since they are not required for Twist + Shout.
+                    v_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                    t_read_rd: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                    t_read_rs1: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                    t_read_rs2: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                    t_read_ram: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                    t_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                    a_init_final: None,
+                    v_init: None,
+                    identity: None,
                 }
-
-                match step.memory_ops[RD] {
-                    MemoryOp::Read(a) => {
-                        panic!("Unexpected rd MemoryOp::Read({})", a);
-                    }
-                    MemoryOp::Write(a, v_new) => {
-                        assert!(a < REGISTER_COUNT);
-                        let a = a as usize;
-                        let v_old = v_final[a];
-
-                        v_read_rd.push(v_old);
-                        v_write_rd.push(v_new as u32);
-                        v_final[a] = v_new as u32;
-                    }
-                }
-
-                match step.memory_ops[RAM] {
-                    MemoryOp::Read(a) => {
-                        debug_assert!(a % 4 == 0);
-                        let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
-                        let v = v_final[remapped_a];
-
-                        a_ram.push(remapped_a as u32);
-                        v_read_ram.push(v);
-                        v_write_ram.push(v);
-                    }
-                    MemoryOp::Write(a, v_new) => {
-                        debug_assert!(a % 4 == 0);
-                        let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
-                        let v_old = v_final[remapped_a];
-
-                        a_ram.push(remapped_a as u32);
-                        v_read_ram.push(v_old);
-                        v_write_ram.push(v_new as u32);
-                        v_final[remapped_a] = v_new as u32;
-                    }
-                }
-            }
-
-            ReadWriteMemoryStuff {
-                a_ram: MultilinearPolynomial::from(a_ram),
-                v_read_rd: MultilinearPolynomial::from(v_read_rd),
-                v_read_rs1: MultilinearPolynomial::from(v_read_rs1),
-                v_read_rs2: MultilinearPolynomial::from(v_read_rs2),
-                v_read_ram: MultilinearPolynomial::from(v_read_ram),
-                v_write_rd: MultilinearPolynomial::from(v_write_rd),
-                v_write_ram: MultilinearPolynomial::from(v_write_ram),
-                // These are dummy values since they are not required for Twist + Shout.
-                v_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                t_read_rd: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                t_read_rs1: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                t_read_rs2: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                t_read_ram: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                t_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                a_init_final: None,
-                v_init: None,
-                identity: None,
-            }
-        };
+            };
 
         ReadWriteMemoryOracle {
             trace_oracle,
@@ -405,7 +390,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> ReadWriteMemoryOracle
 }
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-for ReadWriteMemoryOracle<'a, F, InstructionSet> {
+    for ReadWriteMemoryOracle<'a, F, InstructionSet>
+{
     type Item = ReadWriteMemoryStuff<MultilinearPolynomial<F>>;
 
     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
@@ -423,7 +409,10 @@ for ReadWriteMemoryOracle<'a, F, InstructionSet> {
     fn peek(&mut self) -> Option<Self::Item> {
         if self.trace_oracle.peek().is_some() {
             let mut temp_state = self.state.clone();
-            let res = Some((self.func)(&mut temp_state, self.trace_oracle.peek().unwrap()));
+            let res = Some((self.func)(
+                &mut temp_state,
+                self.trace_oracle.peek().unwrap(),
+            ));
             drop(temp_state);
             res
         } else {
@@ -457,18 +446,18 @@ impl<F: JoltField> ExogenousOpenings<F> for RegisterAddressOpenings<F> {
     }
 
     fn exogenous_data<T: CanonicalSerialize + CanonicalDeserialize + Sync>(
-        polys_or_commitments: &JoltStuff<T>
+        polys_or_commitments: &JoltStuff<T>,
     ) -> Vec<&T> {
         vec![
             &polys_or_commitments.bytecode.v_read_write[2],
             &polys_or_commitments.bytecode.v_read_write[3],
-            &polys_or_commitments.bytecode.v_read_write[4]
+            &polys_or_commitments.bytecode.v_read_write[4],
         ]
     }
 }
 
 fn map_to_polys<F: JoltField, const N: usize>(
-    vals: [Vec<u32>; N]
+    vals: [Vec<u32>; N],
 ) -> [MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
         .map(MultilinearPolynomial::from)
@@ -482,7 +471,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
     pub fn generate_witness<InstructionSet: JoltInstructionSet>(
         program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        trace: &[JoltTraceStep<InstructionSet>]
+        trace: &[JoltTraceStep<InstructionSet>],
     ) -> Self {
         assert!(program_io.inputs.len() <= (program_io.memory_layout.max_input_size as usize));
         assert!(program_io.outputs.len() <= (program_io.memory_layout.max_output_size as usize));
@@ -492,11 +481,9 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
 
         let max_trace_address = trace
             .iter()
-            .map(|step| {
-                match step.memory_ops[RAM] {
-                    MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
-                    MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
-                }
+            .map(|step| match step.memory_ops[RAM] {
+                MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
+                MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
             })
             .max()
             .unwrap();
@@ -506,7 +493,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
         // Copy bytecode
         let mut v_init_index = memory_address_to_witness_index(
             preprocessing.min_bytecode_address,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         );
         for word in preprocessing.bytecode_words.iter() {
             v_init[v_init_index] = *word;
@@ -515,7 +502,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
         // Copy input bytes
         v_init_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         );
         // Convert input bytes into words and populate `v_init`
         for chunk in program_io.inputs.chunks(4) {
@@ -685,37 +672,23 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             assert_eq!(set_difference.len(), 0);
         }
 
-        let [
-            a_ram,
-            v_read_rd,
-            v_read_rs1,
-            v_read_rs2,
-            v_read_ram,
-            v_write_rd,
-            v_write_ram,
-            v_final,
-            t_read_rd_poly,
-            t_read_rs1_poly,
-            t_read_rs2_poly,
-            t_read_ram_poly,
-            t_final,
-            v_init,
-        ] = map_to_polys([
-            a_ram,
-            v_read_rd,
-            v_read_rs1,
-            v_read_rs2,
-            v_read_ram,
-            v_write_rd,
-            v_write_ram,
-            v_final,
-            t_read_rd,
-            t_read_rs1,
-            t_read_rs2,
-            t_read_ram,
-            t_final,
-            v_init,
-        ]);
+        let [a_ram, v_read_rd, v_read_rs1, v_read_rs2, v_read_ram, v_write_rd, v_write_ram, v_final, t_read_rd_poly, t_read_rs1_poly, t_read_rs2_poly, t_read_ram_poly, t_final, v_init] =
+            map_to_polys([
+                a_ram,
+                v_read_rd,
+                v_read_rs1,
+                v_read_rs2,
+                v_read_ram,
+                v_write_rd,
+                v_write_ram,
+                v_final,
+                t_read_rd,
+                t_read_rs1,
+                t_read_rs2,
+                t_read_ram,
+                t_final,
+                v_init,
+            ]);
 
         ReadWriteMemoryPolynomials {
             a_ram,
@@ -740,10 +713,10 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
 
 impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
     for ReadWriteMemoryProof<F, PCS, ProofTranscript>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     type Polynomials = ReadWriteMemoryPolynomials<F>;
     type Openings = ReadWriteMemoryOpenings<F>;
@@ -766,7 +739,7 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
         polynomials: &Self::Polynomials,
         jolt_polynomials: &'a JoltPolynomials<F>,
         gamma: &F,
-        tau: &F
+        tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
 
@@ -796,98 +769,80 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
         let v_read_rd: &CompactPolynomial<u32, F> = (&polynomials.v_read_rd).try_into().unwrap();
         let v_read_ram: &CompactPolynomial<u32, F> = (&polynomials.v_read_ram).try_into().unwrap();
         let v_write_rd: &CompactPolynomial<u32, F> = (&polynomials.v_write_rd).try_into().unwrap();
-        let v_write_ram: &CompactPolynomial<u32, F> = (&polynomials.v_write_ram)
-            .try_into()
-            .unwrap();
+        let v_write_ram: &CompactPolynomial<u32, F> =
+            (&polynomials.v_write_ram).try_into().unwrap();
         let t_read_rs1: &CompactPolynomial<u32, F> = (&polynomials.t_read_rs1).try_into().unwrap();
         let t_read_rs2: &CompactPolynomial<u32, F> = (&polynomials.t_read_rs2).try_into().unwrap();
         let t_read_rd: &CompactPolynomial<u32, F> = (&polynomials.t_read_rd).try_into().unwrap();
         let t_read_ram: &CompactPolynomial<u32, F> = (&polynomials.t_read_ram).try_into().unwrap();
 
-        let mut read_write_leaves: Vec<F> = unsafe_allocate_zero_vec(
-            2 * MEMORY_OPS_PER_INSTRUCTION * num_ops
-        );
+        let mut read_write_leaves: Vec<F> =
+            unsafe_allocate_zero_vec(2 * MEMORY_OPS_PER_INSTRUCTION * num_ops);
         for (i, chunk) in read_write_leaves.chunks_mut(2 * num_ops).enumerate() {
             chunk[..num_ops]
                 .par_iter_mut()
                 .enumerate()
-                .for_each(|(j, read_fingerprint)| {
-                    match i {
-                        RS1 => {
-                            *read_fingerprint =
-                                t_read_rs1[j].field_mul(gamma_squared) +
-                                v_read_rs1[j].field_mul(gamma) +
-                                F::from_u8(a_rs1[j]) -
-                                *tau;
-                        }
-                        RS2 => {
-                            *read_fingerprint =
-                                t_read_rs2[j].field_mul(gamma_squared) +
-                                v_read_rs2[j].field_mul(gamma) +
-                                F::from_u8(a_rs2[j]) -
-                                *tau;
-                        }
-                        RD => {
-                            *read_fingerprint =
-                                t_read_rd[j].field_mul(gamma_squared) +
-                                v_read_rd[j].field_mul(gamma) +
-                                F::from_u8(a_rd[j]) -
-                                *tau;
-                        }
-                        RAM => {
-                            *read_fingerprint =
-                                t_read_ram[j].field_mul(gamma_squared) +
-                                v_read_ram[j].field_mul(gamma) +
-                                F::from_u32(a_ram[j]) -
-                                *tau;
-                        }
-                        _ => unreachable!(),
+                .for_each(|(j, read_fingerprint)| match i {
+                    RS1 => {
+                        *read_fingerprint = t_read_rs1[j].field_mul(gamma_squared)
+                            + v_read_rs1[j].field_mul(gamma)
+                            + F::from_u8(a_rs1[j])
+                            - *tau;
                     }
+                    RS2 => {
+                        *read_fingerprint = t_read_rs2[j].field_mul(gamma_squared)
+                            + v_read_rs2[j].field_mul(gamma)
+                            + F::from_u8(a_rs2[j])
+                            - *tau;
+                    }
+                    RD => {
+                        *read_fingerprint = t_read_rd[j].field_mul(gamma_squared)
+                            + v_read_rd[j].field_mul(gamma)
+                            + F::from_u8(a_rd[j])
+                            - *tau;
+                    }
+                    RAM => {
+                        *read_fingerprint = t_read_ram[j].field_mul(gamma_squared)
+                            + v_read_ram[j].field_mul(gamma)
+                            + F::from_u32(a_ram[j])
+                            - *tau;
+                    }
+                    _ => unreachable!(),
                 });
 
-            chunk[num_ops..]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(j, write_fingerprint)| {
-                    match i {
-                        RS1 => {
-                            *write_fingerprint =
-                                (j as u64).field_mul(gamma_squared) +
-                                v_read_rs1[j].field_mul(gamma) +
-                                F::from_u8(a_rs1[j]) -
-                                *tau;
-                        }
-                        RS2 => {
-                            *write_fingerprint =
-                                (j as u64).field_mul(gamma_squared) +
-                                v_read_rs2[j].field_mul(gamma) +
-                                F::from_u8(a_rs2[j]) -
-                                *tau;
-                        }
-                        RD => {
-                            *write_fingerprint =
-                                (j as u64).field_mul(gamma_squared) +
-                                v_write_rd[j].field_mul(gamma) +
-                                F::from_u8(a_rd[j]) -
-                                *tau;
-                        }
-                        RAM => {
-                            *write_fingerprint =
-                                (j as u64).field_mul(gamma_squared) +
-                                v_write_ram[j].field_mul(gamma) +
-                                F::from_u32(a_ram[j]) -
-                                *tau;
-                        }
-                        _ => unreachable!(),
+            chunk[num_ops..].par_iter_mut().enumerate().for_each(
+                |(j, write_fingerprint)| match i {
+                    RS1 => {
+                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
+                            + v_read_rs1[j].field_mul(gamma)
+                            + F::from_u8(a_rs1[j])
+                            - *tau;
                     }
-                });
+                    RS2 => {
+                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
+                            + v_read_rs2[j].field_mul(gamma)
+                            + F::from_u8(a_rs2[j])
+                            - *tau;
+                    }
+                    RD => {
+                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
+                            + v_write_rd[j].field_mul(gamma)
+                            + F::from_u8(a_rd[j])
+                            - *tau;
+                    }
+                    RAM => {
+                        *write_fingerprint = (j as u64).field_mul(gamma_squared)
+                            + v_write_ram[j].field_mul(gamma)
+                            + F::from_u32(a_ram[j])
+                            - *tau;
+                    }
+                    _ => unreachable!(),
+                },
+            );
         }
 
-        let v_init: &CompactPolynomial<u32, F> = polynomials.v_init
-            .as_ref()
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let v_init: &CompactPolynomial<u32, F> =
+            polynomials.v_init.as_ref().unwrap().try_into().unwrap();
         let init_fingerprints: Vec<F> = (0..memory_size)
             .into_par_iter()
             .map(|i| /* 0 * gamma^2 + */ v_init[i].field_mul(gamma) + F::from_u32(i as u32) - *tau)
@@ -898,10 +853,10 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
         let final_fingerprints = (0..memory_size)
             .into_par_iter()
             .map(|i| {
-                t_final[i].field_mul(gamma_squared) +
-                    v_final[i].field_mul(gamma) +
-                    F::from_u32(i as u32) -
-                    *tau
+                t_final[i].field_mul(gamma_squared)
+                    + v_final[i].field_mul(gamma)
+                    + F::from_u32(i as u32)
+                    - *tau
             })
             .collect();
 
@@ -914,7 +869,7 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
     fn uninterleave_hashes(
         _preprocessing: &Self::Preprocessing,
         read_write_hashes: Vec<F>,
-        init_final_hashes: Vec<F>
+        init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
         assert_eq!(read_write_hashes.len(), 2 * MEMORY_OPS_PER_INSTRUCTION);
         let mut read_hashes = Vec::with_capacity(MEMORY_OPS_PER_INSTRUCTION);
@@ -938,10 +893,16 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
 
     fn check_multiset_equality(
         _preprocessing: &Self::Preprocessing,
-        multiset_hashes: &MultisetHashes<F>
+        multiset_hashes: &MultisetHashes<F>,
     ) {
-        assert_eq!(multiset_hashes.read_hashes.len(), MEMORY_OPS_PER_INSTRUCTION);
-        assert_eq!(multiset_hashes.write_hashes.len(), MEMORY_OPS_PER_INSTRUCTION);
+        assert_eq!(
+            multiset_hashes.read_hashes.len(),
+            MEMORY_OPS_PER_INSTRUCTION
+        );
+        assert_eq!(
+            multiset_hashes.write_hashes.len(),
+            MEMORY_OPS_PER_INSTRUCTION
+        );
         assert_eq!(multiset_hashes.init_hashes.len(), 1);
         assert_eq!(multiset_hashes.final_hashes.len(), 1);
 
@@ -950,7 +911,11 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
         let init_hash = multiset_hashes.init_hashes[0];
         let final_hash = multiset_hashes.final_hashes[0];
 
-        assert_eq!(init_hash * write_hash, final_hash * read_hash, "Multiset hashes don't match");
+        assert_eq!(
+            init_hash * write_hash,
+            final_hash * read_hash,
+            "Multiset hashes don't match"
+        );
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -960,24 +925,22 @@ impl<F, PCS, ProofTranscript> MemoryCheckingProver<F, PCS, ProofTranscript>
 
 impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
     for ReadWriteMemoryProof<F, PCS, ProofTranscript>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn compute_verifier_openings(
         openings: &mut Self::Openings,
         preprocessing: &Self::Preprocessing,
         r_read_write: &[F],
-        r_init_final: &[F]
+        r_init_final: &[F],
     ) {
-        openings.identity = Some(
-            IdentityPolynomial::new(r_read_write.len()).evaluate(r_read_write)
-        );
+        openings.identity =
+            Some(IdentityPolynomial::new(r_read_write.len()).evaluate(r_read_write));
 
-        openings.a_init_final = Some(
-            IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final)
-        );
+        openings.a_init_final =
+            Some(IdentityPolynomial::new(r_init_final.len()).evaluate(r_init_final));
 
         let memory_layout = &preprocessing.program_io.as_ref().unwrap().memory_layout;
 
@@ -985,10 +948,8 @@ impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
         let memory_size = r_init_final.len().pow2();
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
-        let mut v_init_index = memory_address_to_witness_index(
-            preprocessing.min_bytecode_address,
-            memory_layout
-        );
+        let mut v_init_index =
+            memory_address_to_witness_index(preprocessing.min_bytecode_address, memory_layout);
         for word in preprocessing.bytecode_words.iter() {
             v_init[v_init_index] = *word as u64;
             v_init_index += 1;
@@ -1011,19 +972,31 @@ impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
     fn read_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        register_address_openings: &RegisterAddressOpenings<F>
+        register_address_openings: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
         vec![
-            (register_address_openings.a_rs1, openings.v_read_rs1, openings.t_read_rs1),
-            (register_address_openings.a_rs2, openings.v_read_rs2, openings.t_read_rs2),
-            (register_address_openings.a_rd, openings.v_read_rd, openings.t_read_rd),
-            (openings.a_ram, openings.v_read_ram, openings.t_read_ram)
+            (
+                register_address_openings.a_rs1,
+                openings.v_read_rs1,
+                openings.t_read_rs1,
+            ),
+            (
+                register_address_openings.a_rs2,
+                openings.v_read_rs2,
+                openings.t_read_rs2,
+            ),
+            (
+                register_address_openings.a_rd,
+                openings.v_read_rd,
+                openings.t_read_rd,
+            ),
+            (openings.a_ram, openings.v_read_ram, openings.t_read_ram),
         ]
     }
     fn write_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        register_address_openings: &RegisterAddressOpenings<F>
+        register_address_openings: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
         // Write timestamp is always equal to the global timestamp
         vec![
@@ -1037,32 +1010,49 @@ impl<F, PCS, ProofTranscript> MemoryCheckingVerifier<F, PCS, ProofTranscript>
                 openings.v_read_rs2, // For rs1 and rs2, v_write = v_read
                 openings.identity.unwrap(),
             ),
-            (register_address_openings.a_rd, openings.v_write_rd, openings.identity.unwrap()),
-            (openings.a_ram, openings.v_write_ram, openings.identity.unwrap())
+            (
+                register_address_openings.a_rd,
+                openings.v_write_rd,
+                openings.identity.unwrap(),
+            ),
+            (
+                openings.a_ram,
+                openings.v_write_ram,
+                openings.identity.unwrap(),
+            ),
         ]
     }
     fn init_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        _: &RegisterAddressOpenings<F>
+        _: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
-        vec![(openings.a_init_final.unwrap(), openings.v_init.unwrap(), F::zero())]
+        vec![(
+            openings.a_init_final.unwrap(),
+            openings.v_init.unwrap(),
+            F::zero(),
+        )]
     }
     fn final_tuples(
         &_: &Self::Preprocessing,
         openings: &Self::Openings,
-        _: &RegisterAddressOpenings<F>
+        _: &RegisterAddressOpenings<F>,
     ) -> Vec<Self::MemoryTuple> {
-        vec![(openings.a_init_final.unwrap(), openings.v_final, openings.t_final)]
+        vec![(
+            openings.a_init_final.unwrap(),
+            openings.v_final,
+            openings.t_final,
+        )]
     }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct OutputSumcheckProof<F, PCS, ProofTranscript>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript {
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     _pcs: PhantomData<(PCS, ProofTranscript)>,
     num_rounds: usize,
     /// Sumcheck proof that v_final is equal to the program outputs at the relevant indices.
@@ -1072,16 +1062,16 @@ pub struct OutputSumcheckProof<F, PCS, ProofTranscript>
 }
 
 impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     fn prove_outputs(
         polynomials: &ReadWriteMemoryPolynomials<F>,
         program_io: &JoltDevice,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_size = polynomials.v_final.len();
         let num_rounds = memory_size.log_2();
@@ -1090,23 +1080,25 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
 
         let input_start_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         ) as u64;
-        let ram_start_index = memory_address_to_witness_index(
-            RAM_START_ADDRESS,
-            &program_io.memory_layout
-        ) as u64;
+        let ram_start_index =
+            memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
 
         let io_witness_range: Vec<u8> = (0..memory_size as u64)
             .map(|i| {
-                if i >= input_start_index && i < ram_start_index { 1 } else { 0 }
+                if i >= input_start_index && i < ram_start_index {
+                    1
+                } else {
+                    0
+                }
             })
             .collect();
 
         let mut v_io: Vec<u32> = vec![0; memory_size];
         let mut input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         );
         // Convert input bytes into words and populate `v_io`
         for chunk in program_io.inputs.chunks(4) {
@@ -1120,7 +1112,7 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
         }
         let mut output_index = memory_address_to_witness_index(
             program_io.memory_layout.output_start,
-            &program_io.memory_layout
+            &program_io.memory_layout,
         );
         // Convert output bytes into words and populate `v_io`
         for chunk in program_io.outputs.chunks(4) {
@@ -1134,50 +1126,44 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
         }
 
         // Copy panic bit
-        v_io[
-            memory_address_to_witness_index(
-                program_io.memory_layout.panic,
-                &program_io.memory_layout
-            )
-        ] = program_io.panic as u32;
+        v_io[memory_address_to_witness_index(
+            program_io.memory_layout.panic,
+            &program_io.memory_layout,
+        )] = program_io.panic as u32;
         if !program_io.panic {
             // Set termination bit
-            v_io[
-                memory_address_to_witness_index(
-                    program_io.memory_layout.termination,
-                    &program_io.memory_layout
-                )
-            ] = 1;
+            v_io[memory_address_to_witness_index(
+                program_io.memory_layout.termination,
+                &program_io.memory_layout,
+            )] = 1;
         }
 
         let mut sumcheck_polys = vec![
             eq,
             MultilinearPolynomial::from(io_witness_range),
             polynomials.v_final.clone(),
-            MultilinearPolynomial::from(v_io)
+            MultilinearPolynomial::from(v_io),
         ];
 
         // eq * io_witness_range * (v_final - v_io)
         let output_check_fn = |vals: &[F]| -> F { vals[0] * vals[1] * (vals[2] - vals[3]) };
 
-        let (sumcheck_proof, r_sumcheck, sumcheck_openings) = SumcheckInstanceProof::<
-            F,
-            ProofTranscript
-        >::prove_arbitrary::<_>(
-            &F::zero(),
-            num_rounds,
-            &mut sumcheck_polys,
-            output_check_fn,
-            3,
-            transcript
-        );
+        let (sumcheck_proof, r_sumcheck, sumcheck_openings) =
+            SumcheckInstanceProof::<F, ProofTranscript>::prove_arbitrary::<_>(
+                &F::zero(),
+                num_rounds,
+                &mut sumcheck_polys,
+                output_check_fn,
+                3,
+                transcript,
+            );
 
         opening_accumulator.append(
             &[&polynomials.v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
             &[sumcheck_openings[2]],
-            transcript
+            transcript,
         );
 
         Self {
@@ -1193,43 +1179,43 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
         preprocessing: &ReadWriteMemoryPreprocessing,
         commitment: &ReadWriteMemoryCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_eq = transcript.challenge_vector(proof.num_rounds);
 
-        let (sumcheck_claim, r_sumcheck) = proof.sumcheck_proof.verify(
-            F::zero(),
-            proof.num_rounds,
-            3,
-            transcript
-        )?;
+        let (sumcheck_claim, r_sumcheck) =
+            proof
+                .sumcheck_proof
+                .verify(F::zero(), proof.num_rounds, 3, transcript)?;
 
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_sumcheck);
 
         let program_io = preprocessing.program_io.as_ref().unwrap();
         let memory_layout = &program_io.memory_layout;
 
-        let input_start_index = memory_address_to_witness_index(
-            memory_layout.input_start,
-            memory_layout
+        let input_start_index =
+            memory_address_to_witness_index(memory_layout.input_start, memory_layout);
+        let ram_start_index =
+            memory_address_to_witness_index(RAM_START_ADDRESS, memory_layout) as u64;
+        assert!(
+            ram_start_index.is_power_of_two(),
+            "ram_start_index must be a power of two"
         );
-        let ram_start_index = memory_address_to_witness_index(
-            RAM_START_ADDRESS,
-            memory_layout
-        ) as u64;
-        assert!(ram_start_index.is_power_of_two(), "ram_start_index must be a power of two");
 
         let io_memory_size = ram_start_index as usize;
         let log_io_memory_size = io_memory_size.log_2();
 
         let io_witness_range: Vec<_> = (0..io_memory_size)
             .map(|i| {
-                if i >= input_start_index { F::one() } else { F::zero() }
+                if i >= input_start_index {
+                    F::one()
+                } else {
+                    F::zero()
+                }
             })
             .collect();
-        let mut io_witness_range_eval = DensePolynomial::new(io_witness_range).evaluate(
-            &r_sumcheck[proof.num_rounds - log_io_memory_size..]
-        );
+        let mut io_witness_range_eval = DensePolynomial::new(io_witness_range)
+            .evaluate(&r_sumcheck[proof.num_rounds - log_io_memory_size..]);
 
         let r_prod: F = r_sumcheck[..proof.num_rounds - log_io_memory_size]
             .iter()
@@ -1238,10 +1224,8 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
         io_witness_range_eval *= r_prod;
 
         let mut v_io: Vec<u64> = vec![0; io_memory_size];
-        let mut input_index = memory_address_to_witness_index(
-            memory_layout.input_start,
-            memory_layout
-        );
+        let mut input_index =
+            memory_address_to_witness_index(memory_layout.input_start, memory_layout);
         // Convert input bytes into words and populate `v_io`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
@@ -1252,10 +1236,8 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
             v_io[input_index] = word as u64;
             input_index += 1;
         }
-        let mut output_index = memory_address_to_witness_index(
-            memory_layout.output_start,
-            memory_layout
-        );
+        let mut output_index =
+            memory_address_to_witness_index(memory_layout.output_start, memory_layout);
         // Convert output bytes into words and populate `v_io`
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];
@@ -1274,9 +1256,8 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
             v_io[memory_address_to_witness_index(memory_layout.termination, memory_layout)] = 1;
         }
 
-        let mut v_io_eval = DensePolynomial::from_u64(&v_io).evaluate(
-            &r_sumcheck[proof.num_rounds - log_io_memory_size..]
-        );
+        let mut v_io_eval = DensePolynomial::from_u64(&v_io)
+            .evaluate(&r_sumcheck[proof.num_rounds - log_io_memory_size..]);
         v_io_eval *= r_prod;
 
         assert_eq!(
@@ -1289,7 +1270,7 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
             &[&commitment.v_final],
             r_sumcheck,
             &[&proof.opening],
-            transcript
+            transcript,
         );
 
         Ok(())
@@ -1298,26 +1279,27 @@ impl<F, PCS, ProofTranscript> OutputSumcheckProof<F, PCS, ProofTranscript>
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryProof<F, PCS, ProofTranscript>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript {
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
     pub memory_checking_proof: MemoryCheckingProof<
         F,
         PCS,
         ReadWriteMemoryOpenings<F>,
         RegisterAddressOpenings<F>,
-        ProofTranscript
+        ProofTranscript,
     >,
     pub timestamp_validity_proof: TimestampValidityProof<F, PCS, ProofTranscript>,
     pub output_proof: OutputSumcheckProof<F, PCS, ProofTranscript>,
 }
 
 impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]
     pub fn prove<'a>(
@@ -1326,7 +1308,7 @@ impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
         polynomials: &'a JoltPolynomials<F>,
         program_io: &JoltDevice,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             generators,
@@ -1334,14 +1316,14 @@ impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
             &polynomials.read_write_memory,
             polynomials,
             opening_accumulator,
-            transcript
+            transcript,
         );
 
         let output_proof = OutputSumcheckProof::prove_outputs(
             &polynomials.read_write_memory,
             program_io,
             opening_accumulator,
-            transcript
+            transcript,
         );
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
@@ -1349,7 +1331,7 @@ impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
             &polynomials.timestamp_range_check,
             polynomials,
             opening_accumulator,
-            transcript
+            transcript,
         );
 
         Self {
@@ -1365,7 +1347,7 @@ impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
         preprocessing: &ReadWriteMemoryPreprocessing,
         commitments: &JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
@@ -1374,21 +1356,21 @@ impl<F, PCS, ProofTranscript> ReadWriteMemoryProof<F, PCS, ProofTranscript>
             &commitments.read_write_memory,
             commitments,
             opening_accumulator,
-            transcript
+            transcript,
         )?;
         OutputSumcheckProof::verify(
             &self.output_proof,
             preprocessing,
             &commitments.read_write_memory,
             opening_accumulator,
-            transcript
+            transcript,
         )?;
         TimestampValidityProof::verify(
             &mut self.timestamp_validity_proof,
             generators,
             commitments,
             opening_accumulator,
-            transcript
+            transcript,
         )
     }
 }
