@@ -608,41 +608,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         }
     }
 
-    #[inline]
-    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        debug_assert!(degree > 0);
-        debug_assert!(index < self.len() / 2);
-
-        let mut evals = vec![F::zero(); degree];
-        match order {
-            BindingOrder::HighToLow => {
-                evals[0] = self.get_bound_coeff(index);
-                if degree == 1 {
-                    return evals;
-                }
-                let mut eval = self.get_bound_coeff(index + self.len() / 2);
-                let m = eval - evals[0];
-                for i in 1..degree {
-                    eval += m;
-                    evals[i] = eval;
-                }
-            }
-            BindingOrder::LowToHigh => {
-                evals[0] = self.get_bound_coeff(2 * index);
-                if degree == 1 {
-                    return evals;
-                }
-                let mut eval = self.get_bound_coeff(2 * index + 1);
-                let m = eval - evals[0];
-                for i in 1..degree {
-                    eval += m;
-                    evals[i] = eval;
-                }
-            }
-        };
-        evals
-    }
-
     fn stream_batch_evaluate<
         'a,
         const C: usize,
@@ -702,7 +667,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             })
             .collect();
         let len = partial_evals[0].len();
-        
+
         let evals =
             partial_evals
                 .iter()
@@ -715,47 +680,42 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 });
         evals
     }
+
+    #[inline]
+    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
+        debug_assert!(degree > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![F::zero(); degree];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self.get_bound_coeff(index);
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(index + self.len() / 2);
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                evals[0] = self.get_bound_coeff(2 * index);
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self.get_bound_coeff(2 * index + 1);
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+        };
+        evals
+    }
 }
-
-// fn stream_batch_evaluate<'a, F: JoltField, InstructionSet: JoltInstructionSet>(jolt_oracle: &JoltOracle<'a, F, InstructionSet>, r: &[F], no_shard: usize) -> Vec<F> {
-
-//         // let eq = StreamingEqPolynomial::new(r.to_vec(), num_vars, F::montgomery_r2());
-//         // let eq = EqPolynomial::evals(r);
-//         for i in 0..no_shard{
-//             // let eq = StreamingEqPolynomial
-//             let polys = jolt_oracle.next_shard(256); //not fixed
-//             let flattened_polys = polys::flatten();
-//         }
-
-//         unimplemented!();
-//         // if polys
-//         //     .iter()
-//         //     .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
-//         // {
-//         //     // If any of the polynomials contain non-Montgomery form coefficients,
-//         //     // we need to compute the R^2-adjusted EQ table.
-//         //     let eq_r2 = EqPolynomial::evals_with_r2(r);
-//         //     let evals: Vec<F> = polys
-//         //         .into_par_iter()
-//         //         .map(|&poly| match poly {
-//         //             MultilinearPolynomial::LargeScalars(poly) => {
-//         //                 poly.evaluate_at_chi_low_optimized(&eq)
-//         //             }
-//         //             _ => poly.dot_product(None, Some(&eq_r2)),
-//         //         })
-//         //         .collect();
-//         //     (evals, eq)
-//         // } else {
-//         //     let evals: Vec<F> = polys
-//         //         .into_par_iter()
-//         //         .map(|&poly| {
-//         //             let poly: &DensePolynomial<F> = poly.try_into().unwrap();
-//         //             poly.evaluate_at_chi_low_optimized(&eq)
-//         //         })
-//         //         .collect();
-//         //     (evals, eq)
-//         // }
-// }
 
 #[cfg(test)]
 mod tests {

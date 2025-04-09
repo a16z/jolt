@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::streaming::Oracle;
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
@@ -235,10 +236,10 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
     }
 }
 impl<F: JoltField> Oracle for StreamingEqPolynomial<F> {
-    type Item = Vec<F>;
+    type Item = MultilinearPolynomial<F>;
 
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
-        self.next_shard(shard_len)
+        MultilinearPolynomial::from(self.next_shard(shard_len))
     }
 
     fn reset_oracle(&mut self) {
@@ -257,6 +258,7 @@ impl<F: JoltField> Oracle for StreamingEqPolynomial<F> {
         todo!()
     }
 }
+
 mod test {
     use ark_bn254::Fr;
     use rand::{thread_rng, Rng};

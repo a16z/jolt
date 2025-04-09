@@ -110,12 +110,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                   shard: JoltStuff<MultilinearPolynomial<F>>,
                   extra_eval: JoltStuff<MultilinearPolynomial<F>>| {
                 let shard_length = shard.bytecode.a_read_write.len();
-                // println!(
-                //     "total_num_steps = {}, shard_length = {}, shard_idx = {}",
-                //     total_num_steps,
-                //     shard_length,
-                //     shard_idx
-                // );
 
                 let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                     .iter()
@@ -205,8 +199,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             }
                         }
 
-                        // println!("step_index = {}, Uniform constraint end index = {}", step_index);
-
                         if step_index + shard_idx * shard_length + 1 < total_num_steps {
                             let next_step_index = step_index + 1;
 
@@ -278,19 +270,11 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                         }
                                     }
                                 } else {
-                                    // println!("step_index = {}", step_index);
                                     let extra_eval_z: Vec<&MultilinearPolynomial<F>> =
                                         I::flatten::<C>()
                                             .iter()
                                             .map(|var| var.get_ref(&extra_eval))
                                             .collect();
-                                    // println!(
-                                    //     "Extra eval z = {:?}",
-                                    //     extra_eval_z
-                                    //         .iter()
-                                    //         .map(|poly| F::from(poly.get_coeff(0)))
-                                    //         .collect::<Vec<F>>()
-                                    // );
 
                                     let eq_a_eval = streaming_eval_offset_lc(
                                         &constraint.a,
@@ -377,16 +361,16 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.jolt_oracle.reset_oracle();
     }
 
+    fn peek(&mut self) -> Option<Self::Item> {
+        unimplemented!();
+    }
+
     fn get_len(&self) -> usize {
         self.jolt_oracle.get_len()
     }
 
     fn get_step(&self) -> usize {
         self.jolt_oracle.get_step()
-    }
-
-    fn peek(&mut self) -> Option<Self::Item> {
-        unimplemented!();
     }
 }
 
@@ -435,12 +419,15 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     type Item = MultilinearPolynomial<F>;
 
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
-        let jolt_shard = self.jolt_oracle.next_shard(shard_len);
-        (self.func)(jolt_shard)
+        (self.func)(self.jolt_oracle.next_shard(shard_len))
     }
 
     fn reset_oracle(&mut self) {
         self.jolt_oracle.reset_oracle();
+    }
+
+    fn peek(&mut self) -> Option<Self::Item> {
+        unimplemented!();
     }
 
     fn get_len(&self) -> usize {
@@ -449,10 +436,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 
     fn get_step(&self) -> usize {
         self.jolt_oracle.get_step()
-    }
-
-    fn peek(&mut self) -> Option<Self::Item> {
-        unimplemented!();
     }
 }
 
@@ -642,9 +625,9 @@ where
         let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
 
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
-
         let span = span!(Level::INFO, "bind_z_ry_var");
         let _guard = span.enter();
+
         let num_steps_unpadded = constraint_builder.uniform_repeat();
         (0..num_steps_unpadded) // unpadded number of steps is sufficient
             .into_par_iter()
@@ -758,7 +741,6 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
@@ -771,8 +753,7 @@ where
             constraint_builder,
             trace,
         );
-
-        let  streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
+        let streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
             &constraint_builder.uniform_builder.constraints,
             &constraint_builder.offset_equality_constraints,
             num_padded_rows,
@@ -850,8 +831,8 @@ where
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
         let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
-        let (eq_rx_step_r2, eq_plus_one_rx_step_r2) =
-            EqPlusOnePolynomial::evals(rx_step, F::montgomery_r2());
+        // let (eq_rx_step_r2, eq_plus_one_rx_step_r2) =
+        //     EqPlusOnePolynomial::evals(rx_step, F::montgomery_r2());
 
         /* Compute the two polynomials provided as input to the second sumcheck:
            - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
@@ -878,7 +859,7 @@ where
         let mut bind_z_stream = vec![F::zero(); num_vars_uniform * 2];
         let mut bind_shift_z_stream = vec![F::zero(); num_vars_uniform * 2];
 
-        let reverse_rx_step = rx_step.iter().rev().map(|elem| *elem).collect_vec();
+        let reverse_rx_step: Vec<F> = rx_step.iter().rev().copied().collect();
         let mut eq_rx_step_stream =
             StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None);
         let mut eq_rx_step_r2_stream = StreamingEqPolynomial::new(
@@ -938,6 +919,7 @@ where
                 );
         }
         bind_z_stream[num_vars_uniform] = F::one();
+        jolt_oracle.reset_oracle();
 
         drop(_guard);
         drop(span);
@@ -981,7 +963,7 @@ where
         let ry_var = inner_sumcheck_r[1..].to_vec();
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
-        let bind_z_ry_var_oracle = BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var,& eq_ry_var_r2);
+
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
 
         let span = span!(Level::INFO, "bind_z_ry_var");
@@ -1030,7 +1012,15 @@ where
             );
 
         drop_in_background_thread(shift_sumcheck_polys);
+        #[cfg(test)]
+        {
+            let mut bind_z_ry_var_oracle =
+                BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var, &eq_ry_var_r2);
 
+            let mut eq_plus_one_rx_step_stream =
+                StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None);
+            // let oracles = [bind_z_ry_var_oracle, eq_plus_one_rx_step_stream];
+        }
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
@@ -1043,7 +1033,7 @@ where
             transcript,
         );
 
-        let  mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
             preprocessing,
             program_io,
             constraint_builder,
@@ -1053,12 +1043,20 @@ where
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
-        let claimed_witness_eval2  =
-            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(&mut jolt_oracle, rx_step, num_shards, shard_length);
+        let claimed_witness_eval2 = MultilinearPolynomial::stream_batch_evaluate::<
+            C,
+            InstructionSet,
+            I,
+        >(&mut jolt_oracle, rx_step, num_shards, shard_length);
 
-        for i in 0..claimed_witness_evals.len() {
-            assert_eq!(claimed_witness_evals[i], claimed_witness_eval2[i], "mismatch at index {}", i);
-        }
+        #[cfg(test)]
+        assert_eq!(
+            claimed_witness_evals, claimed_witness_eval2,
+            "stream claimed witness evals are incorrect "
+        );
+
+        jolt_oracle.reset_oracle();
+
         opening_accumulator.append(
             &flattened_polys,
             DensePolynomial::new(chis),
@@ -1067,20 +1065,23 @@ where
             transcript,
         );
 
-        jolt_oracle.reset_oracle();
-
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
 
+        let shift_sumcheck_witness_evals2 =
+            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
+                &mut jolt_oracle,
+                &shift_sumcheck_r,
+                num_shards,
+                shard_length,
+            );
 
-
-        let shift_sumcheck_witness_evals2  =
-            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(&mut jolt_oracle, &shift_sumcheck_r, num_shards, shard_length);
-
-        for i in 0..shift_sumcheck_witness_evals.len() {
-            assert_eq!(shift_sumcheck_witness_evals[i], shift_sumcheck_witness_evals2[i], "mismatch at index {}", i);
-        }
+        #[cfg(test)]
+        assert_eq!(
+            shift_sumcheck_witness_evals, shift_sumcheck_witness_evals2,
+            "stream shift sum check witness are incorrect "
+        );
 
         opening_accumulator.append(
             &flattened_polys,

@@ -220,7 +220,6 @@ pub struct Derived<F: JoltField> {
     pub sum: F,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
     // TODO (Bhargav): Made every field except bitflags public. See if this can be avoided.

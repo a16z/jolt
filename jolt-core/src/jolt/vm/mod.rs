@@ -10,7 +10,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
-use bytecode::{BytecodeOracle, };
+use bytecode::BytecodeOracle;
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -706,13 +706,13 @@ where
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
         let program_io_clone = program_io.clone();
-        let mut jolt_oracle = JoltOracle::new::<
-            C,
-            M,
-            PCS,
-            ProofTranscript,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
+        // let mut jolt_oracle = JoltOracle::new::<
+        //     C,
+        //     M,
+        //     PCS,
+        //     ProofTranscript,
+        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        // >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
         let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
 

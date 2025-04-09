@@ -281,7 +281,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         } else {
             None
         }
-
     }
 
     fn get_len(&self) -> usize {
