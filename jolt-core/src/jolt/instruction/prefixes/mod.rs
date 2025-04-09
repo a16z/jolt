@@ -1,11 +1,14 @@
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
+use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
 use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
 use num_derive::FromPrimitive;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
+use pow2::Pow2Prefix;
 use rayon::prelude::*;
+use right_shift_padding::RightShiftPaddingPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -30,6 +33,7 @@ pub mod eq;
 pub mod left_is_zero;
 pub mod left_msb;
 pub mod lower_word;
+pub mod lsb;
 pub mod lt;
 pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
@@ -37,8 +41,10 @@ pub mod negative_divisor_zero_remainder;
 pub mod or;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
+pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
+pub mod right_shift_padding;
 pub mod upper_word;
 pub mod xor;
 
@@ -100,6 +106,9 @@ pub enum Prefixes {
     NegativeDivisorZeroRemainder,
     NegativeDivisorEqualsRemainder,
     NegativeDivisorGreaterThanRemainder,
+    Lsb,
+    Pow2,
+    RightShiftPadding,
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +201,11 @@ impl Prefixes {
             Prefixes::NegativeDivisorGreaterThanRemainder => {
                 NegativeDivisorGreaterThanRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
+            Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::RightShiftPadding => {
+                RightShiftPaddingPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
         };
         PrefixEval(eval)
     }
@@ -200,6 +214,7 @@ impl Prefixes {
     /// prefix, incorporating the two random challenges `r_x` and `r_y` received
     /// since the last update.
     /// This function updates all the prefix checkpoints.
+    #[tracing::instrument(skip_all)]
     pub fn update_checkpoints<const WORD_SIZE: usize, F: JoltField>(
         checkpoints: &mut [PrefixCheckpoint<F>],
         r_x: F,
@@ -304,6 +319,20 @@ impl Prefixes {
             }
             Prefixes::NegativeDivisorGreaterThanRemainder => {
                 NegativeDivisorGreaterThanRemainderPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::Lsb => {
+                LsbPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::Pow2 => {
+                Pow2Prefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightShiftPadding => {
+                RightShiftPaddingPrefix::<WORD_SIZE>::update_prefix_checkpoint(
                     checkpoints,
                     r_x,
                     r_y,

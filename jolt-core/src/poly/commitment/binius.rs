@@ -28,7 +28,7 @@ pub struct BiniusProof {}
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BiniusBatchedProof {}
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct None {}
 
 impl<ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>

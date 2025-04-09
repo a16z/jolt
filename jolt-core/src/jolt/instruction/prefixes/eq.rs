@@ -14,6 +14,7 @@ impl<F: JoltField> SparseDensePrefix<F> for EqPrefix {
     ) -> F {
         let mut result = checkpoints[Prefixes::Eq].unwrap_or(F::one());
 
+        // EQ high-order variables of x and y
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
             result *= r_x * y + (F::one() - r_x) * (F::one() - y);
@@ -22,6 +23,7 @@ impl<F: JoltField> SparseDensePrefix<F> for EqPrefix {
             let y_msb = F::from_u8(b.pop_msb());
             result *= x * y_msb + (F::one() - x) * (F::one() - y_msb);
         }
+        // EQ remaining x and y bits
         let (x, y) = b.uninterleave();
         if x != y {
             return F::zero();

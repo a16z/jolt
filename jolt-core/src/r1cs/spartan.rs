@@ -308,16 +308,16 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.jolt_oracle.reset();
     }
 
+    fn peek(&mut self) -> Option<Self::Item> {
+        unimplemented!();
+    }
+
     fn get_length(&self) -> usize {
         self.jolt_oracle.get_length()
     }
 
     fn get_step(&self) -> usize {
         self.jolt_oracle.get_step()
-    }
-
-    fn peek(&mut self) -> Option<Self::Item> {
-        unimplemented!();
     }
 }
 
@@ -597,35 +597,35 @@ where
         shard_len: usize,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
-        mut jolt_oracle: JoltOracle<F, InstructionSet>,
+        jolt_oracle: JoltOracle<F, InstructionSet>,
         polynomials: &JoltPolynomials<F>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        transcript: &mut ProofTranscript,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _transcript: &mut ProofTranscript,
     ) where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         InstructionSet: JoltInstructionSet,
     {
-        let num_rounds_x = key.num_rows_bits();
+        let _num_rounds_x = key.num_rows_bits();
         let num_padded_rows = constraint_builder.padded_rows_per_step();
-
-        let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
-            &constraint_builder.uniform_builder.constraints,
-            &constraint_builder.offset_equality_constraints,
-            num_padded_rows,
-            jolt_oracle,
-        );
 
         #[cfg(test)]
         {
+            let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
+                &constraint_builder.uniform_builder.constraints,
+                &constraint_builder.offset_equality_constraints,
+                num_padded_rows,
+                jolt_oracle,
+            );
+
             let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                 .iter()
                 .map(|var| var.get_ref(polynomials))
                 .collect();
 
-            let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+            let az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
 
             let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
-            for n in 0..no_of_shards {
+            for _ in 0..no_of_shards {
                 let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_len);
                 streamed_polys_vec.push(streamed_polys);
             }

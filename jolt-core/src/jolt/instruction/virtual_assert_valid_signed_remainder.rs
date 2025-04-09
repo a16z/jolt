@@ -208,21 +208,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for AssertValidSignedRemainderInstruction<WORD_SIZE>
 {
-    fn prefixes() -> Vec<Prefixes> {
-        vec![
-            Prefixes::RightOperandIsZero,
-            Prefixes::PositiveRemainderEqualsDivisor,
-            Prefixes::PositiveRemainderLessThanDivisor,
-            Prefixes::NegativeDivisorZeroRemainder,
-            Prefixes::NegativeDivisorEqualsRemainder,
-            Prefixes::NegativeDivisorGreaterThanRemainder,
-        ]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
             Suffixes::LessThan,
@@ -232,14 +221,17 @@ impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, 
         ]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        prefixes[Prefixes::RightOperandIsZero] * suffixes[Suffixes::RightOperandIsZero]
-            + prefixes[Prefixes::PositiveRemainderEqualsDivisor] * suffixes[Suffixes::LessThan]
-            + prefixes[Prefixes::PositiveRemainderLessThanDivisor] * suffixes[Suffixes::One]
-            + prefixes[Prefixes::NegativeDivisorZeroRemainder]
-                * suffixes[Suffixes::LeftOperandIsZero]
-            + prefixes[Prefixes::NegativeDivisorEqualsRemainder] * suffixes[Suffixes::GreaterThan]
-            + prefixes[Prefixes::NegativeDivisorGreaterThanRemainder] * suffixes[Suffixes::One]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, less_than, greater_than, left_operand_is_zero, right_operand_is_zero] =
+            suffixes.try_into().unwrap();
+        // divisor == 0 || (isPositive(remainder) && remainder <= diviisor) || (isNegative(divisor) && divisor >= remainder)
+        prefixes[Prefixes::RightOperandIsZero] * right_operand_is_zero
+            + prefixes[Prefixes::PositiveRemainderEqualsDivisor] * less_than
+            + prefixes[Prefixes::PositiveRemainderLessThanDivisor] * one
+            + prefixes[Prefixes::NegativeDivisorZeroRemainder] * left_operand_is_zero
+            + prefixes[Prefixes::NegativeDivisorEqualsRemainder] * greater_than
+            + prefixes[Prefixes::NegativeDivisorGreaterThanRemainder] * one
     }
 }
 

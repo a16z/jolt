@@ -110,14 +110,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for AssertValidDiv0Instruction<WORD_SIZE>
 {
-    fn prefixes() -> Vec<Prefixes> {
-        vec![Prefixes::LeftOperandIsZero, Prefixes::DivByZero]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
             Suffixes::LeftOperandIsZero,
@@ -125,10 +121,18 @@ impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, 
         ]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        suffixes[Suffixes::One]
-            - prefixes[Prefixes::LeftOperandIsZero] * suffixes[Suffixes::LeftOperandIsZero]
-            + prefixes[Prefixes::DivByZero] * suffixes[Suffixes::DivByZero]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, left_operand_is_zero, div_by_zero] = suffixes.try_into().unwrap();
+        // If the divisor is *not* zero, both:
+        // `prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero` and
+        // `prefixes[Prefixes::DivByZero] * div_by_zero`
+        // will be zero.
+        //
+        // If the divisor *is* zero, returns 1 (on the Boolean hypercube)
+        // iff the quotient is valid (i.e. 2^WORD_SIZE - 1).
+        one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero
+            + prefixes[Prefixes::DivByZero] * div_by_zero
     }
 }
 

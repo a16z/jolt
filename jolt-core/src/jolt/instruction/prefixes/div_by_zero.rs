@@ -13,6 +13,8 @@ impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
         _: usize,
     ) -> F {
         let (divisor, quotient) = b.uninterleave();
+        // If low-order bits of divisor are not 0s or low-order bits of quotient are not
+        // 1s, short-circuit and return 0.
         if u64::from(divisor) != 0 || u64::from(quotient) != (1 << quotient.len()) - 1 {
             return F::zero();
         }

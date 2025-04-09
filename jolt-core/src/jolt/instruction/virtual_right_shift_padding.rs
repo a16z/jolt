@@ -2,10 +2,11 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{PrefixEval, Prefixes};
+use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
 use crate::field::JoltField;
+use crate::jolt::instruction::prefixes::Prefixes;
 use crate::jolt::subtable::LassoSubtable;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
@@ -79,19 +80,19 @@ impl<const WORD_SIZE: usize> JoltInstruction for RightShiftPaddingInstruction<WO
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for RightShiftPaddingInstruction<WORD_SIZE>
 {
-    fn prefixes() -> Vec<Prefixes> {
-        vec![]
+    fn suffixes(&self) -> Vec<Suffixes> {
+        vec![Suffixes::One, Suffixes::RightShiftPadding]
     }
 
-    fn suffixes() -> Vec<Suffixes> {
-        vec![Suffixes::RightShiftPadding]
-    }
-
-    fn combine(_: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        suffixes[Suffixes::RightShiftPadding]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, right_shift_padding] = suffixes.try_into().unwrap();
+        // 2^WORD_SIZE - 2^shift = 0b11...100..0
+        F::from_u64(1 << WORD_SIZE) * one
+            - prefixes[Prefixes::RightShiftPadding] * right_shift_padding
     }
 }
 

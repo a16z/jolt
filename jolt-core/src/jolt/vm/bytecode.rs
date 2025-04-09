@@ -114,7 +114,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
         preprocessing: &'a BytecodePreprocessing<F>,
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
     ) -> Self {
-        let mut trace_oracle = TraceOracle::new(trace);
+        let trace_oracle = TraceOracle::new(trace);
 
         let func = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
@@ -173,7 +173,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F,
     }
 
     pub fn update_trace(trace: &mut [JoltTraceStep<InstructionSet>]) {
-        for (step_idx, step) in trace.iter_mut().enumerate() {
+        for step in trace.iter_mut() {
             if !step.bytecode_row.address.is_zero() {
                 assert!(step.bytecode_row.address >= (RAM_START_ADDRESS as usize));
                 assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
@@ -335,7 +335,7 @@ pub fn random_bytecode_trace(
     trace
 }
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing<F: JoltField> {
     /// Size of the (padded) bytecode.
     code_size: usize,

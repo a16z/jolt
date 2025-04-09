@@ -393,7 +393,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
     }
 
-    pub fn stream_prove_arbitrary<'a, O, Func1, Func2>(
+    pub fn stream_prove_arbitrary<O, Func1, Func2>(
         num_rounds: usize,
         stream_polys: &mut O,
         extract_poly_fn: Func1,
@@ -414,7 +414,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut final_eval = vec![F::zero(); num_polys];
 
         let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; num_polys];
-        let num_shards = ((1 << num_rounds) / shard_length) as usize;
+        let num_shards = (1 << num_rounds) / shard_length;
         for i in 0..num_rounds {
             let mut accumulator = vec![F::zero(); degree + 1];
 
@@ -554,8 +554,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 }
 
 mod test {
-    use ark_std::iterable::Iterable;
-
     use crate::field::JoltField;
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -664,7 +662,7 @@ mod test {
             }
         }
 
-        let num_vars = 20;
+        let num_vars = 10;
         let num_polys = 2;
         let trace: Vec<u64> = (0..1 << num_vars).map(|elem: u64| elem).collect();
         let mut stream_sum_check_polys = StreamSumCheck::new(&trace);

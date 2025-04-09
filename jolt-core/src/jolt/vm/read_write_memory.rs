@@ -35,7 +35,7 @@ use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
 use super::{JoltPolynomials, JoltStuff, JoltTraceStep, TraceOracle};
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryPreprocessing {
     min_bytecode_address: u64,
     bytecode_words: Vec<u32>,
@@ -238,7 +238,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
         _marker: PhantomData<F>,
     ) -> Self {
-        let mut trace_oracle = TraceOracle::new(trace);
+        let trace_oracle = TraceOracle::new(trace);
 
         let max_trace_address = trace
             .into_iter()

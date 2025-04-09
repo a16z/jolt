@@ -57,7 +57,7 @@ where
 }
 
 //TODO: adapt interface to have prover and verifier key
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphProverKey<P: Pairing>
 where
     P::G1: Icicle,
@@ -66,7 +66,7 @@ where
     pub open_pp: KZGProverKey<P>,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphVerifierKey<P: Pairing> {
     pub kzg_vk: KZGVerifierKey<P>,
     pub tau_N_max_sub_2_N: P::G2Affine,

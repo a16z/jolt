@@ -158,7 +158,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
         preprocessing: &'a InstructionLookupsPreprocessing<C, F>,
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
     ) -> Self {
-        let mut trace_oracle = TraceOracle::new(trace);
+        let trace_oracle = TraceOracle::new(trace);
 
         let func = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
@@ -754,7 +754,7 @@ pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
     pub instruction_to_memory_indices: Vec<Vec<usize>>,

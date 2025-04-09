@@ -90,27 +90,19 @@ impl<const WORD_SIZE: usize> JoltInstruction for BGEInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
-    for BGEInstruction<WORD_SIZE>
-{
-    fn prefixes() -> Vec<Prefixes> {
-        vec![
-            Prefixes::LessThan,
-            Prefixes::Eq,
-            Prefixes::LeftOperandMsb,
-            Prefixes::RightOperandMsb,
-        ]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for BGEInstruction<WORD_SIZE> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LessThan]
     }
 
-    fn combine(prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        suffixes[Suffixes::One] + prefixes[Prefixes::RightOperandMsb] * suffixes[Suffixes::One]
-            - prefixes[Prefixes::LeftOperandMsb] * suffixes[Suffixes::One]
-            - prefixes[Prefixes::LessThan] * suffixes[Suffixes::One]
-            - prefixes[Prefixes::Eq] * suffixes[Suffixes::LessThan]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, less_than] = suffixes.try_into().unwrap();
+        // 1 - LT(x, y) = 1 - (isNegative(x) && isPositive(y)) - LTU(x, y)
+        one + prefixes[Prefixes::RightOperandMsb] * one
+            - prefixes[Prefixes::LeftOperandMsb] * one
+            - prefixes[Prefixes::LessThan] * one
+            - prefixes[Prefixes::Eq] * less_than
     }
 }
 
