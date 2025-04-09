@@ -234,30 +234,34 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
     pub fn next_shard(&mut self, shard_len: usize) -> Vec<F> {
         (0..shard_len).map(|_| self.next_eval()).collect()
     }
-}
-impl<F: JoltField> Oracle for StreamingEqPolynomial<F> {
-    type Item = MultilinearPolynomial<F>;
-
-    fn next_shard(&mut self, shard_len: usize) -> Self::Item {
-        MultilinearPolynomial::from(self.next_shard(shard_len))
-    }
-
-    fn reset_oracle(&mut self) {
-        todo!()
-    }
-
-    fn peek(&mut self) -> Option<Self::Item> {
-        todo!()
-    }
-
-    fn get_len(&self) -> usize {
-        todo!()
-    }
-
-    fn get_step(&self) -> usize {
-        todo!()
+    pub fn reset(&mut self) {
+        self.idx = 0;
+        self.prev_eval = F::zero();
     }
 }
+// impl<F: JoltField> Oracle for StreamingEqPolynomial<F> {
+//     type Item = MultilinearPolynomial<F>;
+//
+//     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+//         MultilinearPolynomial::from(self.next_shard(shard_len))
+//     }
+//
+//     fn reset_oracle(&mut self) {
+//         todo!()
+//     }
+//
+//     fn peek(&mut self) -> Option<Self::Item> {
+//         todo!()
+//     }
+//
+//     fn get_len(&self) -> usize {
+//         todo!()
+//     }
+//
+//     fn get_step(&self) -> usize {
+//         todo!()
+//     }
+// }
 
 mod test {
     use ark_bn254::Fr;

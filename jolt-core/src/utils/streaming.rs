@@ -7,11 +7,17 @@ pub trait Oracle {
 
     fn reset_oracle(&mut self);
 
-    fn peek(&mut self) -> Option<Self::Item>;
+    fn peek(&mut self) -> Option<Self::Item> {
+        unimplemented!("Not required for all impl")
+    }
 
-    fn get_len(&self) -> usize;
+    fn get_len(&self) -> usize {
+        unimplemented!("Not required for all impl")
+    }
 
-    fn get_step(&self) -> usize;
+    fn get_step(&self) -> usize {
+        unimplemented!("Not required for all impl")
+    }
 }
 
 // // An iterator that maps over the values of `iter` with `f`, which modifies its accumulated state.
