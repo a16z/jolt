@@ -207,7 +207,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
             None
         }
     }
-
     fn get_len(&self) -> usize {
         self.trace_oracle.get_len()
     }
@@ -221,46 +220,6 @@ pub struct Derived<F: JoltField> {
     pub sum: F,
 }
 
-pub struct DerivedOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
-    pub bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>,
-    pub func: Box<dyn (Fn(BytecodeStuff<F>) -> Derived<F>) + 'a>,
-}
-
-impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> DerivedOracle<'a, F, InstructionSet> {
-    pub fn new(bytecode_oracle: BytecodeOracle<'a, F, InstructionSet>) -> Self {
-        let polynomial_stream = |step: BytecodeStuff<F>| Derived {
-            sum: step.a_read_write + step.v_read_write[0],
-        };
-
-        DerivedOracle {
-            bytecode_oracle,
-            func: Box::new(polynomial_stream),
-        }
-    }
-}
-
-// impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-//     for DerivedOracle<'a, F, InstructionSet>
-// {
-//     type Item = Derived<F>;
-
-//     // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-//     fn next_eval(&mut self) -> Self::Item {
-//         (self.func)(self.bytecode_oracle.next_eval())
-//     }
-
-//     fn reset_oracle(&mut self) {
-//         self.bytecode_oracle.reset_oracle();
-//     }
-
-//     fn get_len(&self) -> usize {
-//         self.bytecode_oracle.get_len()
-//     }
-
-//     fn get_step(&self) -> usize {
-//         self.bytecode_oracle.get_step()
-//     }
-// }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {

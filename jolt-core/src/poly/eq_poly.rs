@@ -264,26 +264,44 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_next_eval() {
+    fn evals() {
         let mut rng = thread_rng();
         let len = 6;
         let num_vars = 13;
         let mut r: Vec<Fr> = (0..len).map(|_| Fr::from_u64(rng.gen())).collect();
 
         let mut streaming_eq = StreamingEqPolynomial::new(r.clone(), num_vars, None);
-        let eq = EqPolynomial::new(r.clone());
 
         // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
         r.reverse();
         let evals = EqPolynomial::evals(&r);
 
-        for i in 0..(1 << (num_vars - len)) {
+        for _ in 0..(1 << (num_vars - len)) {
             for j in 0..(1 << len) {
-                // let bits: Vec<Fr> = (0..len).map(|k| Fr::from_u64((j >> k) & 1)).collect();
-                // let streaming_eval = streaming_eq.next_eval();
-                // let eval = eq.evaluate(&bits);
-                // assert_eq!(streaming_eval, eval, "{i}, {j}, {}", streaming_eq.idx);
+                assert_eq!(
+                    streaming_eq.next_eval(),
+                    evals[j as usize],
+                    "{}, {j}",
+                    streaming_eq.idx
+                );
+            }
+        }
+    }
+    #[test]
+    fn evals_r2() {
+        let mut rng = thread_rng();
+        let len = 6;
+        let num_vars = 13;
+        let mut r: Vec<Fr> = (0..len).map(|_| Fr::from_u64(rng.gen())).collect();
 
+        let mut streaming_eq = StreamingEqPolynomial::new(r.clone(), num_vars, Fr::montgomery_r2());
+
+        // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
+        r.reverse();
+        let evals = EqPolynomial::evals_with_r2(&r);
+
+        for _ in 0..(1 << (num_vars - len)) {
+            for j in 0..(1 << len) {
                 assert_eq!(
                     streaming_eq.next_eval(),
                     evals[j as usize],

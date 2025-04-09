@@ -10,7 +10,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
-use bytecode::{BytecodeOracle, DerivedOracle};
+use bytecode::{BytecodeOracle, };
 use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -760,16 +760,15 @@ where
         //     C,
         //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         //     F,
-        //     ProofTranscript
-        // >
-        //     ::prove::<PCS>(
-        //         &r1cs_builder,
-        //         &spartan_key,
-        //         &jolt_polynomials,
-        //         &mut opening_accumulator,
-        //         &mut transcript
-        //     )
-        //     .expect("r1cs proof failed");
+        //     ProofTranscript,
+        // >::prove::<PCS>(
+        //     &r1cs_builder,
+        //     &spartan_key,
+        //     &jolt_polynomials,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )
+        // .expect("r1cs proof failed");
 
         let spartan_proof = UniformSpartanProof::<
             C,
