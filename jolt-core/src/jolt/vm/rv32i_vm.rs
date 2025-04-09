@@ -300,7 +300,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
         let (bytecode, memory_init) = program.decode();
-        
+
         let (io_device, trace) = program.trace();
         drop(artifact_guard);
 
