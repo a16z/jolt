@@ -420,9 +420,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             let mut current_window_ub = (1 << (i + 1)) - 1;
 
             let mut witness_eval = vec![vec![F::zero(); 4]; 4];
-            let mut eq_tau = StreamingEqPolynomial::new(tau.clone(), num_rounds, None);
+            let mut eq_tau = StreamingEqPolynomial::new(tau.clone(), num_rounds, None, true);
 
-            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None);
+            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None, true);
 
             for shard_idx in 0..num_shards {
                 let shard = interleaved_az_bz_cz.next_shard(shard_length);
@@ -538,7 +538,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             let mut accumulator = vec![F::zero(); degree + 1];
 
             let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
-            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None);
+            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None, true);
             for shard in 0..num_shards {
                 let shards = stream_polys.next_shard(shard_length);
 
@@ -736,8 +736,7 @@ impl<'a> Oracle for StreamTrace<'a> {
     fn reset(&mut self) {
         if self.counter == self.length {
             self.counter = 0;
-        }
-        else {
+        } else {
             panic!(
                 "Can't reset, trace not exhausted. couter {}, length {}",
                 self.counter, self.length

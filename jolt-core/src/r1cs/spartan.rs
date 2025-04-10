@@ -1,16 +1,16 @@
 use std::marker::PhantomData;
 
 use super::builder::{
-    eval_offset_lc, shard_last_step_eval_offset_lc,
-    CombinedUniformBuilder, Constraint, OffsetEqConstraint,
+    eval_offset_lc, shard_last_step_eval_offset_lc, CombinedUniformBuilder, Constraint,
+    OffsetEqConstraint,
 };
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::jolt::vm::JoltPolynomials;
 use crate::jolt::vm::JoltStuff;
 use crate::jolt::vm::{JoltCommitments, JoltTraceStep};
+use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::StreamingEqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -809,35 +809,38 @@ where
 
         let reverse_rx_step: Vec<F> = rx_step.iter().rev().copied().collect();
         let mut eq_rx_step_stream =
-            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None);
+            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None, true);
         let mut eq_rx_step_r2_stream = StreamingEqPolynomial::new(
             reverse_rx_step.to_vec(),
             reverse_rx_step.len(),
             F::montgomery_r2(),
+            true,
         );
-        let mut eq_plus_one_rx_step_stream =
-            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None);
+        let mut eq_plus_one_rx_step_stream = StreamingEqPolynomial::new(
+            reverse_rx_step.to_vec(),
+            reverse_rx_step.len(),
+            None,
+            false,
+        );
         let mut eq_plus_one_rx_step_r2_stream = StreamingEqPolynomial::new(
             reverse_rx_step.to_vec(),
             reverse_rx_step.len(),
             F::montgomery_r2(),
+            false,
         );
 
         for shard in 0..num_shards {
             let polynomials = jolt_oracle.next_shard(shard_length);
-            let eq_rx_step_shard = eq_rx_step_stream.next_shard(shard_length);
-            let eq_rx_step_r2_shard = eq_rx_step_r2_stream.next_shard(shard_length);
-            let (eq_plus_one_rx_step_shard, eq_plus_one_rx_step_r2_shard) = if shard == 0 {
-                let mut shard1 = eq_plus_one_rx_step_stream.next_shard(shard_length - 1);
-                let mut shard2 = eq_plus_one_rx_step_r2_stream.next_shard(shard_length - 1);
-                (shard1.insert(0, F::zero()), shard2.insert(0, F::zero()));
-                (shard1, shard2)
-            } else {
-                (
-                    eq_plus_one_rx_step_stream.next_shard(shard_length),
-                    eq_plus_one_rx_step_r2_stream.next_shard(shard_length),
-                )
-            };
+            let (eq_rx_step_shard, eq_rx_step_r2_shard) = (
+                eq_rx_step_stream.next_shard(shard_length),
+                eq_rx_step_r2_stream.next_shard(shard_length),
+            );
+
+            let (eq_plus_one_rx_step_shard, eq_plus_one_rx_step_r2_shard) = (
+                eq_plus_one_rx_step_stream.next_shard(shard_length),
+                eq_plus_one_rx_step_r2_stream.next_shard(shard_length),
+            );
+
             let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                 .iter()
                 .map(|var| var.get_ref(&polynomials))
@@ -855,6 +858,7 @@ where
                     (eval1, eval2)
                 })
                 .collect();
+
             partial_bind_z
                 .iter()
                 .zip(partial_bind_shift_z.iter())
@@ -866,6 +870,7 @@ where
                     },
                 );
         }
+
         bind_z_stream[num_vars_uniform] = F::one();
         jolt_oracle.reset();
 
@@ -965,7 +970,7 @@ where
             BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var, &eq_ry_var_r2);
 
         let mut eq_plus_one_rx_step_stream =
-            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), rx_step.len(), None);
+            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), rx_step.len(), None, false);
         let mut oracle =
             Stream::SpartanSumCheck((bind_z_ry_var_oracle, eq_plus_one_rx_step_stream));
 
