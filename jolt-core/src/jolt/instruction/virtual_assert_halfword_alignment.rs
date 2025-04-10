@@ -2,9 +2,10 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{PrefixEval, Prefixes};
+use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::{JoltInstruction, SubtableIndices};
+use crate::jolt::instruction::prefixes::Prefixes;
 use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
 use crate::{
     field::JoltField,
@@ -87,19 +88,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertHalfwordAlignmentInstruct
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> PrefixSuffixDecomposition<WORD_SIZE, F>
+impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
     for AssertHalfwordAlignmentInstruction<WORD_SIZE>
 {
-    fn prefixes() -> Vec<Prefixes> {
-        vec![]
-    }
-
-    fn suffixes() -> Vec<Suffixes> {
+    fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::Lsb]
     }
 
-    fn combine(_prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        suffixes[Suffixes::One] - suffixes[Suffixes::Lsb]
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(self.suffixes().len(), suffixes.len());
+        let [one, lsb] = suffixes.try_into().unwrap();
+        one - prefixes[Prefixes::Lsb] * lsb
     }
 }
 

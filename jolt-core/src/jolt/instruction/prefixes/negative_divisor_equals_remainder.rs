@@ -42,6 +42,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
 
         if let Some(r_x) = r_x {
             let (remainder, divisor) = b.uninterleave();
+            // Short-circuit if low-order bits of remainder and divisor are not equal
             if remainder != divisor {
                 return F::zero();
             }
@@ -50,6 +51,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
         } else {
             let y_msb = F::from_u8(b.pop_msb());
             let (remainder, divisor) = b.uninterleave();
+            // Short-circuit if low-order bits of remainder and divisor are not equal
             if remainder != divisor {
                 return F::zero();
             }

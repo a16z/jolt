@@ -35,7 +35,7 @@ use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments};
 use super::{JoltPolynomials, JoltStuff, JoltTraceStep, TraceOracle};
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryPreprocessing {
     min_bytecode_address: u64,
     bytecode_words: Vec<u32>,
@@ -231,14 +231,14 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
     ReadWriteMemoryOracle<'a, F, InstructionSet>
 {
     // TODO (Bhargav/Ashish): Here _marker is a hack to get around the problem of new being unable to
-    // infer the type of F. Find a better solution.
+    // infer the type of F. Is there a better solution?
     pub fn new(
         preprocessing: &'a ReadWriteMemoryPreprocessing,
         program_io: &'a JoltDevice,
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
         _marker: PhantomData<F>,
     ) -> Self {
-        let mut trace_oracle = TraceOracle::new(trace);
+        let trace_oracle = TraceOracle::new(trace);
 
         let max_trace_address = trace
             .into_iter()
@@ -281,110 +281,109 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
 
         let v_final = v_init.clone();
 
-        let polynomial_stream =
-            |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
-                let shard_len = shard.len();
-                let mut a_ram = vec![];
-                let mut v_read_rd = vec![];
-                let mut v_read_rs1 = vec![];
-                let mut v_read_rs2 = vec![];
-                let mut v_read_ram = vec![];
-                let mut v_write_rd = vec![];
-                let mut v_write_ram = vec![];
+        let func = |v_final: &mut Vec<u32>, shard: &[JoltTraceStep<InstructionSet>]| {
+            let shard_len = shard.len();
+            let mut a_ram = vec![];
+            let mut v_read_rd = vec![];
+            let mut v_read_rs1 = vec![];
+            let mut v_read_rs2 = vec![];
+            let mut v_read_ram = vec![];
+            let mut v_write_rd = vec![];
+            let mut v_write_ram = vec![];
 
-                for i in 0..shard_len {
-                    let step = &shard[i];
+            for i in 0..shard_len {
+                let step = &shard[i];
 
-                    match step.memory_ops[RS1] {
-                        MemoryOp::Read(a) => {
-                            assert!(a < REGISTER_COUNT);
-                            let a = a as usize;
-                            let v = v_final[a];
+                match step.memory_ops[RS1] {
+                    MemoryOp::Read(a) => {
+                        assert!(a < REGISTER_COUNT);
+                        let a = a as usize;
+                        let v = v_final[a];
 
-                            v_read_rs1.push(v);
-                        }
-                        MemoryOp::Write(a, v) => {
-                            panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
-                        }
+                        v_read_rs1.push(v);
                     }
-
-                    match step.memory_ops[RS2] {
-                        MemoryOp::Read(a) => {
-                            assert!(a < REGISTER_COUNT);
-                            let a = a as usize;
-                            let v = v_final[a];
-
-                            v_read_rs2.push(v);
-                        }
-                        MemoryOp::Write(a, v) => {
-                            panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v);
-                        }
-                    }
-
-                    match step.memory_ops[RD] {
-                        MemoryOp::Read(a) => {
-                            panic!("Unexpected rd MemoryOp::Read({})", a);
-                        }
-                        MemoryOp::Write(a, v_new) => {
-                            assert!(a < REGISTER_COUNT);
-                            let a = a as usize;
-                            let v_old = v_final[a];
-
-                            v_read_rd.push(v_old);
-                            v_write_rd.push(v_new as u32);
-                            v_final[a] = v_new as u32;
-                        }
-                    }
-
-                    match step.memory_ops[RAM] {
-                        MemoryOp::Read(a) => {
-                            debug_assert!(a % 4 == 0);
-                            let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
-                            let v = v_final[remapped_a];
-
-                            a_ram.push(remapped_a as u32);
-                            v_read_ram.push(v);
-                            v_write_ram.push(v);
-                        }
-                        MemoryOp::Write(a, v_new) => {
-                            debug_assert!(a % 4 == 0);
-                            let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
-                            let v_old = v_final[remapped_a];
-
-                            a_ram.push(remapped_a as u32);
-                            v_read_ram.push(v_old);
-                            v_write_ram.push(v_new as u32);
-                            v_final[remapped_a] = v_new as u32;
-                        }
+                    MemoryOp::Write(a, v) => {
+                        panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
                     }
                 }
 
-                ReadWriteMemoryStuff {
-                    a_ram: MultilinearPolynomial::from(a_ram),
-                    v_read_rd: MultilinearPolynomial::from(v_read_rd),
-                    v_read_rs1: MultilinearPolynomial::from(v_read_rs1),
-                    v_read_rs2: MultilinearPolynomial::from(v_read_rs2),
-                    v_read_ram: MultilinearPolynomial::from(v_read_ram),
-                    v_write_rd: MultilinearPolynomial::from(v_write_rd),
-                    v_write_ram: MultilinearPolynomial::from(v_write_ram),
-                    // These are dummy values since they are not required for Twist + Shout.
-                    v_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                    t_read_rd: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                    t_read_rs1: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                    t_read_rs2: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                    t_read_ram: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                    t_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
-                    a_init_final: None,
-                    v_init: None,
-                    identity: None,
+                match step.memory_ops[RS2] {
+                    MemoryOp::Read(a) => {
+                        assert!(a < REGISTER_COUNT);
+                        let a = a as usize;
+                        let v = v_final[a];
+
+                        v_read_rs2.push(v);
+                    }
+                    MemoryOp::Write(a, v) => {
+                        panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v);
+                    }
                 }
-            };
+
+                match step.memory_ops[RD] {
+                    MemoryOp::Read(a) => {
+                        panic!("Unexpected rd MemoryOp::Read({})", a);
+                    }
+                    MemoryOp::Write(a, v_new) => {
+                        assert!(a < REGISTER_COUNT);
+                        let a = a as usize;
+                        let v_old = v_final[a];
+
+                        v_read_rd.push(v_old);
+                        v_write_rd.push(v_new as u32);
+                        v_final[a] = v_new as u32;
+                    }
+                }
+
+                match step.memory_ops[RAM] {
+                    MemoryOp::Read(a) => {
+                        debug_assert!(a % 4 == 0);
+                        let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                        let v = v_final[remapped_a];
+
+                        a_ram.push(remapped_a as u32);
+                        v_read_ram.push(v);
+                        v_write_ram.push(v);
+                    }
+                    MemoryOp::Write(a, v_new) => {
+                        debug_assert!(a % 4 == 0);
+                        let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                        let v_old = v_final[remapped_a];
+
+                        a_ram.push(remapped_a as u32);
+                        v_read_ram.push(v_old);
+                        v_write_ram.push(v_new as u32);
+                        v_final[remapped_a] = v_new as u32;
+                    }
+                }
+            }
+
+            ReadWriteMemoryStuff {
+                a_ram: MultilinearPolynomial::from(a_ram),
+                v_read_rd: MultilinearPolynomial::from(v_read_rd),
+                v_read_rs1: MultilinearPolynomial::from(v_read_rs1),
+                v_read_rs2: MultilinearPolynomial::from(v_read_rs2),
+                v_read_ram: MultilinearPolynomial::from(v_read_ram),
+                v_write_rd: MultilinearPolynomial::from(v_write_rd),
+                v_write_ram: MultilinearPolynomial::from(v_write_ram),
+                // These are dummy values since they are not required for Twist + Shout.
+                v_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_read_rd: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_read_rs1: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_read_rs2: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_read_ram: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                a_init_final: None,
+                v_init: None,
+                identity: None,
+            }
+        };
 
         ReadWriteMemoryOracle {
             trace_oracle,
             init_state: v_init,
             state: v_final,
-            func: Box::new(polynomial_stream),
+            func: Box::new(func),
         }
     }
 }
@@ -394,13 +393,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 {
     type Item = ReadWriteMemoryStuff<MultilinearPolynomial<F>>;
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         (self.func)(&mut self.state, self.trace_oracle.next_shard(shard_len))
     }
 
-    fn reset_oracle(&mut self) {
-        self.trace_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
         for i in 0..self.state.len() {
             self.state[i] = self.init_state[i];
         }
@@ -409,8 +407,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     fn peek(&mut self) -> Option<Self::Item> {
         if self.trace_oracle.peek().is_some() {
             let mut temp_state = self.state.clone();
-            let res = (self.func)(&mut temp_state, self.trace_oracle.peek().unwrap());
-            Some(res)
+            let res = Some((self.func)(
+                &mut temp_state,
+                self.trace_oracle.peek().unwrap(),
+            ));
+            drop(temp_state);
+            res
         } else {
             None
         }

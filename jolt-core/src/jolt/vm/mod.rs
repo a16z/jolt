@@ -8,6 +8,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 use strum::EnumCount;
 
 use bytecode::BytecodeOracle;
@@ -21,6 +27,9 @@ use read_write_memory::ReadWriteMemoryOracle;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
 use crate::field::JoltField;
+
+use crate::join_conditional;
+use crate::jolt;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -50,7 +59,6 @@ use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use crate::{join_conditional, jolt};
 
 use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
@@ -58,7 +66,7 @@ use super::instruction::lh::LHInstruction;
 use super::instruction::lhu::LHUInstruction;
 use super::instruction::sb::SBInstruction;
 use super::instruction::sh::SHInstruction;
-use super::instruction::{self, JoltInstructionSet};
+use super::instruction::JoltInstructionSet;
 
 use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
 use self::instruction_lookups::{
@@ -75,8 +83,8 @@ pub mod read_write_memory;
 pub mod rv32i_vm;
 pub mod timestamp_range_check;
 
-#[derive(Clone)]
-pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltVerifierPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -87,7 +95,65 @@ where
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
+}
+
+impl<const C: usize, F, PCS, ProofTranscript> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltProverPreprocessing<const C: usize, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub shared: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
     field: F::SmallValueLookupTables,
+}
+
+impl<const C: usize, F, PCS, ProofTranscript> JoltProverPreprocessing<C, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -107,10 +173,11 @@ pub struct TraceOracle<'a, InstructionSet: JoltInstructionSet> {
 impl<'a, InstructionSet: JoltInstructionSet> TraceOracle<'a, InstructionSet> {
     pub fn new(trace: &'a Vec<JoltTraceStep<InstructionSet>>) -> Self {
         Self {
-            // TODO: This is actually padded length.
+            // Length of the padded trace.
             length: trace.len(),
+            // Index of current step.
             step: 0,
-            trace: &trace,
+            trace,
         }
     }
 }
@@ -118,14 +185,13 @@ impl<'a, InstructionSet: JoltInstructionSet> TraceOracle<'a, InstructionSet> {
 impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, InstructionSet> {
     type Item = &'a [JoltTraceStep<InstructionSet>];
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         let shard_start = self.step;
         self.step += shard_len;
         &self.trace[shard_start..self.step]
     }
 
-    fn reset_oracle(&mut self) {
+    fn reset(&mut self) {
         if self.step == self.length {
             self.step = 0;
         } else {
@@ -200,7 +266,6 @@ pub struct JoltProof<
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
@@ -236,7 +301,7 @@ pub struct JoltOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
 
 impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> JoltOracle<'a, F, InstructionSet> {
     pub fn new<const C: usize, const M: usize, PCS, ProofTranscript, CI: ConstraintInput>(
-        preprocessing: &'a JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &'a JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
         program_io: &'a JoltDevice,
         r1cs_builder: &'a CombinedUniformBuilder<C, F, CI>,
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
@@ -245,21 +310,22 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> JoltOracle<'a, F, Ins
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
-        let mut trace_oracle = TraceOracle::new(trace);
+        let trace_oracle = TraceOracle::new(trace);
 
-        let mut bytecode_oracle = BytecodeOracle::new(&preprocessing.bytecode, trace);
+        let bytecode_oracle = BytecodeOracle::new(&preprocessing.shared.bytecode, trace);
 
-        let mut instruction_lookups_oracle =
-            InstructionLookupOracle::new::<C, M>(&preprocessing.instruction_lookups, trace);
+        let instruction_lookups_oracle =
+            InstructionLookupOracle::new::<C, M>(&preprocessing.shared.instruction_lookups, trace);
 
-        let mut read_write_memory_oracle = ReadWriteMemoryOracle::new(
-            &preprocessing.read_write_memory,
+        // let program_io_clone = program_io.clone();
+        let read_write_memory_oracle = ReadWriteMemoryOracle::new(
+            &preprocessing.shared.read_write_memory,
             program_io,
             trace,
             PhantomData::<F>,
         );
 
-        let polynomial_stream = Box::new(
+        let func =
             |shard: &[JoltTraceStep<InstructionSet>],
              bytecode: BytecodeStuff<MultilinearPolynomial<F>>,
              instruction_lookups: InstructionLookupStuff<MultilinearPolynomial<F>>,
@@ -316,15 +382,14 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> JoltOracle<'a, F, Ins
                 r1cs_builder.streaming_compute_aux(&mut jolt_polys, shard_len);
 
                 jolt_polys
-            },
-        );
+            };
 
         JoltOracle {
             trace_oracle,
             bytecode_oracle,
             instruction_lookups_oracle,
             read_write_memory_oracle,
-            func: Box::new(polynomial_stream),
+            func: Box::new(func),
         }
     }
 }
@@ -333,8 +398,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     for JoltOracle<'a, F, InstructionSet>
 {
     type Item = JoltStuff<MultilinearPolynomial<F>>;
-
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         (self.func)(
             self.trace_oracle.next_shard(shard_len),
@@ -344,11 +407,11 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         )
     }
 
-    fn reset_oracle(&mut self) {
-        self.trace_oracle.reset_oracle();
-        self.bytecode_oracle.reset_oracle();
-        self.instruction_lookups_oracle.reset_oracle();
-        self.read_write_memory_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
+        self.bytecode_oracle.reset();
+        self.instruction_lookups_oracle.reset();
+        self.read_write_memory_oracle.reset();
     }
 
     fn peek(&mut self) -> Option<Self::Item> {
@@ -363,12 +426,10 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         None
     }
 
-    // TODO: Add asserts to check that get_len() of all oracles returns the same value?
     fn get_len(&self) -> usize {
         self.trace_oracle.get_len()
     }
 
-    // TODO: Add asserts to check that get_step() of all oracles returns the same value?
     fn get_step(&self) -> usize {
         self.trace_oracle.get_step()
     }
@@ -443,9 +504,12 @@ impl<
         T: CanonicalSerialize + CanonicalDeserialize + Default + Sync,
         PCS: CommitmentScheme<ProofTranscript>,
         ProofTranscript: Transcript,
-    > Initializable<T, JoltPreprocessing<C, PCS::Field, PCS, ProofTranscript>> for JoltStuff<T>
+    > Initializable<T, JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>>
+    for JoltStuff<T>
 {
-    fn initialize(preprocessing: &JoltPreprocessing<C, PCS::Field, PCS, ProofTranscript>) -> Self {
+    fn initialize(
+        preprocessing: &JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>,
+    ) -> Self {
         Self {
             bytecode: BytecodeStuff::initialize(&preprocessing.bytecode),
             read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
@@ -464,7 +528,7 @@ impl<F: JoltField> JoltPolynomials<F> {
     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
     pub fn commit<const C: usize, PCS, ProofTranscript>(
         &self,
-        preprocessing: &JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> JoltCommitments<PCS, ProofTranscript>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -525,16 +589,14 @@ where
     type Constraints: R1CSConstraints<C, F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn preprocess(
+    fn verifier_preprocess(
         bytecode: Vec<ELFInstruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
+    ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         icicle::icicle_init();
 
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
@@ -577,12 +639,38 @@ where
         .unwrap();
         let generators = PCS::setup(max_poly_len);
 
-        JoltPreprocessing {
+        JoltVerifierPreprocessing {
             generators,
             memory_layout,
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
+    fn prover_preprocess(
+        bytecode: Vec<ELFInstruction>,
+        memory_layout: MemoryLayout,
+        memory_init: Vec<(u64, u8)>,
+        max_bytecode_size: usize,
+        max_memory_address: usize,
+        max_trace_length: usize,
+    ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
+        let small_value_lookup_tables = F::compute_lookup_tables();
+        F::initialize_lookup_tables(small_value_lookup_tables.clone());
+
+        let shared = Self::verifier_preprocess(
+            bytecode,
+            memory_layout,
+            memory_init,
+            max_bytecode_size,
+            max_memory_address,
+            max_trace_length,
+        );
+
+        JoltProverPreprocessing {
+            shared,
             field: small_value_lookup_tables,
         }
     }
@@ -591,7 +679,7 @@ where
     fn prove<'a>(
         program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
-        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             C,
@@ -604,6 +692,7 @@ where
             ProofTranscript,
         >,
         JoltCommitments<PCS, ProofTranscript>,
+        JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
         icicle::icicle_init();
@@ -635,18 +724,18 @@ where
                 Self::InstructionSet,
                 Self::Subtables,
                 ProofTranscript,
-            >::generate_witness(&preprocessing.instruction_lookups, &trace);
+            >::generate_witness(&preprocessing.shared.instruction_lookups, &trace);
 
         let memory_polynomials = ReadWriteMemoryPolynomials::generate_witness(
             &program_io,
-            &preprocessing.read_write_memory,
+            &preprocessing.shared.read_write_memory,
             &trace,
         );
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || {
                 BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
-                    &preprocessing.bytecode,
+                    &preprocessing.shared.bytecode,
                     &mut trace,
                 )
             },
@@ -656,6 +745,127 @@ where
                 )
             },
         );
+
+        // Streaming polynomials
+
+        let program_io_clone = program_io.clone();
+        #[cfg(test)]
+        {
+            BytecodeOracle::<F, Self::InstructionSet>::update_trace(&mut trace_1);
+
+            let mut bytecode_oracle = BytecodeOracle::new(&preprocessing.shared.bytecode, &trace_1);
+
+            let mut instruction_lookups_oracle = InstructionLookupOracle::new::<C, M>(
+                &preprocessing.shared.instruction_lookups,
+                &trace_1,
+            );
+
+            let mut read_write_memory_oracle = ReadWriteMemoryOracle::new(
+                &preprocessing.shared.read_write_memory,
+                &program_io_clone,
+                &trace_1,
+                PhantomData::<F>,
+            );
+
+            let shard_len = (1024).min(padded_trace_length);
+            let no_of_shards = padded_trace_length / shard_len;
+
+            // Testing bytecode oralce.
+            for n in 0..no_of_shards {
+                let streamed_polys = bytecode_oracle.next_shard(shard_len);
+                for i in 0..shard_len {
+                    assert_eq!(
+                        streamed_polys.a_read_write.get_coeff(i),
+                        bytecode_polynomials
+                            .a_read_write
+                            .get_coeff(n * shard_len + i)
+                    );
+                }
+
+                for j in 0..6 {
+                    for i in 0..shard_len {
+                        assert_eq!(
+                            streamed_polys.v_read_write[j].get_coeff(i),
+                            bytecode_polynomials.v_read_write[j].get_coeff(n * shard_len + i)
+                        );
+                    }
+                }
+            }
+            bytecode_oracle.reset();
+
+            // Testing instruction lookups oralce.
+            for n in 0..no_of_shards {
+                let streamed_polys = instruction_lookups_oracle.next_shard(shard_len);
+                for i in 0..shard_len {
+                    for poly_index in 0..instruction_polynomials.dim.len() {
+                        assert_eq!(
+                            streamed_polys.dim[poly_index].get_coeff(i),
+                            instruction_polynomials.dim[poly_index].get_coeff(n * shard_len + i)
+                        );
+                    }
+                    for poly_index in 0..instruction_polynomials.E_polys.len() {
+                        assert_eq!(
+                            streamed_polys.E_polys[poly_index].get_coeff(i),
+                            instruction_polynomials.E_polys[poly_index]
+                                .get_coeff(n * shard_len + i)
+                        );
+                    }
+                    for poly_index in 0..instruction_polynomials.instruction_flags.len() {
+                        assert_eq!(
+                            streamed_polys.instruction_flags[poly_index].get_coeff(i),
+                            instruction_polynomials.instruction_flags[poly_index]
+                                .get_coeff(n * shard_len + i)
+                        );
+                    }
+                }
+                for i in 0..shard_len {
+                    assert_eq!(
+                        streamed_polys.lookup_outputs.get_coeff(i),
+                        instruction_polynomials
+                            .lookup_outputs
+                            .get_coeff(n * shard_len + i)
+                    );
+                }
+            }
+            instruction_lookups_oracle.reset();
+
+            // Testing read write memory oracle.
+            for n in 0..no_of_shards {
+                let streamed_polys = read_write_memory_oracle.next_shard(shard_len);
+                for i in 0..shard_len {
+                    assert_eq!(
+                        streamed_polys.a_ram.get_coeff(i),
+                        memory_polynomials.a_ram.get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.v_read_rs1.get_coeff(i),
+                        memory_polynomials.v_read_rs1.get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.v_read_rs2.get_coeff(i),
+                        memory_polynomials.v_read_rs2.get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.v_read_rd.get_coeff(i),
+                        memory_polynomials.v_read_rd.get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.v_write_rd.get_coeff(i),
+                        memory_polynomials.v_write_rd.get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.v_read_ram.get_coeff(i),
+                        memory_polynomials.v_read_ram.get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.v_write_ram.get_coeff(i),
+                        memory_polynomials.v_write_ram.get_coeff(n * shard_len + i)
+                    );
+                }
+            }
+            read_write_memory_oracle.reset();
+            println!("Bytecode, InstructionLookups, ReadWriteMemory oracle tests passed.");
+        }
 
         let r1cs_builder = Self::Constraints::construct_constraints(
             padded_trace_length,
@@ -675,26 +885,6 @@ where
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         >(&trace);
 
-        // TODO: Stream Polynomials
-
-        BytecodeOracle::<F, Self::InstructionSet>::update_trace(&mut trace_1);
-
-        let mut bytecode_oracle = BytecodeOracle::new(&preprocessing.bytecode, &trace_1);
-
-        let mut instruction_lookups_oracle =
-            InstructionLookupOracle::new::<C, M>(&preprocessing.instruction_lookups, &trace_1);
-
-        let program_io_clone = program_io.clone();
-        let mut read_write_memory_oracle = ReadWriteMemoryOracle::new(
-            &preprocessing.read_write_memory,
-            &program_io_clone,
-            &trace_1,
-            PhantomData::<F>,
-        );
-
-        let shard_len = padded_trace_length / 2;
-        let no_of_shards = padded_trace_length / shard_len;
-
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
@@ -704,17 +894,122 @@ where
         };
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
+        let mut jolt_oracle = JoltOracle::new::<
+            C,
+            M,
+            PCS,
+            ProofTranscript,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
-        let program_io_clone = program_io.clone();
-        // let mut jolt_oracle = JoltOracle::new::<
-        //     C,
-        //     M,
-        //     PCS,
-        //     ProofTranscript,
-        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        // >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
+        let shard_len = (1024).min(padded_trace_length);
+        let no_of_shards = padded_trace_length / shard_len;
+        #[cfg(test)]
+        {
+            // Testing jolt oracle.
+            for n in 0..no_of_shards {
+                let streamed_polys = jolt_oracle.next_shard(shard_len);
 
-        let jolt_commitments = jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing);
+                for i in 0..shard_len {
+                    for j in 0..C {
+                        assert_eq!(
+                            streamed_polys.r1cs.chunks_x[j].get_coeff(i),
+                            jolt_polynomials.r1cs.chunks_x[j].get_coeff(n * shard_len + i)
+                        );
+                        assert_eq!(
+                            streamed_polys.r1cs.chunks_y[j].get_coeff(i),
+                            jolt_polynomials.r1cs.chunks_y[j].get_coeff(n * shard_len + i)
+                        );
+                    }
+                    for j in 0..NUM_CIRCUIT_FLAGS {
+                        assert_eq!(
+                            streamed_polys.r1cs.circuit_flags[j].get_coeff(i),
+                            jolt_polynomials.r1cs.circuit_flags[j].get_coeff(n * shard_len + i)
+                        );
+                    }
+                    for j in 0..jolt_polynomials.r1cs.aux.relevant_y_chunks.len() {
+                        assert_eq!(
+                            streamed_polys.r1cs.aux.relevant_y_chunks[j].get_coeff(i),
+                            jolt_polynomials.r1cs.aux.relevant_y_chunks[j]
+                                .get_coeff(n * shard_len + i)
+                        );
+                    }
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.left_lookup_operand.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .left_lookup_operand
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.right_lookup_operand.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .right_lookup_operand
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.product.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .product
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys
+                            .r1cs
+                            .aux
+                            .write_lookup_output_to_rd
+                            .get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .write_lookup_output_to_rd
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.write_pc_to_rd.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .write_pc_to_rd
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.next_pc_jump.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .next_pc_jump
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.should_branch.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .should_branch
+                            .get_coeff(n * shard_len + i)
+                    );
+                    assert_eq!(
+                        streamed_polys.r1cs.aux.next_pc.get_coeff(i),
+                        jolt_polynomials
+                            .r1cs
+                            .aux
+                            .next_pc
+                            .get_coeff(n * shard_len + i)
+                    );
+                }
+            }
+            jolt_oracle.reset();
+            println!("Jolt oracle tests passed.");
+        }
+
+        let jolt_commitments =
+            jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing.shared);
 
         transcript.append_scalar(&spartan_key.vk_digest);
 
@@ -731,8 +1026,8 @@ where
             ProverOpeningAccumulator::new();
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
-            &preprocessing.generators,
-            &preprocessing.bytecode,
+            &preprocessing.shared.generators,
+            &preprocessing.shared.bytecode,
             &jolt_polynomials.bytecode,
             &jolt_polynomials,
             &mut opening_accumulator,
@@ -740,16 +1035,16 @@ where
         );
 
         let instruction_proof = InstructionLookupsProof::prove(
-            &preprocessing.generators,
+            &preprocessing.shared.generators,
             &mut jolt_polynomials,
-            &preprocessing.instruction_lookups,
+            &preprocessing.shared.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,
         );
 
         let memory_proof = ReadWriteMemoryProof::prove(
-            &preprocessing.generators,
-            &preprocessing.read_write_memory,
+            &preprocessing.shared.generators,
+            &preprocessing.shared.read_write_memory,
             &jolt_polynomials,
             &program_io,
             &mut opening_accumulator,
@@ -790,14 +1085,13 @@ where
         .expect("r1cs proof failed");
 
         // Batch-prove all openings
-        let opening_proof =
-            opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+        let opening_proof = opening_accumulator
+            .reduce_and_prove::<PCS>(&preprocessing.shared.generators, &mut transcript);
 
         drop_in_background_thread(jolt_polynomials);
 
         let jolt_proof = JoltProof {
             trace_length,
-            program_io,
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
@@ -812,12 +1106,12 @@ where
         });
         #[cfg(not(test))]
         let debug_info = None;
-        (jolt_proof, jolt_commitments, debug_info)
+        (jolt_proof, jolt_commitments, program_io, debug_info)
     }
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         proof: JoltProof<
             C,
             M,
@@ -829,6 +1123,7 @@ where
             ProofTranscript,
         >,
         commitments: JoltCommitments<PCS, ProofTranscript>,
+        program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -843,7 +1138,7 @@ where
         }
         Self::fiat_shamir_preamble(
             &mut transcript,
-            &proof.program_io,
+            &program_io,
             &preprocessing.memory_layout,
             proof.trace_length,
         );
@@ -896,7 +1191,7 @@ where
             &preprocessing.memory_layout,
             proof.read_write_memory,
             &commitments,
-            proof.program_io,
+            program_io,
             &mut opening_accumulator,
             &mut transcript,
         )?;

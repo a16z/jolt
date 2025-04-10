@@ -1,18 +1,16 @@
 use std::marker::PhantomData;
 
-use super::builder::eval_offset_lc;
-use super::builder::streaming_eval_offset_lc;
-use super::builder::CombinedUniformBuilder;
-use super::builder::Constraint;
-use super::builder::OffsetEqConstraint;
+use super::builder::{
+    eval_offset_lc, shard_last_step_eval_offset_lc,
+    CombinedUniformBuilder, Constraint, OffsetEqConstraint,
+};
 
-use super::inputs::ConstraintInput;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::jolt::vm::JoltOracle;
+use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::jolt::vm::JoltPolynomials;
 use crate::jolt::vm::JoltStuff;
-use crate::jolt::vm::{JoltCommitments, JoltPreprocessing, JoltTraceStep};
+use crate::jolt::vm::{JoltCommitments, JoltTraceStep};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::StreamingEqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -21,7 +19,7 @@ use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::r1cs::constraints::R1CSConstraints;
-use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::r1cs::inputs::{ConstraintInput, JoltR1CSInputs};
 use crate::r1cs::key::UniformSpartanKey;
 use crate::subprotocols::sumcheck::{OracleItem, Stream};
 use crate::utils::math::Math;
@@ -81,9 +79,25 @@ pub enum SpartanError {
 
 #[derive(Debug)]
 pub struct AzBzCz {
-    pub Az_Bz_Cz: Vec<(usize, i128, usize, bool)>,
+    pub interleaved_az_bz_cz: Vec<(usize, i128)>,
 }
+impl AzBzCz {
+    pub fn uninterleave(self) -> (Vec<(usize, i128)>, Vec<(usize, i128)>, Vec<(usize, i128)>) {
+        let mut az = Vec::<(usize, i128)>::new();
+        let mut bz = Vec::<(usize, i128)>::new();
+        let mut cz = Vec::<(usize, i128)>::new();
 
+        for entry in self.interleaved_az_bz_cz {
+            match entry.0 % 3 {
+                0 => az.push((entry.0 / 3, entry.1)),
+                1 => bz.push((entry.0 / 3, entry.1)),
+                2 => cz.push((entry.0 / 3, entry.1)),
+                _ => unreachable!(),
+            }
+        }
+        (az, bz, cz)
+    }
+}
 pub struct AzBzCzOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
     pub jolt_oracle: JoltOracle<'a, F, InstructionSet>,
     pub func: Box<
@@ -122,7 +136,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                 let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
                 let chunk_size = num_steps.div_ceil(num_chunks);
 
-                let Az_Bz_Cz: Vec<(usize, i128, usize, bool)> = (0..num_chunks)
+                let interleaved_az_bz_cz: Vec<(usize, i128)> = (0..num_chunks)
                 .into_par_iter()
                 .flat_map_iter(|chunk_index| {
                     let mut coeffs = Vec::with_capacity(3 * chunk_size * padded_num_constraints);
@@ -142,14 +156,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.a.terms().is_empty() {
                                 az_coeff = constraint.a.evaluate_row(&streaming_z, step_index);
                                 if !az_coeff.is_zero() {
-                                    coeffs.push(
-                                        (
-                                            global_index,
-                                            az_coeff,
-                                            step_index + shard_idx * shard_length,
-                                            false,
-                                        ).into()
-                                    );
+                                    coeffs.push((global_index, az_coeff));
                                 }
                             }
                             // Bz
@@ -157,17 +164,10 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.b.terms().is_empty() {
                                 bz_coeff = constraint.b.evaluate_row(&streaming_z, step_index);
                                 if !bz_coeff.is_zero() {
-                                    coeffs.push(
-                                        (
-                                            global_index + 1,
-                                            bz_coeff,
-                                            step_index + shard_idx * shard_length,
-                                            false,
-                                        ).into()
-                                    );
+                                    coeffs.push((global_index + 1, bz_coeff));
                                 }
                             }
-                            // Cz = Az ⊙ Cz
+                            // Cz = Az ⊙ Bz
                             if !az_coeff.is_zero() && !bz_coeff.is_zero() {
                                 let cz_coeff = az_coeff * bz_coeff;
                                 #[cfg(test)]
@@ -188,14 +188,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                         );
                                     }
                                 }
-                                coeffs.push(
-                                    (
-                                        global_index + 2,
-                                        cz_coeff,
-                                        step_index + shard_idx * shard_length,
-                                        false,
-                                    ).into()
-                                );
+                                coeffs.push((global_index + 2, cz_coeff));
                             }
                         }
 
@@ -228,14 +221,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                     );
                                     let az_coeff = eq_a_eval - eq_b_eval;
                                     if !az_coeff.is_zero() {
-                                        coeffs.push(
-                                            (
-                                                global_index,
-                                                az_coeff,
-                                                step_index + shard_idx * shard_length,
-                                                true,
-                                            ).into()
-                                        );
+                                        coeffs.push((global_index, az_coeff));
                                         // If Az != 0, then the condition must be false (i.e. Bz = 0)
                                         #[cfg(test)]
                                         {
@@ -259,14 +245,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             Some(next_step_index)
                                         );
                                         if !bz_coeff.is_zero() {
-                                            coeffs.push(
-                                                (
-                                                    global_index + 1,
-                                                    bz_coeff,
-                                                    step_index + shard_idx * shard_length,
-                                                    true,
-                                                ).into()
-                                            );
+                                            coeffs.push((global_index + 1, bz_coeff));
                                         }
                                     }
                                 } else {
@@ -276,14 +255,14 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             .map(|var| var.get_ref(&extra_eval))
                                             .collect();
 
-                                    let eq_a_eval = streaming_eval_offset_lc(
+                                    let eq_a_eval = shard_last_step_eval_offset_lc(
                                         &constraint.a,
                                         &streaming_z,
                                         &extra_eval_z,
                                         step_index,
                                         Some(next_step_index)
                                     );
-                                    let eq_b_eval = streaming_eval_offset_lc(
+                                    let eq_b_eval = shard_last_step_eval_offset_lc(
                                         &constraint.b,
                                         &streaming_z,
                                         &extra_eval_z,
@@ -293,16 +272,9 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
 
                                     let az_coeff = eq_a_eval - eq_b_eval;
                                     if !az_coeff.is_zero() {
-                                        coeffs.push(
-                                            (
-                                                global_index,
-                                                az_coeff,
-                                                step_index + shard_idx * shard_length,
-                                                true,
-                                            ).into()
-                                        );
+                                        coeffs.push((global_index, az_coeff));
                                     } else {
-                                        let bz_coeff = streaming_eval_offset_lc(
+                                        let bz_coeff = shard_last_step_eval_offset_lc(
                                             &constraint.cond,
                                             &streaming_z,
                                             &extra_eval_z,
@@ -310,14 +282,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                             Some(next_step_index)
                                         );
                                         if !bz_coeff.is_zero() {
-                                            coeffs.push(
-                                                (
-                                                    global_index + 1,
-                                                    bz_coeff,
-                                                    step_index + shard_idx * shard_length,
-                                                    true,
-                                                ).into()
-                                            );
+                                            coeffs.push((global_index + 1, bz_coeff));
                                         }
                                     }
                                 }
@@ -328,7 +293,9 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                 })
                 .collect();
 
-                AzBzCz { Az_Bz_Cz }
+                AzBzCz {
+                    interleaved_az_bz_cz,
+                }
             };
 
         AzBzCzOracle {
@@ -342,8 +309,6 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
     for AzBzCzOracle<'a, F, InstructionSet>
 {
     type Item = AzBzCz;
-
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         let shard_idx = self.jolt_oracle.get_step() / shard_len;
         let jolt_shard = self.jolt_oracle.next_shard(shard_len);
@@ -352,17 +317,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
             let jolt_peek = self.jolt_oracle.peek().unwrap();
             (self.func)(shard_idx, jolt_shard, jolt_peek)
         } else {
-            // println!("Done");
             (self.func)(shard_idx, jolt_shard, Default::default())
         }
     }
 
-    fn reset_oracle(&mut self) {
-        self.jolt_oracle.reset_oracle();
-    }
-
-    fn peek(&mut self) -> Option<Self::Item> {
-        unimplemented!();
+    fn reset(&mut self) {
+        self.jolt_oracle.reset();
     }
 
     fn get_len(&self) -> usize {
@@ -422,12 +382,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         (self.func)(self.jolt_oracle.next_shard(shard_len))
     }
 
-    fn reset_oracle(&mut self) {
-        self.jolt_oracle.reset_oracle();
-    }
-
-    fn peek(&mut self) -> Option<Self::Item> {
-        unimplemented!();
+    fn reset(&mut self) {
+        self.jolt_oracle.reset();
     }
 
     fn get_len(&self) -> usize {
@@ -504,14 +460,6 @@ where
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
-
-        // for i in 0..az_bz_cz_poly.unbound_coeffs.len() {
-        //     println!(
-        //         "Stored: {}, {}",
-        //         az_bz_cz_poly.unbound_coeffs[i].index,
-        //         az_bz_cz_poly.unbound_coeffs[i].value
-        //     );
-        // }
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
@@ -715,11 +663,12 @@ where
         })
     }
 
+    // TODO: Change the return type back to Result<Self, SpartanError>.
     #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
     pub fn streaming_prove<PCS, InstructionSet, const M: usize>(
         num_shards: usize,
         shard_length: usize,
-        preprocessing: &JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
         program_io: &JoltDevice,
         trace: &Vec<JoltTraceStep<InstructionSet>>,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
@@ -918,7 +867,7 @@ where
                 );
         }
         bind_z_stream[num_vars_uniform] = F::one();
-        jolt_oracle.reset_oracle();
+        jolt_oracle.reset();
 
         drop(_guard);
         drop(span);
@@ -1037,7 +986,7 @@ where
                 2,
                 transcript,
             );
-        println!("_shift_sumcheck_claims {:?}",_shift_sumcheck_claims);
+        println!("_shift_sumcheck_claims {:?}", _shift_sumcheck_claims);
         // println!("shift_sumcheck_r_rev is {:?}",shift_sumcheck_r_rev);
         let shift_sumcheck_r: Vec<F> = shift_sumcheck_r_rev.iter().rev().copied().collect();
 
@@ -1075,7 +1024,7 @@ where
             "stream claimed witness evals are incorrect "
         );
 
-        jolt_oracle.reset_oracle();
+        jolt_oracle.reset();
 
         opening_accumulator.append(
             &flattened_polys,
@@ -1240,11 +1189,14 @@ where
             EqPlusOnePolynomial::new(rx_rev.to_vec()).evaluate(&shift_sumcheck_r);
         let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck;
 
-    //     println!("shift_sumcheck_witness_evals is {:?}", self.shift_sumcheck_witness_evals);
+        //     println!("shift_sumcheck_witness_evals is {:?}", self.shift_sumcheck_witness_evals);
         println!("eval_z_shift_sumcheck is {:?}", eval_z_shift_sumcheck);
-        println!("eq_plus_one_shift_sumcheck is {:?}", eq_plus_one_shift_sumcheck);
-    //     println!("claim_shift_sumcheck is {:?}", claim_shift_sumcheck);
-    // println!("claim_shift_sumcheck_expected is {:?}", claim_shift_sumcheck_expected);
+        println!(
+            "eq_plus_one_shift_sumcheck is {:?}",
+            eq_plus_one_shift_sumcheck
+        );
+        //     println!("claim_shift_sumcheck is {:?}", claim_shift_sumcheck);
+        // println!("claim_shift_sumcheck_expected is {:?}", claim_shift_sumcheck_expected);
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
@@ -1277,7 +1229,7 @@ where
 //     use ark_bn254::Fr;
 //     use ark_std::One;
 
-//     use crate::poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme};
+//     use crate::poly::commitment::{ commitment_scheme::CommitShape, hyrax::HyraxScheme };
 
 //     use super::*;
 
@@ -1285,9 +1237,9 @@ where
 //     fn integration() {
 //         let (builder, key) = simp_test_builder_key();
 //         let witness_segments: Vec<Vec<Fr>> = vec![
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* Q */,
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* R */,
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* S */
 //         ];
 
 //         // Create a witness and commit
@@ -1296,158 +1248,29 @@ where
 //             .map(|segment| segment.as_slice())
 //             .collect();
 //         let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
-//         let witness_commitment =
-//             HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+//         let witness_commitment = HyraxScheme::batch_commit(
+//             &witness_segments_ref,
+//             &gens,
+//             BatchType::Small
+//         );
 
 //         // Prove spartan!
 //         let mut prover_transcript = ProofTranscript::new(b"stuff");
-//         let proof =
-//             UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
-//                 SimpTestIn,
-//             >(
+//         let proof = UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>
+//             ::prove_precommitted::<SimpTestIn>(
 //                 &gens,
 //                 builder,
 //                 &key,
 //                 witness_segments,
 //                 todo!("opening accumulator"),
-//                 &mut prover_transcript,
+//                 &mut prover_transcript
 //             )
 //             .unwrap();
 
 //         let mut verifier_transcript = ProofTranscript::new(b"stuff");
 //         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
 //         proof
-//             .verify_precommitted(
-//                 &key,
-//                 witness_commitment_ref,
-//                 &gens,
-//                 &mut verifier_transcript,
-//             )
+//             .verify_precommitted(&key, witness_commitment_ref, &gens, &mut verifier_transcript)
 //             .expect("Spartan verifier failed");
 //     }
 // }
-
-// // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-// let next_step_index = if step_index + 1 < total_num_steps {
-//     Some(step_index + 1)
-// } else {
-//     None
-// };
-
-// // Cross-step constraints
-// for (constraint_index, constraint) in cross_step_constraints
-//     .iter()
-//     .enumerate() {
-//     let global_index =
-//         3 *
-//         (step_index * padded_num_constraints +
-//             uniform_constraints.len() +
-//             constraint_index);
-
-//     if
-//         next_step_index.is_some() &&
-//         next_step_index.unwrap() < shard_length
-//     {
-//         // Az
-//         let eq_a_eval = eval_offset_lc(
-//             &constraint.a,
-//             &streaming_z,
-//             step_index,
-//             next_step_index
-//         );
-//         let eq_b_eval = eval_offset_lc(
-//             &constraint.b,
-//             &streaming_z,
-//             step_index,
-//             next_step_index
-//         );
-//         let az_coeff = eq_a_eval - eq_b_eval;
-//         if !az_coeff.is_zero() {
-//             coeffs.push((global_index, az_coeff).into());
-//             // If Az != 0, then the condition must be false (i.e. Bz = 0)
-//             #[cfg(test)]
-//             {
-//                 let bz_coeff = eval_offset_lc(
-//                     &constraint.cond,
-//                     &streaming_z,
-//                     step_index,
-//                     next_step_index
-//                 );
-//                 assert_eq!(
-//                     bz_coeff,
-//                     0,
-//                     "Cross-step constraint {constraint_index} violated at step {step_index}"
-//                 );
-//             }
-//         } else if next_step_index.is_some() {
-//             // Bz
-//             let bz_coeff = eval_offset_lc(
-//                 &constraint.cond,
-//                 &streaming_z,
-//                 step_index,
-//                 next_step_index
-//             );
-//             if !bz_coeff.is_zero() {
-//                 coeffs.push((global_index + 1, bz_coeff).into());
-//             }
-//         }
-//     } else {
-//         let extra_eval_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-//             .iter()
-//             .map(|var| var.get_ref(&extra_eval))
-//             .collect();
-
-//         let eq_a_eval = streaming_eval_offset_lc(
-//             &constraint.a,
-//             &streaming_z,
-//             &extra_eval_z,
-//             step_index,
-//             next_step_index
-//         );
-//         let eq_b_eval = streaming_eval_offset_lc(
-//             &constraint.b,
-//             &streaming_z,
-//             &extra_eval_z,
-//             step_index,
-//             next_step_index
-//         );
-
-//         let az_coeff = eq_a_eval - eq_b_eval;
-//             //         if !az_coeff.is_zero() {
-//             //             coeffs.push((global_index, az_coeff).into());
-//             //             // If Az != 0, then the condition must be false (i.e. Bz = 0)
-//             //             #[cfg(test)]
-//             //             {
-//             //                 let bz_coeff = streaming_eval_offset_lc(
-//             //                     &constraint.cond,
-//             //                     &streaming_z,
-//             //                     &extra_eval_z,
-//             //                     step_index,
-//             //                     next_step_index
-//             //                 );
-//             //                 assert_eq!(
-//             //                     bz_coeff,
-//             //                     0,
-//             //                     "Cross-step constraint {constraint_index} violated at step {step_index}"
-//             //                 );
-//             //             }
-//             //         } else {
-//             //             // Bz
-//             //             let bz_coeff = streaming_eval_offset_lc(
-//             //                 &constraint.cond,
-//             //                 &streaming_z,
-//             //                 &extra_eval_z,
-//             //                 step_index,
-//             //                 next_step_index
-//             //             );
-//             //             if !bz_coeff.is_zero() {
-//             //                 coeffs.push((global_index + 1, bz_coeff).into());
-//             //             }
-//             //         }
-//             //     }
-//             //     // Cz is always 0 for cross-step constraints
-//             // }
-//         }
-//         coeffs
-//     })
-//     .collect();

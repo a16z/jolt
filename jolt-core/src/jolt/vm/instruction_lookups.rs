@@ -39,7 +39,6 @@ use super::{JoltCommitments, JoltPolynomials, JoltTraceStep, TraceOracle};
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
-    // TODO (Bhargav): Made fields public. See if this can be avoided.
     /// `C`-sized vector of polynomials/commitments/openings corresponding to the
     /// indices at which subtables are queried.
     pub(crate) dim: Vec<T>,
@@ -159,9 +158,9 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
         preprocessing: &'a InstructionLookupsPreprocessing<C, F>,
         trace: &'a Vec<JoltTraceStep<InstructionSet>>,
     ) -> Self {
-        let mut trace_oracle = TraceOracle::new(trace);
+        let trace_oracle = TraceOracle::new(trace);
 
-        let polynomial_stream = |shard: &[JoltTraceStep<InstructionSet>]| {
+        let func = |shard: &[JoltTraceStep<InstructionSet>]| {
             let shard_len = shard.len();
             let chunked_indices: Vec<Vec<u16>> = shard
                 .iter()
@@ -255,7 +254,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
 
         InstructionLookupOracle {
             trace_oracle,
-            func: Box::new(polynomial_stream),
+            func: Box::new(func),
         }
     }
 }
@@ -265,14 +264,12 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
 {
     type Item = InstructionLookupStuff<MultilinearPolynomial<F>>;
 
-    // TODO (Bhargav): This should return an Option. Return None if trace exhasuted.
-
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         (self.func)(self.trace_oracle.next_shard(shard_len))
     }
 
-    fn reset_oracle(&mut self) {
-        self.trace_oracle.reset_oracle();
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
     }
 
     fn peek(&mut self) -> Option<Self::Item> {
@@ -757,7 +754,7 @@ pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
     pub instruction_to_memory_indices: Vec<Vec<usize>>,

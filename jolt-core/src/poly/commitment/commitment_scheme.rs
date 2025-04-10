@@ -11,7 +11,7 @@ use crate::{
 
 pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
-    type Setup: Clone + Sync + Send;
+    type Setup: Clone + Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type Commitment: Default
         + Debug
         + Sync
@@ -55,4 +55,14 @@ pub trait CommitmentScheme<ProofTranscript: Transcript>: Clone + Sync + Send + '
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];
+}
+
+pub trait StreamingCommitmentScheme<ProofTranscript: Transcript>:
+    CommitmentScheme<ProofTranscript>
+{
+    type State<'a>; // : Clone + Debug;
+
+    fn initialize<'a>(size: usize, setup: &'a Self::Setup) -> Self::State<'a>;
+    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
+    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment;
 }
