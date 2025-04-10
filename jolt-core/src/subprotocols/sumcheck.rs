@@ -396,7 +396,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
     }
 
-    pub fn stream_prove_cubic<O, Func1, Func2>(
+    pub fn stream_prove_cubic<O>(
+        num_shards: usize,
         num_rounds: usize,
         interleaved_az_bz_cz: &mut O,
         shard_length: usize,
@@ -408,31 +409,21 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         O: Oracle<Item = AzBzCz>,
     {
         let mut r: Vec<F> = Vec::new();
-
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
         let mut final_eval = vec![F::zero(); 3];
-
-        let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; 3];
-        let num_shards = ((1 << num_rounds) / shard_length) as usize;
-
         for i in 0..num_rounds {
             let mut accumulator = vec![F::zero(); 4];
             let mut current_window_ub = (1 << (i + 1)) - 1;
 
             let mut witness_eval = vec![vec![F::zero(); 4]; 4];
-            let mut eq_tau = StreamingEqPolynomial::new(tau.clone(), num_rounds, None, true);
-
-            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None, true);
+            let mut eq_tau = StreamingEqPolynomial::new(tau.clone(), num_rounds, None, false);
+            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None, false);
 
             for shard_idx in 0..num_shards {
                 let shard = interleaved_az_bz_cz.next_shard(shard_length);
                 let (az, bz, cz) = shard.uninterleave();
                 let eq_tau_shard = eq_tau.next_shard(shard_length * padded_num_constraints);
-
                 let eq_shard = eq_poly.next_shard(shard_length * padded_num_constraints);
-
-                // let len = az_shard.len().max(bz_shard.len()).max(cz_shard.len());
-
                 let mut ptr_az = 0;
                 let mut ptr_bz = 0;
                 let mut ptr_cz = 0;
@@ -457,7 +448,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                         for s in 0..=3 {
                             let val = F::from_u64(s as u64);
                             let eq_eval_idx_s_vec = if bit == 0 { F::one() - val } else { val };
-
                             witness_eval[0][s] += eq_shard[idx % shard_length]
                                 * eq_eval_idx_s_vec
                                 * eq_tau_shard[ptr_az % shard_length];
@@ -471,6 +461,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                                 * eq_eval_idx_s_vec
                                 * F::from_i128(cz[ptr_cz % shard_length].1);
                         }
+                        ptr_az += 1;
+                        ptr_bz += 1;
+                        ptr_cz += 1;
                     } else {
                         if az[ptr_az].0 < max_idx {
                             ptr_az += 1;
@@ -499,20 +492,30 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             r.push(r_i);
             compressed_polys.push(compressed_poly);
 
+            // ToDo : Fix this
             if i == num_rounds - 1 {
                 final_eval = (0..=3)
-                    .map(|i| {
-                        (F::one() - r_i) * witness_eval_for_final_eval[i][0]
-                            + r_i * witness_eval_for_final_eval[i][1]
-                    })
+                    .map(|i| (F::one() - r_i) * witness_eval[i][0] + r_i * witness_eval[i][1])
                     .collect();
             }
-
             interleaved_az_bz_cz.reset();
         }
 
+        let mut e = F::zero();
+        for i in 0..compressed_polys.len() {
+            // check if G_k(0) + G_k(1) = e
+            assert_eq!(
+                compressed_polys[i].decompress(&e).eval_at_zero()
+                    + compressed_polys[i].decompress(&e).eval_at_one(),
+                e,
+                "failed at {i}"
+            );
+            // evaluate the claimed degree-ell polynomial at r_i using the hint
+            e = compressed_polys[i].decompress(&e).evaluate(&r[i]);
+        }
         (SumcheckInstanceProof::new(compressed_polys), r, final_eval)
     }
+
     pub fn stream_prove_arbitrary<'a, Func1, Func2, I: JoltInstructionSet>(
         num_rounds: usize,
         stream_polys: &mut Stream<F, I>,

@@ -701,14 +701,12 @@ where
             constraint_builder,
             trace,
         );
-        let streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
+        let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
             &constraint_builder.uniform_builder.constraints,
             &constraint_builder.offset_equality_constraints,
             num_padded_rows,
             jolt_oracle,
         );
-
-        let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         // let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         //
@@ -737,17 +735,18 @@ where
         // }
         // println!("AzBz - Cz streamed.");
 
-        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_cubic(
+            SumcheckInstanceProof::stream_prove_cubic(
+                num_shards,
                 num_rounds_x,
-                &mut eq_tau,
-                &mut az_bz_cz_poly,
+                &mut streaming_az_bz_cz_poly,
+                shard_length,
+                num_padded_rows,
+                tau.clone(),
                 transcript,
             );
 
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        drop_in_background_thread((az_bz_cz_poly, eq_tau));
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
         // claims from the end of sum-check
