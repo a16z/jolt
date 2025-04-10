@@ -1,8 +1,14 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use std::marker::PhantomData;
+
+use ark_serialize::*;
+use rayon::prelude::*;
+
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::eq_poly::StreamingEqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
@@ -11,11 +17,9 @@ use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use ark_serialize::*;
-use rayon::prelude::*;
-use std::marker::PhantomData;
 
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
@@ -242,7 +246,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         // We don't materialize the full, flattened witness vector, but this closure
         // simulates it
         let witness_value = |index: usize| {
-            if (index / trace_len) >= witness_polynomials.len() {
+            if index / trace_len >= witness_polynomials.len() {
                 F::zero()
             } else {
                 witness_polynomials[index / trace_len].get_coeff(index % trace_len)
@@ -388,6 +392,100 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             })
             .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
     }
+
+    pub fn stream_prove_arbitrary<O, Func1, Func2>(
+        num_rounds: usize,
+        stream_polys: &mut O,
+        extract_poly_fn: Func1,
+        comb_fn: Func2,
+        degree: usize,
+        shard_length: usize,
+        num_polys: usize,
+        transcript: &mut ProofTranscript,
+    ) -> (Self, Vec<F>, Vec<F>)
+    where
+        O: Oracle,
+        Func1: Fn(&O::Item) -> Vec<MultilinearPolynomial<F>> + std::marker::Sync,
+        Func2: Fn(&[F]) -> F + std::marker::Sync,
+    {
+        let mut r: Vec<F> = Vec::new();
+
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut final_eval = vec![F::zero(); num_polys];
+
+        let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; num_polys];
+        let num_shards = (1 << num_rounds) / shard_length;
+        for i in 0..num_rounds {
+            let mut accumulator = vec![F::zero(); degree + 1];
+
+            let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
+            let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None);
+            for shard in 0..num_shards {
+                let shards = stream_polys.next_shard(shard_length);
+                let polys = extract_poly_fn(&shards);
+                let eq_shard = eq_poly.next_shard(shard_length);
+                for j in 0..shard_length {
+                    let idx = shard_length * shard + j;
+
+                    let mut eq_eval_idx_s_vec = vec![F::one(); degree + 1];
+
+                    let bit = (idx >> i) & 1;
+
+                    for s in 0..=degree {
+                        let val = F::from_u64(s as u64);
+                        eq_eval_idx_s_vec[s] = if bit == 0 { F::one() - val } else { val };
+                    }
+
+                    for k in 0..num_polys {
+                        for s in 0..=degree {
+                            witness_eval[k][s] +=
+                                eq_shard[j] * eq_eval_idx_s_vec[s] * polys[k].get_coeff(j);
+                        }
+                    }
+
+                    if i == num_rounds - 1 && idx == (1 << num_rounds) - 1 {
+                        for k in 0..num_polys {
+                            witness_eval_for_final_eval[k][0] = witness_eval[k][0];
+                            witness_eval_for_final_eval[k][1] = witness_eval[k][1];
+                        }
+                    }
+
+                    if (idx + 1) % (1 << (i + 1)) == 0 {
+                        for s in 0..=degree {
+                            let eval = comb_fn(
+                                &(0..num_polys)
+                                    .map(|k| witness_eval[k][s])
+                                    .collect::<Vec<F>>(),
+                            );
+                            accumulator[s] += eval;
+                        }
+                        witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
+                    }
+                }
+            }
+
+            let univariate_poly = UniPoly::from_evals(&accumulator);
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+
+            let r_i = transcript.challenge_scalar();
+            r.push(r_i);
+            compressed_polys.push(compressed_poly);
+
+            if i == num_rounds - 1 {
+                final_eval = (0..num_polys)
+                    .map(|i| {
+                        (F::one() - r_i) * witness_eval_for_final_eval[i][0]
+                            + r_i * witness_eval_for_final_eval[i][1]
+                    })
+                    .collect();
+            }
+
+            stream_polys.reset();
+        }
+
+        (SumcheckInstanceProof::new(compressed_polys), r, final_eval)
+    }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
@@ -452,5 +550,156 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         }
 
         Ok((e, r))
+    }
+}
+
+mod test {
+    use crate::field::JoltField;
+    use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+    use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+    use crate::utils::streaming::Oracle;
+    use crate::utils::transcript::KeccakTranscript;
+
+    #[test]
+    fn test_stream_prove_arbitrary() {
+        use crate::utils::transcript::Transcript;
+        use ark_bn254::Fr;
+        struct StreamTrace<'a> {
+            pub(crate) length: usize,
+            pub(crate) counter: usize,
+            pub(crate) trace: &'a Vec<u64>,
+        }
+        impl<'a> StreamTrace<'a> {
+            pub fn new(trace: &'a Vec<u64>) -> Self {
+                Self {
+                    length: trace.len(),
+                    counter: 0,
+                    trace,
+                }
+            }
+        }
+        impl<'a> Oracle for StreamTrace<'a> {
+            type Item = &'a [u64];
+
+            fn next_shard(&mut self, shard_length: usize) -> Self::Item {
+                let shard_start = self.counter;
+                self.counter += shard_length;
+                &self.trace[shard_start..self.counter]
+            }
+
+            fn reset(&mut self) {
+                if self.counter == self.length {
+                    self.counter = 0;
+                } else {
+                    panic!(
+                        "Can't reset, trace not exhausted. couter {}, length {}",
+                        self.counter, self.length
+                    );
+                }
+            }
+
+            fn peek(&mut self) -> Option<Self::Item> {
+                Some(&self.trace[self.counter..self.counter + 1])
+            }
+
+            fn get_length(&self) -> usize {
+                self.length
+            }
+
+            fn get_step(&self) -> usize {
+                self.counter
+            }
+        }
+        #[derive(Clone)]
+        struct SumCheckPolys<T> {
+            pub poly1: T,
+            pub poly2: T,
+        }
+
+        struct StreamSumCheck<'a, F: JoltField> {
+            pub trace_oracle: StreamTrace<'a>,
+            pub func: Box<dyn (Fn(&[u64]) -> SumCheckPolys<MultilinearPolynomial<F>>) + 'a>,
+        }
+        impl<'a, F: JoltField> StreamSumCheck<'a, F> {
+            pub fn new(trace: &'a Vec<u64>) -> Self {
+                let trace_oracle = StreamTrace::new(trace);
+                let stream_poly = |shard: &[u64]| {
+                    let (poly1, poly2): (Vec<F>, Vec<F>) = shard
+                        .into_iter()
+                        .map(|value| (F::from_u64(*value), F::from_u64(2 * value)))
+                        .collect();
+                    SumCheckPolys {
+                        poly1: MultilinearPolynomial::from(poly1),
+                        poly2: MultilinearPolynomial::from(poly2),
+                    }
+                };
+
+                Self {
+                    trace_oracle,
+                    func: Box::new(stream_poly),
+                }
+            }
+        }
+        impl<'a, F: JoltField> Oracle for StreamSumCheck<'a, F> {
+            type Item = SumCheckPolys<MultilinearPolynomial<F>>;
+            fn next_shard(&mut self, shard_length: usize) -> Self::Item {
+                (self.func)(self.trace_oracle.next_shard(shard_length))
+            }
+            fn reset(&mut self) {
+                self.trace_oracle.reset()
+            }
+
+            fn peek(&mut self) -> Option<Self::Item> {
+                Some((self.func)(self.trace_oracle.peek().unwrap()))
+            }
+
+            fn get_length(&self) -> usize {
+                self.trace_oracle.get_length()
+            }
+
+            fn get_step(&self) -> usize {
+                self.trace_oracle.get_step()
+            }
+        }
+
+        let num_vars = 20;
+        let num_polys = 2;
+        let trace: Vec<u64> = (0..1 << num_vars).map(|elem: u64| elem).collect();
+        let mut stream_sum_check_polys = StreamSumCheck::new(&trace);
+
+        let extract_poly_fn = |
+            stream_data: &SumCheckPolys<MultilinearPolynomial<Fr>>
+        | -> Vec<MultilinearPolynomial<Fr>> {
+            [stream_data.poly1.clone(), stream_data.poly2.clone()].to_vec()
+        };
+
+        let comb_func = |poly_evals: &[Fr]| -> Fr {
+            assert_eq!(poly_evals.len(), 2);
+            &poly_evals[0] * &poly_evals[1] * &poly_evals[0] + &poly_evals[1]
+        };
+
+        let shard_length = 1 << 15;
+        let mut transcript = <KeccakTranscript as Transcript>::new(b"test");
+        let claim: Fr = (0..1 << num_vars)
+            .map(|idx| comb_func(&[Fr::from_u64(idx), Fr::from_u64(2 * idx)]))
+            .sum();
+        let degree = 3;
+        let (proof, _r, final_evals) = SumcheckInstanceProof::stream_prove_arbitrary(
+            num_vars,
+            &mut stream_sum_check_polys,
+            extract_poly_fn,
+            comb_func,
+            degree,
+            shard_length,
+            num_polys,
+            &mut transcript,
+        );
+        let mut transcript = <KeccakTranscript as Transcript>::new(b"test");
+        let (e_verify, _) = proof
+            .verify(claim, num_vars, degree, &mut transcript)
+            .unwrap();
+        //
+        let res = comb_func(&final_evals);
+        assert_eq!(res, e_verify, "Final assertion failed");
     }
 }

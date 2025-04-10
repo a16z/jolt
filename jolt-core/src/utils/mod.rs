@@ -1,8 +1,8 @@
 #![allow(dead_code)]
-use crate::field::JoltField;
-
 use ark_std::test_rng;
 use rayon::prelude::*;
+
+use crate::field::JoltField;
 
 pub mod errors;
 pub mod gaussian_elimination;
@@ -10,6 +10,7 @@ pub mod instruction_utils;
 pub mod math;
 pub mod profiling;
 pub mod sol_types;
+pub mod streaming;
 pub mod thread;
 pub mod transcript;
 

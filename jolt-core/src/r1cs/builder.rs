@@ -74,7 +74,7 @@ impl Constraint {
     }
 }
 
-type AuxComputationFunction = dyn Fn(&[i128]) -> i128 + Send + Sync;
+type AuxComputationFunction = dyn (Fn(&[i128]) -> i128) + Send + Sync;
 
 struct AuxComputation<F: JoltField> {
     symbolic_inputs: Vec<LC>,
@@ -112,7 +112,9 @@ impl<F: JoltField> AuxComputation<F> {
                     // Currently do not support aux computations dependent on those allocated after. Could support with dependency graph, instead
                     // dev should write their constraints sequentially. Simplifies aux computation parallelism.
                     if output_index <= *aux_index {
-                        panic!("Aux computation depends on future aux computation: {_output:?} = f({var:?})");
+                        panic!(
+                            "Aux computation depends on future aux computation: {_output:?} = f({var:?})"
+                        );
                     }
                 }
             }
@@ -156,9 +158,11 @@ impl<F: JoltField> AuxComputation<F> {
                                     Variable::Input(index) | Variable::Auxiliary(index) => {
                                         input += flattened_polys[index]
                                             .get_coeff_i128(global_index)
-                                            * term.1 as i128;
+                                            * (term.1 as i128);
                                     }
-                                    Variable::Constant => input += term.1 as i128,
+                                    Variable::Constant => {
+                                        input += term.1 as i128;
+                                    }
                                 }
                             }
                             input
@@ -183,7 +187,7 @@ impl<F: JoltField> AuxComputation<F> {
 
 pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
     _inputs: PhantomData<I>,
-    constraints: Vec<Constraint>,
+    pub constraints: Vec<Constraint>,
     aux_computations: BTreeMap<usize, AuxComputation<F>>,
 }
 
@@ -279,8 +283,8 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
 
         let constraint = Constraint {
             a: condition.clone(),
-            b: (result_true - result_false.clone()),
-            c: (alleged_result - result_false),
+            b: result_true - result_false.clone(),
+            c: alleged_result - result_false,
         };
         self.constraints.push(constraint);
     }
@@ -403,7 +407,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
     fn aux_prod(&mut self, aux_symbol: I, x: &LC, y: &LC) -> Variable {
         let prod = |values: &[i128]| {
             assert_eq!(values.len(), 2);
-            (values[0]) * (values[1])
+            values[0] * values[1]
         };
 
         let symbolic_inputs = vec![x.clone(), y.clone()];
@@ -504,14 +508,30 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
     }
 }
 
+pub(crate) fn shard_last_step_eval_offset_lc<F: JoltField>(
+    offset: &OffsetLC,
+    flattened_polynomials: &[&MultilinearPolynomial<F>],
+    flattened_eval: &[&MultilinearPolynomial<F>],
+    step: usize,
+    next_step_m: Option<usize>,
+) -> i128 {
+    if !offset.0 {
+        offset.1.evaluate_row(flattened_polynomials, step)
+    } else if next_step_m.is_some() {
+        offset.1.evaluate_row(flattened_eval, 0)
+    } else {
+        offset.1.constant_term_field()
+    }
+}
+
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
-    uniform_builder: R1CSBuilder<C, F, I>,
+    pub uniform_builder: R1CSBuilder<C, F, I>,
 
     /// Padded to the nearest power of 2
     uniform_repeat: usize, // TODO(JP): Remove padding of steps
 
-    offset_equality_constraints: Vec<OffsetEqConstraint>,
+    pub offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
 impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C, F, I> {
@@ -534,6 +554,18 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
             *flattened_vars[*aux_index].get_ref_mut(jolt_polynomials) =
                 aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, self.uniform_repeat);
+        }
+    }
+
+    pub fn streaming_compute_aux(
+        &self,
+        jolt_polynomials: &mut JoltPolynomials<F>,
+        shard_len: usize,
+    ) {
+        let flattened_vars = I::flatten::<C>();
+        for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
+            *flattened_vars[*aux_index].get_ref_mut(jolt_polynomials) =
+                aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, shard_len);
         }
     }
 
@@ -633,4 +665,16 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
             self.padded_rows_per_step(),
         )
     }
+
+    // pub fn streaming_compute_spartan_Az_Bz_Cz(
+    //     &self,
+    //     flattened_polynomials: &[&[F]], // N variables of (S steps)
+    // ) -> SpartanInterleavedPolynomial<F> {
+    //     SpartanInterleavedPolynomial::new(
+    //         &self.uniform_builder.constraints,
+    //         &self.offset_equality_constraints,
+    //         flattened_polynomials,
+    //         self.padded_rows_per_step(),
+    //     )
+    // }
 }
