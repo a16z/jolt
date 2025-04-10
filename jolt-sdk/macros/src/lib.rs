@@ -4,7 +4,7 @@ extern crate proc_macro;
 
 use core::panic;
 
-use common::{attributes::parse_attributes, rv_trace::MemoryLayout};
+use common::{attributes::parse_attributes, memory::MemoryLayout};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;

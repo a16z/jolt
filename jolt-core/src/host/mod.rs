@@ -28,7 +28,7 @@ use crate::{
             div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
             lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction,
             mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-            sb::SBInstruction, sh::SHInstruction, VirtualInstructionSequence,
+            sb::SBInstruction, sh::SHInstruction, LookupTables, VirtualInstructionSequence,
         },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
@@ -206,15 +206,11 @@ impl Program {
                 RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
-            .map(|row| {
-                let instruction_lookup = RV32I::try_from(&row).ok();
-
-                JoltTraceStep {
-                    instruction_lookup,
-                    bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
-                    memory_ops: row.to_memory_ops(),
-                    circuit_flags: row.instruction.to_circuit_flags(),
-                }
+            .map(|row| JoltTraceStep {
+                instruction_lookup: LookupTables::try_from(&row).ok(),
+                bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
+                memory_ops: row.to_memory_ops(),
+                circuit_flags: row.instruction.to_circuit_flags(),
             })
             .collect();
 

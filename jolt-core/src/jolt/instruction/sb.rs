@@ -3,8 +3,7 @@ use tracer::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, sll::SLLInstruction, xor::XORInstruction,
-    JoltInstruction,
+    add::ADDInstruction, and::ANDInstruction, xor::XORInstruction, JoltInstruction,
 };
 /// Stores a byte in memory
 pub struct SBInstruction<const WORD_SIZE: usize>;
@@ -13,312 +12,313 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SBInstruction<WORD_S
     const SEQUENCE_LENGTH: usize = 11;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        assert_eq!(trace_row.instruction.opcode, RV32IM::SB);
-        // SB source registers
-        let r_dest = trace_row.instruction.rs1;
-        let r_value = trace_row.instruction.rs2;
-        // Virtual registers used in sequence
-        let v_address = Some(virtual_register_index(0));
-        let v_word_address = Some(virtual_register_index(1));
-        let v_word = Some(virtual_register_index(2));
-        let v_shift = Some(virtual_register_index(3));
-        let v_mask = Some(virtual_register_index(4));
-        let v_byte = Some(virtual_register_index(5));
-        // SB operands
-        let dest = trace_row.register_state.rs1_val.unwrap();
-        let value = trace_row.register_state.rs2_val.unwrap();
-        let offset = trace_row.instruction.imm.unwrap();
+        vec![]
+        // assert_eq!(trace_row.instruction.opcode, RV32IM::SB);
+        // // SB source registers
+        // let r_dest = trace_row.instruction.rs1;
+        // let r_value = trace_row.instruction.rs2;
+        // // Virtual registers used in sequence
+        // let v_address = Some(virtual_register_index(0));
+        // let v_word_address = Some(virtual_register_index(1));
+        // let v_word = Some(virtual_register_index(2));
+        // let v_shift = Some(virtual_register_index(3));
+        // let v_mask = Some(virtual_register_index(4));
+        // let v_byte = Some(virtual_register_index(5));
+        // // SB operands
+        // let dest = trace_row.register_state.rs1_val.unwrap();
+        // let value = trace_row.register_state.rs2_val.unwrap();
+        // let offset = trace_row.instruction.imm.unwrap();
 
-        let mut virtual_trace = vec![];
+        // let mut virtual_trace = vec![];
 
-        let offset_unsigned = match WORD_SIZE {
-            32 => (offset & u32::MAX as i64) as u64,
-            64 => offset as u64,
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
-        };
+        // let offset_unsigned = match WORD_SIZE {
+        //     32 => (offset & u32::MAX as i64) as u64,
+        //     64 => offset as u64,
+        //     _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+        // };
 
-        let ram_address = ADDInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::ADDI,
-                rs1: r_dest,
-                rs2: None,
-                rd: v_address,
-                imm: Some(offset),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(dest),
-                rs2_val: None,
-                rd_post_val: Some(ram_address),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let ram_address = ADDInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::ADDI,
+        //         rs1: r_dest,
+        //         rs2: None,
+        //         rd: v_address,
+        //         imm: Some(offset),
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(dest),
+        //         rs2_val: None,
+        //         rd_post_val: Some(ram_address),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
-        let word_address =
-            ANDInstruction::<WORD_SIZE>(ram_address, word_address_bitmask).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::ANDI,
-                rs1: v_address,
-                rs2: None,
-                rd: v_word_address,
-                imm: Some(word_address_bitmask as i64),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(ram_address),
-                rs2_val: None,
-                rd_post_val: Some(word_address),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let word_address_bitmask = ((1u128 << WORD_SIZE) - 4) as u64;
+        // let word_address =
+        //     ANDInstruction::<WORD_SIZE>(ram_address, word_address_bitmask).lookup_entry();
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::ANDI,
+        //         rs1: v_address,
+        //         rs2: None,
+        //         rd: v_word_address,
+        //         imm: Some(word_address_bitmask as i64),
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(ram_address),
+        //         rs2_val: None,
+        //         rd_post_val: Some(word_address),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let (word_loaded, word_stored) = match trace_row.memory_state.unwrap() {
-            MemoryState::Read {
-                address: _,
-                value: _,
-            } => panic!("Unexpected Read"),
-            MemoryState::Write {
-                address,
-                pre_value,
-                post_value,
-            } => {
-                if address != 0 {
-                    // HACK: Don't check this if `virtual_trace`
-                    // is being invoked by `virtual_sequence`, which
-                    // passes in a dummy `trace_row`
-                    assert_eq!(address, word_address);
-                }
-                (pre_value, post_value)
-            }
-        };
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::LW,
-                rs1: v_word_address,
-                rs2: None,
-                rd: v_word,
-                imm: Some(0),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(word_address),
-                rs2_val: None,
-                rd_post_val: Some(word_loaded),
-            },
-            memory_state: Some(MemoryState::Read {
-                address: word_address,
-                value: word_loaded,
-            }),
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let (word_loaded, word_stored) = match trace_row.memory_state.unwrap() {
+        //     MemoryState::Read {
+        //         address: _,
+        //         value: _,
+        //     } => panic!("Unexpected Read"),
+        //     MemoryState::Write {
+        //         address,
+        //         pre_value,
+        //         post_value,
+        //     } => {
+        //         if address != 0 {
+        //             // HACK: Don't check this if `virtual_trace`
+        //             // is being invoked by `virtual_sequence`, which
+        //             // passes in a dummy `trace_row`
+        //             assert_eq!(address, word_address);
+        //         }
+        //         (pre_value, post_value)
+        //     }
+        // };
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::LW,
+        //         rs1: v_word_address,
+        //         rs2: None,
+        //         rd: v_word,
+        //         imm: Some(0),
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(word_address),
+        //         rs2_val: None,
+        //         rd_post_val: Some(word_loaded),
+        //     },
+        //     memory_state: Some(MemoryState::Read {
+        //         address: word_address,
+        //         value: word_loaded,
+        //     }),
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let bit_shift = SLLInstruction::<WORD_SIZE>(ram_address, 3).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::SLLI,
-                rs1: v_address,
-                rs2: None,
-                rd: v_shift,
-                imm: Some(3),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(ram_address),
-                rs2_val: None,
-                rd_post_val: Some(bit_shift),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let bit_shift = SLLInstruction::<WORD_SIZE>(ram_address, 3).lookup_entry();
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::SLLI,
+        //         rs1: v_address,
+        //         rs2: None,
+        //         rd: v_shift,
+        //         imm: Some(3),
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(ram_address),
+        //         rs2_val: None,
+        //         rd_post_val: Some(bit_shift),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        // Technically such a LUI instruction isn't valid RISC-V, since the lower
-        // 12 bits of the immediate should be 0s, but this shouldn't impact soundness.
-        let byte_mask = 0xff;
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::LUI,
-                rs1: None,
-                rs2: None,
-                rd: v_mask,
-                imm: Some(byte_mask),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: None,
-                rs2_val: None,
-                rd_post_val: Some(byte_mask as u64),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // // Technically such a LUI instruction isn't valid RISC-V, since the lower
+        // // 12 bits of the immediate should be 0s, but this shouldn't impact soundness.
+        // let byte_mask = 0xff;
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::LUI,
+        //         rs1: None,
+        //         rs2: None,
+        //         rd: v_mask,
+        //         imm: Some(byte_mask),
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: None,
+        //         rs2_val: None,
+        //         rd_post_val: Some(byte_mask as u64),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let shifted_mask = SLLInstruction::<WORD_SIZE>(byte_mask as u64, bit_shift).lookup_entry();
-        debug_assert!(
-            shifted_mask == 0xff000000
-                || shifted_mask == 0x00ff0000
-                || shifted_mask == 0x0000ff00
-                || shifted_mask == 0x000000ff
-        );
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::SLL,
-                rs1: v_mask,
-                rs2: v_shift,
-                rd: v_mask,
-                imm: None,
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(byte_mask as u64),
-                rs2_val: Some(bit_shift),
-                rd_post_val: Some(shifted_mask),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let shifted_mask = SLLInstruction::<WORD_SIZE>(byte_mask as u64, bit_shift).lookup_entry();
+        // debug_assert!(
+        //     shifted_mask == 0xff000000
+        //         || shifted_mask == 0x00ff0000
+        //         || shifted_mask == 0x0000ff00
+        //         || shifted_mask == 0x000000ff
+        // );
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::SLL,
+        //         rs1: v_mask,
+        //         rs2: v_shift,
+        //         rd: v_mask,
+        //         imm: None,
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(byte_mask as u64),
+        //         rs2_val: Some(bit_shift),
+        //         rd_post_val: Some(shifted_mask),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let shifted_value = SLLInstruction::<WORD_SIZE>(value, bit_shift).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::SLL,
-                rs1: r_value,
-                rs2: v_shift,
-                rd: v_byte,
-                imm: None,
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(value),
-                rs2_val: Some(bit_shift),
-                rd_post_val: Some(shifted_value),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let shifted_value = SLLInstruction::<WORD_SIZE>(value, bit_shift).lookup_entry();
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::SLL,
+        //         rs1: r_value,
+        //         rs2: v_shift,
+        //         rd: v_byte,
+        //         imm: None,
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(value),
+        //         rs2_val: Some(bit_shift),
+        //         rd_post_val: Some(shifted_value),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        // The next three instructions (XOR, AND, XOR) splices the byte into
-        // the word using the mask.
-        // https://graphics.stanford.edu/~seander/bithacks.html#MaskedMerge
-        let word_xor_halfword =
-            XORInstruction::<WORD_SIZE>(word_loaded, shifted_value).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::XOR,
-                rs1: v_word,
-                rs2: v_byte,
-                rd: v_byte,
-                imm: None,
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(word_loaded),
-                rs2_val: Some(shifted_value),
-                rd_post_val: Some(word_xor_halfword),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // // The next three instructions (XOR, AND, XOR) splices the byte into
+        // // the word using the mask.
+        // // https://graphics.stanford.edu/~seander/bithacks.html#MaskedMerge
+        // let word_xor_halfword =
+        //     XORInstruction::<WORD_SIZE>(word_loaded, shifted_value).lookup_entry();
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::XOR,
+        //         rs1: v_word,
+        //         rs2: v_byte,
+        //         rd: v_byte,
+        //         imm: None,
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(word_loaded),
+        //         rs2_val: Some(shifted_value),
+        //         rd_post_val: Some(word_xor_halfword),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let masked = ANDInstruction::<WORD_SIZE>(word_xor_halfword, shifted_mask).lookup_entry();
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::AND,
-                rs1: v_byte,
-                rs2: v_mask,
-                rd: v_byte,
-                imm: None,
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(word_xor_halfword),
-                rs2_val: Some(shifted_mask),
-                rd_post_val: Some(masked),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let masked = ANDInstruction::<WORD_SIZE>(word_xor_halfword, shifted_mask).lookup_entry();
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::AND,
+        //         rs1: v_byte,
+        //         rs2: v_mask,
+        //         rd: v_byte,
+        //         imm: None,
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(word_xor_halfword),
+        //         rs2_val: Some(shifted_mask),
+        //         rd_post_val: Some(masked),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        let result = XORInstruction::<WORD_SIZE>(word_loaded, masked).lookup_entry();
-        assert_eq!(result, word_stored);
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::XOR,
-                rs1: v_word,
-                rs2: v_byte,
-                rd: v_word,
-                imm: None,
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(word_loaded),
-                rs2_val: Some(masked),
-                rd_post_val: Some(result),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // let result = XORInstruction::<WORD_SIZE>(word_loaded, masked).lookup_entry();
+        // assert_eq!(result, word_stored);
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::XOR,
+        //         rs1: v_word,
+        //         rs2: v_byte,
+        //         rd: v_word,
+        //         imm: None,
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(word_loaded),
+        //         rs2_val: Some(masked),
+        //         rd_post_val: Some(result),
+        //     },
+        //     memory_state: None,
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        virtual_trace.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::SW,
-                rs1: v_word_address,
-                rs2: v_word,
-                rd: None,
-                imm: Some(0),
-                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(word_address),
-                rs2_val: Some(result), // Lookup query
-                rd_post_val: None,
-            },
-            memory_state: Some(MemoryState::Write {
-                address: word_address,
-                pre_value: word_loaded,
-                post_value: result,
-            }),
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
-        });
+        // virtual_trace.push(RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: trace_row.instruction.address,
+        //         opcode: RV32IM::SW,
+        //         rs1: v_word_address,
+        //         rs2: v_word,
+        //         rd: None,
+        //         imm: Some(0),
+        //         virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(word_address),
+        //         rs2_val: Some(result), // Lookup query
+        //         rd_post_val: None,
+        //     },
+        //     memory_state: Some(MemoryState::Write {
+        //         address: word_address,
+        //         pre_value: word_loaded,
+        //         post_value: result,
+        //     }),
+        //     advice_value: None,
+        //     precompile_input: None,
+        //     precompile_output_address: None,
+        // });
 
-        virtual_trace
+        // virtual_trace
     }
 
     fn sequence_output(_: u64, _: u64) -> u64 {

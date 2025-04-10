@@ -20,7 +20,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use sub::SUBInstruction;
 use suffixes::{SuffixEval, Suffixes};
-use tracer::{ELFInstruction, RVTraceRow, RegisterState};
+use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 use virtual_advice::ADVICEInstruction;
 use virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction;
 use virtual_assert_lte::ASSERTLTEInstruction;
@@ -176,6 +176,173 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     AssertHalfwordAlignment(AssertHalfwordAlignmentInstruction<WORD_SIZE>),
     Pow2(POW2Instruction<WORD_SIZE>),
     RightShiftPadding(RightShiftPaddingInstruction<WORD_SIZE>),
+}
+
+impl<const WORD_SIZE: usize> TryFrom<&RVTraceRow> for LookupTables<WORD_SIZE> {
+    type Error = &'static str;
+
+    fn try_from(row: &RVTraceRow) -> Result<Self, Self::Error> {
+        match row.instruction.opcode {
+            RV32IM::ADD => Ok(Self::Add(ADDInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::SUB => Ok(Self::Sub(SUBInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::XOR => Ok(Self::Xor(XORInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::OR => Ok(Self::Or(ORInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::AND => Ok(Self::And(ANDInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::SLT => Ok(Self::Slt(SLTInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::SLTU => Ok(Self::Sltu(SLTUInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::ADDI => Ok(Self::Add(ADDInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::XORI => Ok(Self::Xor(XORInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::ORI => Ok(Self::Or(ORInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::ANDI => Ok(Self::And(ANDInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::SLTI => Ok(Self::Slt(SLTInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::SLTIU => Ok(Self::Sltu(SLTUInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::BEQ => Ok(Self::Beq(BEQInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::BNE => Ok(Self::Bne(BNEInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::BLT => Ok(Self::Slt(SLTInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::BLTU => Ok(Self::Sltu(SLTUInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::BGE => Ok(Self::Bge(BGEInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::BGEU => Ok(Self::Bgeu(BGEUInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::JAL => Ok(Self::Add(ADDInstruction(
+                row.instruction.address,
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::JALR => Ok(Self::Add(ADDInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::AUIPC => Ok(Self::Add(ADDInstruction(
+                row.instruction.address,
+                row.imm_u32() as u64,
+            ))),
+            RV32IM::LUI => Ok(Self::Advice(ADVICEInstruction(row.imm_u32() as u64))),
+            RV32IM::MUL => Ok(Self::Mul(MULInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::MULU => Ok(Self::Mulu(MULUInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::MULHU => Ok(Self::Mulhu(MULHUInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_ADVICE => {
+                Ok(Self::Advice(ADVICEInstruction(row.advice_value.unwrap())))
+            }
+            RV32IM::VIRTUAL_MOVE => Ok(Self::Move(MOVEInstruction(
+                row.register_state.rs1_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_MOVSIGN => Ok(Self::Movsign(MOVSIGNInstruction(
+                row.register_state.rs1_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_ASSERT_EQ => Ok(Self::Beq(BEQInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_ASSERT_LTE => Ok(Self::AssertLte(ASSERTLTEInstruction(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(
+                Self::AssertValidUnsignedRemainder(AssertValidUnsignedRemainderInstruction(
+                    row.register_state.rs1_val.unwrap(),
+                    row.register_state.rs2_val.unwrap(),
+                )),
+            ),
+            RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(Self::AssertValidSignedRemainder(
+                AssertValidSignedRemainderInstruction(
+                    row.register_state.rs1_val.unwrap(),
+                    row.register_state.rs2_val.unwrap(),
+                ),
+            )),
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => {
+                Ok(Self::AssertValidDiv0(AssertValidDiv0Instruction(
+                    row.register_state.rs1_val.unwrap(),
+                    row.register_state.rs2_val.unwrap(),
+                )))
+            }
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(Self::AssertHalfwordAlignment(
+                AssertHalfwordAlignmentInstruction::<WORD_SIZE>(
+                    row.register_state.rs1_val.unwrap(),
+                    row.imm_u32() as u64,
+                ),
+            )),
+            RV32IM::VIRTUAL_POW2 => Ok(Self::Pow2(POW2Instruction::<WORD_SIZE>(
+                row.register_state.rs1_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_POW2I => Ok(Self::Pow2(POW2Instruction::<WORD_SIZE>(row.imm_u64()))),
+            RV32IM::VIRTUAL_SRA_PAD => Ok(Self::RightShiftPadding(RightShiftPaddingInstruction::<
+                WORD_SIZE,
+            >(
+                row.register_state.rs1_val.unwrap(),
+            ))),
+            RV32IM::VIRTUAL_SRA_PADI => {
+                Ok(Self::RightShiftPadding(RightShiftPaddingInstruction::<
+                    WORD_SIZE,
+                >(row.imm_u64())))
+            }
+
+            _ => Err("No corresponding RV32I instruction"),
+        }
+    }
 }
 
 impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {

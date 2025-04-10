@@ -147,7 +147,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .into_iter()
             .chain(self.read_write_memory.read_write_values())
             .chain(self.timestamp_range_check.read_write_values())
-            .chain(self.r1cs.read_write_values())
+            // .chain(self.r1cs.read_write_values())
             .collect()
     }
 
@@ -157,7 +157,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .into_iter()
             .chain(self.read_write_memory.init_final_values())
             .chain(self.timestamp_range_check.init_final_values())
-            .chain(self.r1cs.init_final_values())
+            // .chain(self.r1cs.init_final_values())
             .collect()
     }
 
@@ -167,7 +167,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .into_iter()
             .chain(self.read_write_memory.read_write_values_mut())
             .chain(self.timestamp_range_check.read_write_values_mut())
-            .chain(self.r1cs.read_write_values_mut())
+            // .chain(self.r1cs.read_write_values_mut())
             .collect()
     }
 
@@ -177,7 +177,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
             .into_iter()
             .chain(self.read_write_memory.init_final_values_mut())
             .chain(self.timestamp_range_check.init_final_values_mut())
-            .chain(self.r1cs.init_final_values_mut())
+            // .chain(self.r1cs.init_final_values_mut())
             .collect()
     }
 }
