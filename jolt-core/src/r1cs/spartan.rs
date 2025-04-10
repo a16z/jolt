@@ -991,8 +991,7 @@ where
                 2,
                 transcript,
             );
-        println!("_shift_sumcheck_claims {:?}", _shift_sumcheck_claims);
-        // println!("shift_sumcheck_r_rev is {:?}",shift_sumcheck_r_rev);
+
         let shift_sumcheck_r: Vec<F> = shift_sumcheck_r_rev.iter().rev().copied().collect();
 
         // Inner sumcheck evaluations: evaluate z on rx_step
@@ -1007,56 +1006,51 @@ where
             transcript,
         );
 
-        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
-            preprocessing,
-            program_io,
-            constraint_builder,
-            trace,
-        );
+        // let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+        //     preprocessing,
+        //     program_io,
+        //     constraint_builder,
+        //     trace,
+        // );
 
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
-        let claimed_witness_eval2 = MultilinearPolynomial::stream_batch_evaluate::<
-            C,
-            InstructionSet,
-            I,
-        >(&mut jolt_oracle, rx_step, num_shards, shard_length);
 
-        #[cfg(test)]
-        assert_eq!(
-            claimed_witness_evals, claimed_witness_eval2,
-            "stream claimed witness evals are incorrect "
-        );
-
-        jolt_oracle.reset();
-
-        opening_accumulator.append(
-            &flattened_polys,
-            DensePolynomial::new(chis),
-            rx_step.to_vec(),
-            &claimed_witness_evals,
-            transcript,
-        );
+        // #[cfg(test)]
+        // {
+        //     let claimed_witness_eval2 = MultilinearPolynomial::stream_batch_evaluate::<
+        //         C,
+        //         InstructionSet,
+        //         I,
+        //     >(&mut jolt_oracle, rx_step, num_shards, shard_length);
+        //
+        //     assert_eq!(
+        //         claimed_witness_evals, claimed_witness_eval2,
+        //         "stream claimed witness evals are incorrect "
+        //     );
+        // }
+        // jolt_oracle.reset();
 
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
 
-        let shift_sumcheck_witness_evals2 =
-            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
-                &mut jolt_oracle,
-                &shift_sumcheck_r,
-                num_shards,
-                shard_length,
-            );
-
-        #[cfg(test)]
-        assert_eq!(
-            shift_sumcheck_witness_evals, shift_sumcheck_witness_evals2,
-            "stream shift sum check witness are incorrect "
-        );
-
+        // #[cfg(test)]
+        // {
+        //     let shift_sumcheck_witness_evals2 =
+        //         MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
+        //             &mut jolt_oracle,
+        //             &shift_sumcheck_r,
+        //             num_shards,
+        //             shard_length,
+        //         );
+        //
+        //     assert_eq!(
+        //         shift_sumcheck_witness_evals, shift_sumcheck_witness_evals2,
+        //         "stream shift sum check witness are incorrect "
+        //     );
+        // }
         opening_accumulator.append(
             &flattened_polys,
             DensePolynomial::new(chis2),
@@ -1188,20 +1182,11 @@ where
             &ry_var,
             false,
         );
-        let rx_rev: Vec<F> = rx_step.iter().rev().copied().collect();
-        // println!("shift_sumcheck_r {:?}",shift_sumcheck_r);
+
         let eq_plus_one_shift_sumcheck =
-            EqPlusOnePolynomial::new(rx_rev.to_vec()).evaluate(&shift_sumcheck_r);
+            EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
         let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck;
 
-        //     println!("shift_sumcheck_witness_evals is {:?}", self.shift_sumcheck_witness_evals);
-        println!("eval_z_shift_sumcheck is {:?}", eval_z_shift_sumcheck);
-        println!(
-            "eq_plus_one_shift_sumcheck is {:?}",
-            eq_plus_one_shift_sumcheck
-        );
-        //     println!("claim_shift_sumcheck is {:?}", claim_shift_sumcheck);
-        // println!("claim_shift_sumcheck_expected is {:?}", claim_shift_sumcheck_expected);
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }

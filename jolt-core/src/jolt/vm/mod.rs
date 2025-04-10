@@ -864,7 +864,6 @@ where
                 }
             }
             read_write_memory_oracle.reset();
-            println!("Bytecode, InstructionLookups, ReadWriteMemory oracle tests passed.");
         }
 
         let r1cs_builder = Self::Constraints::construct_constraints(
@@ -1005,7 +1004,6 @@ where
                 }
             }
             jolt_oracle.reset();
-            println!("Jolt oracle tests passed.");
         }
 
         let jolt_commitments =
