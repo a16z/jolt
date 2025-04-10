@@ -662,7 +662,7 @@ mod test {
             }
         }
 
-        let num_vars = 10;
+        let num_vars = 20;
         let num_polys = 2;
         let trace: Vec<u64> = (0..1 << num_vars).map(|elem: u64| elem).collect();
         let mut stream_sum_check_polys = StreamSumCheck::new(&trace);
