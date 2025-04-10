@@ -778,10 +778,6 @@ where
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
-        let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
-        // let (eq_rx_step_r2, eq_plus_one_rx_step_r2) =
-        //     EqPlusOnePolynomial::evals(rx_step, F::montgomery_r2());
-
         /* Compute the two polynomials provided as input to the second sumcheck:
            - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
            - poly_z: z(y_var || rx_step), z_shift(..)
@@ -829,7 +825,7 @@ where
             false,
         );
 
-        for shard in 0..num_shards {
+        for _ in 0..num_shards {
             let polynomials = jolt_oracle.next_shard(shard_length);
             let (eq_rx_step_shard, eq_rx_step_r2_shard) = (
                 eq_rx_step_stream.next_shard(shard_length),
@@ -917,62 +913,20 @@ where
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
 
-        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
-
         let span = span!(Level::INFO, "bind_z_ry_var");
         let _guard = span.enter();
-        let num_steps_unpadded = constraint_builder.uniform_repeat();
-        (0..num_steps_unpadded) // unpadded number of steps is sufficient
-            .into_par_iter()
-            .map(|t| {
-                flattened_polys
-                    .iter()
-                    .enumerate()
-                    .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
-                    .sum()
-            })
-            .collect_into_vec(&mut bind_z_ry_var);
-        drop(_guard);
-        drop(span);
 
         let num_rounds_shift_sumcheck = num_steps_bits;
-        assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
 
-        let mut shift_sumcheck_polys = vec![
-            MultilinearPolynomial::from(bind_z_ry_var),
-            MultilinearPolynomial::from(eq_plus_one_rx_step),
-        ];
 
-        let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
-            .into_par_iter()
-            .map(|i| {
-                let params: Vec<F> = shift_sumcheck_polys
-                    .iter()
-                    .map(|poly| poly.get_coeff(i))
-                    .collect();
-                comb_func(&params)
-            })
-            .reduce(|| F::zero(), |acc, x| acc + x);
-
-        // let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
-        //     SumcheckInstanceProof::prove_arbitrary(
-        //         &shift_sumcheck_claim,
-        //         num_rounds_shift_sumcheck,
-        //         &mut shift_sumcheck_polys,
-        //         comb_func,
-        //         2,
-        //         transcript,
-        //     );
-
-        drop_in_background_thread(shift_sumcheck_polys);
-
-        let mut bind_z_ry_var_oracle =
+        let  bind_z_ry_var_oracle =
             BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var, &eq_ry_var_r2);
 
-        let mut eq_plus_one_rx_step_stream =
+        let  eq_plus_one_rx_step_stream =
             StreamingEqPolynomial::new(reverse_rx_step.to_vec(), rx_step.len(), None, false);
         let mut oracle =
             Stream::SpartanSumCheck((bind_z_ry_var_oracle, eq_plus_one_rx_step_stream));
+        
 
         let extract_poly_fn = |stream_data: &OracleItem<F>| -> Vec<MultilinearPolynomial<F>> {
             match stream_data {
@@ -980,6 +934,25 @@ where
                 _ => vec![],
             }
         };
+
+        let shift_sumcheck_claim: F = (0..num_shards)
+        .map(|_| {
+            let shards = oracle.next_shard(shard_length);
+            let polys = extract_poly_fn(&shards);
+            (0..shard_length)
+                .map(|j| {
+                    let params: Vec<F> = polys.iter().map(|poly| poly.get_coeff(j)).collect();
+                    comb_func(&params)
+                })
+                .fold(F::zero(), |acc, x| acc + x)
+        })
+        .sum();
+
+        oracle.reset();
+
+        drop(_guard);
+        drop(span);
+
         let (shift_sumcheck_proof, shift_sumcheck_r_rev, _shift_sumcheck_claims) =
             SumcheckInstanceProof::stream_prove_arbitrary(
                 num_rounds_shift_sumcheck,
@@ -1006,51 +979,49 @@ where
             transcript,
         );
 
-        // let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
-        //     preprocessing,
-        //     program_io,
-        //     constraint_builder,
-        //     trace,
-        // );
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
 
-        // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
 
-        // #[cfg(test)]
-        // {
-        //     let claimed_witness_eval2 = MultilinearPolynomial::stream_batch_evaluate::<
-        //         C,
-        //         InstructionSet,
-        //         I,
-        //     >(&mut jolt_oracle, rx_step, num_shards, shard_length);
-        //
-        //     assert_eq!(
-        //         claimed_witness_evals, claimed_witness_eval2,
-        //         "stream claimed witness evals are incorrect "
-        //     );
-        // }
-        // jolt_oracle.reset();
+        #[cfg(test)]
+        {
+            let claimed_witness_eval2 = MultilinearPolynomial::stream_batch_evaluate::<
+                C,
+                InstructionSet,
+                I,
+            >(&mut jolt_oracle, rx_step, num_shards, shard_length);
+        
+            assert_eq!(
+                claimed_witness_evals, claimed_witness_eval2,
+                "stream claimed witness evals are incorrect "
+            );
+        }
+        jolt_oracle.reset();
 
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
 
-        // #[cfg(test)]
-        // {
-        //     let shift_sumcheck_witness_evals2 =
-        //         MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
-        //             &mut jolt_oracle,
-        //             &shift_sumcheck_r,
-        //             num_shards,
-        //             shard_length,
-        //         );
-        //
-        //     assert_eq!(
-        //         shift_sumcheck_witness_evals, shift_sumcheck_witness_evals2,
-        //         "stream shift sum check witness are incorrect "
-        //     );
-        // }
+        #[cfg(test)]
+        {
+            let shift_sumcheck_witness_evals2 =
+                MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
+                    &mut jolt_oracle,
+                    &shift_sumcheck_r,
+                    num_shards,
+                    shard_length,
+                );
+        
+            assert_eq!(
+                shift_sumcheck_witness_evals, shift_sumcheck_witness_evals2,
+                "stream shift sum check witness are incorrect "
+            );
+        }
+
         opening_accumulator.append(
             &flattened_polys,
             DensePolynomial::new(chis2),

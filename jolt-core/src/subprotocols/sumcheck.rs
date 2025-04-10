@@ -16,7 +16,6 @@ use crate::poly::multilinear_polynomial::{
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::r1cs::inputs::ConstraintInput;
 use crate::r1cs::spartan::{AzBzCz, BindZRyVarOracle};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
@@ -775,6 +774,16 @@ impl<'a, F: JoltField> StreamSumCheck<'a, F> {
     }
 }
 
+impl<'a, F: JoltField> Oracle for StreamSumCheck<'a, F> {
+    type Item = SumCheckPolys<MultilinearPolynomial<F>>;
+    fn next_shard(&mut self, shard_length: usize) -> Self::Item {
+        (self.func)(self.trace_oracle.next_shard(shard_length))
+    }
+    fn reset(&mut self) {
+        self.trace_oracle.reset()
+    }
+}
+
 mod test {
     use crate::field::JoltField;
     use crate::jolt::vm::rv32i_vm::RV32I;
@@ -789,16 +798,6 @@ mod test {
     fn test_stream_prove_arbitrary() {
         use crate::utils::transcript::Transcript;
         use ark_bn254::Fr;
-
-        impl<'a, F: JoltField> Oracle for StreamSumCheck<'a, F> {
-            type Item = SumCheckPolys<MultilinearPolynomial<F>>;
-            fn next_shard(&mut self, shard_length: usize) -> Self::Item {
-                (self.func)(self.trace_oracle.next_shard(shard_length))
-            }
-            fn reset(&mut self) {
-                self.trace_oracle.reset()
-            }
-        }
 
         let num_vars = 10;
         let num_polys = 2;
