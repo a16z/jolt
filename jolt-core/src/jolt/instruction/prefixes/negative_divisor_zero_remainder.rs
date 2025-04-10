@@ -42,6 +42,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
 
         if let Some(r_x) = r_x {
             let (remainder, _) = b.uninterleave();
+            // Short-circuit if low-order bits of remainder are not 0s
             if u64::from(remainder) != 0 {
                 return F::zero();
             }
@@ -50,7 +51,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
         } else {
             let _ = b.pop_msb();
             let (remainder, _) = b.uninterleave();
-
+            // Short-circuit if low-order bits of remainder are not 0s
             if u64::from(remainder) != 0 {
                 return F::zero();
             }

@@ -6,6 +6,7 @@ use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -13,7 +14,7 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SRS<P: Pairing>
 where
     P::G1: Icicle,
@@ -131,7 +132,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct KZGProverKey<P: Pairing>
 where
     P::G1: Icicle,
@@ -182,7 +183,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct KZGVerifierKey<P: Pairing> {
     pub g1: P::G1Affine,
     pub g2: P::G2Affine,
@@ -343,22 +344,32 @@ where
         coeffs: &[P::ScalarField],
         offset: usize,
     ) -> Result<P::G1Affine, ProofVerifyError> {
-        if pk.g1_powers().len() < coeffs.len() {
+        let final_commitment = Self::commit_inner_helper(pk, &coeffs[offset..], offset)?;
+        Ok(final_commitment.into_affine())
+    }
+
+    #[inline]
+    pub(crate) fn commit_inner_helper(
+        pk: &KZGProverKey<P>,
+        coeffs: &[P::ScalarField],
+        offset: usize,
+    ) -> Result<P::G1, ProofVerifyError> {
+        if pk.g1_powers().len() < offset + coeffs.len() {
             return Err(ProofVerifyError::KeyLengthError(
                 pk.g1_powers().len(),
-                coeffs.len(),
+                offset + coeffs.len(),
             ));
         }
 
         let c = <P::G1 as VariableBaseMSM>::msm_field_elements(
-            &pk.g1_powers()[offset..coeffs.len()],
-            pk.gpu_g1().map(|g| &g[offset..coeffs.len()]),
-            &coeffs[offset..],
+            &pk.g1_powers()[offset..offset + coeffs.len()],
+            pk.gpu_g1().map(|g| &g[offset..offset + coeffs.len()]),
+            coeffs,
             None,
             use_icicle(),
         )?;
 
-        Ok(c.into_affine())
+        Ok(c)
     }
 
     #[tracing::instrument(skip_all, name = "KZG::open")]
