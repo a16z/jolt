@@ -81,7 +81,34 @@ library FrLib {
         return Fr.wrap(result);
     }
 
-    // TODO: Montgomery's batch inversion trick
+    // Montgomery's batch inversion trick implementation
+    function batchInvert(Fr[] memory values) internal view returns (Fr[] memory) {
+        uint256 n = values.length;
+        if (n == 0) return new Fr[](0);
+        if (n == 1) return [invert(values[0])];
+
+        Fr[] memory products = new Fr[](n);
+        products[0] = values[0];
+        
+        // Compute partial products
+        for (uint256 i = 1; i < n; i++) {
+            products[i] = products[i-1] * values[i];
+        }
+
+        // Invert the final product
+        Fr running = invert(products[n-1]);
+        Fr[] memory results = new Fr[](n);
+
+        // Unwind the products
+        for (uint256 i = n-1; i > 0; i--) {
+            results[i] = running * products[i-1];
+            running = running * values[i];
+        }
+        results[0] = running;
+
+        return results;
+    }
+
     function div(Fr numerator, Fr denominator) internal view returns (Fr) {
         return numerator * invert(denominator);
     }
