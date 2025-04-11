@@ -258,10 +258,10 @@ impl<F: JoltField> Oracle for StreamingEqPolynomial<F> {
     }
 }
 mod test {
+    use super::*;
+    use crate::poly::split_eq_poly::SplitEqPolynomial;
     use ark_bn254::Fr;
     use rand::{thread_rng, Rng};
-
-    use super::*;
 
     #[test]
     fn evals() {
@@ -305,6 +305,42 @@ mod test {
                 assert_eq!(
                     streaming_eq.next_eval(),
                     evals[j as usize],
+                    "{}, {j}",
+                    streaming_eq.idx
+                );
+            }
+        }
+    }
+    #[test]
+    fn split_eq() {
+        let mut rng = thread_rng();
+        let len = 16;
+        let num_vars = 16;
+        let mut r: Vec<Fr> = (0..len).map(|_| Fr::from_u64(rng.gen())).collect();
+
+        let mut streaming_eq = StreamingEqPolynomial::new(r.clone(), num_vars, None);
+        let rev_r: Vec<Fr> = r.iter().rev().copied().collect();
+        let split_eq = SplitEqPolynomial::new(&r);
+        let mid = len / 2;
+        for _ in 0..1 << (num_vars - len) {
+            for j in 0..1 << len {
+                let mut bits = Vec::new();
+                for idx in 0..len {
+                    let bit = (j >> idx) & 1;
+                    bits.push(bit);
+                }
+                let (left_bits, right_bits) = bits.split_at(mid);
+                let right_bit_len = right_bits.len();
+                let left_bit_len = left_bits.len();
+                let left_idx = left_bits.iter().enumerate().fold(0, |acc, (idx, bit)| {
+                    acc + bit * (1 << (left_bit_len - idx - 1))
+                });
+                let right_idx = right_bits.iter().enumerate().fold(0, |acc, (idx, bit)| {
+                    acc + bit * (1 << (right_bit_len - idx - 1))
+                });
+                assert_eq!(
+                    streaming_eq.next_eval(),
+                    split_eq.E1[right_idx].clone() * split_eq.E2[left_idx].clone(),
                     "{}, {j}",
                     streaming_eq.idx
                 );

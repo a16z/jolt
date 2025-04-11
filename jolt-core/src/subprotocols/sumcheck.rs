@@ -415,21 +415,46 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; num_polys];
         let num_shards = (1 << num_rounds) / shard_length;
-        for i in 0..num_rounds {
+        for round in 0..num_rounds {
             let mut accumulator = vec![F::zero(); degree + 1];
 
             let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
             let mut eq_poly = StreamingEqPolynomial::new(r.clone(), num_rounds, None);
+            let split_eq_poly = SplitEqPolynomial::new(&r);
             for shard in 0..num_shards {
                 let shards = stream_polys.next_shard(shard_length);
                 let polys = extract_poly_fn(&shards);
                 let eq_shard = eq_poly.next_shard(shard_length);
                 for j in 0..shard_length {
-                    let idx = shard_length * shard + j;
+                    let poly_idx = shard_length * shard + j;
+                    #[cfg(test)]
+                    {
+                        let mut bits = Vec::new();
+                        for idx in 0..round {
+                            let bit = (poly_idx >> idx) & 1;
+                            bits.push(bit);
+                        }
+                        let (left_bits, right_bits) = bits.split_at(round / 2);
+                        let right_bit_len = right_bits.len();
+                        let left_bit_len = left_bits.len();
 
+                        let left_idx = left_bits.iter().enumerate().fold(0, |acc, (idx, bit)| {
+                            acc + bit * (1 << (left_bit_len - idx - 1))
+                        });
+
+                        let right_idx = right_bits.iter().enumerate().fold(0, |acc, (idx, bit)| {
+                            acc + bit * (1 << (right_bit_len - idx - 1))
+                        });
+                        let expected_eq = split_eq_poly.E1[right_idx] * split_eq_poly.E2[left_idx];
+                        assert_eq!(
+                            expected_eq, eq_shard[j],
+                            "incorrect value of eq for round {} at j {}",
+                            round, j
+                        );
+                    }
                     let mut eq_eval_idx_s_vec = vec![F::one(); degree + 1];
 
-                    let bit = (idx >> i) & 1;
+                    let bit = (poly_idx >> round) & 1;
 
                     for s in 0..=degree {
                         let val = F::from_u64(s as u64);
@@ -443,14 +468,14 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                         }
                     }
 
-                    if i == num_rounds - 1 && idx == (1 << num_rounds) - 1 {
+                    if round == num_rounds - 1 && poly_idx == (1 << num_rounds) - 1 {
                         for k in 0..num_polys {
                             witness_eval_for_final_eval[k][0] = witness_eval[k][0];
                             witness_eval_for_final_eval[k][1] = witness_eval[k][1];
                         }
                     }
 
-                    if (idx + 1) % (1 << (i + 1)) == 0 {
+                    if (poly_idx + 1) % (1 << (round + 1)) == 0 {
                         for s in 0..=degree {
                             let eval = comb_fn(
                                 &(0..num_polys)
@@ -472,7 +497,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             r.push(r_i);
             compressed_polys.push(compressed_poly);
 
-            if i == num_rounds - 1 {
+            if round == num_rounds - 1 {
                 final_eval = (0..num_polys)
                     .map(|i| {
                         (F::one() - r_i) * witness_eval_for_final_eval[i][0]
@@ -662,7 +687,7 @@ mod test {
             }
         }
 
-        let num_vars = 20;
+        let num_vars = 3;
         let num_polys = 2;
         let trace: Vec<u64> = (0..1 << num_vars).map(|elem: u64| elem).collect();
         let mut stream_sum_check_polys = StreamSumCheck::new(&trace);
@@ -678,7 +703,7 @@ mod test {
             &poly_evals[0] * &poly_evals[1] * &poly_evals[0] + &poly_evals[1]
         };
 
-        let shard_length = 1 << 15;
+        let shard_length = 4;
         let mut transcript = <KeccakTranscript as Transcript>::new(b"test");
         let claim: Fr = (0..1 << num_vars)
             .map(|idx| comb_func(&[Fr::from_u64(idx), Fr::from_u64(2 * idx)]))

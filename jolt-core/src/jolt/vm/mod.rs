@@ -487,7 +487,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// `alloy_sol_types`.
 pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
 
-// pub type StreamingJoltPolynomials<F: JoltField> = JoltStuff<StreamingPolynomial<JoltTraceStep<JoltInstructionSet>, F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
@@ -891,18 +890,16 @@ where
         };
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
-        let mut jolt_oracle =
-            JoltOracle::new::<
-                C,
-                M,
-                PCS,
-                ProofTranscript,
-                <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-            >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
+        let mut jolt_oracle = JoltOracle::new::<
+            C,
+            M,
+            PCS,
+            ProofTranscript,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
         #[cfg(test)]
         {
-
             let shard_len = (1024).min(padded_trace_length);
             let no_of_shards = padded_trace_length / shard_len;
             // Testing jolt oracle.
