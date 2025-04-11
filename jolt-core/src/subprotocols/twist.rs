@@ -15,6 +15,7 @@ use crate::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 /// The Twist+Shout paper gives two different prover algorithms for the read-checking
@@ -32,6 +33,7 @@ pub enum TwistAlgorithm {
     Alternative,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct TwistProof<F: JoltField, ProofTranscript: Transcript> {
     /// Proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -40,6 +42,7 @@ pub struct TwistProof<F: JoltField, ProofTranscript: Transcript> {
     val_evaluation_proof: ValEvaluationProof<F, ProofTranscript>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     /// Joint sumcheck proof for the read-checking and write-checking sumchecks
     /// (steps 3 and 4 of Figure 9).
@@ -65,6 +68,7 @@ pub struct ReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_switch_index: usize,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     /// Sumcheck proof for the Val-evaluation sumcheck (steps 6 of Figure 9).
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,

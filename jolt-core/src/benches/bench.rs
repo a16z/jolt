@@ -86,8 +86,8 @@ where
 
     let mut tasks = Vec::new();
 
-    const TABLE_SIZE: usize = 1 << 16;
-    const NUM_LOOKUPS: usize = 1 << 20;
+    const TABLE_SIZE: usize = 4096;
+    const NUM_LOOKUPS: usize = 1 << 23;
 
     let mut rng = test_rng();
 
@@ -100,12 +100,14 @@ where
     let r_cycle: Vec<F> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
 
     let task = move || {
-        let _proof = ShoutProof::prove(
+        let proof = ShoutProof::prove(
             lookup_table,
             read_addresses,
             &r_cycle,
             &mut prover_transcript,
         );
+
+        serialize_and_print_size("Shout proof", &proof);
     };
 
     tasks.push((
@@ -128,7 +130,7 @@ where
 
     const WORD_SIZE: usize = 32;
     const LOG_K: usize = 2 * WORD_SIZE;
-    const LOG_T: usize = 19;
+    const LOG_T: usize = 23;
     const T: u64 = 1 << LOG_T;
 
     let mut rng = StdRng::seed_from_u64(12345);
@@ -146,6 +148,8 @@ where
             r_cycle,
             &mut prover_transcript,
         );
+
+        serialize_and_print_size("Sparse-dense Shout proof", &proof);
 
         let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
         let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
@@ -184,9 +188,10 @@ where
 
     let mut tasks = Vec::new();
 
-    const K: usize = 1 << 10;
-    const T: usize = 1 << 20;
-    const ZIPF_S: f64 = 0.0;
+    // const K: usize = 64;
+    const K: usize = 8192;
+    const T: usize = 1 << 23;
+    const ZIPF_S: f64 = 1.0;
     let zipf = Zipf::new(K as u64, ZIPF_S).unwrap();
 
     let mut rng = test_rng();
@@ -221,7 +226,7 @@ where
     let r_prime: Vec<F> = prover_transcript.challenge_vector(T.log_2());
 
     let task = move || {
-        let _proof = TwistProof::prove(
+        let proof = TwistProof::prove(
             read_addresses,
             read_values,
             write_addresses,
@@ -232,6 +237,8 @@ where
             &mut prover_transcript,
             TwistAlgorithm::Local,
         );
+
+        serialize_and_print_size("Twist proof", &proof);
     };
 
     tasks.push((
@@ -276,8 +283,8 @@ fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSeri
     item.serialize_compressed(&mut file).unwrap();
     let file_size_bytes = file.metadata().unwrap().len();
     let file_size_kb = file_size_bytes as f64 / 1024.0;
-    let file_size_mb = file_size_kb / 1024.0;
-    println!("{:<30} : {:.3} MB", name, file_size_mb);
+    // let file_size_mb = file_size_kb / 1024.0;
+    println!("{:<30} : {:.3} kB", name, file_size_kb);
 }
 
 fn prove_example<T: Serialize, PCS, F, ProofTranscript>(
@@ -383,6 +390,19 @@ where
                 trace,
                 preprocessing.clone(),
             );
+
+        serialize_and_print_size("jolt_proof", &jolt_proof);
+        serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
+        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
+        serialize_and_print_size(
+            " jolt_proof.read_write_memory",
+            &jolt_proof.read_write_memory,
+        );
+        serialize_and_print_size(
+            " jolt_proof.instruction_lookups",
+            &jolt_proof.instruction_lookups,
+        );
+
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
             jolt_proof,

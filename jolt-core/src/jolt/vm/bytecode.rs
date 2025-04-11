@@ -264,6 +264,7 @@ impl<F: JoltField> BytecodePreprocessing<F> {
 
         // Bytecode: Pad to nearest power of 2
         let code_size = bytecode.len().next_power_of_two();
+        println!("code size: {code_size}");
         bytecode.resize(code_size, BytecodeRow::no_op(0));
 
         let mut address = vec![];

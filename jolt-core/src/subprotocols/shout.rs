@@ -16,8 +16,10 @@ use crate::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
     core_piop_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,
     booleanity_sumcheck: SumcheckInstanceProof<F, ProofTranscript>,

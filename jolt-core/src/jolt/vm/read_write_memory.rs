@@ -272,6 +272,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
             .unwrap();
 
         let memory_size = max_trace_address.next_power_of_two() as usize;
+        println!("memory size: {memory_size}");
         let mut v_init: Vec<u32> = vec![0; memory_size];
         // Copy bytecode
         let mut v_init_index = memory_address_to_witness_index(
