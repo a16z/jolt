@@ -128,6 +128,7 @@ impl RVTraceRow {
             | RV32IM::SLTI
             | RV32IM::SLTIU
             | RV32IM::JALR
+            | RV32IM::VIRTUAL_POW2
             | RV32IM::VIRTUAL_MOVE
             | RV32IM::VIRTUAL_MOVSIGN => [
                 rs1_read(),
@@ -157,7 +158,7 @@ impl RVTraceRow {
             ],
 
             // RV32IM::LB | RV32IM::LH | RV32IM::LBU | RV32IM::LHU => [
-            RV32IM::JAL => [
+            RV32IM::JAL | RV32IM::VIRTUAL_POW2I => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 rd_write(),

@@ -11,7 +11,9 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SLLVirtualSequence<W
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         let mut virtual_trace = vec![];
-        let v_0 = Some(virtual_register_index(0));
+        // SLL is used in the virtual sequences for store/load instructions,
+        // so use an unused virtual register
+        let v_0 = Some(virtual_register_index(6));
 
         let (pow2, result) = match trace_row.instruction.opcode {
             RV32IM::SLL => {
