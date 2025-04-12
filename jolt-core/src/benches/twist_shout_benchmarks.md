@@ -6,7 +6,7 @@ Because Twist and Shout are not fully integrated into Jolt yet, they are instead
 
 Benchmark code can be found in [`bench.rs`](./bench.rs).
 
-Results reported do not include costs associated with polynomial commitment schemes (i.e. proof sizes do not include commitment size, and proof times do not include commitment or opening proof time).
+Results reported (for both Twist/Shout and Spice/Lasso) do not include costs associated with polynomial commitment schemes (i.e. proof sizes do not include commitment size, and proof times do not include commitment or opening proof time).
 
 All benchmarks were run on an M3 Macbook Pro with 128GB RAM.
 
@@ -38,15 +38,18 @@ Note that the current Twist implementation does not include the "one-hot" sumche
 
 We implement the "local" Twist algorithm described in Section 8.2.2 of the Twist+Shout paper, the performance of which improves with locality of memory.
 To simulate locality in our Twist benchmarks, we sample memory addresses from a [Zipf](https://mathworld.wolfram.com/ZipfDistribution.html) distribution, varying the skew parameter.
-Note that `Zipf(0)` is equivalent to the uniform distribution, while `Zipf(1)` simulates some degree of locality.
+`Zipf(0)` is equivalent to the uniform distribution, while `Zipf(1)` simulates some degree of locality.
 
-| **Twist, Zipf(0)**   | **Twist, Zipf(1)**    | **Lasso**   | **Improvement**  |
+Note that the simulated Twist trace generates random values for all $$2^{23}$$ steps of the trace, whereas Spice is benchmarked on a real execution trace, where most instructions do not access RAM (resulting in a sparse witness).
+Due to this discrepancy, our benchmarks may underestimate Twist's perforamnce relative to Spice.
+
+| **Twist, Zipf(0)**   | **Twist, Zipf(1)**    | **Spice**   | **Improvement**  |
 | -------------------- | --------------------- | ----------- | ---------------- |
 | 1.6 + 3.0 = 4.6s     | 1.4 + 2.4 = 3.8s      | 6.1s        | 1.3-1.6x         |
 
 ### Proof size
 
-| **Twist**                   | **Lasso**   | **Improvement**  |
+| **Twist**                   | **Spice**   | **Improvement**  |
 | --------------------------- | ----------- | ---------------- |
 | 4.8 kB + 5.5 kB = 10.3 kB   | 87.1 kB     | 8.5x             |
 
