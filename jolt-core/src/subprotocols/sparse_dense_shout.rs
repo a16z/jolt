@@ -710,7 +710,6 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     const WORD_SIZE: usize = 8;
-    const LOG_K: usize = 2 * WORD_SIZE;
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
