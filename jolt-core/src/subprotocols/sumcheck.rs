@@ -416,10 +416,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; num_polys];
         let num_shards = (1 << num_rounds) / shard_length;
-        assert!(
-            1 << ((num_rounds - 1) / 2) <= shard_length,
-            "shard is small"
-        );
 
         let compute_idx = |bits: &[usize], bit_len: usize| -> usize {
             bits.iter()
@@ -435,78 +431,72 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             let mut accumulator = vec![F::zero(); degree + 1];
             let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
 
+            let mut int_witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
             let split_eq_poly = SplitEqPolynomial::new(&r);
             let e2_len = split_eq_poly.E2_len;
             for shard in 0..num_shards {
                 let shards = stream_polys.next_shard(shard_length);
                 let polys = extract_poly_fn(&shards);
-                (0..shard_length)
-                    .chunks(e2_len)
-                    .into_iter()
-                    .enumerate()
-                    .for_each(|(chunk, _)| {
-                        let mut int_witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
-                        let poly_idx = shard_length * shard + (chunk + 1) * e2_len - 1;
+                (0..shard_length).for_each(|shard_idx| {
+                    let poly_idx = shard_length * shard + shard_idx;
+                    let eval_e2 = if round != 0 {
+                        let bits = compute_bits(poly_idx);
+                        let (left_bits, _) = bits.split_at(round / 2);
+                        let left_bit_len = left_bits.len();
+                        let left_idx = compute_idx(left_bits, left_bit_len);
+                        let eval_e2 = split_eq_poly.E2[left_idx];
+                        eval_e2
+                    } else {
+                        F::one()
+                    };
+
+                    let mut eq_eval_idx_s_vec = vec![F::one(); degree + 1];
+
+                    let bit = (poly_idx >> round) & 1;
+                    for s in 0..=degree {
+                        let val = F::from_u64(s as u64);
+                        eq_eval_idx_s_vec[s] = if bit == 0 { F::one() - val } else { val };
+                    }
+
+                    for k in 0..num_polys {
+                        for s in 0..=degree {
+                            int_witness_eval[k][s] +=
+                                eval_e2 * eq_eval_idx_s_vec[s] * polys[k].get_coeff(shard_idx);
+                        }
+                    }
+
+                    if (poly_idx + 1) % e2_len == 0 {
                         let bits = compute_bits(poly_idx);
                         let (_, right_bits) = bits.split_at(round / 2);
                         let right_bit_len = right_bits.len();
                         let right_idx = compute_idx(right_bits, right_bit_len);
                         let eval_e1 = split_eq_poly.E1[right_idx];
 
-                        for e2_iter in 0..e2_len {
-                            let j = e2_iter + chunk * e2_len;
-                            let poly_idx = shard_length * shard + j;
-                            let eval_e2 = if round != 0 {
-                                let bits = compute_bits(poly_idx);
-                                let (left_bits, _) = bits.split_at(round / 2);
-                                let left_bit_len = left_bits.len();
-                                let left_idx = compute_idx(left_bits, left_bit_len);
-                                let eval_e2 = split_eq_poly.E2[left_idx];
-                                eval_e2
-                            } else {
-                                F::one()
-                            };
-
-                            let mut eq_eval_idx_s_vec = vec![F::one(); degree + 1];
-
-                            let bit = (poly_idx >> round) & 1;
-                            for s in 0..=degree {
-                                let val = F::from_u64(s as u64);
-                                eq_eval_idx_s_vec[s] = if bit == 0 { F::one() - val } else { val };
-                            }
-
-                            for k in 0..num_polys {
-                                for s in 0..=degree {
-                                    int_witness_eval[k][s] +=
-                                        eval_e2 * eq_eval_idx_s_vec[s] * polys[k].get_coeff(j);
-                                }
-                            }
-                        }
-
                         for k in 0..num_polys {
                             for s in 0..=degree {
                                 witness_eval[k][s] += eval_e1 * int_witness_eval[k][s];
                             }
                         }
-
-                        if (poly_idx + 1) % (1 << (round + 1)) == 0 {
-                            for s in 0..=degree {
-                                let eval = comb_fn(
-                                    &(0..num_polys)
-                                        .map(|k| witness_eval[k][s])
-                                        .collect::<Vec<F>>(),
-                                );
-                                accumulator[s] += eval;
-                            }
-                            if round == num_rounds - 1 {
-                                for k in 0..num_polys {
-                                    witness_eval_for_final_eval[k][0] = witness_eval[k][0];
-                                    witness_eval_for_final_eval[k][1] = witness_eval[k][1];
-                                }
-                            }
-                            witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
+                        int_witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
+                    }
+                    if (poly_idx + 1) % (1 << (round + 1)) == 0 {
+                        for s in 0..=degree {
+                            let eval = comb_fn(
+                                &(0..num_polys)
+                                    .map(|k| witness_eval[k][s])
+                                    .collect::<Vec<F>>(),
+                            );
+                            accumulator[s] += eval;
                         }
-                    });
+                        if round == num_rounds - 1 {
+                            for k in 0..num_polys {
+                                witness_eval_for_final_eval[k][0] = witness_eval[k][0];
+                                witness_eval_for_final_eval[k][1] = witness_eval[k][1];
+                            }
+                        }
+                        witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
+                    }
+                });
             }
 
             let univariate_poly = UniPoly::from_evals(&accumulator);
@@ -519,14 +509,14 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
             stream_polys.reset();
         }
-        
+
         final_eval = (0..num_polys)
             .map(|i| {
                 (F::one() - r[num_rounds - 1]) * witness_eval_for_final_eval[i][0]
                     + r[num_rounds - 1] * witness_eval_for_final_eval[i][1]
             })
             .collect();
-        
+
         (SumcheckInstanceProof::new(compressed_polys), r, final_eval)
     }
 }
@@ -721,7 +711,7 @@ mod test {
             &poly_evals[0] * &poly_evals[1] * &poly_evals[0] + &poly_evals[1]
         };
 
-        let shard_length = 16;
+        let shard_length = 4;
         let mut transcript = <KeccakTranscript as Transcript>::new(b"test");
         let claim: Fr = (0..1 << num_vars)
             .map(|idx| comb_func(&[Fr::from_u64(idx), Fr::from_u64(2 * idx)]))
