@@ -416,8 +416,11 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; num_polys];
         let num_shards = (1 << num_rounds) / shard_length;
-        assert!(1<<((num_rounds - 1) / 2) <= shard_length, "shard is small");
-        
+        assert!(
+            1 << ((num_rounds - 1) / 2) <= shard_length,
+            "shard is small"
+        );
+
         let compute_idx = |bits: &[usize], bit_len: usize| -> usize {
             bits.iter()
                 .enumerate()
@@ -431,7 +434,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
             let mut accumulator = vec![F::zero(); degree + 1];
             let mut witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
-            
+
             let split_eq_poly = SplitEqPolynomial::new(&r);
             let e2_len = split_eq_poly.E2_len;
             for shard in 0..num_shards {
@@ -463,7 +466,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                             } else {
                                 F::one()
                             };
-                            
+
                             let mut eq_eval_idx_s_vec = vec![F::one(); degree + 1];
 
                             let bit = (poly_idx >> round) & 1;
@@ -486,13 +489,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                             }
                         }
 
-                        if round == num_rounds - 1 && poly_idx == (1 << num_rounds) - 1 {
-                            for k in 0..num_polys {
-                                witness_eval_for_final_eval[k][0] = witness_eval[k][0];
-                                witness_eval_for_final_eval[k][1] = witness_eval[k][1];
-                            }
-                        }
-
                         if (poly_idx + 1) % (1 << (round + 1)) == 0 {
                             for s in 0..=degree {
                                 let eval = comb_fn(
@@ -501,6 +497,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                                         .collect::<Vec<F>>(),
                                 );
                                 accumulator[s] += eval;
+                            }
+                            if round == num_rounds - 1 {
+                                for k in 0..num_polys {
+                                    witness_eval_for_final_eval[k][0] = witness_eval[k][0];
+                                    witness_eval_for_final_eval[k][1] = witness_eval[k][1];
+                                }
                             }
                             witness_eval = vec![vec![F::zero(); degree + 1]; num_polys];
                         }
@@ -515,18 +517,16 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             r.push(r_i);
             compressed_polys.push(compressed_poly);
 
-            if round == num_rounds - 1 {
-                final_eval = (0..num_polys)
-                    .map(|i| {
-                        (F::one() - r_i) * witness_eval_for_final_eval[i][0]
-                            + r_i * witness_eval_for_final_eval[i][1]
-                    })
-                    .collect();
-            }
-
             stream_polys.reset();
         }
-
+        
+        final_eval = (0..num_polys)
+            .map(|i| {
+                (F::one() - r[num_rounds - 1]) * witness_eval_for_final_eval[i][0]
+                    + r[num_rounds - 1] * witness_eval_for_final_eval[i][1]
+            })
+            .collect();
+        
         (SumcheckInstanceProof::new(compressed_polys), r, final_eval)
     }
 }
@@ -598,7 +598,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
 mod test {
     use crate::field::JoltField;
-    use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+    use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use crate::subprotocols::sumcheck::SumcheckInstanceProof;
     use crate::utils::streaming::Oracle;
     use crate::utils::transcript::KeccakTranscript;
@@ -726,6 +726,7 @@ mod test {
         let claim: Fr = (0..1 << num_vars)
             .map(|idx| comb_func(&[Fr::from_u64(idx), Fr::from_u64(2 * idx)]))
             .sum();
+
         let degree = 3;
         let (proof, _r, final_evals) = SumcheckInstanceProof::stream_prove_arbitrary(
             num_vars,
@@ -737,11 +738,12 @@ mod test {
             num_polys,
             &mut transcript,
         );
+        let rev_r: Vec<Fr> = _r.iter().rev().copied().collect();
         let mut transcript = <KeccakTranscript as Transcript>::new(b"test");
         let (e_verify, _) = proof
             .verify(claim, num_vars, degree, &mut transcript)
             .unwrap();
-        //
+
         let res = comb_func(&final_evals);
         assert_eq!(res, e_verify, "Final assertion failed");
     }
