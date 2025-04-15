@@ -30,7 +30,8 @@ use virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruc
 use virtual_move::MOVEInstruction;
 use virtual_movsign::MOVSIGNInstruction;
 use virtual_pow2::POW2Instruction;
-use virtual_right_shift_padding::RightShiftPaddingInstruction;
+use virtual_sra::VirtualSRAInstruction;
+use virtual_srl::VirtualSRLInstruction;
 use xor::XORInstruction;
 
 use crate::field::JoltField;
@@ -143,8 +144,9 @@ pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod virtual_pow2;
-pub mod virtual_right_shift_bitmask;
-pub mod virtual_right_shift_padding;
+pub mod virtual_shift_right_bitmask;
+pub mod virtual_sra;
+pub mod virtual_srl;
 pub mod xor;
 
 #[cfg(test)]
@@ -176,7 +178,8 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     AssertValidDiv0(AssertValidDiv0Instruction<WORD_SIZE>),
     AssertHalfwordAlignment(AssertHalfwordAlignmentInstruction<WORD_SIZE>),
     Pow2(POW2Instruction<WORD_SIZE>),
-    RightShiftPadding(RightShiftPaddingInstruction<WORD_SIZE>),
+    Srl(VirtualSRLInstruction<WORD_SIZE>),
+    Sra(VirtualSRAInstruction<WORD_SIZE>),
 }
 
 impl<const WORD_SIZE: usize> TryFrom<&RVTraceRow> for LookupTables<WORD_SIZE> {
@@ -330,16 +333,14 @@ impl<const WORD_SIZE: usize> TryFrom<&RVTraceRow> for LookupTables<WORD_SIZE> {
                 row.register_state.rs1_val.unwrap(),
             ))),
             RV32IM::VIRTUAL_POW2I => Ok(Self::Pow2(POW2Instruction::<WORD_SIZE>(row.imm_u64()))),
-            RV32IM::VIRTUAL_SRA_PAD => Ok(Self::RightShiftPadding(RightShiftPaddingInstruction::<
-                WORD_SIZE,
-            >(
+            RV32IM::VIRTUAL_SRL => Ok(Self::Srl(VirtualSRLInstruction::<WORD_SIZE>(
                 row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
             ))),
-            RV32IM::VIRTUAL_SRA_PADI => {
-                Ok(Self::RightShiftPadding(RightShiftPaddingInstruction::<
-                    WORD_SIZE,
-                >(row.imm_u64())))
-            }
+            RV32IM::VIRTUAL_SRA => Ok(Self::Sra(VirtualSRAInstruction::<WORD_SIZE>(
+                row.register_state.rs1_val.unwrap(),
+                row.register_state.rs2_val.unwrap(),
+            ))),
 
             _ => Err("No corresponding RV32I instruction"),
         }
@@ -378,7 +379,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.to_lookup_index(),
             LookupTables::AssertHalfwordAlignment(instr) => instr.to_lookup_index(),
             LookupTables::Pow2(instr) => instr.to_lookup_index(),
-            LookupTables::RightShiftPadding(instr) => instr.to_lookup_index(),
+            LookupTables::Srl(instr) => instr.to_lookup_index(),
+            LookupTables::Sra(instr) => instr.to_lookup_index(),
         }
     }
 
@@ -408,7 +410,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.materialize(),
             LookupTables::AssertHalfwordAlignment(instr) => instr.materialize(),
             LookupTables::Pow2(instr) => instr.materialize(),
-            LookupTables::RightShiftPadding(instr) => instr.materialize(),
+            LookupTables::Srl(instr) => instr.materialize(),
+            LookupTables::Sra(instr) => instr.materialize(),
         }
     }
 
@@ -437,7 +440,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.materialize_entry(index),
             LookupTables::AssertHalfwordAlignment(instr) => instr.materialize_entry(index),
             LookupTables::Pow2(instr) => instr.materialize_entry(index),
-            LookupTables::RightShiftPadding(instr) => instr.materialize_entry(index),
+            LookupTables::Srl(instr) => instr.materialize_entry(index),
+            LookupTables::Sra(instr) => instr.materialize_entry(index),
         }
     }
 
@@ -466,7 +470,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.evaluate_mle(r),
             LookupTables::AssertHalfwordAlignment(instr) => instr.evaluate_mle(r),
             LookupTables::Pow2(instr) => instr.evaluate_mle(r),
-            LookupTables::RightShiftPadding(instr) => instr.evaluate_mle(r),
+            LookupTables::Srl(instr) => instr.evaluate_mle(r),
+            LookupTables::Sra(instr) => instr.evaluate_mle(r),
         }
     }
 
@@ -512,9 +517,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
                 LookupTables::AssertHalfwordAlignment(instr.random(rng))
             }
             LookupTables::Pow2(instr) => LookupTables::Pow2(instr.random(rng)),
-            LookupTables::RightShiftPadding(instr) => {
-                LookupTables::RightShiftPadding(instr.random(rng))
-            }
+            LookupTables::Srl(instr) => LookupTables::Srl(instr.random(rng)),
+            LookupTables::Sra(instr) => LookupTables::Sra(instr.random(rng)),
         }
     }
 
@@ -543,7 +547,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.suffixes(),
             LookupTables::AssertHalfwordAlignment(instr) => instr.suffixes(),
             LookupTables::Pow2(instr) => instr.suffixes(),
-            LookupTables::RightShiftPadding(instr) => instr.suffixes(),
+            LookupTables::Srl(instr) => instr.suffixes(),
+            LookupTables::Sra(instr) => instr.suffixes(),
         }
     }
 
@@ -576,7 +581,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::AssertValidDiv0(instr) => instr.combine(prefixes, suffixes),
             LookupTables::AssertHalfwordAlignment(instr) => instr.combine(prefixes, suffixes),
             LookupTables::Pow2(instr) => instr.combine(prefixes, suffixes),
-            LookupTables::RightShiftPadding(instr) => instr.combine(prefixes, suffixes),
+            LookupTables::Srl(instr) => instr.combine(prefixes, suffixes),
+            LookupTables::Sra(instr) => instr.combine(prefixes, suffixes),
         }
     }
 }

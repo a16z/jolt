@@ -8,7 +8,8 @@ use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
 use rayon::prelude::*;
-use right_shift_padding::RightShiftPaddingPrefix;
+use right_shift::RightShiftPrefix;
+use sign_extension::SignExtensionPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -44,7 +45,8 @@ pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
-pub mod right_shift_padding;
+pub mod right_shift;
+pub mod sign_extension;
 pub mod upper_word;
 pub mod xor;
 
@@ -108,7 +110,8 @@ pub enum Prefixes {
     NegativeDivisorGreaterThanRemainder,
     Lsb,
     Pow2,
-    RightShiftPadding,
+    RightShift,
+    SignExtension,
 }
 
 #[derive(Clone, Copy)]
@@ -203,8 +206,9 @@ impl Prefixes {
             }
             Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::RightShiftPadding => {
-                RightShiftPaddingPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            Prefixes::RightShift => RightShiftPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::SignExtension => {
+                SignExtensionPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -331,13 +335,11 @@ impl Prefixes {
             Prefixes::Pow2 => {
                 Pow2Prefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
-            Prefixes::RightShiftPadding => {
-                RightShiftPaddingPrefix::<WORD_SIZE>::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                )
+            Prefixes::RightShift => {
+                RightShiftPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::SignExtension => {
+                SignExtensionPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

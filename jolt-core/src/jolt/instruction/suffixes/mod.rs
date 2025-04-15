@@ -9,7 +9,10 @@ use num_derive::FromPrimitive;
 use or::OrSuffix;
 use pow2::Pow2Suffix;
 use right_is_zero::RightOperandIsZeroSuffix;
+use right_shift::RightShiftSuffix;
+use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
+use sign_extension::SignExtensionSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
@@ -30,7 +33,10 @@ pub mod one;
 pub mod or;
 pub mod pow2;
 pub mod right_is_zero;
+pub mod right_shift;
+pub mod right_shift_helper;
 pub mod right_shift_padding;
+pub mod sign_extension;
 pub mod upper_word;
 pub mod xor;
 
@@ -59,6 +65,9 @@ pub enum Suffixes {
     DivByZero,
     Pow2,
     RightShiftPadding,
+    RightShift,
+    RightShiftHelper,
+    SignExtension,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -83,6 +92,9 @@ impl Suffixes {
             Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
             Suffixes::Pow2 => Pow2Suffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::RightShiftPadding => RightShiftPaddingSuffix::<WORD_SIZE>::suffix_mle(b),
+            Suffixes::RightShift => RightShiftSuffix::suffix_mle(b),
+            Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
+            Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
         }
     }
 }

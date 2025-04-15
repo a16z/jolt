@@ -10,10 +10,9 @@ use crate::{
     subprotocols::sparse_dense_shout::{LookupBits, PrefixSuffixDecomposition},
     utils::index_to_field_bitvector,
 };
-use ark_std::test_rng;
 use common::constants::REGISTER_COUNT;
-use rand::{rngs::StdRng, SeedableRng};
-use rand_core::RngCore;
+use num::Integer;
+use rand::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
@@ -29,7 +28,7 @@ use super::{JoltInstruction, VirtualInstructionSequence};
 /// 6. Ensures that the result of the instruction sequence is correctly written to the `rd` register.
 /// 7. Checks that no unintended modifications have been made to other registers.
 pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: RV32IM) {
-    let mut rng = test_rng();
+    let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {
         let r_x = rng.next_u64() % 32;
@@ -129,7 +128,7 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: RV32IM)
 }
 
 pub fn instruction_mle_random_test<F: JoltField, I: JoltInstruction + Default>() {
-    let mut rng = test_rng();
+    let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {
         let index = rng.next_u64();
@@ -158,7 +157,8 @@ pub fn materialize_entry_test<F: JoltField, I: JoltInstruction + Default>() {
         let instr = I::default().random(&mut rng);
         assert_eq!(
             instr.lookup_entry(),
-            instr.materialize_entry(instr.to_lookup_index())
+            instr.materialize_entry(instr.to_lookup_index()),
+            "{instr:?}"
         );
     }
 }
@@ -171,10 +171,8 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32>>() {
         let instr = I::default().random(&mut rng);
         let lookup_index = instr.to_lookup_index();
 
-        let result = F::from_u64(instr.materialize_entry(lookup_index));
-
         let mut j = 0;
-        let mut r: Vec<u8> = vec![];
+        let mut r: Vec<F> = vec![];
         for phase in 0..4 {
             let suffix_len = (3 - phase) * 16;
             let (mut prefix_bits, suffix_bits) =
@@ -187,28 +185,32 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32>>() {
                 .collect();
 
             for _ in 0..16 {
+                let mut eval_point = r.clone();
+                let c = if rng.next_u64().is_even() { 0 } else { 2 };
+                eval_point.push(F::from_u32(c));
+                prefix_bits.pop_msb();
+
+                eval_point
+                    .extend(index_to_field_bitvector(prefix_bits.into(), prefix_bits.len()).iter());
+                eval_point
+                    .extend(index_to_field_bitvector(suffix_bits.into(), suffix_bits.len()).iter());
+
+                let mle_eval = instr.evaluate_mle(&eval_point);
+
                 let r_x = if j % 2 == 1 {
-                    Some(F::from_u8(*r.last().unwrap()))
+                    Some(*r.last().unwrap())
                 } else {
                     None
                 };
 
-                let c = prefix_bits.pop_msb();
-
                 let prefix_evals: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<32, F>(
-                            &prefix_checkpoints,
-                            r_x,
-                            c as u32,
-                            prefix_bits,
-                            j,
-                        )
+                        prefix.prefix_mle::<32, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();
 
                 let combined = instr.combine(&prefix_evals, &suffix_evals);
-                if combined != result {
+                if combined != mle_eval {
                     println!("{instr:?} -> {lookup_index}");
                     println!("{j} {prefix_bits} {suffix_bits}");
                     for (i, x) in prefix_evals.iter().enumerate() {
@@ -219,14 +221,14 @@ pub fn prefix_suffix_test<F: JoltField, I: PrefixSuffixDecomposition<32>>() {
                     }
                 }
 
-                assert_eq!(combined, result);
-                r.push(c);
+                assert_eq!(combined, mle_eval);
+                r.push(F::from_u64(rng.next_u64()));
 
                 if r.len() % 2 == 0 {
                     Prefixes::update_checkpoints::<32, F>(
                         &mut prefix_checkpoints,
-                        F::from_u8(r[r.len() - 2]),
-                        F::from_u8(r[r.len() - 1]),
+                        r[r.len() - 2],
+                        r[r.len() - 1],
                         j,
                     );
                 }

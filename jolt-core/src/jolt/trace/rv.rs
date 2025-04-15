@@ -18,7 +18,9 @@ use crate::jolt::instruction::virtual_assert_valid_signed_remainder::AssertValid
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::virtual_pow2::POW2Instruction;
-use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInstruction;
+use crate::jolt::instruction::virtual_shift_right_bitmask::ShiftRightBitmaskInstruction;
+use crate::jolt::instruction::virtual_sra::VirtualSRAInstruction;
+use crate::jolt::instruction::virtual_srl::VirtualSRLInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, virtual_movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -73,8 +75,10 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>::default().into()),
             RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>::default().into()),
             RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>::default().into()),
-            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32>::default().into()),
-            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASK => Ok(ShiftRightBitmaskInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASKI => Ok(ShiftRightBitmaskInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_SRL => Ok(VirtualSRLInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_SRA => Ok(VirtualSRAInstruction::<32>::default().into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
@@ -129,8 +133,10 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
             RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>(row.register_state.rs1_val.unwrap()).into()),
             RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>(row.imm_u64()).into()),
-            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32>(row.register_state.rs1_val.unwrap()).into()),
-            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32>(row.imm_u64()).into()),
+            RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASK => Ok(ShiftRightBitmaskInstruction::<32>(row.register_state.rs1_val.unwrap()).into()),
+            RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASKI => Ok(ShiftRightBitmaskInstruction::<32>(row.imm_u64()).into()),
+            RV32IM::VIRTUAL_SRL => Ok(VirtualSRLInstruction::<32>(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_SRA => Ok(VirtualSRAInstruction::<32>(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

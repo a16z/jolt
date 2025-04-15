@@ -4,7 +4,9 @@ use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruct
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::virtual_pow2::POW2Instruction;
-use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInstruction;
+use crate::jolt::instruction::virtual_shift_right_bitmask::ShiftRightBitmaskInstruction;
+use crate::jolt::instruction::virtual_sra::VirtualSRAInstruction;
+use crate::jolt::instruction::virtual_srl::VirtualSRLInstruction;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::r1cs::constraints::JoltRV32IMConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -88,7 +90,9 @@ instruction_set!(
   VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>,
   VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertHalfwordAlignmentInstruction<WORD_SIZE>,
   VIRTUAL_POW2: POW2Instruction<WORD_SIZE>,
-  VIRTUAL_SRA_PADDING: RightShiftPaddingInstruction<WORD_SIZE>
+  VIRTUAL_SHIFT_RIGHT_BITMASK: ShiftRightBitmaskInstruction<WORD_SIZE>,
+  VIRTUAL_SRL: VirtualSRLInstruction<WORD_SIZE>,
+  VIRTUAL_SRA: VirtualSRAInstruction<WORD_SIZE>
 );
 
 // ==================== JOLT ====================

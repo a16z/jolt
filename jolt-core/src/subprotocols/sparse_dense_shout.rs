@@ -145,6 +145,14 @@ impl LookupBits {
     pub fn len(&self) -> usize {
         self.len
     }
+
+    pub fn trailing_zeros(&self) -> u32 {
+        std::cmp::min(self.bits.trailing_zeros(), self.len as u32)
+    }
+
+    pub fn leading_ones(&self) -> u32 {
+        self.bits.unbounded_shl(64 - self.len as u32).leading_ones()
+    }
 }
 
 impl Display for LookupBits {
@@ -701,8 +709,8 @@ mod tests {
             virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
             virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
             virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
-            virtual_pow2::POW2Instruction,
-            virtual_right_shift_padding::RightShiftPaddingInstruction, xor::XORInstruction,
+            virtual_pow2::POW2Instruction, virtual_sra::VirtualSRAInstruction,
+            virtual_srl::VirtualSRLInstruction, xor::XORInstruction,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -880,9 +888,12 @@ mod tests {
     }
 
     #[test]
-    fn test_right_shift_padding() {
-        test_sparse_dense_shout(Some(LookupTables::RightShiftPadding(
-            RightShiftPaddingInstruction::default(),
-        )));
+    fn test_virtual_srl() {
+        test_sparse_dense_shout(Some(LookupTables::Srl(VirtualSRLInstruction::default())));
+    }
+
+    #[test]
+    fn test_virtual_sra() {
+        test_sparse_dense_shout(Some(LookupTables::Sra(VirtualSRAInstruction::default())));
     }
 }

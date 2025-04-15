@@ -13,9 +13,9 @@ use crate::utils::index_to_field_bitvector;
 use crate::utils::math::Math;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RightShiftPaddingInstruction<const WORD_SIZE: usize>(pub u64);
+pub struct ShiftRightBitmaskInstruction<const WORD_SIZE: usize>(pub u64);
 
-impl<const WORD_SIZE: usize> JoltInstruction for RightShiftPaddingInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for ShiftRightBitmaskInstruction<WORD_SIZE> {
     fn to_lookup_index(&self) -> u64 {
         self.0
     }
@@ -26,14 +26,14 @@ impl<const WORD_SIZE: usize> JoltInstruction for RightShiftPaddingInstruction<WO
 
     fn lookup_entry(&self) -> u64 {
         let shift = self.0 % WORD_SIZE as u64;
-        let ones = (1 << shift) - 1;
-        ones << (WORD_SIZE as u64 - shift)
+        let ones = (1 << (WORD_SIZE - shift as usize)) - 1;
+        ones << shift
     }
 
     fn materialize_entry(&self, index: u64) -> u64 {
         let shift = index % WORD_SIZE as u64;
-        let ones = (1 << shift) - 1;
-        ones << (WORD_SIZE as u64 - shift)
+        let ones = (1 << (WORD_SIZE - shift as usize)) - 1;
+        ones << shift
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -51,8 +51,8 @@ impl<const WORD_SIZE: usize> JoltInstruction for RightShiftPaddingInstruction<WO
         let eq = EqPolynomial::new(r[r.len() - WORD_SIZE.log_2()..].to_vec());
         let mut result = F::zero();
         for shift in 0..WORD_SIZE {
-            let padding = ((1 << shift) - 1) << (WORD_SIZE - shift);
-            result += F::from_u64(padding)
+            let bitmask = ((1 << (WORD_SIZE - shift)) - 1) << shift;
+            result += F::from_u64(bitmask)
                 * eq.evaluate(&index_to_field_bitvector(shift as u64, WORD_SIZE.log_2()))
         }
         result
@@ -60,18 +60,17 @@ impl<const WORD_SIZE: usize> JoltInstruction for RightShiftPaddingInstruction<WO
 }
 
 impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for RightShiftPaddingInstruction<WORD_SIZE>
+    for ShiftRightBitmaskInstruction<WORD_SIZE>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::RightShiftPadding]
+        vec![Suffixes::One, Suffixes::Pow2]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, right_shift_padding] = suffixes.try_into().unwrap();
+        let [one, pow2] = suffixes.try_into().unwrap();
         // 2^WORD_SIZE - 2^shift = 0b11...100..0
-        F::from_u64(1 << WORD_SIZE) * one
-            - prefixes[Prefixes::RightShiftPadding] * right_shift_padding
+        F::from_u64(1 << WORD_SIZE) * one - prefixes[Prefixes::Pow2] * pow2
     }
 }
 
@@ -79,29 +78,29 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
 mod test {
     use ark_bn254::Fr;
 
-    use super::RightShiftPaddingInstruction;
+    use super::ShiftRightBitmaskInstruction;
     use crate::jolt::instruction::test::{
         instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
         prefix_suffix_test,
     };
 
     #[test]
-    fn right_shift_padding_materialize_entry() {
-        materialize_entry_test::<Fr, RightShiftPaddingInstruction<32>>();
+    fn right_shift_bitmask_materialize_entry() {
+        materialize_entry_test::<Fr, ShiftRightBitmaskInstruction<32>>();
     }
 
     #[test]
-    fn right_shift_padding_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, RightShiftPaddingInstruction<8>>();
+    fn right_shift_bitmask_mle_full_hypercube() {
+        instruction_mle_full_hypercube_test::<Fr, ShiftRightBitmaskInstruction<8>>();
     }
 
     #[test]
-    fn right_shift_padding_mle_random() {
-        instruction_mle_random_test::<Fr, RightShiftPaddingInstruction<32>>();
+    fn right_shift_bitmask_mle_random() {
+        instruction_mle_random_test::<Fr, ShiftRightBitmaskInstruction<32>>();
     }
 
     #[test]
-    fn right_shift_padding_prefix_suffix() {
-        prefix_suffix_test::<Fr, RightShiftPaddingInstruction<32>>();
+    fn right_shift_bitmask_prefix_suffix() {
+        prefix_suffix_test::<Fr, ShiftRightBitmaskInstruction<32>>();
     }
 }

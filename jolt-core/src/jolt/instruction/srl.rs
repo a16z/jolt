@@ -1,40 +1,43 @@
 use common::constants::virtual_register_index;
 use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
-use super::{divu::DIVUInstruction, VirtualInstructionSequence};
+use super::{
+    virtual_shift_right_bitmask::ShiftRightBitmaskInstruction, virtual_srl::VirtualSRLInstruction,
+    JoltInstruction, VirtualInstructionSequence,
+};
 
 /// Performs a logical right shift as a division by a power of 2.
 pub struct SRLVirtualSequence<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<WORD_SIZE> {
-    const SEQUENCE_LENGTH: usize = 1 + DIVUInstruction::<WORD_SIZE>::SEQUENCE_LENGTH;
+    const SEQUENCE_LENGTH: usize = 2;
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         let mut virtual_trace = vec![];
-        // DIVU sequence uses virtual registers 0-3
-        let v_pow2 = Some(virtual_register_index(4));
+        let v0 = Some(virtual_register_index(0));
 
-        let (pow2, result) = match trace_row.instruction.opcode {
+        let (x, bitmask) = match trace_row.instruction.opcode {
             RV32IM::SRL => {
                 let x = trace_row.register_state.rs1_val.unwrap();
                 let y = trace_row.register_state.rs2_val.unwrap();
-                let shift = y as usize % WORD_SIZE;
 
-                let pow2: u64 = 1 << shift;
+                let bitmask = ShiftRightBitmaskInstruction::<WORD_SIZE>(y).lookup_entry();
                 virtual_trace.push(RVTraceRow {
                     instruction: ELFInstruction {
                         address: trace_row.instruction.address,
-                        opcode: RV32IM::VIRTUAL_POW2,
+                        opcode: RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASK,
                         rs1: trace_row.instruction.rs2,
                         rs2: None,
-                        rd: v_pow2,
+                        rd: v0,
                         imm: None,
-                        virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - 1),
+                        virtual_sequence_remaining: Some(
+                            Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
+                        ),
                     },
                     register_state: RegisterState {
                         rs1_val: trace_row.register_state.rs2_val,
                         rs2_val: None,
-                        rd_post_val: Some(pow2),
+                        rd_post_val: Some(bitmask),
                     },
                     memory_state: None,
                     advice_value: None,
@@ -42,28 +45,29 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<W
                     precompile_output_address: None,
                 });
 
-                let result = x >> shift;
-                (pow2, result)
+                (x, bitmask)
             }
             RV32IM::SRLI => {
                 let x = trace_row.register_state.rs1_val.unwrap();
-                let shift = trace_row.instruction.imm.unwrap() as u64 as usize % WORD_SIZE;
+                let imm = trace_row.instruction.imm.unwrap() as u64;
 
-                let pow2: u64 = 1 << shift;
+                let bitmask = ShiftRightBitmaskInstruction::<WORD_SIZE>(imm).lookup_entry();
                 virtual_trace.push(RVTraceRow {
                     instruction: ELFInstruction {
                         address: trace_row.instruction.address,
-                        opcode: RV32IM::VIRTUAL_POW2I,
+                        opcode: RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASKI,
                         rs1: None,
                         rs2: None,
-                        rd: v_pow2,
+                        rd: v0,
                         imm: trace_row.instruction.imm,
-                        virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - 1),
+                        virtual_sequence_remaining: Some(
+                            Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
+                        ),
                     },
                     register_state: RegisterState {
                         rs1_val: None,
                         rs2_val: None,
-                        rd_post_val: Some(pow2),
+                        rd_post_val: Some(bitmask),
                     },
                     memory_state: None,
                     advice_value: None,
@@ -71,34 +75,32 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRLVirtualSequence<W
                     precompile_output_address: None,
                 });
 
-                let result = x >> shift;
-                (pow2, result)
+                (x, bitmask)
             }
             _ => panic!("Unexpected opcode {:?}", trace_row.instruction.opcode),
         };
 
-        let divu = RVTraceRow {
+        let result = VirtualSRLInstruction::<WORD_SIZE>(x, bitmask).lookup_entry();
+        virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::DIVU,
+                opcode: RV32IM::VIRTUAL_SRL,
                 rs1: trace_row.instruction.rs1,
-                rs2: v_pow2,
+                rs2: v0,
                 rd: trace_row.instruction.rd,
                 imm: None,
-                virtual_sequence_remaining: None,
+                virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
             },
             register_state: RegisterState {
                 rs1_val: trace_row.register_state.rs1_val,
-                rs2_val: Some(pow2),
+                rs2_val: Some(bitmask),
                 rd_post_val: Some(result),
             },
             memory_state: None,
             advice_value: None,
             precompile_input: None,
             precompile_output_address: None,
-        };
-        let divu_sequence = DIVUInstruction::<WORD_SIZE>::virtual_trace(divu);
-        virtual_trace.extend(divu_sequence);
+        });
 
         virtual_trace
     }
