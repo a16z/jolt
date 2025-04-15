@@ -2,16 +2,19 @@ use super::{
     multilinear_polynomial::MultilinearPolynomial,
     sparse_interleaved_poly::SparseCoefficient,
     split_eq_poly::SplitEqPolynomial,
-    unipoly::{ CompressedUniPoly, UniPoly },
+    unipoly::{CompressedUniPoly, UniPoly},
 };
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
 #[cfg(test)]
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
-    field::{ JoltField, OptimizedMul },
-    r1cs::builder::{ eval_offset_lc, Constraint, OffsetEqConstraint },
-    utils::{ math::Math, transcript::{ AppendToTranscript, Transcript } },
+    field::{JoltField, OptimizedMul},
+    r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
+    utils::{
+        math::Math,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 use ark_ff::Zero;
 use rayon::prelude::*;
@@ -42,7 +45,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         uniform_constraints: &[Constraint],
         cross_step_constraints: &[OffsetEqConstraint],
         flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
-        padded_num_constraints: usize
+        padded_num_constraints: usize,
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
 
@@ -223,23 +226,24 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 }
             }
         }
-        (DensePolynomial::new(az), DensePolynomial::new(bz), DensePolynomial::new(cz))
+        (
+            DensePolynomial::new(az),
+            DensePolynomial::new(bz),
+            DensePolynomial::new(cz),
+        )
     }
 
     pub fn is_bound(&self) -> bool {
         !self.bound_coeffs.is_empty()
     }
 
-    /// The first round of the first Spartan sumcheck. Since the polynomials
-    /// are still unbound at the beginning of this round, we can replace some
-    /// of the field arithmetic with `i128` arithmetic.
     pub fn first_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut SplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
         r: &mut Vec<F>,
         polys: &mut Vec<CompressedUniPoly<F>>,
-        claim: &mut F
+        claim: &mut F,
     ) {
         assert!(!self.is_bound());
 
@@ -247,11 +251,13 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         // determine how to divide it into chunks that can be processed independently.
         // In particular, coefficients whose indices are the same modulo 6 cannot
         // be processed independently.
-        let block_size = self.unbound_coeffs
+        let block_size = self
+            .unbound_coeffs
             .len()
             .div_ceil(rayon::current_num_threads())
             .next_multiple_of(6);
-        let chunks: Vec<_> = self.unbound_coeffs
+        let chunks: Vec<_> = self
+            .unbound_coeffs
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
@@ -318,12 +324,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     let cz_eval_2 = cz.1 + m_cz;
                     let cz_eval_3 = cz_eval_2 + m_cz;
 
-                    println!("idx = {} {}", sparse_block[0].index / 3,sparse_block[0].index / 3 + 1);
-                    println!("az, bz, cz eval at 0 = {} {} {}", az.0, bz.0, cz.0);
-                    println!("az, bz, cz eval at 1 = {} {} {}", az.1, bz.1, cz.1);
-                    println!("az, bz, cz eval at 2 = {} {} {}", az_eval_2, bz_eval_2, cz_eval_2);
-                    println!("az, bz, cz eval at 3 = {} {} {}", az_eval_3, bz_eval_3, cz_eval_3);
-
                     // TODO(moodlezoup): optimize
                     inner_sums.0 += E1_evals.0 * F::from_i128(az.0 * bz.0 - cz.0);
                     inner_sums.1 += E1_evals.1 * F::from_i128(az_eval_2 * bz_eval_2 - cz_eval_2);
@@ -338,11 +338,10 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             })
             .reduce(
                 || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
+                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
             );
 
         let cubic_evals = [evals.0, /* 0 */ -evals.0, evals.1, evals.2];
-        println!("cubic_evals = {:?}", cubic_evals);
         let cubic_poly = UniPoly::from_evals(&cubic_evals);
 
         let compressed_poly = cubic_poly.compress();
@@ -426,7 +425,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         output_slice[output_index] = (
                             3 * block_index,
                             F::from_i128(low) + r_i * F::from_i128(high - low),
-                        ).into();
+                        )
+                            .into();
                         output_index += 1;
                     }
                     if bz_coeff != (None, None) {
@@ -434,7 +434,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         output_slice[output_index] = (
                             3 * block_index + 1,
                             F::from_i128(low) + r_i * F::from_i128(high - low),
-                        ).into();
+                        )
+                            .into();
                         output_index += 1;
                     }
                     if cz_coeff != (None, None) {
@@ -442,7 +443,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         output_slice[output_index] = (
                             3 * block_index + 2,
                             F::from_i128(low) + r_i * F::from_i128(high - low),
-                        ).into();
+                        )
+                            .into();
                         output_index += 1;
                     }
                 }
@@ -476,7 +478,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         transcript: &mut ProofTranscript,
         r: &mut Vec<F>,
         polys: &mut Vec<CompressedUniPoly<F>>,
-        claim: &mut F
+        claim: &mut F,
     ) {
         assert!(self.is_bound());
 
@@ -484,11 +486,13 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         // determine how to divide it into chunks that can be processed independently.
         // In particular, coefficients whose indices are the same modulo 6 cannot
         // be processed independently.
-        let block_size = self.bound_coeffs
+        let block_size = self
+            .bound_coeffs
             .len()
             .div_ceil(rayon::current_num_threads())
             .next_multiple_of(6);
-        let chunks: Vec<_> = self.bound_coeffs
+        let chunks: Vec<_> = self
+            .bound_coeffs
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
@@ -536,19 +540,21 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             let eq_evals = eq_evals[block_index];
 
                             (
-                                eq_evals.0.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0),
+                                eq_evals
+                                    .0
+                                    .mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0),
                                 eq_evals.1.mul_0_optimized(
-                                    az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2
+                                    az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2,
                                 ),
                                 eq_evals.2.mul_0_optimized(
-                                    az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3
+                                    az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3,
                                 ),
                             )
                         })
                 })
                 .reduce(
                     || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
             let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
@@ -585,7 +591,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let x1 = block_index & x1_bitmask;
                         let E1_evals = E1_evals[x1];
                         let x2 = block_index >> num_x1_bits;
-
+                        // println!(" x1 {}, x2 {}", x1, x2);
                         if x2 != prev_x2 {
                             eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
                             eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
@@ -617,15 +623,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let cz_eval_2 = cz.1 + m_cz;
                         let cz_eval_3 = cz_eval_2 + m_cz;
 
-                        inner_sums.0 += E1_evals.0.mul_0_optimized(
-                            az.0.mul_0_optimized(bz.0) - cz.0
-                        );
-                        inner_sums.1 += E1_evals.1.mul_0_optimized(
-                            az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2
-                        );
-                        inner_sums.2 += E1_evals.2.mul_0_optimized(
-                            az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3
-                        );
+                        inner_sums.0 += E1_evals
+                            .0
+                            .mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0);
+                        inner_sums.1 += E1_evals
+                            .1
+                            .mul_0_optimized(az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2);
+                        inner_sums.2 += E1_evals
+                            .2
+                            .mul_0_optimized(az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3);
                     }
 
                     eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
@@ -636,12 +642,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 })
                 .reduce(
                     || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2)
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
             let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
+            // println!("cubic_evals is {:?}",cubic_evals);
+
             UniPoly::from_evals(&cubic_evals)
         };
+        // println!("cubic_poly is {:?}", cubic_poly);
 
         let compressed_poly = cubic_poly.compress();
 
@@ -724,10 +733,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             az_coeff.0.unwrap_or(F::zero()),
                             az_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] = (
-                            3 * block_index,
-                            low + r_i * (high - low),
-                        ).into();
+                        output_slice[output_index] =
+                            (3 * block_index, low + r_i * (high - low)).into();
                         output_index += 1;
                     }
                     if bz_coeff != (None, None) {
@@ -735,10 +742,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             bz_coeff.0.unwrap_or(F::zero()),
                             bz_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] = (
-                            3 * block_index + 1,
-                            low + r_i * (high - low),
-                        ).into();
+                        output_slice[output_index] =
+                            (3 * block_index + 1, low + r_i * (high - low)).into();
                         output_index += 1;
                     }
                     if cz_coeff != (None, None) {
@@ -746,10 +751,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             cz_coeff.0.unwrap_or(F::zero()),
                             cz_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] = (
-                            3 * block_index + 2,
-                            low + r_i * (high - low),
-                        ).into();
+                        output_slice[output_index] =
+                            (3 * block_index + 2, low + r_i * (high - low)).into();
                         output_index += 1;
                     }
                 }

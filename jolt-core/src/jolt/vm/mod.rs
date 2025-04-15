@@ -1049,21 +1049,21 @@ where
             &mut transcript,
         );
 
-        let mut transcript_1 = transcript.clone();
+        // let mut transcript_1 = transcript.clone();
 
-        let spartan_proof = UniformSpartanProof::<
-            C,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-            F,
-            ProofTranscript,
-        >::prove::<PCS>(
-            &r1cs_builder,
-            &spartan_key,
-            &jolt_polynomials,
-            &mut opening_accumulator,
-            &mut transcript,
-        )
-        .expect("r1cs proof failed");
+        // let spartan_proof = UniformSpartanProof::<
+        //     C,
+        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+        //     F,
+        //     ProofTranscript,
+        // >::prove::<PCS>(
+        //     &r1cs_builder,
+        //     &spartan_key,
+        //     &jolt_polynomials,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )
+        // .expect("r1cs proof failed");
 
         let spartan_proof = UniformSpartanProof::<
             C,
@@ -1080,7 +1080,7 @@ where
             &spartan_key,
             &jolt_polynomials,
             &mut opening_accumulator,
-            &mut transcript_1,
+            &mut transcript,
         )
         .expect("r1cs proof failed");
 

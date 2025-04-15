@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::field::JoltField;
-use crate::utils::{ math::Math, thread::unsafe_allocate_zero_vec };
+use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
 pub struct EqPolynomial<F> {
     r: Vec<F>,
@@ -172,13 +172,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             let step = 1 << (ell - i);
             let half_step = step / 2;
 
-            let r_lower_product =
-                (F::one() - r[i]) *
-                r
-                    .iter()
-                    .skip(i + 1)
-                    .copied()
-                    .product::<F>();
+            let r_lower_product = (F::one() - r[i]) * r.iter().skip(i + 1).copied().product::<F>();
 
             eq_plus_one_evals
                 .par_iter_mut()
@@ -217,12 +211,8 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
         let mut eval: F;
 
         if self.idx == 0 {
-            eval =
-                self.scaling_factor.unwrap_or(F::one()) *
-                self.r
-                    .iter()
-                    .map(|r_i| F::one() - r_i)
-                    .product::<F>();
+            eval = self.scaling_factor.unwrap_or(F::one())
+                * self.r.iter().map(|r_i| F::one() - r_i).product::<F>();
         } else {
             let i = self.idx;
             eval = self.prev_eval;
@@ -262,7 +252,7 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
 
 mod test {
     use ark_bn254::Fr;
-    use rand::{ thread_rng, Rng };
+    use rand::{thread_rng, Rng};
 
     use super::*;
 
@@ -297,12 +287,8 @@ mod test {
         let num_vars = 13;
         let mut r: Vec<Fr> = (0..len).map(|_| Fr::from_u64(rng.gen())).collect();
 
-        let mut streaming_eq = StreamingEqPolynomial::new(
-            r.clone(),
-            num_vars,
-            Fr::montgomery_r2(),
-            true
-        );
+        let mut streaming_eq =
+            StreamingEqPolynomial::new(r.clone(), num_vars, Fr::montgomery_r2(), true);
 
         // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
         r.reverse();
@@ -326,12 +312,8 @@ mod test {
         let num_vars = 13;
         let mut r: Vec<Fr> = (0..num_vars).map(|_| Fr::from_u64(rng.gen())).collect();
 
-        let mut streaming_eq_plus_one = StreamingEqPolynomial::new(
-            r.clone(),
-            num_vars,
-            None,
-            false
-        );
+        let mut streaming_eq_plus_one =
+            StreamingEqPolynomial::new(r.clone(), num_vars, None, false);
 
         // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
         r.reverse();
