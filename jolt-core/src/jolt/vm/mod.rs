@@ -490,7 +490,6 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
 /// `alloy_sol_types`.
 pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
 
-// pub type StreamingJoltPolynomials<F: JoltField> = JoltStuff<StreamingPolynomial<JoltTraceStep<JoltInstructionSet>, F>>;
 /// Note –– PCS: CommitmentScheme bound is not enforced.
 ///
 /// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
