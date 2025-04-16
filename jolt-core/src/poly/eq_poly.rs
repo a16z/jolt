@@ -249,6 +249,7 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
     }
 }
 
+#[cfg(test)]
 mod test {
     use ark_bn254::Fr;
     use rand::{thread_rng, Rng};

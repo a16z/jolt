@@ -12,7 +12,6 @@ use rayon::prelude::*;
 #[cfg(test)]
 use std::collections::HashSet;
 use std::marker::PhantomData;
-use std::ops::Mul;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::Transcript;

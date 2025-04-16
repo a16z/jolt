@@ -4,8 +4,6 @@
 use std::marker::PhantomData;
 
 use ark_serialize::*;
-use itertools::Itertools;
-use num::zero;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -416,7 +414,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
         let mut uni_polys: Vec<UniPoly<F>> = Vec::new();
         let mut witness_eval_for_final_eval = vec![vec![F::zero(); 2]; 4];
-        let mut final_eval = vec![F::zero(); 3];
         let eq_shard_len = shard_length * padded_num_constraints;
 
         for round in 0..num_rounds {
@@ -543,9 +540,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                         let idx = block[0].0 / 3;
                         if idx >= current_window_ub {
                             let x1 = (prev_idx & x1_bitmask) >> (round + 1);
-                            let x2 = (prev_idx >> (num_x1_bits + round));
+                            let x2 = prev_idx >> (num_x1_bits + round);
                             for s in 0..=3 {
-                                witness_eval[0][s] = (E1_evals[x1][s] * eq_tau.E2[x2]);
+                                witness_eval[0][s] = E1_evals[x1][s] * eq_tau.E2[x2];
                                 let eval = witness_eval[0][s]
                                     * (witness_eval[1][s] * witness_eval[2][s]
                                         - witness_eval[3][s]);
@@ -603,7 +600,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                             let x1 = ((current_window_ub - 1) & x1_bitmask) >> (round + 1);
                             let x2 = (current_window_ub - 1) >> (num_x1_bits + round);
 
-                            witness_eval[0][s] = (E1_evals[x1][s] * eq_tau.E2[x2]);
+                            witness_eval[0][s] = E1_evals[x1][s] * eq_tau.E2[x2];
                             let eval = witness_eval[0][s]
                                 * (witness_eval[1][s] * witness_eval[2][s] - witness_eval[3][s]);
                             accumulator[s] += eval;
@@ -643,7 +640,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             }
         }
 
-        final_eval = (1..=3)
+        let final_eval = (1..=3)
             .map(|i| {
                 (F::one() - r[num_rounds - 1]) * witness_eval_for_final_eval[i][0]
                     + r[num_rounds - 1] * witness_eval_for_final_eval[i][1]
@@ -923,10 +920,10 @@ impl<'a, F: JoltField, I: JoltInstructionSet> Oracle for Stream<'a, F, I> {
         }
     }
 }
-struct StreamTrace<'a> {
-    pub(crate) length: usize,
-    pub(crate) counter: usize,
-    pub(crate) trace: &'a Vec<u64>,
+pub struct StreamTrace<'a> {
+    pub length: usize,
+    pub counter: usize,
+    pub trace: &'a Vec<u64>,
 }
 impl<'a> StreamTrace<'a> {
     pub fn new(trace: &'a Vec<u64>) -> Self {
@@ -998,6 +995,7 @@ impl<'a, F: JoltField> Oracle for StreamSumCheck<'a, F> {
     }
 }
 
+#[cfg(test)]
 mod test {
     use crate::field::JoltField;
     use crate::jolt::vm::rv32i_vm::RV32I;
@@ -1005,55 +1003,7 @@ mod test {
     use crate::subprotocols::sumcheck::{
         OracleItem, Stream, StreamSumCheck, SumcheckInstanceProof,
     };
-    use crate::utils::streaming::Oracle;
     use crate::utils::transcript::KeccakTranscript;
-    struct StreamTrace<'a> {
-        pub(crate) length: usize,
-        pub(crate) counter: usize,
-        pub(crate) trace: &'a Vec<u64>,
-    }
-    impl<'a> StreamTrace<'a> {
-        pub fn new(trace: &'a Vec<u64>) -> Self {
-            Self {
-                length: trace.len(),
-                counter: 0,
-                trace,
-            }
-        }
-    }
-    impl<'a> Oracle for StreamTrace<'a> {
-        type Item = &'a [u64];
-
-        fn next_shard(&mut self, shard_length: usize) -> Self::Item {
-            let shard_start = self.counter;
-            self.counter += shard_length;
-            &self.trace[shard_start..self.counter]
-        }
-
-        fn reset(&mut self) {
-            if self.counter == self.length {
-                self.counter = 0;
-            } else {
-                panic!(
-                    "Can't reset, trace not exhausted. couter {}, length {}",
-                    self.counter, self.length
-                );
-            }
-        }
-
-        fn peek(&mut self) -> Option<Self::Item> {
-            Some(&self.trace[self.counter..self.counter + 1])
-        }
-
-        fn get_len(&self) -> usize {
-            self.length
-        }
-
-        fn get_step(&self) -> usize {
-            self.counter
-        }
-    }
-
     #[test]
     fn test_stream_prove_arbitrary() {
         use crate::utils::transcript::Transcript;
@@ -1061,7 +1011,7 @@ mod test {
         let num_vars = 20;
         let num_polys = 2;
         let trace: Vec<u64> = (0..1 << num_vars).map(|elem: u64| elem).collect();
-        let mut stream_sum_check_polys = StreamSumCheck::new(&trace);
+        let stream_sum_check_polys = StreamSumCheck::new(&trace);
 
         let extract_poly_fn = |stream_data: &OracleItem<Fr>| -> Vec<MultilinearPolynomial<Fr>> {
             match stream_data {

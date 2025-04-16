@@ -80,20 +80,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
         }
         evals
     }
-
-    fn stream_batch_evaluate<
-        'a,
-        const C: usize,
-        InstructionSet: crate::jolt::instruction::JoltInstructionSet,
-        I: crate::r1cs::inputs::ConstraintInput,
-    >(
-        jolt_oracle: &mut crate::jolt::vm::JoltOracle<'a, F, InstructionSet>,
-        r: &[F],
-        no_shard: usize,
-        num_vars: usize,
-    ) -> Vec<F> {
-        todo!()
-    }
 }
 
 #[cfg(test)]

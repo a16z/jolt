@@ -18,8 +18,9 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
-use crate::r1cs::constraints::R1CSConstraints;
-use crate::r1cs::inputs::{ConstraintInput, JoltR1CSInputs};
+use crate::r1cs::inputs::ConstraintInput;
+#[cfg(test)]
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::subprotocols::sumcheck::{OracleItem, Stream};
 use crate::utils::math::Math;
@@ -37,7 +38,6 @@ use ark_ff::Zero;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use common::rv_trace::JoltDevice;
-use itertools::Itertools;
 use rayon::prelude::*;
 use thiserror::Error;
 use tracing::{span, Level};
@@ -718,10 +718,10 @@ where
 
         #[cfg(test)]
         {
-            let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+            let az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
 
             let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
-            for n in 0..num_shards {
+            for _ in 0..num_shards {
                 let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_length);
                 streamed_polys_vec.push(streamed_polys);
             }
@@ -961,7 +961,7 @@ where
         drop(_guard);
         drop(span);
 
-        let (shift_sumcheck_proof, shift_sumcheck_r_rev, _shift_sumcheck_claims) =
+        let (shift_sumcheck_proof, shift_sumcheck_rev, _shift_sumcheck_claims) =
             SumcheckInstanceProof::stream_prove_arbitrary(
                 num_rounds_shift_sumcheck,
                 &mut oracle,
@@ -972,8 +972,7 @@ where
                 2,
                 transcript,
             );
-
-        let shift_sumcheck_r: Vec<F> = shift_sumcheck_r_rev.iter().rev().copied().collect();
+        let shift_sumcheck_r: Vec<F> = shift_sumcheck_rev.iter().rev().copied().collect();
 
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
@@ -1146,7 +1145,7 @@ where
         */
 
         let num_rounds_shift_sumcheck = num_steps_bits;
-        let (claim_shift_sumcheck, shift_sumcheck_r_rev) = self
+        let (claim_shift_sumcheck, shift_sumcheck_r) = self
             .shift_sumcheck_proof
             .verify(
                 self.shift_sumcheck_claim,
@@ -1155,7 +1154,9 @@ where
                 transcript,
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
-        let shift_sumcheck_r: Vec<F> = shift_sumcheck_r_rev.iter().rev().copied().collect();
+        
+        #[cfg(test)]
+        let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
 
         let eval_z_shift_sumcheck = key.evaluate_z_mle_with_segment_evals(
             &self.shift_sumcheck_witness_evals,

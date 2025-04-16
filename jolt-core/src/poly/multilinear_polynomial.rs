@@ -578,11 +578,13 @@ pub trait PolynomialEvaluation<F: JoltField> {
         InstructionSet: JoltInstructionSet,
         I: ConstraintInput,
     >(
-        jolt_oracle: &mut JoltOracle<'a, F, InstructionSet>,
-        r: &[F],
-        no_shard: usize,
-        num_vars: usize,
-    ) -> Vec<F>;
+        _: &mut JoltOracle<'a, F, InstructionSet>,
+        _: &[F],
+        _: usize,
+        _: usize,
+    ) -> Vec<F> {
+        unimplemented!("stream batch evaluate not implemented")
+    }
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
