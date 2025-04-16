@@ -892,9 +892,9 @@ where
         r1cs_builder.compute_aux(&mut jolt_polynomials);
 
         #[cfg(test)]
-        let shard_len = (1024).min(padded_trace_length);
+        let no_of_shards = 4;
         #[cfg(test)]
-        let no_of_shards = padded_trace_length / shard_len;
+        let shard_len = padded_trace_length / no_of_shards;
         #[cfg(test)]
         {
             let mut jolt_oracle =

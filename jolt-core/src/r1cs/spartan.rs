@@ -12,6 +12,7 @@ use crate::jolt::vm::JoltStuff;
 use crate::jolt::vm::{JoltCommitments, JoltTraceStep};
 use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::eq_poly::StreamingEqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -813,15 +814,14 @@ where
         let mut bind_z_stream = vec![F::zero(); num_vars_uniform * 2];
         let mut bind_shift_z_stream = vec![F::zero(); num_vars_uniform * 2];
 
+        let eq_rx_step_split = SplitEqPolynomial::new(&rx_step);
+        let mut eq_rx_step_r2_split = SplitEqPolynomial::new(&rx_step);
+        eq_rx_step_r2_split
+            .E2
+            .iter_mut()
+            .for_each(|elem| *elem = elem.mul(F::montgomery_r2().unwrap()));
+
         let reverse_rx_step: Vec<F> = rx_step.iter().rev().copied().collect();
-        let mut eq_rx_step_stream =
-            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), reverse_rx_step.len(), None, true);
-        let mut eq_rx_step_r2_stream = StreamingEqPolynomial::new(
-            reverse_rx_step.to_vec(),
-            reverse_rx_step.len(),
-            F::montgomery_r2(),
-            true,
-        );
         let mut eq_plus_one_rx_step_stream = StreamingEqPolynomial::new(
             reverse_rx_step.to_vec(),
             reverse_rx_step.len(),
@@ -835,12 +835,13 @@ where
             false,
         );
 
-        for _ in 0..num_shards {
+        let e1_len = eq_rx_step_split.E1_len;
+        let num_x1_bits = eq_rx_step_split.E1_len.log_2();
+        let x1_bitmask = (1 << (num_x1_bits)) - 1;
+        let mut int_evals = vec![F::zero(); 77];
+        let mut evals = vec![F::zero(); 77];
+        for shard in 0..num_shards {
             let polynomials = jolt_oracle.next_shard(shard_length);
-            let (eq_rx_step_shard, eq_rx_step_r2_shard) = (
-                eq_rx_step_stream.next_shard(shard_length),
-                eq_rx_step_r2_stream.next_shard(shard_length),
-            );
 
             let (eq_plus_one_rx_step_shard, eq_plus_one_rx_step_r2_shard) = (
                 eq_plus_one_rx_step_stream.next_shard(shard_length),
@@ -852,32 +853,107 @@ where
                 .map(|var| var.get_ref(&polynomials))
                 .collect();
 
-            let (partial_bind_z, partial_bind_shift_z): (Vec<F>, Vec<F>) = flattened_polys
+            let partial_bind_shift_z: Vec<F> = flattened_polys
                 .par_iter()
-                .map(|poly| {
-                    let eval1 =
-                        poly.dot_product(Some(&eq_rx_step_shard), Some(&eq_rx_step_r2_shard));
+                .zip(int_evals.par_iter_mut().zip(evals.par_iter_mut()))
+                .map(|(poly, (int_eval, eval))| {
+                    match poly {
+                        MultilinearPolynomial::LargeScalars(poly) => {
+                            for i in 0..shard_length {
+                                let poly_idx = shard_length * shard + i;
+                                let x1 = poly_idx & x1_bitmask;
+                                *int_eval += poly.Z[i] * eq_rx_step_split.E1[x1];
+                                if (poly_idx + 1) % e1_len == 0 {
+                                    let x2 = poly_idx >> num_x1_bits;
+                                    *eval += *int_eval * eq_rx_step_split.E2[x2];
+                                    *int_eval = F::zero();
+                                }
+                            }
+                        }
+                        MultilinearPolynomial::U8Scalars(poly) => {
+                            for i in 0..shard_length {
+                                let poly_idx = shard_length * shard + i;
+                                let x1 = poly_idx & x1_bitmask;
+                                *int_eval += poly.coeffs[i].field_mul(eq_rx_step_r2_split.E1[x1]);
+                                if (poly_idx + 1) % e1_len == 0 {
+                                    let x2 = poly_idx >> num_x1_bits;
+                                    *eval += *int_eval * eq_rx_step_r2_split.E2[x2];
+                                    *int_eval = F::zero();
+                                }
+                            }
+                        }
+                        MultilinearPolynomial::U16Scalars(poly) => {
+                            for i in 0..shard_length {
+                                let poly_idx = shard_length * shard + i;
+                                let x1 = poly_idx & x1_bitmask;
+                                *int_eval += poly.coeffs[i].field_mul(eq_rx_step_r2_split.E1[x1]);
+                                if (poly_idx + 1) % e1_len == 0 {
+                                    let x2 = poly_idx >> num_x1_bits;
+                                    *eval += *int_eval * eq_rx_step_r2_split.E2[x2];
+                                    *int_eval = F::zero();
+                                }
+                            }
+                        }
+                        MultilinearPolynomial::U32Scalars(poly) => {
+                            for i in 0..shard_length {
+                                let poly_idx = shard_length * shard + i;
+                                let x1 = poly_idx & x1_bitmask;
+                                *int_eval += poly.coeffs[i].field_mul(eq_rx_step_r2_split.E1[x1]);
+                                if (poly_idx + 1) % e1_len == 0 {
+                                    let x2 = poly_idx >> num_x1_bits;
+                                    *eval += *int_eval * eq_rx_step_r2_split.E2[x2];
+                                    *int_eval = F::zero();
+                                }
+                            }
+                        }
+                        MultilinearPolynomial::U64Scalars(poly) => {
+                            for i in 0..shard_length {
+                                let poly_idx = shard_length * shard + i;
+                                let x1 = poly_idx & x1_bitmask;
+                                *int_eval += poly.coeffs[i].field_mul(eq_rx_step_r2_split.E1[x1]);
+                                if (poly_idx + 1) % e1_len == 0 {
+                                    let x2 = poly_idx >> num_x1_bits;
+                                    *eval += *int_eval * eq_rx_step_r2_split.E2[x2];
+                                    *int_eval = F::zero();
+                                }
+                            }
+                        }
+                        MultilinearPolynomial::I64Scalars(poly) => {
+                            for i in 0..shard_length {
+                                let poly_idx = shard_length * shard + i;
+                                let x1 = poly_idx & x1_bitmask;
+                                *int_eval += poly.coeffs[i].field_mul(eq_rx_step_r2_split.E1[x1]);
+                                if (poly_idx + 1) % e1_len == 0 {
+                                    let x2 = poly_idx >> num_x1_bits;
+                                    *eval += *int_eval * eq_rx_step_r2_split.E2[x2];
+                                    *int_eval = F::zero();
+                                }
+                            }
+                        }
+                    };
                     let eval2 = poly.dot_product(
                         Some(&eq_plus_one_rx_step_shard),
                         Some(&eq_plus_one_rx_step_r2_shard),
                     );
-                    (eval1, eval2)
+                    eval2
                 })
                 .collect();
 
-            partial_bind_z
+            partial_bind_shift_z
                 .iter()
-                .zip(partial_bind_shift_z.iter())
-                .zip(bind_z_stream.iter_mut().zip(bind_shift_z_stream.iter_mut()))
-                .for_each(
-                    |((partial_eval, partial_bind_shift_eval), (eval, eval_shifted))| {
-                        *eval += *partial_eval;
-                        *eval_shifted += *partial_bind_shift_eval;
-                    },
-                );
+                .zip(bind_shift_z_stream.iter_mut())
+                .for_each(|(partial_bind_shift_eval, eval_shifted)| {
+                    *eval_shifted += *partial_bind_shift_eval;
+                });
         }
+        bind_z_stream
+            .iter_mut()
+            .take(77)
+            .zip(evals)
+            .for_each(|(bind_z, eval)| *bind_z = eval);
 
         bind_z_stream[num_vars_uniform] = F::one();
+
         jolt_oracle.reset();
 
         drop(_guard);
@@ -1154,7 +1230,7 @@ where
                 transcript,
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
-        
+
         #[cfg(test)]
         let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
 
