@@ -1,25 +1,30 @@
 use std::marker::PhantomData;
+
+use ark_ff::Zero;
+use ark_serialize::CanonicalDeserialize;
+use ark_serialize::CanonicalSerialize;
+use rayon::prelude::*;
+use thiserror::Error;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
+use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::JoltCommitments;
+use crate::jolt::vm::JoltOracle;
 use crate::jolt::vm::JoltPolynomials;
+use crate::jolt::vm::JoltStuff;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
+use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
-
 use crate::utils::transcript::Transcript;
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
-
-use thiserror::Error;
-
 use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -28,10 +33,12 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
 
+use super::builder::eval_offset_lc;
+use super::builder::shard_last_step_eval_offset_lc;
 use super::builder::CombinedUniformBuilder;
+use super::builder::Constraint;
+use super::builder::OffsetEqConstraint;
 use super::inputs::ConstraintInput;
-
-use rayon::prelude::*;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -66,6 +73,252 @@ pub enum SpartanError {
     /// returned when an invalid PCS proof is provided
     #[error("InvalidPCSProof")]
     InvalidPCSProof,
+}
+
+#[derive(Debug)]
+pub struct AzBzCz {
+    pub interleaved_az_bz_cz: Vec<(usize, i128)>,
+}
+
+pub struct AzBzCzOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+    pub func: Box<
+        dyn (Fn(
+                usize,
+                JoltStuff<MultilinearPolynomial<F>>,
+                JoltStuff<MultilinearPolynomial<F>>,
+            ) -> AzBzCz)
+            + 'a,
+    >,
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, InstructionSet> {
+    pub fn new<const C: usize, I: ConstraintInput>(
+        uniform_constraints: &'a [Constraint],
+        cross_step_constraints: &'a [OffsetEqConstraint],
+        padded_num_constraints: usize,
+        jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+    ) -> Self {
+        let total_num_steps = jolt_oracle.get_length();
+
+        let polynomial_stream =
+            move |shard_idx: usize,
+                  shard: JoltStuff<MultilinearPolynomial<F>>,
+                  extra_eval: JoltStuff<MultilinearPolynomial<F>>| {
+                let shard_length = shard.bytecode.a_read_write.len();
+
+                let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                    .iter()
+                    .map(|var| var.get_ref(&shard))
+                    .collect();
+
+                // TODO: Put in a seperate function.
+                let num_steps = streaming_z[0].len();
+
+                let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
+                let chunk_size = num_steps.div_ceil(num_chunks);
+
+                let interleaved_az_bz_cz: Vec<(usize, i128)> = (0..num_chunks)
+                .into_par_iter()
+                .flat_map_iter(|chunk_index| {
+                    let mut coeffs = Vec::with_capacity(3 * chunk_size * padded_num_constraints);
+
+                    for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
+                        // Uniform constraints
+                        for (constraint_index, constraint) in uniform_constraints
+                            .iter()
+                            .enumerate() {
+                            let global_index =
+                                3 *
+                                ((step_index + shard_idx * shard_length) * padded_num_constraints +
+                                    constraint_index);
+
+                            // Az
+                            let mut az_coeff = 0;
+                            if !constraint.a.terms().is_empty() {
+                                az_coeff = constraint.a.evaluate_row(&streaming_z, step_index);
+                                if !az_coeff.is_zero() {
+                                    coeffs.push((global_index, az_coeff));
+                                }
+                            }
+                            // Bz
+                            let mut bz_coeff = 0;
+                            if !constraint.b.terms().is_empty() {
+                                bz_coeff = constraint.b.evaluate_row(&streaming_z, step_index);
+                                if !bz_coeff.is_zero() {
+                                    coeffs.push((global_index + 1, bz_coeff));
+                                }
+                            }
+                            // Cz = Az ⊙ Bz
+                            if !az_coeff.is_zero() && !bz_coeff.is_zero() {
+                                let cz_coeff = az_coeff * bz_coeff;
+                                #[cfg(test)]
+                                {
+                                    if
+                                        cz_coeff !=
+                                        constraint.c.evaluate_row(&streaming_z, step_index)
+                                    {
+                                        let mut constraint_string = String::new();
+                                        let _ = constraint.pretty_fmt::<4, JoltR1CSInputs, F>(
+                                            &mut constraint_string,
+                                            &streaming_z,
+                                            step_index
+                                        );
+                                        println!("{constraint_string}");
+                                        panic!(
+                                            "Uniform constraint {constraint_index} violated at step {step_index}"
+                                        );
+                                    }
+                                }
+                                coeffs.push((global_index + 2, cz_coeff));
+                            }
+                        }
+
+                        // Cross step constraints
+                        if step_index + shard_idx * shard_length + 1 < total_num_steps {
+                            let next_step_index = step_index + 1;
+
+                            for (constraint_index, constraint) in cross_step_constraints
+                                .iter()
+                                .enumerate() {
+                                let global_index =
+                                    3 *
+                                    ((step_index + shard_idx * shard_length) *
+                                        padded_num_constraints +
+                                        uniform_constraints.len() +
+                                        constraint_index);
+
+                                if next_step_index < shard_length {
+                                    // Az
+                                    let eq_a_eval = eval_offset_lc(
+                                        &constraint.a,
+                                        &streaming_z,
+                                        step_index,
+                                        Some(next_step_index)
+                                    );
+                                    let eq_b_eval = eval_offset_lc(
+                                        &constraint.b,
+                                        &streaming_z,
+                                        step_index,
+                                        Some(next_step_index)
+                                    );
+                                    let az_coeff = eq_a_eval - eq_b_eval;
+                                    if !az_coeff.is_zero() {
+                                        coeffs.push((global_index, az_coeff));
+                                        // If Az != 0, then the condition must be false (i.e. Bz = 0)
+                                        #[cfg(test)]
+                                        {
+                                            let bz_coeff = eval_offset_lc(
+                                                &constraint.cond,
+                                                &streaming_z,
+                                                step_index,
+                                                Some(next_step_index)
+                                            );
+                                            assert_eq!(
+                                                bz_coeff,
+                                                0,
+                                                "Cross-step constraint {constraint_index} violated at step {step_index}"
+                                            );
+                                        }
+                                    } else {
+                                        let bz_coeff = eval_offset_lc(
+                                            &constraint.cond,
+                                            &streaming_z,
+                                            step_index,
+                                            Some(next_step_index)
+                                        );
+                                        if !bz_coeff.is_zero() {
+                                            coeffs.push((global_index + 1, bz_coeff));
+                                        }
+                                    }
+                                } else {
+                                    let extra_eval_z: Vec<&MultilinearPolynomial<F>> =
+                                        I::flatten::<C>()
+                                            .iter()
+                                            .map(|var| var.get_ref(&extra_eval))
+                                            .collect();
+
+                                    let eq_a_eval = shard_last_step_eval_offset_lc(
+                                        &constraint.a,
+                                        &streaming_z,
+                                        &extra_eval_z,
+                                        step_index,
+                                        Some(next_step_index)
+                                    );
+                                    let eq_b_eval = shard_last_step_eval_offset_lc(
+                                        &constraint.b,
+                                        &streaming_z,
+                                        &extra_eval_z,
+                                        step_index,
+                                        Some(next_step_index)
+                                    );
+
+                                    let az_coeff = eq_a_eval - eq_b_eval;
+                                    if !az_coeff.is_zero() {
+                                        coeffs.push((global_index, az_coeff));
+                                    } else {
+                                        let bz_coeff = shard_last_step_eval_offset_lc(
+                                            &constraint.cond,
+                                            &streaming_z,
+                                            &extra_eval_z,
+                                            step_index,
+                                            Some(next_step_index)
+                                        );
+                                        if !bz_coeff.is_zero() {
+                                            coeffs.push((global_index + 1, bz_coeff));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    coeffs
+                })
+                .collect();
+
+                AzBzCz {
+                    interleaved_az_bz_cz,
+                }
+            };
+
+        AzBzCzOracle {
+            jolt_oracle,
+            func: Box::new(polynomial_stream),
+        }
+    }
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for AzBzCzOracle<'a, F, InstructionSet>
+{
+    type Item = AzBzCz;
+    fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+        let shard_idx = self.jolt_oracle.get_step() / shard_len;
+        let jolt_shard = self.jolt_oracle.next_shard(shard_len);
+
+        if self.jolt_oracle.peek().is_some() {
+            let jolt_peek = self.jolt_oracle.peek().unwrap();
+            (self.func)(shard_idx, jolt_shard, jolt_peek)
+        } else {
+            (self.func)(shard_idx, jolt_shard, Default::default())
+        }
+    }
+
+    fn reset(&mut self) {
+        self.jolt_oracle.reset();
+    }
+
+    fn peek(&mut self) -> Option<Self::Item> {
+        unimplemented!();
+    }
+
+    fn get_length(&self) -> usize {
+        self.jolt_oracle.get_length()
+    }
+
+    fn get_step(&self) -> usize {
+        self.jolt_oracle.get_step()
+    }
 }
 
 /// A succinct proof of knowledge of a witness to a relaxed R1CS instance
@@ -133,6 +386,7 @@ where
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
                 num_rounds_x,
@@ -336,6 +590,67 @@ where
         })
     }
 
+    // TODO: Change the return type back to Result<Self, SpartanError>.
+    #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
+    pub fn streaming_prove<PCS, InstructionSet>(
+        no_of_shards: usize,
+        shard_len: usize,
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+        key: &UniformSpartanKey<C, I, F>,
+        jolt_oracle: JoltOracle<F, InstructionSet>,
+        polynomials: &JoltPolynomials<F>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _transcript: &mut ProofTranscript,
+    ) where
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        InstructionSet: JoltInstructionSet,
+    {
+        let _num_rounds_x = key.num_rows_bits();
+        let num_padded_rows = constraint_builder.padded_rows_per_step();
+
+        #[cfg(test)]
+        {
+            let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
+                &constraint_builder.uniform_builder.constraints,
+                &constraint_builder.offset_equality_constraints,
+                num_padded_rows,
+                jolt_oracle,
+            );
+
+            let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                .iter()
+                .map(|var| var.get_ref(polynomials))
+                .collect();
+
+            let az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+
+            let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
+            for _ in 0..no_of_shards {
+                let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_len);
+                streamed_polys_vec.push(streamed_polys);
+            }
+
+            let mut j = 0;
+            for n in 0..no_of_shards {
+                let len = streamed_polys_vec[n].interleaved_az_bz_cz.len();
+                for i in 0..len {
+                    assert_eq!(
+                        streamed_polys_vec[n].interleaved_az_bz_cz[i].0,
+                        az_bz_cz_poly.unbound_coeffs[j].index
+                    );
+                    assert_eq!(
+                        streamed_polys_vec[n].interleaved_az_bz_cz[i].1,
+                        az_bz_cz_poly.unbound_coeffs[j].value
+                    );
+                    j += 1;
+                }
+            }
+            println!("AzBzCz oracle test passing.");
+        }
+
+        // TODO: Add outer sum-check, inner sum-check, and pc-next sum-check.
+    }
+
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
@@ -477,7 +792,7 @@ where
 //     use ark_bn254::Fr;
 //     use ark_std::One;
 
-//     use crate::poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme};
+//     use crate::poly::commitment::{ commitment_scheme::CommitShape, hyrax::HyraxScheme };
 
 //     use super::*;
 
@@ -485,9 +800,9 @@ where
 //     fn integration() {
 //         let (builder, key) = simp_test_builder_key();
 //         let witness_segments: Vec<Vec<Fr>> = vec![
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* Q */,
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* R */,
+//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* S */
 //         ];
 
 //         // Create a witness and commit
@@ -496,33 +811,29 @@ where
 //             .map(|segment| segment.as_slice())
 //             .collect();
 //         let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
-//         let witness_commitment =
-//             HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+//         let witness_commitment = HyraxScheme::batch_commit(
+//             &witness_segments_ref,
+//             &gens,
+//             BatchType::Small
+//         );
 
 //         // Prove spartan!
 //         let mut prover_transcript = ProofTranscript::new(b"stuff");
-//         let proof =
-//             UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
-//                 SimpTestIn,
-//             >(
+//         let proof = UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>
+//             ::prove_precommitted::<SimpTestIn>(
 //                 &gens,
 //                 builder,
 //                 &key,
 //                 witness_segments,
 //                 todo!("opening accumulator"),
-//                 &mut prover_transcript,
+//                 &mut prover_transcript
 //             )
 //             .unwrap();
 
 //         let mut verifier_transcript = ProofTranscript::new(b"stuff");
 //         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
 //         proof
-//             .verify_precommitted(
-//                 &key,
-//                 witness_commitment_ref,
-//                 &gens,
-//                 &mut verifier_transcript,
-//             )
+//             .verify_precommitted(&key, witness_commitment_ref, &gens, &mut verifier_transcript)
 //             .expect("Spartan verifier failed");
 //     }
 // }

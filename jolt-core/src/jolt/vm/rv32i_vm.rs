@@ -301,6 +301,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
+
         let (io_device, trace) = program.trace(&inputs);
         drop(artifact_guard);
 
