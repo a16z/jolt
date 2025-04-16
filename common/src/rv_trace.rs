@@ -92,6 +92,8 @@ impl RVTraceRow {
             | RV32IM::SLL
             | RV32IM::SRL
             | RV32IM::SRA
+            | RV32IM::VIRTUAL_SRL
+            | RV32IM::VIRTUAL_SRA
             | RV32IM::SLT
             | RV32IM::SLTU
             | RV32IM::MUL

@@ -15,7 +15,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
 
     fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
         let mut virtual_trace = vec![];
-        let v0 = Some(virtual_register_index(0));
+        let v_bitmask = Some(virtual_register_index(6));
 
         let (x, bitmask) = match trace_row.instruction.opcode {
             RV32IM::SRA => {
@@ -29,7 +29,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                         opcode: RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASK,
                         rs1: trace_row.instruction.rs2,
                         rs2: None,
-                        rd: v0,
+                        rd: v_bitmask,
                         imm: None,
                         virtual_sequence_remaining: Some(
                             Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
@@ -59,7 +59,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                         opcode: RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASKI,
                         rs1: None,
                         rs2: None,
-                        rd: v0,
+                        rd: v_bitmask,
                         imm: trace_row.instruction.imm,
                         virtual_sequence_remaining: Some(
                             Self::SEQUENCE_LENGTH - virtual_trace.len() - 1,
@@ -87,7 +87,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SRAVirtualSequence<W
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_SRA,
                 rs1: trace_row.instruction.rs1,
-                rs2: v0,
+                rs2: v_bitmask,
                 rd: trace_row.instruction.rd,
                 imm: None,
                 virtual_sequence_remaining: Some(Self::SEQUENCE_LENGTH - virtual_trace.len() - 1),
