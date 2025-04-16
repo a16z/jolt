@@ -766,7 +766,7 @@ where
                 PhantomData::<F>,
             );
 
-            let shard_len = (1024).min(padded_trace_length);
+            let shard_len = (128).min(padded_trace_length);
             let no_of_shards = padded_trace_length / shard_len;
 
             // Testing bytecode oralce.
@@ -900,7 +900,7 @@ where
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
-        let shard_len = (1024).min(padded_trace_length);
+        let shard_len = (128).min(padded_trace_length);
         let no_of_shards = padded_trace_length / shard_len;
         #[cfg(test)]
         {
@@ -1048,7 +1048,7 @@ where
             &mut transcript,
         );
 
-        // let mut transcript_1 = transcript.clone();
+        let mut transcript_1 = transcript.clone();
 
         // let spartan_proof = UniformSpartanProof::<
         //     C,
@@ -1060,7 +1060,7 @@ where
         //     &spartan_key,
         //     &jolt_polynomials,
         //     &mut opening_accumulator,
-        //     &mut transcript,
+        //     &mut transcript_1,
         // )
         // .expect("r1cs proof failed");
 
