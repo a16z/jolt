@@ -890,11 +890,11 @@ pub enum OracleItem<F: JoltField> {
     SumCheck(SumCheckPolys<MultilinearPolynomial<F>>),
     SpartanSumCheck(Vec<MultilinearPolynomial<F>>),
 }
-impl<'a, F: JoltField, I: JoltInstructionSet> Oracle for Stream<'a, F, I> {
+impl<F: JoltField, I: JoltInstructionSet> Oracle for Stream<'_, F, I> {
     type Item = OracleItem<F>;
 
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
-        let shard = match self {
+        match self {
             Stream::SumCheck(inner) => {
                 let shard = inner.next_shard(shard_len);
                 OracleItem::SumCheck(shard)
@@ -904,8 +904,7 @@ impl<'a, F: JoltField, I: JoltInstructionSet> Oracle for Stream<'a, F, I> {
                 let shard2 = MultilinearPolynomial::from(inner.1.next_shard(shard_len));
                 OracleItem::SpartanSumCheck([shard1, shard2].to_vec())
             }
-        };
-        shard
+        }
     }
 
     fn reset(&mut self) {
@@ -969,7 +968,7 @@ impl<'a, F: JoltField> StreamSumCheck<'a, F> {
         let trace_oracle = StreamTrace::new(trace);
         let stream_poly = |shard: &[u64]| {
             let (poly1, poly2): (Vec<F>, Vec<F>) = shard
-                .into_iter()
+                .iter()
                 .map(|value| (F::from_u64(*value), F::from_u64(2 * value)))
                 .collect();
             SumCheckPolys {
@@ -985,7 +984,7 @@ impl<'a, F: JoltField> StreamSumCheck<'a, F> {
     }
 }
 
-impl<'a, F: JoltField> Oracle for StreamSumCheck<'a, F> {
+impl<F: JoltField> Oracle for StreamSumCheck<'_, F> {
     type Item = SumCheckPolys<MultilinearPolynomial<F>>;
     fn next_shard(&mut self, shard_length: usize) -> Self::Item {
         (self.func)(self.trace_oracle.next_shard(shard_length))

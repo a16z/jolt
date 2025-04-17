@@ -233,14 +233,12 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
     pub fn next_shard(&mut self, shard_len: usize) -> Vec<F> {
         if self.flag == true {
             (0..shard_len).map(|_| self.next_eval()).collect()
+        } else if self.idx == 0 {
+            let mut shard: Vec<F> = (0..shard_len - 1).map(|_| self.next_eval()).collect();
+            shard.insert(0, F::zero());
+            shard
         } else {
-            if self.idx == 0 {
-                let mut shard: Vec<F> = (0..shard_len - 1).map(|_| self.next_eval()).collect();
-                shard.insert(0, F::zero());
-                shard
-            } else {
-                (0..shard_len).map(|_| self.next_eval()).collect()
-            }
+            (0..shard_len).map(|_| self.next_eval()).collect()
         }
     }
     pub fn reset(&mut self) {
