@@ -18,17 +18,24 @@ pub enum MemoryState {
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum MemoryOp {
-    Read(u64),       // (address)
-    Write(u64, u64), // (address, new_value)
+    Read(u64, u64),       // (address, value)
+    Write(u64, u64, u64), // (address, old_value, new_value)
 }
 
 impl MemoryOp {
     pub fn noop_read() -> Self {
-        Self::Read(0)
+        Self::Read(0, 0)
     }
 
     pub fn noop_write() -> Self {
-        Self::Write(0, 0)
+        Self::Write(0, 0, 0)
+    }
+
+    pub fn address(&self) -> u64 {
+        match self {
+            MemoryOp::Read(a, _) => *a,
+            MemoryOp::Write(a, _, _) => *a,
+        }
     }
 }
 

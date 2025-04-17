@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct RegisterState {
     pub rs1_val: Option<u64>,
     pub rs2_val: Option<u64>,
+    pub rd_pre_val: Option<u64>,
     pub rd_post_val: Option<u64>,
 }
 
@@ -22,19 +23,6 @@ pub struct RVTraceRow {
     pub precompile_output_address: Option<u64>,
 }
 
-fn sum_u64_i32(a: u64, b: i32) -> u64 {
-    if b.is_negative() {
-        let abs_b = b.unsigned_abs() as u64;
-        if a < abs_b {
-            panic!("overflow")
-        }
-        a - abs_b
-    } else {
-        let b_u64: u64 = b.try_into().expect("failed u64 conversion");
-        a + b_u64
-    }
-}
-
 impl RVTraceRow {
     pub fn imm_u64(&self) -> u64 {
         self.instruction.imm.unwrap() as u64
@@ -45,32 +33,34 @@ impl RVTraceRow {
     }
 
     pub fn to_memory_ops(&self) -> [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
-        let rs1_read = || MemoryOp::Read(self.instruction.rs1.unwrap());
-        let rs2_read = || MemoryOp::Read(self.instruction.rs2.unwrap());
+        let rs1_read = || {
+            MemoryOp::Read(
+                self.instruction.rs1.unwrap(),
+                self.register_state.rs1_val.unwrap(),
+            )
+        };
+        let rs2_read = || {
+            MemoryOp::Read(
+                self.instruction.rs2.unwrap(),
+                self.register_state.rs2_val.unwrap(),
+            )
+        };
         let rd_write = || {
             MemoryOp::Write(
                 self.instruction.rd.unwrap(),
+                self.register_state.rd_pre_val.unwrap(),
                 self.register_state.rd_post_val.unwrap(),
             )
         };
 
-        let ram_write_value = || match self.memory_state {
-            Some(MemoryState::Read {
-                address: _,
-                value: _,
-            }) => panic!("Unexpected MemoryState::Read"),
+        let ram_access = || match self.memory_state {
+            Some(MemoryState::Read { address, value }) => MemoryOp::Read(address, value),
             Some(MemoryState::Write {
-                address: _,
-                pre_value: _,
+                address,
+                pre_value,
                 post_value,
-            }) => post_value,
+            }) => MemoryOp::Write(address, pre_value, post_value),
             None => panic!("Memory state not found"),
-        };
-
-        let rs1_offset = || -> u64 {
-            let rs1_val = self.register_state.rs1_val.unwrap();
-            let imm = self.instruction.imm.unwrap();
-            sum_u64_i32(rs1_val, imm as i32)
         };
 
         // Canonical ordering for memory instructions
@@ -140,12 +130,7 @@ impl RVTraceRow {
                 MemoryOp::noop_read(),
             ],
 
-            RV32IM::LW => [
-                rs1_read(),
-                MemoryOp::noop_read(),
-                rd_write(),
-                MemoryOp::Read(rs1_offset()),
-            ],
+            RV32IM::LW => [rs1_read(), MemoryOp::noop_read(), rd_write(), ram_access()],
             RV32IM::FENCE => [
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
@@ -153,12 +138,9 @@ impl RVTraceRow {
                 MemoryOp::noop_read(),
             ],
 
-            RV32IM::SB | RV32IM::SH | RV32IM::SW => [
-                rs1_read(),
-                rs2_read(),
-                MemoryOp::noop_write(),
-                MemoryOp::Write(rs1_offset(), ram_write_value()),
-            ],
+            RV32IM::SB | RV32IM::SH | RV32IM::SW => {
+                [rs1_read(), rs2_read(), MemoryOp::noop_write(), ram_access()]
+            }
 
             // RV32IM::LB | RV32IM::LH | RV32IM::LBU | RV32IM::LHU => [
             RV32IM::JAL | RV32IM::VIRTUAL_POW2I | RV32IM::VIRTUAL_SHIFT_RIGHT_BITMASKI => [
@@ -189,7 +171,7 @@ impl RVTraceRow {
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
                 MemoryOp::noop_write(),
-                MemoryOp::Write(rs1_offset(), ram_write_value()),
+                ram_access(),
             ],
 
             _ => unreachable!("{self:?}"),

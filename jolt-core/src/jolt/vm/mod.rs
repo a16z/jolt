@@ -12,20 +12,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::instruction::{NUM_CIRCUIT_FLAGS, RV32IM};
 use common::memory::MemoryLayout;
 use instruction_lookups::LookupsProof;
+use ram::RAMTwistProof;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use strum::EnumCount;
-use timestamp_range_check::TimestampRangeCheckStuff;
 use tracer::{ELFInstruction, JoltDevice};
 
-use crate::join_conditional;
-use crate::jolt::{
-    instruction::{
-        div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
-        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-        VirtualInstructionSequence,
-    },
-    vm::timestamp_range_check::TimestampValidityProof,
+use crate::jolt::instruction::{
+    div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction, mulhsu::MULHSUInstruction,
+    rem::REMInstruction, remu::REMUInstruction, VirtualInstructionSequence,
 };
 use crate::lasso::memory_checking::{
     Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
@@ -39,10 +34,6 @@ use crate::utils::transcript::{AppendToTranscript, Transcript};
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, memory::MemoryOp};
 
 use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
-use self::read_write_memory::{
-    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
-    ReadWriteMemoryStuff,
-};
 
 use super::instruction::lb::LBInstruction;
 use super::instruction::lbu::LBUInstruction;
@@ -61,7 +52,7 @@ where
 {
     pub generators: PCS::Setup,
     pub bytecode: BytecodePreprocessing<F>,
-    pub read_write_memory: ReadWriteMemoryPreprocessing,
+    // pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
     field: F::SmallValueLookupTables,
 }
@@ -123,8 +114,9 @@ pub struct JoltProof<
     pub trace_length: usize,
     pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
-    pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+    // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
+    pub ram: RAMTwistProof<F, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     _marker: PhantomData<I>,
@@ -133,8 +125,8 @@ pub struct JoltProof<
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) bytecode: BytecodeStuff<T>,
-    pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
-    pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
+    // pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
+    // pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
     pub(crate) r1cs: R1CSStuff<T>,
 }
 
@@ -145,8 +137,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
         self.bytecode
             .read_write_values()
             .into_iter()
-            .chain(self.read_write_memory.read_write_values())
-            .chain(self.timestamp_range_check.read_write_values())
+            // .chain(self.read_write_memory.read_write_values())
+            // .chain(self.timestamp_range_check.read_write_values())
             // .chain(self.r1cs.read_write_values())
             .collect()
     }
@@ -155,8 +147,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
         self.bytecode
             .init_final_values()
             .into_iter()
-            .chain(self.read_write_memory.init_final_values())
-            .chain(self.timestamp_range_check.init_final_values())
+            // .chain(self.read_write_memory.init_final_values())
+            // .chain(self.timestamp_range_check.init_final_values())
             // .chain(self.r1cs.init_final_values())
             .collect()
     }
@@ -165,8 +157,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
         self.bytecode
             .read_write_values_mut()
             .into_iter()
-            .chain(self.read_write_memory.read_write_values_mut())
-            .chain(self.timestamp_range_check.read_write_values_mut())
+            // .chain(self.read_write_memory.read_write_values_mut())
+            // .chain(self.timestamp_range_check.read_write_values_mut())
             // .chain(self.r1cs.read_write_values_mut())
             .collect()
     }
@@ -175,8 +167,8 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialDa
         self.bytecode
             .init_final_values_mut()
             .into_iter()
-            .chain(self.read_write_memory.init_final_values_mut())
-            .chain(self.timestamp_range_check.init_final_values_mut())
+            // .chain(self.read_write_memory.init_final_values_mut())
+            // .chain(self.timestamp_range_check.init_final_values_mut())
             // .chain(self.r1cs.init_final_values_mut())
             .collect()
     }
@@ -206,10 +198,10 @@ impl<
     fn initialize(preprocessing: &JoltPreprocessing<C, PCS::Field, PCS, ProofTranscript>) -> Self {
         Self {
             bytecode: BytecodeStuff::initialize(&preprocessing.bytecode),
-            read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
-            timestamp_range_check: TimestampRangeCheckStuff::initialize(
-                &crate::lasso::memory_checking::NoPreprocessing,
-            ),
+            // read_write_memory: ReadWriteMemoryStuff::initialize(&preprocessing.read_write_memory),
+            // timestamp_range_check: TimestampRangeCheckStuff::initialize(
+            //     &crate::lasso::memory_checking::NoPreprocessing,
+            // ),
             r1cs: R1CSStuff::initialize(&C),
         }
     }
@@ -247,18 +239,6 @@ impl<F: JoltField> JoltPolynomials<F> {
         drop(_guard);
         drop(span);
 
-        let span = tracing::span!(tracing::Level::INFO, "commit::read_write_memory");
-        let _guard = span.enter();
-        (
-            commitments.read_write_memory.v_final,
-            commitments.read_write_memory.t_final,
-        ) = join_conditional!(
-            || PCS::commit(&self.read_write_memory.v_final, &preprocessing.generators),
-            || PCS::commit(&self.read_write_memory.t_final, &preprocessing.generators)
-        );
-        drop(_guard);
-        drop(span);
-
         commitments
     }
 }
@@ -285,7 +265,7 @@ where
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
         icicle::icicle_init();
 
-        let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
+        // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .into_iter()
@@ -323,7 +303,7 @@ where
             generators,
             memory_layout,
             bytecode: bytecode_preprocessing,
-            read_write_memory: read_write_memory_preprocessing,
+            // read_write_memory: read_write_memory_preprocessing,
             field: small_value_lookup_tables,
         }
     }
@@ -366,24 +346,9 @@ where
             trace_length,
         );
 
-        let memory_polynomials = ReadWriteMemoryPolynomials::generate_witness(
-            &program_io,
-            &preprocessing.read_write_memory,
-            &trace,
-        );
-
-        let (bytecode_polynomials, range_check_polys) = rayon::join(
-            || {
-                BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
-                    &preprocessing.bytecode,
-                    &mut trace,
-                )
-            },
-            || {
-                TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(
-                    &memory_polynomials,
-                )
-            },
+        let bytecode_polynomials = BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
+            &preprocessing.bytecode,
+            &mut trace,
         );
 
         let r1cs_builder = Self::Constraints::construct_constraints(
@@ -407,8 +372,8 @@ where
 
         let mut jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
-            read_write_memory: memory_polynomials,
-            timestamp_range_check: range_check_polys,
+            // read_write_memory: memory_polynomials,
+            // timestamp_range_check: range_check_polys,
             r1cs: r1cs_polynomials,
         };
 
@@ -446,11 +411,10 @@ where
             &mut transcript,
         );
 
-        let memory_proof = ReadWriteMemoryProof::prove(
-            &preprocessing.generators,
-            &preprocessing.read_write_memory,
-            &jolt_polynomials,
-            &program_io,
+        let ram_proof = RAMTwistProof::prove(
+            // &preprocessing.generators,
+            &trace,
+            1 << 16, // TODO(moodlezoup)
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -479,8 +443,8 @@ where
             trace_length,
             program_io,
             bytecode: bytecode_proof,
-            read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
+            ram: ram_proof,
             // r1cs: spartan_proof,
             opening_proof,
             _marker: PhantomData,
@@ -569,16 +533,16 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )?;
-        Self::verify_memory(
-            &mut preprocessing.read_write_memory,
-            &preprocessing.generators,
-            &preprocessing.memory_layout,
-            proof.read_write_memory,
-            &commitments,
-            proof.program_io,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        // Self::verify_memory(
+        //     &mut preprocessing.read_write_memory,
+        //     &preprocessing.generators,
+        //     &preprocessing.memory_layout,
+        //     proof.read_write_memory,
+        //     &commitments,
+        //     proof.program_io,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
         // Self::verify_r1cs(
         //     r1cs_proof,
         //     &commitments,
@@ -627,37 +591,37 @@ where
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all)]
-    fn verify_memory<'a>(
-        preprocessing: &mut ReadWriteMemoryPreprocessing,
-        generators: &PCS::Setup,
-        memory_layout: &MemoryLayout,
-        proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
-        commitment: &'a JoltCommitments<PCS, ProofTranscript>,
-        program_io: JoltDevice,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
-        assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
-        // pair the memory layout with the program io from the proof
-        preprocessing.program_io = Some(JoltDevice {
-            inputs: program_io.inputs,
-            outputs: program_io.outputs,
-            panic: program_io.panic,
-            memory_layout: memory_layout.clone(),
-        });
+    // #[allow(clippy::too_many_arguments)]
+    // #[tracing::instrument(skip_all)]
+    // fn verify_memory<'a>(
+    //     preprocessing: &mut ReadWriteMemoryPreprocessing,
+    //     generators: &PCS::Setup,
+    //     memory_layout: &MemoryLayout,
+    //     proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+    //     commitment: &'a JoltCommitments<PCS, ProofTranscript>,
+    //     program_io: JoltDevice,
+    //     opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+    //     transcript: &mut ProofTranscript,
+    // ) -> Result<(), ProofVerifyError> {
+    //     assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
+    //     assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
+    //     // pair the memory layout with the program io from the proof
+    //     preprocessing.program_io = Some(JoltDevice {
+    //         inputs: program_io.inputs,
+    //         outputs: program_io.outputs,
+    //         panic: program_io.panic,
+    //         memory_layout: memory_layout.clone(),
+    //     });
 
-        ReadWriteMemoryProof::verify(
-            proof,
-            generators,
-            preprocessing,
-            commitment,
-            opening_accumulator,
-            transcript,
-        )
-    }
+    //     ReadWriteMemoryProof::verify(
+    //         proof,
+    //         generators,
+    //         preprocessing,
+    //         commitment,
+    //         opening_accumulator,
+    //         transcript,
+    //     )
+    // }
 
     #[tracing::instrument(skip_all)]
     fn verify_r1cs<'a>(
@@ -695,6 +659,5 @@ where
 
 pub mod bytecode;
 pub mod instruction_lookups;
-pub mod read_write_memory;
+pub mod ram;
 pub mod rv32i_vm;
-pub mod timestamp_range_check;
