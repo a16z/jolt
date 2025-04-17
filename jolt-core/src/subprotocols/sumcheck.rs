@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::StreamingEqPolynomial;
+use crate::poly::eq_poly::StreamingEqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
@@ -698,7 +698,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 }
 pub enum Stream<'a, F: JoltField, I: JoltInstructionSet> {
     SumCheck(StreamSumCheck<'a, F>),
-    SpartanSumCheck((BindZRyVarOracle<'a, F, I>, StreamingEqPolynomial<F>)),
+    SpartanSumCheck((BindZRyVarOracle<'a, F, I>, StreamingEqPlusOnePolynomial<F>)),
 }
 pub enum OracleItem<F: JoltField> {
     SumCheck(SumCheckPolys<MultilinearPolynomial<F>>),

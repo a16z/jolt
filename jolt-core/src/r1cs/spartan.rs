@@ -13,7 +13,7 @@ use crate::jolt::vm::{JoltCommitments, JoltTraceStep};
 use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::SmallScalar;
-use crate::poly::eq_poly::StreamingEqPolynomial;
+use crate::poly::eq_poly::StreamingEqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -1429,7 +1429,7 @@ where
 
         let reverse_rx_step: Vec<F> = rx_step.iter().rev().copied().collect();
         let eq_plus_one_rx_step_stream =
-            StreamingEqPolynomial::new(reverse_rx_step.to_vec(), rx_step.len(), None, false);
+            StreamingEqPlusOnePolynomial::new(reverse_rx_step.to_vec(), rx_step.len(), None);
         let mut oracle =
             Stream::SpartanSumCheck((bind_z_ry_var_oracle, eq_plus_one_rx_step_stream));
 

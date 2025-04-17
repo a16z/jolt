@@ -10,14 +10,13 @@ pub struct EqPlusOnePolynomial<F> {
     x: Vec<F>,
 }
 
-pub struct StreamingEqPolynomial<F> {
+pub struct StreamingEqPlusOnePolynomial<F> {
     r: Vec<F>,
     num_vars: usize,
     ratios: Vec<F>,
     idx: usize,
     prev_eval: F,
     scaling_factor: Option<F>,
-    flag: bool, //Flag for eq = 1 and eq_plus = 0
 }
 
 const PARALLEL_THRESHOLD: usize = 16;
@@ -189,8 +188,8 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
     }
 }
 
-impl<F: JoltField> StreamingEqPolynomial<F> {
-    pub fn new(r: Vec<F>, num_vars: usize, scaling_factor: Option<F>, flag: bool) -> Self {
+impl<F: JoltField> StreamingEqPlusOnePolynomial<F> {
+    pub fn new(r: Vec<F>, num_vars: usize, scaling_factor: Option<F>,) -> Self {
         let mut ratios = vec![F::one(); num_vars];
         for i in 0..r.len() {
             ratios[i] = (F::one() - r[i]) / r[i];
@@ -202,7 +201,6 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
             idx: 0,
             prev_eval: F::zero(),
             scaling_factor,
-            flag,
         }
     }
 
@@ -231,9 +229,7 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
     }
 
     pub fn next_shard(&mut self, shard_len: usize) -> Vec<F> {
-        if self.flag == true {
-            (0..shard_len).map(|_| self.next_eval()).collect()
-        } else if self.idx == 0 {
+     if self.idx == 0 {
             let mut shard: Vec<F> = (0..shard_len - 1).map(|_| self.next_eval()).collect();
             shard.insert(0, F::zero());
             shard

@@ -243,8 +243,6 @@ mod tests {
     use ark_bn254::{Bn254, Fr};
 
     use std::collections::HashSet;
-    use std::time::Instant;
-
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
