@@ -243,6 +243,7 @@ mod tests {
     use ark_bn254::{Bn254, Fr};
 
     use std::collections::HashSet;
+    use std::time::Instant;
 
     use crate::field::JoltField;
     use crate::host;
@@ -379,10 +380,8 @@ mod tests {
             Zeromorph<Bn254, KeccakTranscript>,
             C,
             M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+            KeccakTranscript
+        >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
@@ -422,10 +421,8 @@ mod tests {
             HyperKZG<Bn254, KeccakTranscript>,
             C,
             M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+            KeccakTranscript
+        >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
@@ -462,10 +459,8 @@ mod tests {
             HyperKZG<Bn254, KeccakTranscript>,
             C,
             M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+            KeccakTranscript
+        >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,

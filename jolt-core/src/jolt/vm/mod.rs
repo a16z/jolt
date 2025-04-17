@@ -766,7 +766,7 @@ where
                 PhantomData::<F>,
             );
 
-            let shard_len = (128).min(padded_trace_length);
+            let shard_len = (1024).min(padded_trace_length);
             let no_of_shards = padded_trace_length / shard_len;
 
             // Testing bytecode oralce.
@@ -900,7 +900,7 @@ where
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
         >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
-        let shard_len = (128).min(padded_trace_length);
+        let shard_len = (1024).min(padded_trace_length);
         let no_of_shards = padded_trace_length / shard_len;
         #[cfg(test)]
         {
