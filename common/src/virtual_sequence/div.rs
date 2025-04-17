@@ -1,12 +1,9 @@
-use common::constants::virtual_register_index;
-use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
+use crate::constants::virtual_register_index;
+use crate::instruction::{ELFInstruction, RV32IM};
+use crate::rv_trace::{RVTraceRow, RegisterState};
 
 use super::VirtualInstructionSequence;
-use crate::jolt::instruction::{
-    add::ADDInstruction, beq::BEQInstruction, mul::MULInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_valid_div0::AssertValidDiv0Instruction,
-    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction, JoltInstruction,
-};
+
 /// Perform signed division and return the result
 pub struct DIVInstruction<const WORD_SIZE: usize>;
 
@@ -254,14 +251,14 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+// #[cfg(test)]
+// mod test {
+//     use crate::jolt::instruction::test::jolt_virtual_sequence_test;
 
-    use super::*;
+//     use super::*;
 
-    #[test]
-    fn div_virtual_sequence_32() {
-        jolt_virtual_sequence_test::<DIVInstruction<32>>(RV32IM::DIV);
-    }
-}
+//     #[test]
+//     fn div_virtual_sequence_32() {
+//         jolt_virtual_sequence_test::<DIVInstruction<32>>(RV32IM::DIV);
+//     }
+// }

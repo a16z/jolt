@@ -10,13 +10,13 @@ use crate::{
     subprotocols::sparse_dense_shout::{LookupBits, PrefixSuffixDecomposition},
     utils::index_to_field_bitvector,
 };
-use common::constants::REGISTER_COUNT;
+use common::{constants::REGISTER_COUNT, virtual_sequence::VirtualInstructionSequence};
 use num::Integer;
 use rand::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
-use super::{JoltInstruction, VirtualInstructionSequence};
+use super::JoltInstruction;
 
 /// Tests the consistency and correctness of a virtual instruction sequence.
 /// In detail:
@@ -64,6 +64,7 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: RV32IM)
             register_state: RegisterState {
                 rs1_val: Some(x),
                 rs2_val: Some(y),
+                rd_pre_val: Some(registers[rd as usize]),
                 rd_post_val: Some(result),
             },
             memory_state: None,

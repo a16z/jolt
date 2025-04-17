@@ -311,3 +311,26 @@ impl FromStr for RV32IM {
         }
     }
 }
+
+trait RISCVInstruction {
+    type StateCapture: Default;
+
+    fn capture_pre_execution_state(state: &mut Self::StateCapture) {}
+    fn capture_post_execution_state(state: &mut Self::StateCapture) {}
+    fn capture_memory_state(state: &mut Self::StateCapture) {}
+}
+
+struct RVInstruction<T: RISCVInstruction>(T);
+struct Execution<T: RISCVInstruction> {
+    instruction: T,
+    state_capture: T::StateCapture,
+}
+
+pub struct Foo {}
+impl RISCVInstruction for Foo {
+    type StateCapture = ();
+}
+
+enum RV32IMCycle {
+    Foo(Foo),
+}

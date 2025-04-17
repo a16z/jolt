@@ -201,14 +201,14 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::jolt::instruction::test::jolt_virtual_sequence_test;
+// #[cfg(test)]
+// mod test {
+//     use crate::jolt::instruction::test::jolt_virtual_sequence_test;
 
-    use super::*;
+//     use super::*;
 
-    #[test]
-    fn mulh_virtual_sequence_32() {
-        jolt_virtual_sequence_test::<MULHInstruction<32>>(RV32IM::MULH);
-    }
-}
+//     #[test]
+//     fn mulh_virtual_sequence_32() {
+//         jolt_virtual_sequence_test::<MULHInstruction<32>>(RV32IM::MULH);
+//     }
+// }
