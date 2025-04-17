@@ -1,4 +1,4 @@
-g# Twist and Shout preliminary benchmarks
+# Twist and Shout preliminary benchmarks
 
 In the benchmark results below, Spice and Lasso results are obtained by running Jolt end-to-end on an execution trace of length $$T\approx 2^{23}$$ from the `sha2-chain` example guest program.
 
