@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
-use std::marker::PhantomData;
 
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

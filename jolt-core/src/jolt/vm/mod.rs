@@ -1,19 +1,16 @@
 #![allow(clippy::type_complexity)]
 #![allow(dead_code)]
 
-use std::marker::PhantomData;
-use std::slice::Iter;
-
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-
+use std::marker::PhantomData;
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
+
 use strum::EnumCount;
 
 use bytecode::BytecodeOracle;
@@ -29,7 +26,6 @@ use timestamp_range_check::TimestampRangeCheckStuff;
 use crate::field::JoltField;
 
 use crate::join_conditional;
-use crate::jolt;
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -55,7 +51,6 @@ use crate::r1cs::inputs::{
 };
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -704,6 +699,8 @@ where
 
         // TODO(JP): Drop padding on number of steps
         JoltTraceStep::pad(&mut trace);
+
+        #[cfg(test)]
         let mut trace_1 = trace.clone();
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -747,6 +744,7 @@ where
 
         // Streaming polynomials
 
+        #[cfg(test)]
         let program_io_clone = program_io.clone();
         #[cfg(test)]
         {
@@ -892,18 +890,22 @@ where
         };
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
-        let mut jolt_oracle = JoltOracle::new::<
-            C,
-            M,
-            PCS,
-            ProofTranscript,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
-        let shard_len = (1024).min(padded_trace_length);
-        let no_of_shards = padded_trace_length / shard_len;
+        #[cfg(test)]
+        let no_of_shards = 4;
+        #[cfg(test)]
+        let shard_len = padded_trace_length / no_of_shards;
         #[cfg(test)]
         {
+            let mut jolt_oracle =
+                JoltOracle::new::<
+                    C,
+                    M,
+                    PCS,
+                    ProofTranscript,
+                    <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+                >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
+
             // Testing jolt oracle.
             for n in 0..no_of_shards {
                 let streamed_polys = jolt_oracle.next_shard(shard_len);
@@ -1048,22 +1050,22 @@ where
             &mut transcript,
         );
 
-        let mut transcript_1 = transcript.clone();
+        #[cfg(not(test))]
+        let spartan_proof = UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            ProofTranscript,
+        >::prove::<PCS>(
+            &r1cs_builder,
+            &spartan_key,
+            &jolt_polynomials,
+            &mut opening_accumulator,
+            &mut transcript,
+        )
+        .expect("r1cs proof failed");
 
-        // let spartan_proof = UniformSpartanProof::<
-        //     C,
-        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        //     F,
-        //     ProofTranscript,
-        // >::prove::<PCS>(
-        //     &r1cs_builder,
-        //     &spartan_key,
-        //     &jolt_polynomials,
-        //     &mut opening_accumulator,
-        //     &mut transcript_1,
-        // )
-        // .expect("r1cs proof failed");
-
+        #[cfg(test)]
         let spartan_proof = UniformSpartanProof::<
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,

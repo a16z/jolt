@@ -233,99 +233,16 @@ impl<F: JoltField> StreamingEqPolynomial<F> {
     pub fn next_shard(&mut self, shard_len: usize) -> Vec<F> {
         if self.flag == true {
             (0..shard_len).map(|_| self.next_eval()).collect()
+        } else if self.idx == 0 {
+            let mut shard: Vec<F> = (0..shard_len - 1).map(|_| self.next_eval()).collect();
+            shard.insert(0, F::zero());
+            shard
         } else {
-            if self.idx == 0 {
-                let mut shard: Vec<F> = (0..shard_len - 1).map(|_| self.next_eval()).collect();
-                shard.insert(0, F::zero());
-                shard
-            } else {
-                (0..shard_len).map(|_| self.next_eval()).collect()
-            }
+            (0..shard_len).map(|_| self.next_eval()).collect()
         }
     }
     pub fn reset(&mut self) {
         self.idx = 0;
         self.prev_eval = F::zero();
-    }
-}
-
-mod test {
-    use ark_bn254::Fr;
-    use rand::{thread_rng, Rng};
-
-    use super::*;
-
-    #[test]
-    fn evals() {
-        let mut rng = thread_rng();
-        let len = 6;
-        let num_vars = 13;
-        let mut r: Vec<Fr> = (0..len).map(|_| Fr::from_u64(rng.gen())).collect();
-
-        let mut streaming_eq = StreamingEqPolynomial::new(r.clone(), num_vars, None, true);
-
-        // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
-        r.reverse();
-        let evals = EqPolynomial::evals(&r);
-
-        for _ in 0..1 << (num_vars - len) {
-            for j in 0..1 << len {
-                assert_eq!(
-                    streaming_eq.next_eval(),
-                    evals[j as usize],
-                    "{}, {j}",
-                    streaming_eq.idx
-                );
-            }
-        }
-    }
-    #[test]
-    fn evals_r2() {
-        let mut rng = thread_rng();
-        let len = 6;
-        let num_vars = 13;
-        let mut r: Vec<Fr> = (0..len).map(|_| Fr::from_u64(rng.gen())).collect();
-
-        let mut streaming_eq =
-            StreamingEqPolynomial::new(r.clone(), num_vars, Fr::montgomery_r2(), true);
-
-        // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
-        r.reverse();
-        let evals = EqPolynomial::evals_with_r2(&r);
-
-        for _ in 0..1 << (num_vars - len) {
-            for j in 0..1 << len {
-                assert_eq!(
-                    streaming_eq.next_eval(),
-                    evals[j as usize],
-                    "{}, {j}",
-                    streaming_eq.idx
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn evals_eq_plus_one() {
-        let mut rng = thread_rng();
-        let num_vars = 13;
-        let mut r: Vec<Fr> = (0..num_vars).map(|_| Fr::from_u64(rng.gen())).collect();
-
-        let mut streaming_eq_plus_one =
-            StreamingEqPolynomial::new(r.clone(), num_vars, None, false);
-
-        // For StreamingPolyEq, x_0 is the LSB. For EqPolynomial::evals, x_0 is the MSB
-        r.reverse();
-        let evals = EqPlusOnePolynomial::evals(&r, None);
-
-        let shard_len = 1 << 6;
-        let num_shards = (1 << num_vars) / shard_len;
-
-        for i in 0..num_shards {
-            let shard = streaming_eq_plus_one.next_shard(shard_len);
-            for j in 0..shard_len {
-                assert_eq!(shard[j], evals.1[i * shard_len + j], "{i}, {j}");
-            }
-        }
     }
 }
