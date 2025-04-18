@@ -1470,29 +1470,6 @@ pub struct Instruction {
         Option<fn(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction>,
 }
 
-struct FormatB {
-    rs1: usize,
-    rs2: usize,
-    imm: i64,
-}
-
-fn parse_format_b(word: u32) -> FormatB {
-    FormatB {
-        rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-        rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
-        imm: (
-            match word & 0x80000000 { // imm[31:12] = [31]
-				0x80000000 => 0xfffff000,
-				_ => 0
-			} |
-			((word << 4) & 0x00000800) | // imm[11] = [7]
-			((word >> 20) & 0x000007e0) | // imm[10:5] = [30:25]
-			((word >> 7) & 0x0000001e)
-            // imm[4:1] = [11:8]
-        ) as i32 as i64,
-    }
-}
-
 fn dump_format_b(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String {
     let f = parse_format_b(word);
     let mut s = String::new();
@@ -1506,20 +1483,6 @@ fn dump_format_b(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> Stri
     }
     s += &format!(",{:x}", address as i64 + f.imm);
     s
-}
-
-struct FormatCSR {
-    csr: u16,
-    rs: usize,
-    rd: usize,
-}
-
-fn parse_format_csr(word: u32) -> FormatCSR {
-    FormatCSR {
-        csr: ((word >> 20) & 0xfff) as u16, // [31:20]
-        rs: ((word >> 15) & 0x1f) as usize, // [19:15], also uimm
-        rd: ((word >> 7) & 0x1f) as usize,  // [11:7]
-    }
 }
 
 fn dump_format_csr(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
@@ -1539,27 +1502,6 @@ fn dump_format_csr(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> S
         s += &format!(":{:x}", cpu.x[f.rs]);
     }
     s
-}
-
-struct FormatI {
-    rd: usize,
-    rs1: usize,
-    imm: i64,
-}
-
-fn parse_format_i(word: u32) -> FormatI {
-    FormatI {
-        rd: ((word >> 7) & 0x1f) as usize,   // [11:7]
-        rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-        imm: (
-            match word & 0x80000000 {
-                // imm[31:11] = [31]
-                0x80000000 => 0xfffff800,
-                _ => 0,
-            } | ((word >> 20) & 0x000007ff)
-            // imm[10:0] = [30:20]
-        ) as i32 as i64,
-    }
 }
 
 fn dump_format_i(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
@@ -1592,27 +1534,6 @@ fn dump_format_i_mem(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) ->
     s
 }
 
-struct FormatJ {
-    rd: usize,
-    imm: i64,
-}
-
-fn parse_format_j(word: u32) -> FormatJ {
-    FormatJ {
-        rd: ((word >> 7) & 0x1f) as usize, // [11:7]
-        imm: (
-            match word & 0x80000000 { // imm[31:20] = [31]
-				0x80000000 => 0xfff00000,
-				_ => 0
-			} |
-			(word & 0x000ff000) | // imm[19:12] = [19:12]
-			((word & 0x00100000) >> 9) | // imm[11] = [20]
-			((word & 0x7fe00000) >> 20)
-            // imm[10:1] = [30:21]
-        ) as i32 as i64,
-    }
-}
-
 fn dump_format_j(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String {
     let f = parse_format_j(word);
     let mut s = String::new();
@@ -1622,20 +1543,6 @@ fn dump_format_j(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> Stri
     }
     s += &format!(",{:x}", address as i64 + f.imm);
     s
-}
-
-struct FormatR {
-    rd: usize,
-    rs1: usize,
-    rs2: usize,
-}
-
-fn parse_format_r(word: u32) -> FormatR {
-    FormatR {
-        rd: ((word >> 7) & 0x1f) as usize,   // [11:7]
-        rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-        rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
-    }
 }
 
 fn dump_format_r(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
@@ -1654,23 +1561,6 @@ fn dump_format_r(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> Str
         s += &format!(":{:x}", cpu.x[f.rs2]);
     }
     s
-}
-
-// has rs3
-struct FormatR2 {
-    rd: usize,
-    rs1: usize,
-    rs2: usize,
-    rs3: usize,
-}
-
-fn parse_format_r2(word: u32) -> FormatR2 {
-    FormatR2 {
-        rd: ((word >> 7) & 0x1f) as usize,   // [11:7]
-        rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-        rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
-        rs3: ((word >> 27) & 0x1f) as usize, // [31:27]
-    }
 }
 
 fn dump_format_r2(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
@@ -1695,28 +1585,6 @@ fn dump_format_r2(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> St
     s
 }
 
-struct FormatS {
-    rs1: usize,
-    rs2: usize,
-    imm: i64,
-}
-
-fn parse_format_s(word: u32) -> FormatS {
-    FormatS {
-        rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-        rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
-        imm: (
-            match word & 0x80000000 {
-				0x80000000 => 0xfffff000,
-				_ => 0
-			} | // imm[31:12] = [31]
-			((word >> 20) & 0xfe0) | // imm[11:5] = [31:25]
-			((word >> 7) & 0x1f)
-            // imm[4:0] = [11:7]
-        ) as i32 as i64,
-    }
-}
-
 fn dump_format_s(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
     let f = parse_format_s(word);
     let mut s = String::new();
@@ -1730,25 +1598,6 @@ fn dump_format_s(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> Str
     }
     s += &format!(")");
     s
-}
-
-struct FormatU {
-    rd: usize,
-    imm: i64,
-}
-
-fn parse_format_u(word: u32) -> FormatU {
-    FormatU {
-        rd: ((word >> 7) & 0x1f) as usize, // [11:7]
-        imm: (
-            match word & 0x80000000 {
-				0x80000000 => 0xffffffff00000000,
-				_ => 0
-			} | // imm[63:32] = [31]
-			((word as u64) & 0xfffff000)
-            // imm[31:12] = [31:12]
-        ) as i32 as i64,
-    }
 }
 
 fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {

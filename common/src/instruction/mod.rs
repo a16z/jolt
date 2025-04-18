@@ -1,7 +1,103 @@
+use add::ADD;
+use addi::ADDI;
+use and::AND;
+use andi::ANDI;
+use auipc::AUIPC;
+use beq::BEQ;
+use bge::BGE;
+use bgeu::BGEU;
+use blt::BLT;
+use bltu::BLTU;
+use bne::BNE;
+use div::DIV;
+use divu::DIVU;
+use format::InstructionFormat;
+use jal::JAL;
+use jalr::JALR;
+use lb::LB;
+use lbu::LBU;
+use lh::LH;
+use lhu::LHU;
+use lui::LUI;
+use lw::LW;
+use mul::MUL;
+use mulh::MULH;
+use mulhsu::MULHSU;
+use mulhu::MULHU;
+use mulu::MULU;
+use or::OR;
+use ori::ORI;
+use rem::REM;
+use remu::REMU;
+use sb::SB;
 use serde::{Deserialize, Serialize};
+use sh::SH;
+use sll::SLL;
+use slli::SLLI;
+use slt::SLT;
+use slti::SLTI;
+use sltiu::SLTIU;
+use sltu::SLTU;
+use sra::SRA;
+use srai::SRAI;
+use srl::SRL;
+use srli::SRLI;
 use std::str::FromStr;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
+use sub::SUB;
+use sw::SW;
+use xor::XOR;
+use xori::XORI;
+
+pub mod format;
+
+pub mod add;
+pub mod addi;
+pub mod and;
+pub mod andi;
+pub mod auipc;
+pub mod beq;
+pub mod bge;
+pub mod bgeu;
+pub mod blt;
+pub mod bltu;
+pub mod bne;
+pub mod div;
+pub mod divu;
+pub mod jal;
+pub mod jalr;
+pub mod lb;
+pub mod lbu;
+pub mod lh;
+pub mod lhu;
+pub mod lui;
+pub mod lw;
+pub mod mul;
+pub mod mulh;
+pub mod mulhsu;
+pub mod mulhu;
+pub mod mulu;
+pub mod or;
+pub mod ori;
+pub mod rem;
+pub mod remu;
+pub mod sb;
+pub mod sh;
+pub mod sll;
+pub mod slli;
+pub mod slt;
+pub mod slti;
+pub mod sltiu;
+pub mod sltu;
+pub mod sra;
+pub mod srai;
+pub mod srl;
+pub mod srli;
+pub mod sub;
+pub mod sw;
+pub mod xor;
+pub mod xori;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ELFInstruction {
@@ -313,24 +409,128 @@ impl FromStr for RV32IM {
 }
 
 trait RISCVInstruction {
-    type StateCapture: Default;
+    type Format: InstructionFormat;
+    type RAMAccess: Default;
 
-    fn capture_pre_execution_state(state: &mut Self::StateCapture) {}
-    fn capture_post_execution_state(state: &mut Self::StateCapture) {}
-    fn capture_memory_state(state: &mut Self::StateCapture) {}
+    fn to_raw(&self) -> Self::Format;
+    fn new(word: u32, address: u64) -> Self;
 }
 
-struct RVInstruction<T: RISCVInstruction>(T);
-struct Execution<T: RISCVInstruction> {
+struct RISCVCycle<T: RISCVInstruction> {
     instruction: T,
-    state_capture: T::StateCapture,
+    register_state: <T::Format as InstructionFormat>::RegisterState,
+    memory_state: T::RAMAccess,
 }
 
-pub struct Foo {}
-impl RISCVInstruction for Foo {
-    type StateCapture = ();
+impl<T: RISCVInstruction> RISCVCycle<T> {
+    fn capture_pre_execution_state(&mut self, registers: [i64; 64]) {
+        self.instruction
+            .to_raw()
+            .capture_pre_execution_state(&mut self.register_state, registers);
+    }
+
+    fn capture_post_execution_state(&mut self, registers: [i64; 64]) {
+        self.instruction
+            .to_raw()
+            .capture_post_execution_state(&mut self.register_state, registers);
+    }
+    // fn capture_memory_state(&mut self, state: MemoryState) {}
 }
 
-enum RV32IMCycle {
-    Foo(Foo),
+pub enum RV32IMInstruction {
+    ADD(ADD),
+    ADDI(ADDI),
+    AND(AND),
+    ANDI(ANDI),
+    AUIPC(AUIPC),
+    BEQ(BEQ),
+    BGE(BGE),
+    BGEU(BGEU),
+    BLT(BLT),
+    BLTU(BLTU),
+    BNE(BNE),
+    DIV(DIV),
+    DIVU(DIVU),
+    JAL(JAL),
+    JALR(JALR),
+    LB(LB),
+    LBU(LBU),
+    LH(LH),
+    LHU(LHU),
+    LUI(LUI),
+    LW(LW),
+    MUL(MUL),
+    MULH(MULH),
+    MULHSU(MULHSU),
+    MULHU(MULHU),
+    MULU(MULU),
+    OR(OR),
+    ORI(ORI),
+    REM(REM),
+    REMU(REMU),
+    SB(SB),
+    SH(SH),
+    SLL(SLL),
+    SLLI(SLLI),
+    SLT(SLT),
+    SLTI(SLTI),
+    SLTIU(SLTIU),
+    SLTU(SLTU),
+    SRA(SRA),
+    SRAI(SRAI),
+    SRL(SRL),
+    SRLI(SRLI),
+    SUB(SUB),
+    SW(SW),
+    XOR(XOR),
+    XORI(XORI),
+}
+
+pub enum RV32IMCycle {
+    ADD(RISCVCycle<ADD>),
+    ADDI(RISCVCycle<ADDI>),
+    AND(RISCVCycle<AND>),
+    ANDI(RISCVCycle<ANDI>),
+    AUIPC(RISCVCycle<AUIPC>),
+    BEQ(RISCVCycle<BEQ>),
+    BGE(RISCVCycle<BGE>),
+    BGEU(RISCVCycle<BGEU>),
+    BLT(RISCVCycle<BLT>),
+    BLTU(RISCVCycle<BLTU>),
+    BNE(RISCVCycle<BNE>),
+    DIV(RISCVCycle<DIV>),
+    DIVU(RISCVCycle<DIVU>),
+    JAL(RISCVCycle<JAL>),
+    JALR(RISCVCycle<JALR>),
+    LB(RISCVCycle<LB>),
+    LBU(RISCVCycle<LBU>),
+    LH(RISCVCycle<LH>),
+    LHU(RISCVCycle<LHU>),
+    LUI(RISCVCycle<LUI>),
+    LW(RISCVCycle<LW>),
+    MUL(RISCVCycle<MUL>),
+    MULH(RISCVCycle<MULH>),
+    MULHSU(RISCVCycle<MULHSU>),
+    MULHU(RISCVCycle<MULHU>),
+    MULU(RISCVCycle<MULU>),
+    OR(RISCVCycle<OR>),
+    ORI(RISCVCycle<ORI>),
+    REM(RISCVCycle<REM>),
+    REMU(RISCVCycle<REMU>),
+    SB(RISCVCycle<SB>),
+    SH(RISCVCycle<SH>),
+    SLL(RISCVCycle<SLL>),
+    SLLI(RISCVCycle<SLLI>),
+    SLT(RISCVCycle<SLT>),
+    SLTI(RISCVCycle<SLTI>),
+    SLTIU(RISCVCycle<SLTIU>),
+    SLTU(RISCVCycle<SLTU>),
+    SRA(RISCVCycle<SRA>),
+    SRAI(RISCVCycle<SRAI>),
+    SRL(RISCVCycle<SRL>),
+    SRLI(RISCVCycle<SRLI>),
+    SUB(RISCVCycle<SUB>),
+    SW(RISCVCycle<SW>),
+    XOR(RISCVCycle<XOR>),
+    XORI(RISCVCycle<XORI>),
 }

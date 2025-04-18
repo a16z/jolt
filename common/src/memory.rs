@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 
+#[derive(Default)]
+pub struct MemoryRead(u64, u64); // (address, value)
+#[derive(Default)]
+pub struct MemoryWrite(u64, u64, u64); // (address, old_value, new_value)
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
     Read {
