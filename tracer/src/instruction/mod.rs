@@ -9,10 +9,8 @@ use bgeu::BGEU;
 use blt::BLT;
 use bltu::BLTU;
 use bne::BNE;
-use derive_more::From;
 use div::DIV;
 use divu::DIVU;
-use format::InstructionFormat;
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
@@ -25,13 +23,11 @@ use mul::MUL;
 use mulh::MULH;
 use mulhsu::MULHSU;
 use mulhu::MULHU;
-use mulu::MULU;
 use or::OR;
 use ori::ORI;
 use rem::REM;
 use remu::REMU;
 use sb::SB;
-use serde::{Deserialize, Serialize};
 use sh::SH;
 use sll::SLL;
 use slli::SLLI;
@@ -43,13 +39,18 @@ use sra::SRA;
 use srai::SRAI;
 use srl::SRL;
 use srli::SRLI;
-use std::str::FromStr;
-use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 use sub::SUB;
 use sw::SW;
 use xor::XOR;
 use xori::XORI;
+
+use crate::emulator::cpu::Cpu;
+use derive_more::From;
+use format::InstructionFormat;
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use strum::EnumCount;
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 
 pub mod format;
 
@@ -78,7 +79,6 @@ pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
-pub mod mulu;
 pub mod or;
 pub mod ori;
 pub mod rem;
@@ -112,29 +112,30 @@ pub trait RISCVInstruction: Sized + Copy {
     type Format: InstructionFormat;
     type RAMAccess: Default;
 
-    fn to_raw(&self) -> Self::Format;
+    fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64) -> Self;
+
+    fn execute(&self, cpu: &mut Cpu, memory_state: &mut Self::RAMAccess);
+    fn trace(&self, cpu: &mut Cpu) -> RISCVCycle<Self> {
+        let mut cycle: RISCVCycle<Self> = RISCVCycle {
+            instruction: *self,
+            register_state: Default::default(),
+            memory_state: Default::default(),
+        };
+        self.operands()
+            .capture_pre_execution_state(&mut cycle.register_state, cpu);
+        self.execute(cpu, &mut cycle.memory_state);
+        self.operands()
+            .capture_post_execution_state(&mut cycle.register_state, cpu);
+        cycle
+    }
 }
 
+#[derive(Default)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
     pub memory_state: T::RAMAccess,
-}
-
-impl<T: RISCVInstruction> RISCVCycle<T> {
-    fn capture_pre_execution_state(&mut self, registers: [i64; 64]) {
-        self.instruction
-            .to_raw()
-            .capture_pre_execution_state(&mut self.register_state, registers);
-    }
-
-    fn capture_post_execution_state(&mut self, registers: [i64; 64]) {
-        self.instruction
-            .to_raw()
-            .capture_post_execution_state(&mut self.register_state, registers);
-    }
-    // fn capture_memory_state(&mut self, state: MemoryState) {}
 }
 
 #[derive(From)]
@@ -164,7 +165,6 @@ pub enum RV32IMInstruction {
     MULH(MULH<32>),
     MULHSU(MULHSU<32>),
     MULHU(MULHU<32>),
-    MULU(MULU<32>),
     OR(OR<32>),
     ORI(ORI<32>),
     REM(REM<32>),
@@ -214,7 +214,6 @@ pub enum RV32IMCycle {
     MULH(RISCVCycle<MULH<32>>),
     MULHSU(RISCVCycle<MULHSU<32>>),
     MULHU(RISCVCycle<MULHU<32>>),
-    MULU(RISCVCycle<MULU<32>>),
     OR(RISCVCycle<OR<32>>),
     ORI(RISCVCycle<ORI<32>>),
     REM(RISCVCycle<REM<32>>),
@@ -265,7 +264,6 @@ impl RV32IMCycle {
             RV32IMCycle::MULH(cycle) => RV32IMInstruction::MULH(cycle.instruction),
             RV32IMCycle::MULHSU(cycle) => RV32IMInstruction::MULHSU(cycle.instruction),
             RV32IMCycle::MULHU(cycle) => RV32IMInstruction::MULHU(cycle.instruction),
-            RV32IMCycle::MULU(cycle) => RV32IMInstruction::MULU(cycle.instruction),
             RV32IMCycle::OR(cycle) => RV32IMInstruction::OR(cycle.instruction),
             RV32IMCycle::ORI(cycle) => RV32IMInstruction::ORI(cycle.instruction),
             RV32IMCycle::REM(cycle) => RV32IMInstruction::REM(cycle.instruction),

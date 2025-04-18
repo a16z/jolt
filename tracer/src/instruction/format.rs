@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-pub trait InstructionFormat {
+use crate::emulator::cpu::Cpu;
+
+pub trait InstructionFormat: Default {
     type RegisterState: Default;
 
     fn parse(word: u32) -> Self;
-    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, registers: [i64; 64]) {}
-    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, registers: [i64; 64]) {}
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {}
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatB {
     pub rs1: usize,
     pub rs2: usize,
@@ -42,7 +44,7 @@ impl InstructionFormat for FormatB {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatCSR {
     pub csr: u16,
     pub rs: usize,
@@ -67,7 +69,7 @@ impl InstructionFormat for FormatCSR {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatI {
     pub rd: usize,
     pub rs1: usize,
@@ -99,7 +101,7 @@ impl InstructionFormat for FormatI {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatJ {
     pub rd: usize,
     pub imm: i64,
@@ -130,7 +132,7 @@ impl InstructionFormat for FormatJ {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatR {
     pub rd: usize,
     pub rs1: usize,
@@ -156,7 +158,7 @@ impl InstructionFormat for FormatR {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatR2 {
     pub rd: usize,
     pub rs1: usize,
@@ -185,7 +187,7 @@ impl InstructionFormat for FormatR2 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatS {
     pub rs1: usize,
     pub rs2: usize,
@@ -218,7 +220,7 @@ impl InstructionFormat for FormatS {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatU {
     pub rd: usize,
     pub imm: i64,
