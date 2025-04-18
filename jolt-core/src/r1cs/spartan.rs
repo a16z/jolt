@@ -13,7 +13,6 @@ use crate::jolt::vm::{JoltCommitments, JoltTraceStep};
 use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::SmallScalar;
-use crate::poly::eq_poly::StreamingEqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
@@ -1427,11 +1426,7 @@ where
         let bind_z_ry_var_oracle =
             BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var, &eq_ry_var_r2);
 
-        let reverse_rx_step: Vec<F> = rx_step.iter().rev().copied().collect();
-        let eq_plus_one_rx_step_stream =
-            StreamingEqPlusOnePolynomial::new(reverse_rx_step.to_vec(), rx_step.len(), None);
-        let mut oracle =
-            Stream::SpartanSumCheck((bind_z_ry_var_oracle, eq_plus_one_rx_step_stream));
+        let mut oracle = Stream::SpartanSumCheck((bind_z_ry_var_oracle, eq_rx_step));
 
         let extract_poly_fn = |stream_data: &OracleItem<F>| -> Vec<MultilinearPolynomial<F>> {
             match stream_data {

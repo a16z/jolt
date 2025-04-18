@@ -26,6 +26,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::iterable::Iterable;
 use common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
 };
@@ -240,7 +241,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
         let trace_oracle = TraceOracle::new(trace);
 
         let max_trace_address = trace
-            .into_iter()
+            .iter()
             .map(|step| match step.memory_ops[RAM] {
                 MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
                 MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),

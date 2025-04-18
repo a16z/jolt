@@ -242,7 +242,6 @@ impl Serializable for JoltHyperKZGProof {}
 mod tests {
     use ark_bn254::{Bn254, Fr};
 
-    use std::collections::HashSet;
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
@@ -252,6 +251,7 @@ mod tests {
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
+    use std::collections::HashSet;
     use std::sync::{LazyLock, Mutex};
     use strum::{EnumCount, IntoEnumIterator};
 

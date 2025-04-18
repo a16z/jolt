@@ -9,7 +9,6 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::StreamingEqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
@@ -414,7 +413,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut final_evals = vec![F::zero(); 3];
         let mut evals_1 = vec![F::zero(); 1 << (num_rounds - num_rounds / 2)];
         evals_1[0] = F::one();
-        let mut evals_2 = vec![F::zero(); 1 << num_rounds / 2];
+        let mut evals_2 = vec![F::zero(); 1 << (num_rounds / 2)];
         evals_2[0] = F::one();
         assert_eq!(eq_tau.E1_len.log_2(), num_rounds - num_rounds / 2);
 
@@ -698,7 +697,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 }
 pub enum Stream<'a, F: JoltField, I: JoltInstructionSet> {
     SumCheck(StreamSumCheck<'a, F>),
-    SpartanSumCheck((BindZRyVarOracle<'a, F, I>, StreamingEqPlusOnePolynomial<F>)),
+    SpartanSumCheck((BindZRyVarOracle<'a, F, I>, SplitEqPolynomial<F>)),
 }
 pub enum OracleItem<F: JoltField> {
     SumCheck(SumCheckPolys<MultilinearPolynomial<F>>),
@@ -715,8 +714,33 @@ impl<F: JoltField, I: JoltInstructionSet> Oracle for Stream<'_, F, I> {
             }
             Stream::SpartanSumCheck(inner) => {
                 let shard1 = inner.0.next_shard(shard_len);
-                let shard2 = MultilinearPolynomial::from(inner.1.next_shard(shard_len));
-                OracleItem::SpartanSumCheck([shard1, shard2].to_vec())
+                let step = inner.0.get_step();
+                let eq_rx_step = &inner.1;
+                let num_x1_bits = eq_rx_step.E1_len.log_2();
+                let x1_bitmask = (1 << (num_x1_bits)) - 1;
+                let step_shard = step - shard_len;
+                let shard2 = if step_shard == 0 {
+                    let mut evals: Vec<F> = (0..shard_len - 1)
+                        .map(|idx| {
+                            let poly_idx = step_shard + idx;
+                            let x1 = poly_idx & x1_bitmask;
+                            let x2 = poly_idx >> num_x1_bits;
+                            eq_rx_step.E1[x1] * eq_rx_step.E2[x2]
+                        })
+                        .collect();
+                    evals.insert(0, F::zero());
+                    evals
+                } else {
+                    (0..shard_len)
+                        .map(|idx| {
+                            let poly_idx = step_shard + idx - 1;
+                            let x1 = poly_idx & x1_bitmask;
+                            let x2 = poly_idx >> num_x1_bits;
+                            eq_rx_step.E1[x1] * eq_rx_step.E2[x2]
+                        })
+                        .collect::<Vec<F>>()
+                };
+                OracleItem::SpartanSumCheck([shard1, MultilinearPolynomial::from(shard2)].to_vec())
             }
         }
     }
@@ -728,7 +752,6 @@ impl<F: JoltField, I: JoltInstructionSet> Oracle for Stream<'_, F, I> {
             }
             Stream::SpartanSumCheck(inner) => {
                 inner.0.reset();
-                inner.1.reset()
             }
         }
     }
