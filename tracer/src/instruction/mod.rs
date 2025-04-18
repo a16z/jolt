@@ -29,6 +29,7 @@ use ori::ORI;
 use rem::REM;
 use remu::REMU;
 use sb::SB;
+use serde::{Deserialize, Serialize};
 use sh::SH;
 use sll::SLL;
 use slli::SLLI;
@@ -98,12 +99,12 @@ pub mod sw;
 pub mod xor;
 pub mod xori;
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct MemoryRead {
     pub(crate) address: u64,
     pub(crate) value: u64,
 }
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct MemoryWrite {
     pub(crate) address: u64,
     pub(crate) pre_value: u64,
@@ -136,14 +137,14 @@ pub trait RISCVInstruction: Sized + Copy {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
     pub memory_state: T::RAMAccess,
 }
 
-#[derive(From)]
+#[derive(From, Serialize, Deserialize)]
 pub enum RV32IMInstruction {
     ADD(ADD<32>),
     ADDI(ADDI<32>),
@@ -376,7 +377,7 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(From)]
+#[derive(From, Serialize, Deserialize)]
 pub enum RV32IMCycle {
     ADD(RISCVCycle<ADD<32>>),
     ADDI(RISCVCycle<ADDI<32>>),

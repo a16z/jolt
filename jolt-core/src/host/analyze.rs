@@ -1,17 +1,18 @@
 use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tracer::{ELFInstruction, JoltDevice, RVTraceRow, RV32IM};
+use tracer::{
+    instruction::{RV32IMCycle, RV32IMInstruction},
+    JoltDevice, RV32IM,
+};
 
 use crate::{field::JoltField, jolt::vm::JoltTraceStep};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ProgramSummary {
-    pub raw_trace: Vec<RVTraceRow>,
-
-    pub bytecode: Vec<ELFInstruction>,
+    pub raw_trace: Vec<RV32IMCycle>,
+    pub bytecode: Vec<RV32IMInstruction>,
     pub memory_init: Vec<(u64, u8)>,
-
     pub io_device: JoltDevice,
     pub processed_trace: Vec<JoltTraceStep<32>>,
 }

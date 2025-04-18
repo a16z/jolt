@@ -14,7 +14,7 @@ use instruction::{RV32IMCycle, RV32IMInstruction};
 use object::{Object, ObjectSection, SectionKind};
 
 mod emulator;
-mod instruction;
+pub mod instruction;
 
 pub use common::instruction::{ELFInstruction, RV32IM};
 pub use common::memory::{JoltDevice, MemoryState};

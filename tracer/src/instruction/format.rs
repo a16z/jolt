@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
 pub trait InstructionFormat: Default {
-    type RegisterState: Default;
+    type RegisterState: Default + Serialize + DeserializeOwned;
 
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
@@ -17,7 +17,7 @@ pub struct FormatB {
     pub imm: i64,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RegisterStateFormatB {
     rs1: u64,
     rs2: u64,
@@ -60,7 +60,7 @@ pub struct FormatI {
     pub imm: i64,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RegisterStateFormatI {
     rd: (u64, u64), // (old_value, new_value)
     rs1: u64,
@@ -100,7 +100,7 @@ pub struct FormatJ {
     pub imm: i64,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RegisterStateFormatJ {
     rd: (u64, u64), // (old_value, new_value)
 }
@@ -140,7 +140,7 @@ pub struct FormatR {
     pub rs2: usize,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RegisterStateFormatR {
     rd: (u64, u64), // (old_value, new_value)
     rs1: u64,
@@ -176,7 +176,7 @@ pub struct FormatS {
     pub imm: i64,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RegisterStateFormatS {
     rs1: u64,
     rs2: u64,
@@ -217,7 +217,7 @@ pub struct FormatU {
     pub imm: i64,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RegisterStateFormatU {
     rd: (u64, u64), // (old_value, new_value)
 }

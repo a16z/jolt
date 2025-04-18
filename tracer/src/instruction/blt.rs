@@ -31,6 +31,8 @@ impl<const WORD_SIZE: usize> RISCVInstruction for BLT<WORD_SIZE> {
     }
 
     fn new(word: u32, address: u64) -> Self {
+        debug_assert_eq!(word & Self::MASK, Self::MATCH);
+
         Self {
             address,
             operands: FormatB::parse(word),

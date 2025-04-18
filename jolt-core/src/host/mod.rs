@@ -19,19 +19,12 @@ use common::{
     instruction::RV32IM,
     memory::JoltDevice,
 };
+use tracer::instruction::RV32IMInstruction;
 pub use tracer::ELFInstruction;
 
 use crate::{
     field::JoltField,
-    jolt::{
-        instruction::{
-            div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
-            lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction,
-            mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-            sb::SBInstruction, sh::SHInstruction, LookupTables, VirtualInstructionSequence,
-        },
-        vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
-    },
+    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
 };
 
 use self::analyze::ProgramSummary;
@@ -171,7 +164,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
+    pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
         self.build();
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
