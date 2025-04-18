@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::MemoryRead;
 
 use super::{
@@ -36,5 +38,18 @@ impl<const WORD_SIZE: usize> RISCVInstruction for LHU<WORD_SIZE> {
             operands: FormatI::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, memory_state: &mut Self::RAMAccess) {
+        cpu.x[self.operands.rd] = match cpu
+            .mmu
+            .load_halfword(cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64)
+        {
+            Ok((halfword, memory_read)) => {
+                *memory_state = memory_read;
+                halfword as i64
+            }
+            Err(_) => panic!("MMU load error"),
+        };
     }
 }

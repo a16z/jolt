@@ -8,6 +8,7 @@ extern crate fnv;
 
 use std::rc::Rc;
 
+use crate::instruction::{MemoryRead, MemoryWrite};
 use crate::trace::Tracer;
 use common::memory::{JoltDevice, MemoryState};
 
@@ -315,11 +316,11 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load(&mut self, v_address: u64) -> Result<u8, Trap> {
+    pub fn load(&mut self, v_address: u64) -> Result<(u8, MemoryRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_load(effective_address);
+        let memory_read = self.trace_load(effective_address);
         match self.translate_address(effective_address, &MemoryAccessType::Read) {
-            Ok(p_address) => Ok(self.load_raw(p_address)),
+            Ok(p_address) => Ok((self.load_raw(p_address), memory_read)),
             Err(()) => Err(Trap {
                 trap_type: TrapType::LoadPageFault,
                 value: v_address,
@@ -361,7 +362,7 @@ impl Mmu {
                 let mut data = 0_u64;
                 for i in 0..width {
                     match self.load(v_address.wrapping_add(i)) {
-                        Ok(byte) => data |= (byte as u64) << (i * 8),
+                        Ok((byte, _)) => data |= (byte as u64) << (i * 8),
                         Err(e) => return Err(e),
                     };
                 }
@@ -375,12 +376,12 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_halfword(&mut self, v_address: u64) -> Result<u16, Trap> {
+    pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, MemoryRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 2 == 0, "Unaligned load_halfword");
-        self.trace_load(effective_address);
+        let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 2) {
-            Ok(data) => Ok(data as u16),
+            Ok(data) => Ok((data as u16, memory_read)),
             Err(e) => Err(e),
         }
     }
@@ -390,12 +391,12 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_word(&mut self, v_address: u64) -> Result<u32, Trap> {
+    pub fn load_word(&mut self, v_address: u64) -> Result<(u32, MemoryRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 4 == 0, "Unaligned load_word");
-        self.trace_load(effective_address);
+        let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 4) {
-            Ok(data) => Ok(data as u32),
+            Ok(data) => Ok((data as u32, memory_read)),
             Err(e) => Err(e),
         }
     }
@@ -408,7 +409,6 @@ impl Mmu {
     pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 8 == 0, "Unaligned load_doubleword");
-        self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
             Ok(data) => Ok(data),
             Err(e) => Err(e),
@@ -421,13 +421,13 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value`
-    pub fn store(&mut self, v_address: u64, value: u8) -> Result<(), Trap> {
+    pub fn store(&mut self, v_address: u64, value: u8) -> Result<MemoryWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store_byte(effective_address, value as u64);
+        let memory_write = self.trace_store_byte(effective_address, value as u64);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
             Ok(p_address) => {
                 self.store_raw(p_address, value);
-                Ok(())
+                Ok(memory_write)
             }
             Err(()) => Err(Trap {
                 trap_type: TrapType::StorePageFault,
@@ -471,7 +471,7 @@ impl Mmu {
             false => {
                 for i in 0..width {
                     match self.store(v_address.wrapping_add(i), ((value >> (i * 8)) & 0xff) as u8) {
-                        Ok(()) => {}
+                        Ok(_) => {}
                         Err(e) => return Err(e),
                     }
                 }
@@ -486,11 +486,12 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<(), Trap> {
+    pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<MemoryWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 2 == 0, "Unaligned store_halfword");
-        self.trace_store_halfword(effective_address, value as u64);
-        self.store_bytes(v_address, value as u64, 2)
+        let memory_write = self.trace_store_halfword(effective_address, value as u64);
+        self.store_bytes(v_address, value as u64, 2)?;
+        Ok(memory_write)
     }
 
     /// Stores four bytes. This method takes virtual address and translates
@@ -499,11 +500,12 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<(), Trap> {
+    pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<MemoryWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 4 == 0, "Unaligned store_word");
-        self.trace_store(effective_address, value as u64);
-        self.store_bytes(v_address, value as u64, 4)
+        let memory_write = self.trace_store(effective_address, value as u64);
+        self.store_bytes(v_address, value as u64, 4)?;
+        Ok(memory_write)
     }
 
     /// Stores eight bytes. This method takes virtual address and translates
@@ -551,7 +553,7 @@ impl Mmu {
 
     /// Records the memory word being accessed by a load instruction. The memory
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
-    fn trace_load(&mut self, effective_address: u64) {
+    fn trace_load(&self, effective_address: u64) -> MemoryRead {
         let word_address = (effective_address >> 2) << 2;
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -563,11 +565,10 @@ impl Mmu {
                 for i in 0..bytes {
                     value_bytes[i as usize] = self.jolt_device.load(word_address + i);
                 }
-                let value = u64::from_le_bytes(value_bytes);
-                self.tracer.push_memory(MemoryState::Read {
+                MemoryRead {
                     address: word_address,
-                    value,
-                });
+                    value: u64::from_le_bytes(value_bytes),
+                }
             } else {
                 panic!("Unknown memory mapping {:X}.", word_address);
             }
@@ -576,18 +577,17 @@ impl Mmu {
             for i in 0..bytes {
                 value_bytes[i as usize] = self.memory.read_byte(word_address + i);
             }
-            let value = u64::from_le_bytes(value_bytes);
-            self.tracer.push_memory(MemoryState::Read {
+            MemoryRead {
                 address: word_address,
-                value,
-            });
+                value: u64::from_le_bytes(value_bytes),
+            }
         }
     }
 
     /// Records the state of the memory word containing the accessed byte
     /// before and after the store instruction. The memory state is used in Jolt to
     /// construct the witnesses in `read_write_memory.rs`.
-    fn trace_store_byte(&mut self, effective_address: u64, value: u64) {
+    fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> MemoryWrite {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -618,17 +618,17 @@ impl Mmu {
             _ => unreachable!(),
         };
 
-        self.tracer.push_memory(MemoryState::Write {
+        MemoryWrite {
             address: word_address,
             pre_value,
             post_value,
-        });
+        }
     }
 
     /// Records the state of the memory word containing the accessed halfword
     /// before and after the store instruction. The memory state is used in Jolt to
     /// construct the witnesses in `read_write_memory.rs`.
-    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) {
+    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> MemoryWrite {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -659,17 +659,17 @@ impl Mmu {
             panic!("Unaligned store {:x}", effective_address);
         };
 
-        self.tracer.push_memory(MemoryState::Write {
+        MemoryWrite {
             address: word_address,
             pre_value,
             post_value,
-        });
+        }
     }
 
     /// Records the state of the accessed memory word before and after the store
     /// instruction. The memory state is used in Jolt to construct the witnesses
     /// in `read_write_memory.rs`.
-    fn trace_store(&mut self, effective_address: u64, value: u64) {
+    fn trace_store(&mut self, effective_address: u64, value: u64) -> MemoryWrite {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -682,23 +682,22 @@ impl Mmu {
                 pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
-
-            self.tracer.push_memory(MemoryState::Write {
+            MemoryWrite {
                 address: effective_address,
                 pre_value,
                 post_value: value,
-            });
+            }
         } else {
             let mut pre_value_bytes = [0u8; 8];
             for i in 0..bytes {
                 pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
-            self.tracer.push_memory(MemoryState::Write {
+            MemoryWrite {
                 address: effective_address,
                 pre_value,
                 post_value: value,
-            });
+            }
         }
     }
 
@@ -1171,7 +1170,7 @@ impl MemoryWrapper {
         self.memory.init(capacity);
     }
 
-    pub fn read_byte(&mut self, p_address: u64) -> u8 {
+    pub fn read_byte(&self, p_address: u64) -> u8 {
         debug_assert!(
             p_address >= DRAM_BASE,
             "Memory address must equals to or bigger than DRAM_BASE. {:X}",

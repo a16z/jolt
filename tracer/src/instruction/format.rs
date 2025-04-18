@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, Xlen};
 
 pub trait InstructionFormat: Default {
     type RegisterState: Default;
 
     fn parse(word: u32) -> Self;
-    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {}
-    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {}
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -42,30 +42,14 @@ impl InstructionFormat for FormatB {
             ) as i32 as i64,
         }
     }
-}
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatCSR {
-    pub csr: u16,
-    pub rs: usize,
-    pub rd: usize,
-}
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
+    }
 
-#[derive(Default)]
-pub struct RegisterStateFormatCSR {
-    rs: u64,
-    rd: (u64, u64), // (old_value, new_value)
-}
-
-impl InstructionFormat for FormatCSR {
-    type RegisterState = RegisterStateFormatCSR;
-
-    fn parse(word: u32) -> Self {
-        FormatCSR {
-            csr: ((word >> 20) & 0xfff) as u16, // [31:20]
-            rs: ((word >> 15) & 0x1f) as usize, // [19:15], also uimm
-            rd: ((word >> 7) & 0x1f) as usize,  // [11:7]
-        }
+    fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
+        // No register write
     }
 }
 
@@ -99,6 +83,15 @@ impl InstructionFormat for FormatI {
             ) as i32 as i64,
         }
     }
+
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
+
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -130,6 +123,14 @@ impl InstructionFormat for FormatJ {
             ) as i32 as i64,
         }
     }
+
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
+
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -156,34 +157,15 @@ impl InstructionFormat for FormatR {
             rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
         }
     }
-}
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatR2 {
-    pub rd: usize,
-    pub rs1: usize,
-    pub rs2: usize,
-    pub rs3: usize,
-}
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
 
-#[derive(Default)]
-pub struct RegisterStateFormatR2 {
-    rd: (u64, u64), // (old_value, new_value)
-    rs1: u64,
-    rs2: u64,
-    rs3: u64,
-}
-
-impl InstructionFormat for FormatR2 {
-    type RegisterState = RegisterStateFormatR2;
-
-    fn parse(word: u32) -> Self {
-        FormatR2 {
-            rd: ((word >> 7) & 0x1f) as usize,   // [11:7]
-            rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
-            rs3: ((word >> 27) & 0x1f) as usize, // [31:27]
-        }
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
     }
 }
 
@@ -218,6 +200,15 @@ impl InstructionFormat for FormatS {
             ) as i32 as i64,
         }
     }
+
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
+    }
+
+    fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
+        // No register write
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -246,5 +237,20 @@ impl InstructionFormat for FormatU {
                 // imm[31:12] = [31:12]
             ) as i32 as i64,
         }
+    }
+
+    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
+
+    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
+        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+    }
+}
+
+fn normalize_register_value(value: i64, xlen: &Xlen) -> u64 {
+    match xlen {
+        Xlen::Bit32 => value as u32 as u64,
+        Xlen::Bit64 => value as u64,
     }
 }

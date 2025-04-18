@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatR, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,14 @@ impl<const WORD_SIZE: usize> RISCVInstruction for SLTU<WORD_SIZE> {
             operands: FormatR::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        cpu.x[self.operands.rd] = match cpu.unsigned_data(cpu.x[self.operands.rs1])
+            < cpu.unsigned_data(cpu.x[self.operands.rs2])
+        {
+            true => 1,
+            false => 0,
+        };
     }
 }

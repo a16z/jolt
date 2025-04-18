@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::{Cpu, Xlen};
+
 use super::{
     format::{FormatR, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,16 @@ impl<const WORD_SIZE: usize> RISCVInstruction for SRL<WORD_SIZE> {
             operands: FormatR::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        let mask = match cpu.xlen {
+            Xlen::Bit32 => 0x1f,
+            Xlen::Bit64 => 0x3f,
+        };
+        cpu.x[self.operands.rd] = cpu.sign_extend(
+            cpu.unsigned_data(cpu.x[self.operands.rs1])
+                .wrapping_shr(cpu.x[self.operands.rs2] as u32 & mask) as i64,
+        );
     }
 }

@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{FormatJ, InstructionFormat},
+    format::{FormatI, InstructionFormat},
     RISCVInstruction,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct JAL<const WORD_SIZE: usize> {
+pub struct FENCE<const WORD_SIZE: usize> {
     pub address: u64,
-    pub operands: FormatJ,
+    pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -19,11 +19,11 @@ pub struct JAL<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for JAL<WORD_SIZE> {
-    const MASK: u32 = 0x0000007f;
-    const MATCH: u32 = 0x0000006f;
+impl<const WORD_SIZE: usize> RISCVInstruction for FENCE<WORD_SIZE> {
+    const MASK: u32 = 0x0000707f;
+    const MATCH: u32 = 0x0000000f;
 
-    type Format = FormatJ;
+    type Format = FormatI;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {
@@ -33,13 +33,12 @@ impl<const WORD_SIZE: usize> RISCVInstruction for JAL<WORD_SIZE> {
     fn new(word: u32, address: u64) -> Self {
         Self {
             address,
-            operands: FormatJ::parse(word),
+            operands: FormatI::parse(word),
             virtual_sequence_remaining: None,
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64);
-        cpu.pc = (cpu.pc as i64 + self.operands.imm) as u64;
+    fn execute(&self, _: &mut Cpu, _: &mut Self::RAMAccess) {
+        // no-op
     }
 }

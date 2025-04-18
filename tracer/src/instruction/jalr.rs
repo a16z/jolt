@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatI, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,11 @@ impl<const WORD_SIZE: usize> RISCVInstruction for JALR<WORD_SIZE> {
             operands: FormatI::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        let tmp = cpu.sign_extend(cpu.pc as i64);
+        cpu.pc = (cpu.x[self.operands.rs1] as u64).wrapping_add(self.operands.imm as u64);
+        cpu.x[self.operands.rd] = tmp;
     }
 }

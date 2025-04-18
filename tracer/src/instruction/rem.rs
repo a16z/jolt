@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatR, InstructionFormat},
     RISCVInstruction,
@@ -33,6 +35,19 @@ impl<const WORD_SIZE: usize> RISCVInstruction for REM<WORD_SIZE> {
             address,
             operands: FormatR::parse(word),
             virtual_sequence_remaining: None,
+        }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        let dividend = cpu.x[self.operands.rs1];
+        let divisor = cpu.x[self.operands.rs2];
+        if divisor == 0 {
+            cpu.x[self.operands.rd] = dividend;
+        } else if dividend == cpu.most_negative() && divisor == -1 {
+            cpu.x[self.operands.rd] = 0;
+        } else {
+            cpu.x[self.operands.rd] =
+                cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_rem(cpu.x[self.operands.rs2]));
         }
     }
 }

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::instruction::format::{
-    FormatB, FormatCSR, FormatI, FormatJ, FormatR, FormatR2, FormatS, FormatU, InstructionFormat,
+    FormatB, FormatI, FormatJ, FormatR, FormatS, FormatU, InstructionFormat,
 };
 use crate::trace::Tracer;
 use common::instruction::*;
@@ -71,16 +71,16 @@ const MIP_SSIP: u64 = 0x002;
 /// Emulates a RISC-V CPU core
 pub struct Cpu {
     clock: u64,
-    xlen: Xlen,
+    pub(crate) xlen: Xlen,
     privilege_mode: PrivilegeMode,
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
     pub x: [i64; 32],
     f: [f64; 32],
-    pc: u64,
+    pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
-    mmu: Mmu,
+    pub(crate) mmu: Mmu,
     reservation: u64, // @TODO: Should support multiple address reservations
     is_reservation_set: bool,
     _dump_flag: bool,
@@ -867,7 +867,7 @@ impl Cpu {
     }
 
     // @TODO: Rename to better name?
-    fn sign_extend(&self, value: i64) -> i64 {
+    pub(crate) fn sign_extend(&self, value: i64) -> i64 {
         match self.xlen {
             Xlen::Bit32 => value as i32 as i64,
             Xlen::Bit64 => value,
@@ -875,12 +875,12 @@ impl Cpu {
     }
 
     // @TODO: Rename to better name?
-    fn unsigned_data(&self, value: i64) -> u64 {
+    pub(crate) fn unsigned_data(&self, value: i64) -> u64 {
         (value as u64) & self.unsigned_data_mask
     }
 
     // @TODO: Rename to better name?
-    fn most_negative(&self) -> i64 {
+    pub(crate) fn most_negative(&self) -> i64 {
         match self.xlen {
             Xlen::Bit32 => std::i32::MIN as i64,
             Xlen::Bit64 => std::i64::MIN,
@@ -1488,25 +1488,6 @@ fn dump_format_b(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> Stri
     s
 }
 
-fn dump_format_csr(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatCSR::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    // @TODO: Use CSR name
-    s += &format!(",{:x}", f.csr);
-    if evaluate {
-        s += &format!(":{:x}", cpu.read_csr_raw(f.csr));
-    }
-    s += &format!(",{}", get_register_name(f.rs));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs]);
-    }
-    s
-}
-
 fn dump_format_i(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
     let f = FormatI::parse(word);
     let mut s = String::new();
@@ -1562,28 +1543,6 @@ fn dump_format_r(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> Str
     s += &format!(",{}", get_register_name(f.rs2));
     if evaluate {
         s += &format!(":{:x}", cpu.x[f.rs2]);
-    }
-    s
-}
-
-fn dump_format_r2(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatR2::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    s += &format!(",{}", get_register_name(f.rs1));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs1]);
-    }
-    s += &format!(",{}", get_register_name(f.rs2));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs2]);
-    }
-    s += &format!(",{}", get_register_name(f.rs3));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs3]);
     }
     s
 }
@@ -1990,7 +1949,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = FormatI::parse(word);
             cpu.x[f.rd] = match cpu.mmu.load(cpu.x[f.rs1].wrapping_add(f.imm) as u64) {
-                Ok(data) => data as i8 as i64,
+                Ok((data, _)) => data as i8 as i64,
                 Err(e) => return Err(e),
             };
             Ok(())
@@ -2005,7 +1964,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = FormatI::parse(word);
             cpu.x[f.rd] = match cpu.mmu.load(cpu.x[f.rs1].wrapping_add(f.imm) as u64) {
-                Ok(data) => data as i64,
+                Ok((data, _)) => data as i64,
                 Err(e) => return Err(e),
             };
             Ok(())
@@ -2023,7 +1982,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
                 .mmu
                 .load_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64)
             {
-                Ok(data) => data as i16 as i64,
+                Ok((data, _)) => data as i16 as i64,
                 Err(e) => return Err(e),
             };
             Ok(())
@@ -2041,7 +2000,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
                 .mmu
                 .load_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64)
             {
-                Ok(data) => data as i64,
+                Ok((data, _)) => data as i64,
                 Err(e) => return Err(e),
             };
             Ok(())
@@ -2068,7 +2027,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = FormatI::parse(word);
             cpu.x[f.rd] = match cpu.mmu.load_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64) {
-                Ok(data) => data as i32 as i64,
+                Ok((data, _)) => data as i32 as i64,
                 Err(e) => return Err(e),
             };
             Ok(())
@@ -2210,7 +2169,8 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = FormatS::parse(word);
             cpu.mmu
-                .store(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u8)
+                .store(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u8)?;
+            Ok(())
         },
         disassemble: dump_format_s,
         trace: Some(trace_s),
@@ -2222,7 +2182,8 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = FormatS::parse(word);
             cpu.mmu
-                .store_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u16)
+                .store_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u16)?;
+            Ok(())
         },
         disassemble: dump_format_s,
         trace: Some(trace_s),
@@ -2396,7 +2357,8 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = FormatS::parse(word);
             cpu.mmu
-                .store_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u32)
+                .store_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u32)?;
+            Ok(())
         },
         disassemble: dump_format_s,
         trace: Some(trace_s),
@@ -2695,12 +2657,12 @@ mod test_cpu {
 
         // Write non-compressed "addi x1, x1, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00108093) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         // Write compressed "addi x8, x0, 8" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE + 4, 0x20) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
 
@@ -2722,7 +2684,7 @@ mod test_cpu {
         cpu.update_pc(DRAM_BASE);
         // write non-compressed "addi a0, a0, 12" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xc50513) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         assert_eq!(DRAM_BASE, cpu.read_pc());
@@ -2749,7 +2711,7 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(4);
         cpu.update_pc(DRAM_BASE);
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xaaaaaaaa) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         match cpu.fetch() {
@@ -2757,7 +2719,7 @@ mod test_cpu {
             Err(_e) => panic!("Failed to fetch"),
         };
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x55555555) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         match cpu.fetch() {
@@ -2808,7 +2770,7 @@ mod test_cpu {
         cpu.update_pc(DRAM_BASE);
         // write WFI instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, wfi_instruction) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         cpu.tick();
@@ -2836,7 +2798,7 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(4);
         // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         cpu.update_pc(DRAM_BASE);
@@ -2877,7 +2839,7 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(4);
         // Write ECALL instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00000073) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
@@ -2905,12 +2867,12 @@ mod test_cpu {
 
         // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
         // Write non-compressed "addi x1, x1, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE + 4, 0x00108093) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
 
@@ -2935,7 +2897,7 @@ mod test_cpu {
 
         // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
 

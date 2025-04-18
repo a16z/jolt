@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatB, InstructionFormat},
     RISCVInstruction,
@@ -33,6 +35,12 @@ impl<const WORD_SIZE: usize> RISCVInstruction for BLT<WORD_SIZE> {
             address,
             operands: FormatB::parse(word),
             virtual_sequence_remaining: None,
+        }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        if cpu.sign_extend(cpu.x[self.operands.rs1]) < cpu.sign_extend(cpu.x[self.operands.rs2]) {
+            cpu.pc = (cpu.pc as i64 + self.operands.imm) as u64;
         }
     }
 }

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatU, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,9 @@ impl<const WORD_SIZE: usize> RISCVInstruction for AUIPC<WORD_SIZE> {
             operands: FormatU::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64 + self.operands.imm);
     }
 }

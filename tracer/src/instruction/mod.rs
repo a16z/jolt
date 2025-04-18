@@ -11,6 +11,7 @@ use bltu::BLTU;
 use bne::BNE;
 use div::DIV;
 use divu::DIVU;
+use fence::FENCE;
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
@@ -47,10 +48,6 @@ use xori::XORI;
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
 use format::InstructionFormat;
-use serde::{Deserialize, Serialize};
-use std::str::FromStr;
-use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
 
 pub mod format;
 
@@ -67,6 +64,7 @@ pub mod bltu;
 pub mod bne;
 pub mod div;
 pub mod divu;
+pub mod fence;
 pub mod jal;
 pub mod jalr;
 pub mod lb;
@@ -101,9 +99,16 @@ pub mod xor;
 pub mod xori;
 
 #[derive(Default)]
-pub struct MemoryRead(u64, u64); // (address, value)
+pub struct MemoryRead {
+    pub(crate) address: u64,
+    pub(crate) value: u64,
+}
 #[derive(Default)]
-pub struct MemoryWrite(u64, u64, u64); // (address, old_value, new_value)
+pub struct MemoryWrite {
+    pub(crate) address: u64,
+    pub(crate) pre_value: u64,
+    pub(crate) post_value: u64,
+}
 
 pub trait RISCVInstruction: Sized + Copy {
     const MASK: u32;
@@ -153,6 +158,7 @@ pub enum RV32IMInstruction {
     BNE(BNE<32>),
     DIV(DIV<32>),
     DIVU(DIVU<32>),
+    FENCE(FENCE<32>),
     JAL(JAL<32>),
     JALR(JALR<32>),
     LB(LB<32>),
@@ -202,6 +208,7 @@ pub enum RV32IMCycle {
     BNE(RISCVCycle<BNE<32>>),
     DIV(RISCVCycle<DIV<32>>),
     DIVU(RISCVCycle<DIVU<32>>),
+    FENCE(RISCVCycle<FENCE<32>>),
     JAL(RISCVCycle<JAL<32>>),
     JALR(RISCVCycle<JALR<32>>),
     LB(RISCVCycle<LB<32>>),
@@ -239,51 +246,52 @@ pub enum RV32IMCycle {
 impl RV32IMCycle {
     pub fn instruction(&self) -> RV32IMInstruction {
         match self {
-            RV32IMCycle::ADD(cycle) => RV32IMInstruction::ADD(cycle.instruction),
-            RV32IMCycle::ADDI(cycle) => RV32IMInstruction::ADDI(cycle.instruction),
-            RV32IMCycle::AND(cycle) => RV32IMInstruction::AND(cycle.instruction),
-            RV32IMCycle::ANDI(cycle) => RV32IMInstruction::ANDI(cycle.instruction),
-            RV32IMCycle::AUIPC(cycle) => RV32IMInstruction::AUIPC(cycle.instruction),
-            RV32IMCycle::BEQ(cycle) => RV32IMInstruction::BEQ(cycle.instruction),
-            RV32IMCycle::BGE(cycle) => RV32IMInstruction::BGE(cycle.instruction),
-            RV32IMCycle::BGEU(cycle) => RV32IMInstruction::BGEU(cycle.instruction),
-            RV32IMCycle::BLT(cycle) => RV32IMInstruction::BLT(cycle.instruction),
-            RV32IMCycle::BLTU(cycle) => RV32IMInstruction::BLTU(cycle.instruction),
-            RV32IMCycle::BNE(cycle) => RV32IMInstruction::BNE(cycle.instruction),
-            RV32IMCycle::DIV(cycle) => RV32IMInstruction::DIV(cycle.instruction),
-            RV32IMCycle::DIVU(cycle) => RV32IMInstruction::DIVU(cycle.instruction),
-            RV32IMCycle::JAL(cycle) => RV32IMInstruction::JAL(cycle.instruction),
-            RV32IMCycle::JALR(cycle) => RV32IMInstruction::JALR(cycle.instruction),
-            RV32IMCycle::LB(cycle) => RV32IMInstruction::LB(cycle.instruction),
-            RV32IMCycle::LBU(cycle) => RV32IMInstruction::LBU(cycle.instruction),
-            RV32IMCycle::LH(cycle) => RV32IMInstruction::LH(cycle.instruction),
-            RV32IMCycle::LHU(cycle) => RV32IMInstruction::LHU(cycle.instruction),
-            RV32IMCycle::LUI(cycle) => RV32IMInstruction::LUI(cycle.instruction),
-            RV32IMCycle::LW(cycle) => RV32IMInstruction::LW(cycle.instruction),
-            RV32IMCycle::MUL(cycle) => RV32IMInstruction::MUL(cycle.instruction),
-            RV32IMCycle::MULH(cycle) => RV32IMInstruction::MULH(cycle.instruction),
-            RV32IMCycle::MULHSU(cycle) => RV32IMInstruction::MULHSU(cycle.instruction),
-            RV32IMCycle::MULHU(cycle) => RV32IMInstruction::MULHU(cycle.instruction),
-            RV32IMCycle::OR(cycle) => RV32IMInstruction::OR(cycle.instruction),
-            RV32IMCycle::ORI(cycle) => RV32IMInstruction::ORI(cycle.instruction),
-            RV32IMCycle::REM(cycle) => RV32IMInstruction::REM(cycle.instruction),
-            RV32IMCycle::REMU(cycle) => RV32IMInstruction::REMU(cycle.instruction),
-            RV32IMCycle::SB(cycle) => RV32IMInstruction::SB(cycle.instruction),
-            RV32IMCycle::SH(cycle) => RV32IMInstruction::SH(cycle.instruction),
-            RV32IMCycle::SLL(cycle) => RV32IMInstruction::SLL(cycle.instruction),
-            RV32IMCycle::SLLI(cycle) => RV32IMInstruction::SLLI(cycle.instruction),
-            RV32IMCycle::SLT(cycle) => RV32IMInstruction::SLT(cycle.instruction),
-            RV32IMCycle::SLTI(cycle) => RV32IMInstruction::SLTI(cycle.instruction),
-            RV32IMCycle::SLTIU(cycle) => RV32IMInstruction::SLTIU(cycle.instruction),
-            RV32IMCycle::SLTU(cycle) => RV32IMInstruction::SLTU(cycle.instruction),
-            RV32IMCycle::SRA(cycle) => RV32IMInstruction::SRA(cycle.instruction),
-            RV32IMCycle::SRAI(cycle) => RV32IMInstruction::SRAI(cycle.instruction),
-            RV32IMCycle::SRL(cycle) => RV32IMInstruction::SRL(cycle.instruction),
-            RV32IMCycle::SRLI(cycle) => RV32IMInstruction::SRLI(cycle.instruction),
-            RV32IMCycle::SUB(cycle) => RV32IMInstruction::SUB(cycle.instruction),
-            RV32IMCycle::SW(cycle) => RV32IMInstruction::SW(cycle.instruction),
-            RV32IMCycle::XOR(cycle) => RV32IMInstruction::XOR(cycle.instruction),
-            RV32IMCycle::XORI(cycle) => RV32IMInstruction::XORI(cycle.instruction),
+            RV32IMCycle::ADD(cycle) => cycle.instruction.into(),
+            RV32IMCycle::ADDI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::AND(cycle) => cycle.instruction.into(),
+            RV32IMCycle::ANDI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::AUIPC(cycle) => cycle.instruction.into(),
+            RV32IMCycle::BEQ(cycle) => cycle.instruction.into(),
+            RV32IMCycle::BGE(cycle) => cycle.instruction.into(),
+            RV32IMCycle::BGEU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::BLT(cycle) => cycle.instruction.into(),
+            RV32IMCycle::BLTU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::BNE(cycle) => cycle.instruction.into(),
+            RV32IMCycle::DIV(cycle) => cycle.instruction.into(),
+            RV32IMCycle::DIVU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::FENCE(cycle) => cycle.instruction.into(),
+            RV32IMCycle::JAL(cycle) => cycle.instruction.into(),
+            RV32IMCycle::JALR(cycle) => cycle.instruction.into(),
+            RV32IMCycle::LB(cycle) => cycle.instruction.into(),
+            RV32IMCycle::LBU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::LH(cycle) => cycle.instruction.into(),
+            RV32IMCycle::LHU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::LUI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::LW(cycle) => cycle.instruction.into(),
+            RV32IMCycle::MUL(cycle) => cycle.instruction.into(),
+            RV32IMCycle::MULH(cycle) => cycle.instruction.into(),
+            RV32IMCycle::MULHSU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::MULHU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::OR(cycle) => cycle.instruction.into(),
+            RV32IMCycle::ORI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::REM(cycle) => cycle.instruction.into(),
+            RV32IMCycle::REMU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SB(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SH(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SLL(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SLLI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SLT(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SLTI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SLTIU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SLTU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SRA(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SRAI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SRL(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SRLI(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SUB(cycle) => cycle.instruction.into(),
+            RV32IMCycle::SW(cycle) => cycle.instruction.into(),
+            RV32IMCycle::XOR(cycle) => cycle.instruction.into(),
+            RV32IMCycle::XORI(cycle) => cycle.instruction.into(),
         }
     }
 }

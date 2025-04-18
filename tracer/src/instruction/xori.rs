@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatI, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,9 @@ impl<const WORD_SIZE: usize> RISCVInstruction for XORI<WORD_SIZE> {
             operands: FormatI::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        cpu.x[self.operands.rd] = cpu.sign_extend(cpu.x[self.operands.rs1] ^ self.operands.imm);
     }
 }

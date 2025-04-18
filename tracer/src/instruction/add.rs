@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatR, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,10 @@ impl<const WORD_SIZE: usize> RISCVInstruction for ADD<WORD_SIZE> {
             operands: FormatR::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        cpu.x[self.operands.rd] =
+            cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_add(cpu.x[self.operands.rs2]));
     }
 }

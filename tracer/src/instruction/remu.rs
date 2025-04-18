@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::emulator::cpu::Cpu;
+
 use super::{
     format::{FormatR, InstructionFormat},
     RISCVInstruction,
@@ -34,5 +36,14 @@ impl<const WORD_SIZE: usize> RISCVInstruction for REMU<WORD_SIZE> {
             operands: FormatR::parse(word),
             virtual_sequence_remaining: None,
         }
+    }
+
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+        let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1]);
+        let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2]);
+        cpu.x[self.operands.rd] = match divisor {
+            0 => cpu.sign_extend(dividend as i64),
+            _ => cpu.sign_extend(dividend.wrapping_rem(divisor) as i64),
+        };
     }
 }
