@@ -5,7 +5,7 @@ use super::builder::{
     OffsetEqConstraint,
 };
 
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::JoltPolynomials;
 use crate::jolt::vm::JoltStuff;
@@ -1143,35 +1143,29 @@ where
                                 for i in 0..shard_length {
                                     let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
-                                    *bind_z_int_eval += poly.Z[i] * eq_rx_step.E1[x1];
+                                    *bind_z_int_eval +=
+                                        poly.Z[i].mul_01_optimized(eq_rx_step.E1[x1]);
 
                                     if poly_idx != 0 {
-                                        if poly_idx % e1_len == 0 {
-                                            *bind_shift_z_int_eval +=
-                                                poly.Z[i] * eq_rx_step.E1[e1_len - 1];
-                                        } else {
-                                            *bind_shift_z_int_eval +=
-                                                poly.Z[i] * eq_rx_step.E1[x1 - 1];
-                                        }
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.Z[i] * eq_rx_step.E1[e1_index];
                                     }
 
-                                    if (poly_idx + 1) % e1_len == 0 {
+                                    if x1 == e1_len - 1 {
                                         let x2 = poly_idx >> num_x1_bits;
                                         *bind_z_eval += *bind_z_int_eval * eq_rx_step.E2[x2];
                                         *bind_z_int_eval = F::zero();
                                     }
 
-                                    if poly_idx % e1_len == 0 && poly_idx != 0 {
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
                                         let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
                                         *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard_idx == num_shards - 1)
-                                        && (poly_idx + 1) % e1_len == 0
-                                    {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2];
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
                                         *bind_shift_z_int_eval = F::zero();
                                     }
                                 }
@@ -1184,32 +1178,24 @@ where
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
 
                                     if poly_idx != 0 {
-                                        if poly_idx % e1_len == 0 {
-                                            *bind_shift_z_int_eval += poly.coeffs[i]
-                                                .field_mul(eq_rx_step_r2.E1[e1_len - 1]);
-                                        } else {
-                                            *bind_shift_z_int_eval +=
-                                                poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1 - 1]);
-                                        }
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
                                     }
 
-                                    if (poly_idx + 1) % e1_len == 0 {
+                                    if x1 == e1_len - 1 {
                                         let x2 = poly_idx >> num_x1_bits;
                                         *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
                                         *bind_z_int_eval = F::zero();
                                     }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
 
-                                    if poly_idx % e1_len == 0 && poly_idx != 0 {
+                                    if boundary_case && poly_idx != 0 {
                                         let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
                                         *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard_idx == num_shards - 1)
-                                        && (poly_idx + 1) % e1_len == 0
-                                    {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2];
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
                                         *bind_shift_z_int_eval = F::zero();
                                     }
                                 }
@@ -1222,32 +1208,24 @@ where
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
 
                                     if poly_idx != 0 {
-                                        if poly_idx % e1_len == 0 {
-                                            *bind_shift_z_int_eval += poly.coeffs[i]
-                                                .field_mul(eq_rx_step_r2.E1[e1_len - 1]);
-                                        } else {
-                                            *bind_shift_z_int_eval +=
-                                                poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1 - 1]);
-                                        }
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
                                     }
 
-                                    if (poly_idx + 1) % e1_len == 0 {
+                                    if x1 == e1_len - 1 {
                                         let x2 = poly_idx >> num_x1_bits;
                                         *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
                                         *bind_z_int_eval = F::zero();
                                     }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
 
-                                    if poly_idx % e1_len == 0 && poly_idx != 0 {
+                                    if boundary_case && poly_idx != 0 {
                                         let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
                                         *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard_idx == num_shards - 1)
-                                        && (poly_idx + 1) % e1_len == 0
-                                    {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2];
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
                                         *bind_shift_z_int_eval = F::zero();
                                     }
                                 }
@@ -1260,32 +1238,24 @@ where
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
 
                                     if poly_idx != 0 {
-                                        if poly_idx % e1_len == 0 {
-                                            *bind_shift_z_int_eval += poly.coeffs[i]
-                                                .field_mul(eq_rx_step_r2.E1[e1_len - 1]);
-                                        } else {
-                                            *bind_shift_z_int_eval +=
-                                                poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1 - 1]);
-                                        }
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
                                     }
 
-                                    if (poly_idx + 1) % e1_len == 0 {
+                                    if x1 == e1_len - 1 {
                                         let x2 = poly_idx >> num_x1_bits;
                                         *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
                                         *bind_z_int_eval = F::zero();
                                     }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
 
-                                    if poly_idx % e1_len == 0 && poly_idx != 0 {
+                                    if boundary_case && poly_idx != 0 {
                                         let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
                                         *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard_idx == num_shards - 1)
-                                        && (poly_idx + 1) % e1_len == 0
-                                    {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2];
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
                                         *bind_shift_z_int_eval = F::zero();
                                     }
                                 }
@@ -1298,32 +1268,24 @@ where
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
 
                                     if poly_idx != 0 {
-                                        if poly_idx % e1_len == 0 {
-                                            *bind_shift_z_int_eval += poly.coeffs[i]
-                                                .field_mul(eq_rx_step_r2.E1[e1_len - 1]);
-                                        } else {
-                                            *bind_shift_z_int_eval +=
-                                                poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1 - 1]);
-                                        }
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
                                     }
 
-                                    if (poly_idx + 1) % e1_len == 0 {
+                                    if x1 == e1_len - 1 {
                                         let x2 = poly_idx >> num_x1_bits;
                                         *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
                                         *bind_z_int_eval = F::zero();
                                     }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
 
-                                    if poly_idx % e1_len == 0 && poly_idx != 0 {
+                                    if boundary_case && poly_idx != 0 {
                                         let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
                                         *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard_idx == num_shards - 1)
-                                        && (poly_idx + 1) % e1_len == 0
-                                    {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2];
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
                                         *bind_shift_z_int_eval = F::zero();
                                     }
                                 }
@@ -1336,32 +1298,24 @@ where
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
 
                                     if poly_idx != 0 {
-                                        if poly_idx % e1_len == 0 {
-                                            *bind_shift_z_int_eval += poly.coeffs[i]
-                                                .field_mul(eq_rx_step_r2.E1[e1_len - 1]);
-                                        } else {
-                                            *bind_shift_z_int_eval +=
-                                                poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1 - 1]);
-                                        }
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
                                     }
 
-                                    if (poly_idx + 1) % e1_len == 0 {
+                                    if x1 == e1_len - 1 {
                                         let x2 = poly_idx >> num_x1_bits;
                                         *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
                                         *bind_z_int_eval = F::zero();
                                     }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
 
-                                    if poly_idx % e1_len == 0 && poly_idx != 0 {
+                                    if boundary_case && poly_idx != 0 {
                                         let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
                                         *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
-                                        *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard_idx == num_shards - 1)
-                                        && (poly_idx + 1) % e1_len == 0
-                                    {
-                                        let x2 = poly_idx >> num_x1_bits;
-                                        *bind_shift_z_eval +=
-                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2];
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
                                         *bind_shift_z_int_eval = F::zero();
                                     }
                                 }

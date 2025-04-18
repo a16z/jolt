@@ -744,7 +744,7 @@ where
 
         // Streaming polynomials
         #[cfg(test)]
-        let shard_len = (1024).min(padded_trace_length);
+        let shard_len = (128).min(padded_trace_length);
         #[cfg(test)]
         let no_of_shards = padded_trace_length / shard_len;
 
