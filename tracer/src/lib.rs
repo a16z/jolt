@@ -14,6 +14,7 @@ use object::{Object, ObjectSection, SectionKind};
 
 mod decode;
 mod emulator;
+mod instruction;
 mod trace;
 
 pub use common::instruction::{ELFInstruction, RV32IM};

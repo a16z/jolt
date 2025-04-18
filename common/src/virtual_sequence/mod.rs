@@ -1,35 +1,19 @@
-use crate::{
-    instruction::ELFInstruction,
-    rv_trace::{RVTraceRow, RegisterState},
-};
+use crate::instruction::{RISCVCycle, RISCVInstruction, RV32IMCycle, RV32IMInstruction};
 
-pub trait VirtualInstructionSequence {
-    const SEQUENCE_LENGTH: usize;
-
-    fn virtual_sequence(instruction: ELFInstruction) -> Vec<ELFInstruction> {
-        let dummy_trace_row = RVTraceRow {
-            instruction,
-            register_state: RegisterState {
-                rs1_val: Some(0),
-                rs2_val: Some(0),
-                rd_post_val: Some(0),
-                rd_pre_val: Some(0),
-            },
-            memory_state: None,
-            advice_value: None,
-            precompile_input: None,
-            precompile_output_address: None,
+pub trait VirtualInstructionSequence: RISCVInstruction {
+    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+        let dummy_cycle = RISCVCycle {
+            instruction: *self,
+            register_state: Default::default(),
+            memory_state: Default::default(),
         };
-        Self::virtual_trace(dummy_trace_row)
+        Self::virtual_trace(dummy_cycle)
             .into_iter()
-            .map(|trace_row| trace_row.instruction)
+            .map(|cycle| cycle.instruction())
             .collect()
     }
 
-    fn virtual_trace(trace_row: RVTraceRow) -> Vec<RVTraceRow> {
-        vec![trace_row]
-    }
-
+    fn virtual_trace(cycle: RISCVCycle<Self>) -> Vec<RV32IMCycle>;
     fn sequence_output(x: u64, y: u64) -> u64;
 }
 
