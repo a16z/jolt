@@ -723,7 +723,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 .iter_mut()
                 .for_each(|elem| *elem = elem.mul(F::montgomery_r2().unwrap()));
 
-            for shard in 0..num_shards {
+            for shard_idx in 0..num_shards {
                 let shards = jolt_oracle.next_shard(shard_length);
                 let polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                     .iter()
@@ -736,9 +736,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                         match poly {
                             MultilinearPolynomial::LargeScalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
-                                    *int_eval += poly.Z[i] * eq.E1[x1];
+                                    *int_eval += poly.Z[i].mul_01_optimized(eq.E1[x1]);
 
                                     if (poly_idx + 1) % e1_len == 0 {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -749,7 +749,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                             }
                             MultilinearPolynomial::U8Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
 
@@ -762,7 +762,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                             }
                             MultilinearPolynomial::U16Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
 
@@ -775,7 +775,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                             }
                             MultilinearPolynomial::U32Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
 
@@ -788,7 +788,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                             }
                             MultilinearPolynomial::U64Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
                                     if (poly_idx + 1) % e1_len == 0 {
@@ -800,7 +800,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                             }
                             MultilinearPolynomial::I64Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
 
@@ -815,7 +815,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     });
             }
         } else {
-            for shard in 0..num_shards {
+            for shard_idx in 0..num_shards {
                 let shards = jolt_oracle.next_shard(shard_length);
                 let polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                     .iter()
@@ -827,9 +827,9 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                     .for_each(|(poly, (int_eval, final_eval))| {
                         let poly: &DensePolynomial<F> = poly.try_into().unwrap();
                         for i in 0..shard_length {
-                            let poly_idx = shard_length * shard + i;
+                            let poly_idx = shard_length * shard_idx + i;
                             let x1 = poly_idx & x1_bitmask;
-                            *int_eval += poly.Z[i] * eq.E1[x1];
+                            *int_eval += poly.Z[i].mul_01_optimized(eq.E1[x1]);
 
                             if (poly_idx + 1) % e1_len == 0 {
                                 let x2 = poly_idx >> num_x1_bits;

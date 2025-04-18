@@ -950,7 +950,6 @@ where
         })
     }
 
-    // TODO: Change the return type back to Result<Self, SpartanError>.
     #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
     pub fn streaming_prove<PCS, InstructionSet, const M: usize>(
         num_shards: usize,
@@ -1112,7 +1111,7 @@ where
         let mut bind_z_int = vec![F::zero(); num_polys];
         let mut bind_shift_z_int = vec![F::zero(); num_polys];
 
-        for shard in 0..num_shards {
+        for shard_idx in 0..num_shards {
             let polynomials = jolt_oracle.next_shard(shard_length);
             let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
                 .iter()
@@ -1142,7 +1141,7 @@ where
                         match poly {
                             MultilinearPolynomial::LargeScalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *bind_z_int_eval += poly.Z[i] * eq_rx_step.E1[x1];
 
@@ -1167,7 +1166,7 @@ where
                                         *bind_shift_z_eval +=
                                             *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
                                         *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard == num_shards - 1)
+                                    } else if (shard_idx == num_shards - 1)
                                         && (poly_idx + 1) % e1_len == 0
                                     {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -1179,7 +1178,7 @@ where
                             }
                             MultilinearPolynomial::U8Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *bind_z_int_eval +=
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
@@ -1205,7 +1204,7 @@ where
                                         *bind_shift_z_eval +=
                                             *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
                                         *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard == num_shards - 1)
+                                    } else if (shard_idx == num_shards - 1)
                                         && (poly_idx + 1) % e1_len == 0
                                     {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -1217,7 +1216,7 @@ where
                             }
                             MultilinearPolynomial::U16Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *bind_z_int_eval +=
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
@@ -1243,7 +1242,7 @@ where
                                         *bind_shift_z_eval +=
                                             *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
                                         *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard == num_shards - 1)
+                                    } else if (shard_idx == num_shards - 1)
                                         && (poly_idx + 1) % e1_len == 0
                                     {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -1255,7 +1254,7 @@ where
                             }
                             MultilinearPolynomial::U32Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *bind_z_int_eval +=
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
@@ -1281,7 +1280,7 @@ where
                                         *bind_shift_z_eval +=
                                             *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
                                         *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard == num_shards - 1)
+                                    } else if (shard_idx == num_shards - 1)
                                         && (poly_idx + 1) % e1_len == 0
                                     {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -1293,7 +1292,7 @@ where
                             }
                             MultilinearPolynomial::U64Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *bind_z_int_eval +=
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
@@ -1319,7 +1318,7 @@ where
                                         *bind_shift_z_eval +=
                                             *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
                                         *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard == num_shards - 1)
+                                    } else if (shard_idx == num_shards - 1)
                                         && (poly_idx + 1) % e1_len == 0
                                     {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -1331,7 +1330,7 @@ where
                             }
                             MultilinearPolynomial::I64Scalars(poly) => {
                                 for i in 0..shard_length {
-                                    let poly_idx = shard_length * shard + i;
+                                    let poly_idx = shard_length * shard_idx + i;
                                     let x1 = poly_idx & x1_bitmask;
                                     *bind_z_int_eval +=
                                         poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
@@ -1357,7 +1356,7 @@ where
                                         *bind_shift_z_eval +=
                                             *bind_shift_z_int_eval * eq_rx_step_r2.E2[x2 - 1];
                                         *bind_shift_z_int_eval = F::zero();
-                                    } else if (shard == num_shards - 1)
+                                    } else if (shard_idx == num_shards - 1)
                                         && (poly_idx + 1) % e1_len == 0
                                     {
                                         let x2 = poly_idx >> num_x1_bits;
@@ -1467,8 +1466,23 @@ where
         let shift_sumcheck_r: Vec<F> = shift_sumcheck_rev.iter().rev().copied().collect();
 
         // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
+
+        //TODO: Required for opening accumulator can be removed after streaming version of opening accumulator
+        let chis = EqPolynomial::evals(rx_step);
+
+        let claimed_witness_evals = MultilinearPolynomial::stream_batch_evaluate::<
+            C,
+            InstructionSet,
+            I,
+        >(&mut jolt_oracle, rx_step, num_shards, shard_length);
+
+        jolt_oracle.reset();
 
         opening_accumulator.append(
             &flattened_polys,
@@ -1478,49 +1492,17 @@ where
             transcript,
         );
 
-        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
-            preprocessing,
-            program_io,
-            constraint_builder,
-            trace,
-        );
-
-        #[cfg(test)]
-        {
-            let claimed_witness_eval2 = MultilinearPolynomial::stream_batch_evaluate::<
-                C,
-                InstructionSet,
-                I,
-            >(
-                &mut jolt_oracle, rx_step, num_shards, shard_length
-            );
-
-            assert_eq!(
-                claimed_witness_evals, claimed_witness_eval2,
-                "stream claimed witness evals are incorrect "
-            );
-        }
-        jolt_oracle.reset();
+        //TODO: Required for opening accumulator can be removed after streaming version of opening accumulator
+        let chis2 = EqPolynomial::evals(&shift_sumcheck_r);
 
         // Shift sumcheck evaluations: evaluate z on ry_var
-        let (shift_sumcheck_witness_evals, chis2) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
-
-        #[cfg(test)]
-        {
-            let shift_sumcheck_witness_evals2 =
-                MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
-                    &mut jolt_oracle,
-                    &shift_sumcheck_r,
-                    num_shards,
-                    shard_length,
-                );
-
-            assert_eq!(
-                shift_sumcheck_witness_evals, shift_sumcheck_witness_evals2,
-                "stream shift sum check witness are incorrect "
+        let shift_sumcheck_witness_evals =
+            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
+                &mut jolt_oracle,
+                &shift_sumcheck_r,
+                num_shards,
+                shard_length,
             );
-        }
 
         opening_accumulator.append(
             &flattened_polys,

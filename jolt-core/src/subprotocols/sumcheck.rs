@@ -411,10 +411,13 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
         let mut uni_polys: Vec<UniPoly<F>> = Vec::new();
         let mut final_evals = vec![F::zero(); 3];
+
         let mut evals_1 = vec![F::zero(); 1 << (num_rounds - num_rounds / 2)];
         evals_1[0] = F::one();
+
         let mut evals_2 = vec![F::zero(); 1 << (num_rounds / 2)];
         evals_2[0] = F::one();
+
         assert_eq!(eq_tau.E1_len.log_2(), num_rounds - num_rounds / 2);
 
         interleaved_az_bz_cz.streaming_sumcheck_first_half(
@@ -696,7 +699,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     }
 }
 pub enum Stream<'a, F: JoltField, I: JoltInstructionSet> {
-    SumCheck(StreamSumCheck<'a, F>),
+    TestSumCheck(StreamSumCheck<'a, F>),
     SpartanSumCheck((BindZRyVarOracle<'a, F, I>, SplitEqPolynomial<F>)),
 }
 pub enum OracleItem<F: JoltField> {
@@ -708,7 +711,7 @@ impl<F: JoltField, I: JoltInstructionSet> Oracle for Stream<'_, F, I> {
 
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
         match self {
-            Stream::SumCheck(inner) => {
+            Stream::TestSumCheck(inner) => {
                 let shard = inner.next_shard(shard_len);
                 OracleItem::SumCheck(shard)
             }
@@ -747,7 +750,7 @@ impl<F: JoltField, I: JoltInstructionSet> Oracle for Stream<'_, F, I> {
 
     fn reset(&mut self) {
         match self {
-            Stream::SumCheck(inner) => {
+            Stream::TestSumCheck(inner) => {
                 inner.reset();
             }
             Stream::SpartanSumCheck(inner) => {
@@ -872,7 +875,7 @@ mod test {
         let degree = 3;
         let (proof, _r, final_evals) = SumcheckInstanceProof::stream_prove_arbitrary::<_, _, RV32I>(
             num_vars,
-            &mut Stream::SumCheck(stream_sum_check_polys),
+            &mut Stream::TestSumCheck(stream_sum_check_polys),
             extract_poly_fn,
             comb_func,
             degree,
