@@ -6,11 +6,8 @@ const DTB_SIZE: usize = 0xfe0;
 
 extern crate fnv;
 
-use std::rc::Rc;
-
 use crate::instruction::{MemoryRead, MemoryWrite};
-use crate::trace::Tracer;
-use common::memory::{JoltDevice, MemoryState};
+use common::memory::JoltDevice;
 
 use self::fnv::FnvHashMap;
 
@@ -41,7 +38,6 @@ pub struct Mmu {
     uart: Uart,
 
     pub jolt_device: JoltDevice,
-    tracer: Rc<Tracer>,
 
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
@@ -94,7 +90,7 @@ impl Mmu {
     /// * `xlen`
     /// * `terminal`
     /// * `tracer`
-    pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>, tracer: Rc<Tracer>) -> Self {
+    pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>) -> Self {
         let mut dtb = vec![0; DTB_SIZE];
 
         // Load default device tree binary content
@@ -107,14 +103,13 @@ impl Mmu {
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
-            memory: MemoryWrapper::new(tracer.clone()),
+            memory: MemoryWrapper::new(),
             dtb,
             disk: VirtioBlockDisk::new(),
             plic: Plic::new(),
             clint: Clint::new(),
             uart: Uart::new(terminal),
             jolt_device: JoltDevice::new(0, 0),
-            tracer,
             mstatus: 0,
             page_cache_enabled: false,
             fetch_page_cache: FnvHashMap::default(),
@@ -1155,14 +1150,12 @@ impl Mmu {
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 pub struct MemoryWrapper {
     memory: Memory,
-    tracer: Rc<Tracer>,
 }
 
 impl MemoryWrapper {
-    fn new(tracer: Rc<Tracer>) -> Self {
+    fn new() -> Self {
         MemoryWrapper {
             memory: Memory::new(),
-            tracer,
         }
     }
 
@@ -1259,14 +1252,12 @@ impl MemoryWrapper {
 mod test_mmu {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
-    use std::rc::Rc;
 
     const MEM_CAPACITY: u64 = 1024 * 1024;
 
     fn setup_mmu(capacity: u64) -> Mmu {
         let terminal = Box::new(DummyTerminal::new());
-        let tracer = Rc::new(Tracer::new());
-        let mut mmu = Mmu::new(Xlen::Bit64, terminal, tracer);
+        let mut mmu = Mmu::new(Xlen::Bit64, terminal);
 
         mmu.init_memory(capacity);
 

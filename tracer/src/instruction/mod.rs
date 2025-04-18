@@ -191,6 +191,189 @@ pub enum RV32IMInstruction {
     SW(SW<32>),
     XOR(XOR<32>),
     XORI(XORI<32>),
+    UNIMPL,
+}
+
+impl RV32IMInstruction {
+    pub fn decode(instr: u32, address: u64) -> Result<Self, &'static str> {
+        let opcode = instr & 0x7f;
+        match opcode {
+            0b0110111 => {
+                // LUI: U-type => [imm(31:12), rd, opcode]
+                Ok(LUI::new(instr, address).into())
+            }
+            0b0010111 => {
+                // AUIPC: U-type => [imm(31:12), rd, opcode]
+                Ok(AUIPC::new(instr, address).into())
+            }
+            0b1101111 => {
+                // JAL: UJ-type instruction.
+                Ok(JAL::new(instr, address).into())
+            }
+            0b1100111 => {
+                // JALR: I-type, where funct3 must be 0.
+                let funct3 = (instr >> 12) & 0x7;
+                if funct3 != 0 {
+                    return Err("Invalid funct3 for JALR");
+                }
+                Ok(JALR::new(instr, address).into())
+            }
+            0b1100011 => {
+                // Branch instructions (SB-type): BEQ, BNE, BLT, BGE, BLTU, BGEU.
+                match (instr >> 12) & 0x7 {
+                    0b000 => Ok(BEQ::new(instr, address).into()),
+                    0b001 => Ok(BNE::new(instr, address).into()),
+                    0b100 => Ok(BLT::new(instr, address).into()),
+                    0b101 => Ok(BGE::new(instr, address).into()),
+                    0b110 => Ok(BLTU::new(instr, address).into()),
+                    0b111 => Ok(BGEU::new(instr, address).into()),
+                    _ => Err("Invalid branch funct3"),
+                }
+            }
+            0b0000011 => {
+                // Load instructions (I-type): LB, LH, LW, LBU, LHU.
+                match (instr >> 12) & 0x7 {
+                    0b000 => Ok(LB::new(instr, address).into()),
+                    0b001 => Ok(LH::new(instr, address).into()),
+                    0b010 => Ok(LW::new(instr, address).into()),
+                    0b100 => Ok(LBU::new(instr, address).into()),
+                    0b101 => Ok(LHU::new(instr, address).into()),
+                    _ => Err("Invalid load funct3"),
+                }
+            }
+            0b0100011 => {
+                // Store instructions (S-type): SB, SH, SW.
+                match (instr >> 12) & 0x7 {
+                    0b000 => Ok(SB::new(instr, address).into()),
+                    0b001 => Ok(SH::new(instr, address).into()),
+                    0b010 => Ok(SW::new(instr, address).into()),
+                    _ => Err("Invalid store funct3"),
+                }
+            }
+            0b0010011 => {
+                // I-type arithmetic instructions: ADDI, SLTI, SLTIU, XORI, ORI, ANDI,
+                // and also shift-immediate instructions SLLI, SRLI, SRAI.
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                if funct3 == 0b001 {
+                    // SLLI uses shamt and expects funct7 == 0.
+                    if funct7 == 0 {
+                        Ok(SLLI::new(instr, address).into())
+                    } else {
+                        Err("Invalid funct7 for SLLI")
+                    }
+                } else if funct3 == 0b101 {
+                    if funct7 == 0b0000000 {
+                        Ok(SRLI::new(instr, address).into())
+                    } else if funct7 == 0b0100000 {
+                        Ok(SRAI::new(instr, address).into())
+                    } else {
+                        Err("Invalid ALU shift funct7")
+                    }
+                } else {
+                    match funct3 {
+                        0b000 => Ok(ADDI::new(instr, address).into()),
+                        0b010 => Ok(SLTI::new(instr, address).into()),
+                        0b011 => Ok(SLTIU::new(instr, address).into()),
+                        0b100 => Ok(XORI::new(instr, address).into()),
+                        0b110 => Ok(ORI::new(instr, address).into()),
+                        0b111 => Ok(ANDI::new(instr, address).into()),
+                        _ => Err("Invalid I-type ALU funct3"),
+                    }
+                }
+            }
+            0b0110011 => {
+                // R-type arithmetic instructions.
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                match (funct3, funct7) {
+                    (0b000, 0b0000000) => Ok(ADD::new(instr, address).into()),
+                    (0b000, 0b0100000) => Ok(SUB::new(instr, address).into()),
+                    (0b001, 0b0000000) => Ok(SLL::new(instr, address).into()),
+                    (0b010, 0b0000000) => Ok(SLT::new(instr, address).into()),
+                    (0b011, 0b0000000) => Ok(SLTU::new(instr, address).into()),
+                    (0b100, 0b0000000) => Ok(XOR::new(instr, address).into()),
+                    (0b101, 0b0000000) => Ok(SRL::new(instr, address).into()),
+                    (0b101, 0b0100000) => Ok(SRA::new(instr, address).into()),
+                    (0b110, 0b0000000) => Ok(OR::new(instr, address).into()),
+                    (0b111, 0b0000000) => Ok(AND::new(instr, address).into()),
+                    // RV32M extension
+                    (0b000, 0b0000001) => Ok(MUL::new(instr, address).into()),
+                    (0b001, 0b0000001) => Ok(MULH::new(instr, address).into()),
+                    (0b010, 0b0000001) => Ok(MULHSU::new(instr, address).into()),
+                    (0b011, 0b0000001) => Ok(MULHU::new(instr, address).into()),
+                    (0b100, 0b0000001) => Ok(DIV::new(instr, address).into()),
+                    (0b101, 0b0000001) => Ok(DIVU::new(instr, address).into()),
+                    (0b110, 0b0000001) => Ok(REM::new(instr, address).into()),
+                    (0b111, 0b0000001) => Ok(REMU::new(instr, address).into()),
+                    _ => Err("Invalid R-type arithmetic instruction"),
+                }
+            }
+            0b0001111 => {
+                // FENCE: I-type; the immediate encodes "pred" and "succ" flags.
+                Ok(FENCE::new(instr, address).into())
+            }
+            0b1110011 => {
+                // SYSTEM instructions: ECALL/EBREAK (I-type)
+                Err("Unsupported SYSTEM instruction")
+            }
+            _ => Err("Unknown opcode"),
+        }
+    }
+
+    pub fn trace(&self, cpu: &mut Cpu) -> RV32IMCycle {
+        match self {
+            RV32IMInstruction::ADD(add) => add.trace(cpu).into(),
+            RV32IMInstruction::ADDI(addi) => addi.trace(cpu).into(),
+            RV32IMInstruction::AND(and) => and.trace(cpu).into(),
+            RV32IMInstruction::ANDI(andi) => andi.trace(cpu).into(),
+            RV32IMInstruction::AUIPC(auipc) => auipc.trace(cpu).into(),
+            RV32IMInstruction::BEQ(beq) => beq.trace(cpu).into(),
+            RV32IMInstruction::BGE(bge) => bge.trace(cpu).into(),
+            RV32IMInstruction::BGEU(bgeu) => bgeu.trace(cpu).into(),
+            RV32IMInstruction::BLT(blt) => blt.trace(cpu).into(),
+            RV32IMInstruction::BLTU(bltu) => bltu.trace(cpu).into(),
+            RV32IMInstruction::BNE(bne) => bne.trace(cpu).into(),
+            RV32IMInstruction::DIV(div) => div.trace(cpu).into(),
+            RV32IMInstruction::DIVU(divu) => divu.trace(cpu).into(),
+            RV32IMInstruction::FENCE(fence) => fence.trace(cpu).into(),
+            RV32IMInstruction::JAL(jal) => jal.trace(cpu).into(),
+            RV32IMInstruction::JALR(jalr) => jalr.trace(cpu).into(),
+            RV32IMInstruction::LB(lb) => lb.trace(cpu).into(),
+            RV32IMInstruction::LBU(lbu) => lbu.trace(cpu).into(),
+            RV32IMInstruction::LH(lh) => lh.trace(cpu).into(),
+            RV32IMInstruction::LHU(lhu) => lhu.trace(cpu).into(),
+            RV32IMInstruction::LUI(lui) => lui.trace(cpu).into(),
+            RV32IMInstruction::LW(lw) => lw.trace(cpu).into(),
+            RV32IMInstruction::MUL(mul) => mul.trace(cpu).into(),
+            RV32IMInstruction::MULH(mulh) => mulh.trace(cpu).into(),
+            RV32IMInstruction::MULHSU(mulhsu) => mulhsu.trace(cpu).into(),
+            RV32IMInstruction::MULHU(mulhu) => mulhu.trace(cpu).into(),
+            RV32IMInstruction::OR(or) => or.trace(cpu).into(),
+            RV32IMInstruction::ORI(ori) => ori.trace(cpu).into(),
+            RV32IMInstruction::REM(rem) => rem.trace(cpu).into(),
+            RV32IMInstruction::REMU(remu) => remu.trace(cpu).into(),
+            RV32IMInstruction::SB(sb) => sb.trace(cpu).into(),
+            RV32IMInstruction::SH(sh) => sh.trace(cpu).into(),
+            RV32IMInstruction::SLL(sll) => sll.trace(cpu).into(),
+            RV32IMInstruction::SLLI(slli) => slli.trace(cpu).into(),
+            RV32IMInstruction::SLT(slt) => slt.trace(cpu).into(),
+            RV32IMInstruction::SLTI(slti) => slti.trace(cpu).into(),
+            RV32IMInstruction::SLTIU(sltiu) => sltiu.trace(cpu).into(),
+            RV32IMInstruction::SLTU(sltu) => sltu.trace(cpu).into(),
+            RV32IMInstruction::SRA(sra) => sra.trace(cpu).into(),
+            RV32IMInstruction::SRAI(srai) => srai.trace(cpu).into(),
+            RV32IMInstruction::SRL(srl) => srl.trace(cpu).into(),
+            RV32IMInstruction::SRLI(srli) => srli.trace(cpu).into(),
+            RV32IMInstruction::SUB(sub) => sub.trace(cpu).into(),
+            RV32IMInstruction::SW(sw) => sw.trace(cpu).into(),
+            RV32IMInstruction::XOR(xor) => xor.trace(cpu).into(),
+            RV32IMInstruction::XORI(xori) => xori.trace(cpu).into(),
+            RV32IMInstruction::UNIMPL => {
+                unimplemented!("UNIMPL")
+            }
+        }
+    }
 }
 
 #[derive(From)]
@@ -241,57 +424,4 @@ pub enum RV32IMCycle {
     SW(RISCVCycle<SW<32>>),
     XOR(RISCVCycle<XOR<32>>),
     XORI(RISCVCycle<XORI<32>>),
-}
-
-impl RV32IMCycle {
-    pub fn instruction(&self) -> RV32IMInstruction {
-        match self {
-            RV32IMCycle::ADD(cycle) => cycle.instruction.into(),
-            RV32IMCycle::ADDI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::AND(cycle) => cycle.instruction.into(),
-            RV32IMCycle::ANDI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::AUIPC(cycle) => cycle.instruction.into(),
-            RV32IMCycle::BEQ(cycle) => cycle.instruction.into(),
-            RV32IMCycle::BGE(cycle) => cycle.instruction.into(),
-            RV32IMCycle::BGEU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::BLT(cycle) => cycle.instruction.into(),
-            RV32IMCycle::BLTU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::BNE(cycle) => cycle.instruction.into(),
-            RV32IMCycle::DIV(cycle) => cycle.instruction.into(),
-            RV32IMCycle::DIVU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::FENCE(cycle) => cycle.instruction.into(),
-            RV32IMCycle::JAL(cycle) => cycle.instruction.into(),
-            RV32IMCycle::JALR(cycle) => cycle.instruction.into(),
-            RV32IMCycle::LB(cycle) => cycle.instruction.into(),
-            RV32IMCycle::LBU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::LH(cycle) => cycle.instruction.into(),
-            RV32IMCycle::LHU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::LUI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::LW(cycle) => cycle.instruction.into(),
-            RV32IMCycle::MUL(cycle) => cycle.instruction.into(),
-            RV32IMCycle::MULH(cycle) => cycle.instruction.into(),
-            RV32IMCycle::MULHSU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::MULHU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::OR(cycle) => cycle.instruction.into(),
-            RV32IMCycle::ORI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::REM(cycle) => cycle.instruction.into(),
-            RV32IMCycle::REMU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SB(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SH(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SLL(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SLLI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SLT(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SLTI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SLTIU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SLTU(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SRA(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SRAI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SRL(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SRLI(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SUB(cycle) => cycle.instruction.into(),
-            RV32IMCycle::SW(cycle) => cycle.instruction.into(),
-            RV32IMCycle::XOR(cycle) => cycle.instruction.into(),
-            RV32IMCycle::XORI(cycle) => cycle.instruction.into(),
-        }
-    }
 }

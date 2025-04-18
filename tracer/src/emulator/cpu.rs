@@ -3,16 +3,12 @@
 extern crate fnv;
 
 use std::convert::TryInto;
-use std::rc::Rc;
-use std::str::FromStr;
 
 use crate::instruction::format::{
     FormatB, FormatI, FormatJ, FormatR, FormatS, FormatU, InstructionFormat,
 };
-use crate::trace::Tracer;
+use crate::instruction::{RV32IMCycle, RV32IMInstruction};
 use common::instruction::*;
-
-use self::fnv::FnvHashMap;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
@@ -84,9 +80,8 @@ pub struct Cpu {
     reservation: u64, // @TODO: Should support multiple address reservations
     is_reservation_set: bool,
     _dump_flag: bool,
-    decode_cache: DecodeCache,
     unsigned_data_mask: u64,
-    pub tracer: Rc<Tracer>,
+    pub trace: Vec<RV32IMCycle>,
 }
 
 #[derive(Clone)]
@@ -231,7 +226,6 @@ impl Cpu {
     /// # Arguments
     /// * `Terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
-        let tracer = Rc::new(Tracer::new());
         let mut cpu = Cpu {
             clock: 0,
             xlen: Xlen::Bit64,
@@ -241,13 +235,12 @@ impl Cpu {
             f: [0.0; 32],
             pc: 0,
             csr: [0; CSR_CAPACITY],
-            mmu: Mmu::new(Xlen::Bit64, terminal, tracer.clone()),
+            mmu: Mmu::new(Xlen::Bit64, terminal),
             reservation: 0,
             is_reservation_set: false,
             _dump_flag: false,
-            decode_cache: DecodeCache::new(),
             unsigned_data_mask: 0xffffffffffffffff,
-            tracer,
+            trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
         };
         cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -331,72 +324,14 @@ impl Cpu {
             }
         };
 
-        match self.decode(word).cloned() {
-            Ok(inst) => {
-                // setup trace
-                let trace_inst = inst.trace.unwrap()(&inst, &self.xlen, word, instruction_address);
-                self.tracer.start_instruction(trace_inst);
-                self.tracer.capture_pre_state(self.x, &self.xlen);
+        let instr = RV32IMInstruction::decode(word, instruction_address)
+            .ok()
+            .unwrap();
+        let cycle = instr.trace(self);
+        self.trace.push(cycle);
+        self.x[0] = 0; // hardwired zero
 
-                // execute
-                let result = (inst.operation)(self, word, instruction_address);
-                self.x[0] = 0; // hardwired zero
-
-                // complete trace
-                self.tracer.capture_post_state(self.x, &self.xlen);
-                self.tracer.end_instruction();
-
-                result
-            }
-            Err(()) => {
-                panic!(
-                    "Unknown instruction PC:{:x} WORD:{:x}",
-                    instruction_address, original_word
-                );
-            }
-        }
-    }
-
-    /// Decodes a word instruction data and returns a reference to
-    /// [`Instruction`](struct.Instruction.html). Using [`DecodeCache`](struct.DecodeCache.html)
-    /// so if cache hits this method returns the result very quickly.
-    /// The result will be stored to cache.
-    fn decode(&mut self, word: u32) -> Result<&Instruction, ()> {
-        match self.decode_cache.get(word) {
-            Some(index) => Ok(&INSTRUCTIONS[index]),
-            None => match self.decode_and_get_instruction_index(word) {
-                Ok(index) => {
-                    self.decode_cache.insert(word, index);
-                    Ok(&INSTRUCTIONS[index])
-                }
-                Err(()) => Err(()),
-            },
-        }
-    }
-
-    /// Decodes a word instruction data and returns a reference to
-    /// [`Instruction`](struct.Instruction.html). Not Using [`DecodeCache`](struct.DecodeCache.html)
-    /// so if you don't want to pollute the cache you should use this method
-    /// instead of `decode`.
-    fn decode_raw(&self, word: u32) -> Result<&Instruction, ()> {
-        match self.decode_and_get_instruction_index(word) {
-            Ok(index) => Ok(&INSTRUCTIONS[index]),
-            Err(()) => Err(()),
-        }
-    }
-
-    /// Decodes a word instruction data and returns an index of
-    /// [`INSTRUCTIONS`](constant.INSTRUCTIONS.html)
-    ///
-    /// # Arguments
-    /// * `word` word instruction data decoded
-    fn decode_and_get_instruction_index(&self, word: u32) -> Result<usize, ()> {
-        for (i, inst) in INSTRUCTIONS.iter().enumerate().take(INSTRUCTION_NUM) {
-            if (word & inst.mask) == inst.data {
-                return Ok(i);
-            }
-        }
-        Err(())
+        Ok(())
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
@@ -1413,42 +1348,43 @@ impl Cpu {
 
     /// Disassembles an instruction pointed by Program Counter.
     pub fn disassemble_next_instruction(&mut self) -> String {
-        // @TODO: Fetching can make a side effect,
-        // for example updating page table entry or update peripheral hardware registers.
-        // But ideally disassembling doesn't want to cause any side effect.
-        // How can we avoid side effect?
-        let mut original_word = match self.mmu.fetch_word(self.pc) {
-            Ok(data) => data,
-            Err(_e) => {
-                return format!("PC:{:016x}, InstructionPageFault Trap!\n", self.pc);
-            }
-        };
+        // // @TODO: Fetching can make a side effect,
+        // // for example updating page table entry or update peripheral hardware registers.
+        // // But ideally disassembling doesn't want to cause any side effect.
+        // // How can we avoid side effect?
+        // let mut original_word = match self.mmu.fetch_word(self.pc) {
+        //     Ok(data) => data,
+        //     Err(_e) => {
+        //         return format!("PC:{:016x}, InstructionPageFault Trap!\n", self.pc);
+        //     }
+        // };
 
-        let word = match (original_word & 0x3) == 0x3 {
-            true => original_word,
-            false => {
-                original_word &= 0xffff;
-                self.uncompress(original_word)
-            }
-        };
+        // let word = match (original_word & 0x3) == 0x3 {
+        //     true => original_word,
+        //     false => {
+        //         original_word &= 0xffff;
+        //         self.uncompress(original_word)
+        //     }
+        // };
 
-        let inst = {
-            match self.decode_raw(word) {
-                Ok(inst) => inst,
-                Err(()) => {
-                    return format!(
-                        "Unknown instruction PC:{:x} WORD:{:x}",
-                        self.pc, original_word
-                    );
-                }
-            }
-        };
+        // let inst = {
+        //     match self.decode_raw(word) {
+        //         Ok(inst) => inst,
+        //         Err(()) => {
+        //             return format!(
+        //                 "Unknown instruction PC:{:x} WORD:{:x}",
+        //                 self.pc, original_word
+        //             );
+        //         }
+        //     }
+        // };
 
-        let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
-        s += &format!("{:08x} ", original_word);
-        s += &format!("{} ", inst.name);
-        s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
-        s
+        // let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
+        // s += &format!("{:08x} ", original_word);
+        // s += &format!("{} ", inst.name);
+        // s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
+        // s
+        todo!()
     }
 
     /// Returns mutable `Mmu`
@@ -1627,951 +1563,6 @@ fn normalize_register(value: usize) -> u64 {
     value.try_into().unwrap()
 }
 
-fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
-    let f = FormatR::parse(word);
-    ELFInstruction {
-        opcode: RV32IM::from_str(inst.name).unwrap(),
-        address: normalize_u64(address, xlen),
-        imm: None,
-        rs1: Some(normalize_register(f.rs1)),
-        rs2: Some(normalize_register(f.rs2)),
-        rd: Some(normalize_register(f.rd)),
-        virtual_sequence_remaining: None,
-    }
-}
-
-fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
-    let f = FormatI::parse(word);
-    ELFInstruction {
-        opcode: RV32IM::from_str(inst.name).unwrap(),
-        address: normalize_u64(address, xlen),
-        imm: Some(f.imm),
-        rs1: Some(normalize_register(f.rs1)),
-        rs2: None,
-        rd: Some(normalize_register(f.rd)),
-        virtual_sequence_remaining: None,
-    }
-}
-
-fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
-    let f = FormatS::parse(word);
-    ELFInstruction {
-        opcode: RV32IM::from_str(inst.name).unwrap(),
-        address: normalize_u64(address, xlen),
-        imm: Some(f.imm),
-        rs1: Some(normalize_register(f.rs1)),
-        rs2: Some(normalize_register(f.rs2)),
-        rd: None,
-        virtual_sequence_remaining: None,
-    }
-}
-
-fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
-    let f = FormatB::parse(word);
-    ELFInstruction {
-        opcode: RV32IM::from_str(inst.name).unwrap(),
-        address: normalize_u64(address, xlen),
-        imm: Some(f.imm),
-        rs1: Some(normalize_register(f.rs1)),
-        rs2: Some(normalize_register(f.rs2)),
-        rd: None,
-        virtual_sequence_remaining: None,
-    }
-}
-
-fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
-    let f = FormatU::parse(word);
-    ELFInstruction {
-        opcode: RV32IM::from_str(inst.name).unwrap(),
-        address: normalize_u64(address, xlen),
-        imm: Some(f.imm),
-        rs1: None,
-        rs2: None,
-        rd: Some(normalize_register(f.rd)),
-        virtual_sequence_remaining: None,
-    }
-}
-
-// (UJ)
-fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
-    let f = FormatJ::parse(word);
-    ELFInstruction {
-        opcode: RV32IM::from_str(inst.name).unwrap(),
-        address: normalize_u64(address, xlen),
-        imm: Some(f.imm),
-        rs1: None,
-        rs2: None,
-        rd: Some(normalize_register(f.rd)),
-        virtual_sequence_remaining: None,
-    }
-}
-
-const INSTRUCTION_NUM: usize = 46;
-// @TODO: Reorder in often used order as
-pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00000033,
-        name: "ADD",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_add(cpu.x[f.rs2]));
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00000013,
-        name: "ADDI",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_add(f.imm));
-            Ok(())
-        },
-        disassemble: dump_format_i,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00007033,
-        name: "AND",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] & cpu.x[f.rs2]);
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00007013,
-        name: "ANDI",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] & f.imm);
-            Ok(())
-        },
-        disassemble: dump_format_i,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000007f,
-        data: 0x00000017,
-        name: "AUIPC",
-        operation: |cpu, word, address| {
-            let f = FormatU::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(address as i64 + f.imm);
-            Ok(())
-        },
-        disassemble: dump_format_u,
-        trace: Some(trace_u),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00000063,
-        name: "BEQ",
-        operation: |cpu, word, address| {
-            let f = FormatB::parse(word);
-            if cpu.sign_extend(cpu.x[f.rs1]) == cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = (address as i64 + f.imm) as u64;
-            }
-            Ok(())
-        },
-        disassemble: dump_format_b,
-        trace: Some(trace_b),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00005063,
-        name: "BGE",
-        operation: |cpu, word, address| {
-            let f = FormatB::parse(word);
-            if cpu.sign_extend(cpu.x[f.rs1]) >= cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = (address as i64 + f.imm) as u64;
-            }
-            Ok(())
-        },
-        disassemble: dump_format_b,
-        trace: Some(trace_b),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00007063,
-        name: "BGEU",
-        operation: |cpu, word, address| {
-            let f = FormatB::parse(word);
-            if cpu.unsigned_data(cpu.x[f.rs1]) >= cpu.unsigned_data(cpu.x[f.rs2]) {
-                cpu.pc = (address as i64 + f.imm) as u64;
-            }
-            Ok(())
-        },
-        disassemble: dump_format_b,
-        trace: Some(trace_b),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00004063,
-        name: "BLT",
-        operation: |cpu, word, address| {
-            let f = FormatB::parse(word);
-            if cpu.sign_extend(cpu.x[f.rs1]) < cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = (address as i64 + f.imm) as u64;
-            }
-            Ok(())
-        },
-        disassemble: dump_format_b,
-        trace: Some(trace_b),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00006063,
-        name: "BLTU",
-        operation: |cpu, word, address| {
-            let f = FormatB::parse(word);
-            if cpu.unsigned_data(cpu.x[f.rs1]) < cpu.unsigned_data(cpu.x[f.rs2]) {
-                cpu.pc = (address as i64 + f.imm) as u64;
-            }
-            Ok(())
-        },
-        disassemble: dump_format_b,
-        trace: Some(trace_b),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00001063,
-        name: "BNE",
-        operation: |cpu, word, address| {
-            let f = FormatB::parse(word);
-            if cpu.sign_extend(cpu.x[f.rs1]) != cpu.sign_extend(cpu.x[f.rs2]) {
-                cpu.pc = (address as i64 + f.imm) as u64;
-            }
-            Ok(())
-        },
-        disassemble: dump_format_b,
-        trace: Some(trace_b),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02004033,
-        name: "DIV",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let dividend = cpu.x[f.rs1];
-            let divisor = cpu.x[f.rs2];
-            if divisor == 0 {
-                cpu.x[f.rd] = -1;
-            } else if dividend == cpu.most_negative() && divisor == -1 {
-                cpu.x[f.rd] = dividend;
-            } else {
-                cpu.x[f.rd] = cpu.sign_extend(dividend.wrapping_div(divisor))
-            }
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02005033,
-        name: "DIVU",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let dividend = cpu.unsigned_data(cpu.x[f.rs1]);
-            let divisor = cpu.unsigned_data(cpu.x[f.rs2]);
-            if divisor == 0 {
-                cpu.x[f.rd] = -1;
-            } else {
-                cpu.x[f.rd] = cpu.sign_extend(dividend.wrapping_div(divisor) as i64)
-            }
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x0000000f,
-        name: "FENCE",
-        operation: |_cpu, _word, _address| {
-            // Do nothing?
-            Ok(())
-        },
-        disassemble: dump_empty,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000007f,
-        data: 0x0000006f,
-        name: "JAL",
-        operation: |cpu, word, address| {
-            let f = FormatJ::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.pc as i64);
-            cpu.pc = (address as i64 + f.imm) as u64;
-            Ok(())
-        },
-        disassemble: dump_format_j,
-        trace: Some(trace_j),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00000067,
-        name: "JALR",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            let tmp = cpu.sign_extend(cpu.pc as i64);
-            cpu.pc = (cpu.x[f.rs1] as u64).wrapping_add(f.imm as u64);
-            cpu.x[f.rd] = tmp;
-            Ok(())
-        },
-        disassemble: |cpu, word, _address, evaluate| {
-            let f = FormatI::parse(word);
-            let mut s = String::new();
-            s += &format!("{}", get_register_name(f.rd));
-            if evaluate {
-                s += &format!(":{:x}", cpu.x[f.rd]);
-            }
-            s += &format!(",{:x}({}", f.imm, get_register_name(f.rs1));
-            if evaluate {
-                s += &format!(":{:x}", cpu.x[f.rs1]);
-            }
-            s += &format!(")");
-            s
-        },
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00000003,
-        name: "LB",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu.mmu.load(cpu.x[f.rs1].wrapping_add(f.imm) as u64) {
-                Ok((data, _)) => data as i8 as i64,
-                Err(e) => return Err(e),
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i_mem,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00004003,
-        name: "LBU",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu.mmu.load(cpu.x[f.rs1].wrapping_add(f.imm) as u64) {
-                Ok((data, _)) => data as i64,
-                Err(e) => return Err(e),
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i_mem,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00001003,
-        name: "LH",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu
-                .mmu
-                .load_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64)
-            {
-                Ok((data, _)) => data as i16 as i64,
-                Err(e) => return Err(e),
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i_mem,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00005003,
-        name: "LHU",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu
-                .mmu
-                .load_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64)
-            {
-                Ok((data, _)) => data as i64,
-                Err(e) => return Err(e),
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i_mem,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000007f,
-        data: 0x00000037,
-        name: "LUI",
-        operation: |cpu, word, _address| {
-            let f = FormatU::parse(word);
-            cpu.x[f.rd] = f.imm as i64;
-            Ok(())
-        },
-        disassemble: dump_format_u,
-        trace: Some(trace_u),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00002003,
-        name: "LW",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu.mmu.load_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64) {
-                Ok((data, _)) => data as i32 as i64,
-                Err(e) => return Err(e),
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i_mem,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02000033,
-        name: "MUL",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_mul(cpu.x[f.rs2]));
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02001033,
-        name: "MULH",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = match cpu.xlen {
-                Xlen::Bit32 => cpu.sign_extend((cpu.x[f.rs1] * cpu.x[f.rs2]) >> 32),
-                Xlen::Bit64 => (((cpu.x[f.rs1] as i128) * (cpu.x[f.rs2] as i128)) >> 64) as i64,
-            };
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02003033,
-        name: "MULHU",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = match cpu.xlen {
-                Xlen::Bit32 => cpu.sign_extend(
-                    (((cpu.x[f.rs1] as u32 as u64) * (cpu.x[f.rs2] as u32 as u64)) >> 32) as i64,
-                ),
-                Xlen::Bit64 => {
-                    ((cpu.x[f.rs1] as u64 as u128).wrapping_mul(cpu.x[f.rs2] as u64 as u128) >> 64)
-                        as i64
-                }
-            };
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02002033,
-        name: "MULHSU",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = match cpu.xlen {
-                Xlen::Bit32 => cpu.sign_extend(
-                    ((cpu.x[f.rs1] as i64).wrapping_mul(cpu.x[f.rs2] as u32 as i64) >> 32) as i64,
-                ),
-                Xlen::Bit64 => {
-                    ((cpu.x[f.rs1] as u128).wrapping_mul(cpu.x[f.rs2] as u64 as u128) >> 64) as i64
-                }
-            };
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00006033,
-        name: "OR",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] | cpu.x[f.rs2]);
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00006013,
-        name: "ORI",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] | f.imm);
-            Ok(())
-        },
-        disassemble: dump_format_i,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02006033,
-        name: "REM",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let dividend = cpu.x[f.rs1];
-            let divisor = cpu.x[f.rs2];
-            if divisor == 0 {
-                cpu.x[f.rd] = dividend;
-            } else if dividend == cpu.most_negative() && divisor == -1 {
-                cpu.x[f.rd] = 0;
-            } else {
-                cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_rem(cpu.x[f.rs2]));
-            }
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x02007033,
-        name: "REMU",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let dividend = cpu.unsigned_data(cpu.x[f.rs1]);
-            let divisor = cpu.unsigned_data(cpu.x[f.rs2]);
-            cpu.x[f.rd] = match divisor {
-                0 => cpu.sign_extend(dividend as i64),
-                _ => cpu.sign_extend(dividend.wrapping_rem(divisor) as i64),
-            };
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00000023,
-        name: "SB",
-        operation: |cpu, word, _address| {
-            let f = FormatS::parse(word);
-            cpu.mmu
-                .store(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u8)?;
-            Ok(())
-        },
-        disassemble: dump_format_s,
-        trace: Some(trace_s),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00001023,
-        name: "SH",
-        operation: |cpu, word, _address| {
-            let f = FormatS::parse(word);
-            cpu.mmu
-                .store_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u16)?;
-            Ok(())
-        },
-        disassemble: dump_format_s,
-        trace: Some(trace_s),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00001033,
-        name: "SLL",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shl(cpu.x[f.rs2] as u32 & 0b11111));
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfc00707f,
-        data: 0x00001013,
-        name: "SLLI",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let mask = match cpu.xlen {
-                Xlen::Bit32 => 0x1f,
-                Xlen::Bit64 => 0x3f,
-            };
-            let shamt = (word >> 20) & mask;
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] << shamt);
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00002033,
-        name: "SLT",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = match cpu.x[f.rs1] < cpu.x[f.rs2] {
-                true => 1,
-                false => 0,
-            };
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00002013,
-        name: "SLTI",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu.x[f.rs1] < f.imm {
-                true => 1,
-                false => 0,
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00003013,
-        name: "SLTIU",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = match cpu.unsigned_data(cpu.x[f.rs1]) < cpu.unsigned_data(f.imm) {
-                true => 1,
-                false => 0,
-            };
-            Ok(())
-        },
-        disassemble: dump_format_i,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00003033,
-        name: "SLTU",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = match cpu.unsigned_data(cpu.x[f.rs1]) < cpu.unsigned_data(cpu.x[f.rs2]) {
-                true => 1,
-                false => 0,
-            };
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x40005033,
-        name: "SRA",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shr(cpu.x[f.rs2] as u32 & 0b11111));
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfc00707f,
-        data: 0x40005013,
-        name: "SRAI",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let mask = match cpu.xlen {
-                Xlen::Bit32 => 0x1f,
-                Xlen::Bit64 => 0x3f,
-            };
-            let shamt = (word >> 20) & mask;
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] >> shamt);
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00005033,
-        name: "SRL",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(
-                cpu.unsigned_data(cpu.x[f.rs1])
-                    .wrapping_shr(cpu.x[f.rs2] as u32 & 0b11111) as i64,
-            );
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0xfc00707f,
-        data: 0x00005013,
-        name: "SRLI",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            let mask = match cpu.xlen {
-                Xlen::Bit32 => 0x1f,
-                Xlen::Bit64 => 0x3f,
-            };
-            let shamt = (word >> 20) & mask;
-            cpu.x[f.rd] = cpu.sign_extend((cpu.unsigned_data(cpu.x[f.rs1]) >> shamt) as i64);
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_i),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x40000033,
-        name: "SUB",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_sub(cpu.x[f.rs2]));
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00002023,
-        name: "SW",
-        operation: |cpu, word, _address| {
-            let f = FormatS::parse(word);
-            cpu.mmu
-                .store_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u32)?;
-            Ok(())
-        },
-        disassemble: dump_format_s,
-        trace: Some(trace_s),
-    },
-    Instruction {
-        mask: 0xfe00707f,
-        data: 0x00004033,
-        name: "XOR",
-        operation: |cpu, word, _address| {
-            let f = FormatR::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] ^ cpu.x[f.rs2]);
-            Ok(())
-        },
-        disassemble: dump_format_r,
-        trace: Some(trace_r),
-    },
-    Instruction {
-        mask: 0x0000707f,
-        data: 0x00004013,
-        name: "XORI",
-        operation: |cpu, word, _address| {
-            let f = FormatI::parse(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] ^ f.imm);
-            Ok(())
-        },
-        disassemble: dump_format_i,
-        trace: Some(trace_i),
-    },
-];
-
-/// The number of results [`DecodeCache`](struct.DecodeCache.html) holds.
-/// You need to carefully choose the number. Too small number causes
-/// bad cache hit ratio. Too large number causes memory consumption
-/// and host hardware CPU cache memory miss.
-const DECODE_CACHE_ENTRY_NUM: usize = 0x1000;
-
-const INVALID_CACHE_ENTRY: usize = INSTRUCTION_NUM;
-const NULL_ENTRY: usize = DECODE_CACHE_ENTRY_NUM;
-
-/// `DecodeCache` provides a cache system for instruction decoding.
-/// It holds the recent [`DECODE_CACHE_ENTRY_NUM`](constant.DECODE_CACHE_ENTRY_NUM.html)
-/// instruction decode results. If it has a cache (called "hit") for passed
-/// word data, it returns decoding result very quickly. Decoding is one of the
-/// slowest parts in CPU. This cache system improves the CPU processing speed
-/// by skipping decoding. Especially it should work well for loop. It is said
-/// that some loops in a program consume the majority of time then this cache
-/// system is expected to reduce the decoding time very well.
-///
-/// This cache system is based on LRU algorithm, and consists of a hash map and
-/// a linked list. Linked list is for LRU, front means recently used and back
-/// means least recently used. A content in hash map points to an entry in the
-/// linked list. This is the key to achieve computing in O(1).
-///
-// @TODO: Write performance benchmark test to confirm this cache actually
-//        improves the speed.
-struct DecodeCache {
-    /// Holds mappings from word instruction data to an index of `entries`
-    /// pointing to the entry having the decoding result. Containing the word
-    /// means cache hit.
-    hash_map: FnvHashMap<u32, usize>,
-
-    /// Holds the entries [`DecodeCacheEntry`](struct.DecodeCacheEntry.html)
-    /// forming linked list.
-    entries: Vec<DecodeCacheEntry>,
-
-    /// An index of `entries` pointing to the head entry in the linked list
-    front_index: usize,
-
-    /// An index of `entries` pointing to the tail entry in the linked list
-    back_index: usize,
-
-    /// Cache hit count for debugging purpose
-    hit_count: u64,
-
-    /// Cache miss count for debugging purpose
-    miss_count: u64,
-}
-
-impl DecodeCache {
-    /// Creates a new `DecodeCache`.
-    fn new() -> Self {
-        // Initialize linked list
-        let mut entries = Vec::new();
-        for i in 0..DECODE_CACHE_ENTRY_NUM {
-            let next_index = match i == DECODE_CACHE_ENTRY_NUM - 1 {
-                true => NULL_ENTRY,
-                false => i + 1,
-            };
-            let prev_index = match i == 0 {
-                true => NULL_ENTRY,
-                false => i - 1,
-            };
-            entries.push(DecodeCacheEntry::new(next_index, prev_index));
-        }
-
-        DecodeCache {
-            hash_map: FnvHashMap::default(),
-            entries,
-            front_index: 0,
-            back_index: DECODE_CACHE_ENTRY_NUM - 1,
-            hit_count: 0,
-            miss_count: 0,
-        }
-    }
-
-    /// Gets the cached decoding result. If hits this method moves the
-    /// cache entry to front of the linked list and returns an index of
-    /// [`INSTRUCTIONS`](constant.INSTRUCTIONS.html).
-    /// Otherwise returns `None`. This operation should compute in O(1) time.
-    ///
-    /// # Arguments
-    /// * `word` word instruction data
-    fn get(&mut self, word: u32) -> Option<usize> {
-        let result = match self.hash_map.get(&word) {
-            Some(index) => {
-                self.hit_count += 1;
-                // Move the entry to front of the list unless it is at front.
-                if self.front_index != *index {
-                    let next_index = self.entries[*index].next_index;
-                    let prev_index = self.entries[*index].prev_index;
-
-                    // Remove the entry from the list
-                    if self.back_index == *index {
-                        self.back_index = prev_index;
-                    } else {
-                        self.entries[next_index].prev_index = prev_index;
-                    }
-                    self.entries[prev_index].next_index = next_index;
-
-                    // Push the entry to front
-                    self.entries[*index].prev_index = NULL_ENTRY;
-                    self.entries[*index].next_index = self.front_index;
-                    self.entries[self.front_index].prev_index = *index;
-                    self.front_index = *index;
-                }
-                Some(self.entries[*index].instruction_index)
-            }
-            None => {
-                self.miss_count += 1;
-                None
-            }
-        };
-        //println!("Hit:{:X}, Miss:{:X}, Ratio:{}", self.hit_count, self.miss_count,
-        //	(self.hit_count as f64) / (self.hit_count + self.miss_count) as f64);
-        result
-    }
-
-    /// Inserts a new decode result to front of the linked list while removing
-    /// the least recently used result from the list. This operation should
-    /// compute in O(1) time.
-    ///
-    /// # Arguments
-    /// * `word`
-    /// * `instruction_index`
-    fn insert(&mut self, word: u32, instruction_index: usize) {
-        let index = self.back_index;
-
-        // Remove the least recently used entry. The entry resource
-        // is reused as new entry.
-        if self.entries[index].instruction_index != INVALID_CACHE_ENTRY {
-            self.hash_map.remove(&self.entries[index].word);
-        }
-        self.back_index = self.entries[index].prev_index;
-        self.entries[self.back_index].next_index = NULL_ENTRY;
-
-        // Push the new entry to front of the linked list
-        self.hash_map.insert(word, index);
-        self.entries[index].prev_index = NULL_ENTRY;
-        self.entries[index].next_index = self.front_index;
-        self.entries[index].word = word;
-        self.entries[index].instruction_index = instruction_index;
-        self.entries[self.front_index].prev_index = index;
-        self.front_index = index;
-    }
-}
-
-/// An entry of linked list managed by [`DecodeCache`](struct.DecodeCache.html).
-/// An entry consists of a mapping from word instruction data to an index of
-/// [`INSTRUCTIONS`](constant.INSTRUCTIONS.html) and next/previous entry index
-/// in the linked list.
-struct DecodeCacheEntry {
-    /// Instruction word data
-    word: u32,
-
-    /// The result of decoding `word`. An index of [`INSTRUCTIONS`](constant.INSTRUCTIONS.html).
-    instruction_index: usize,
-
-    /// Next entry index in the linked list. [`NULL_ENTRY`](constant.NULL_ENTRY.html)
-    /// represents no next entry, meaning the entry is at tail.
-    next_index: usize,
-
-    /// Previous entry index in the linked list. [`NULL_ENTRY`](constant.NULL_ENTRY.html)
-    /// represents no previous entry, meaning the entry is at head.
-    prev_index: usize,
-}
-
-impl DecodeCacheEntry {
-    /// Creates a new entry. Initial `instruction_index` is
-    /// `INVALID_CACHE_ENTRY` meaning the entry is invalid.
-    ///
-    /// # Arguments
-    /// * `next_index`
-    /// * `prev_index`
-    fn new(next_index: usize, prev_index: usize) -> Self {
-        DecodeCacheEntry {
-            word: 0,
-            instruction_index: INVALID_CACHE_ENTRY,
-            next_index,
-            prev_index,
-        }
-    }
-}
-
 #[cfg(test)]
 mod test_cpu {
     use super::*;
@@ -2729,67 +1720,67 @@ mod test_cpu {
         // @TODO: Write test cases where Trap happens
     }
 
-    #[test]
-    fn decode() {
-        let mut cpu = create_cpu();
-        // 0x13 is addi instruction
-        match cpu.decode(0x13) {
-            Ok(inst) => assert_eq!(inst.name, "ADDI"),
-            Err(_e) => panic!("Failed to decode"),
-        };
-        // .decode() returns error for invalid word data.
-        match cpu.decode(0x0) {
-            Ok(_inst) => panic!("Unexpectedly succeeded in decoding"),
-            Err(()) => assert!(true),
-        };
-        // @TODO: Should I test all instructions?
-    }
+    // #[test]
+    // fn decode() {
+    //     let mut cpu = create_cpu();
+    //     // 0x13 is addi instruction
+    //     match cpu.decode(0x13) {
+    //         Ok(inst) => assert_eq!(inst.name, "ADDI"),
+    //         Err(_e) => panic!("Failed to decode"),
+    //     };
+    //     // .decode() returns error for invalid word data.
+    //     match cpu.decode(0x0) {
+    //         Ok(_inst) => panic!("Unexpectedly succeeded in decoding"),
+    //         Err(()) => assert!(true),
+    //     };
+    //     // @TODO: Should I test all instructions?
+    // }
 
-    #[test]
-    fn uncompress() {
-        let mut cpu = create_cpu();
-        // .uncompress() doesn't directly return an instruction but
-        // it returns uncompressed word. Then you need to call .decode().
-        match cpu.decode(cpu.uncompress(0x20)) {
-            Ok(inst) => assert_eq!(inst.name, "ADDI"),
-            Err(_e) => panic!("Failed to decode"),
-        };
-        // @TODO: Should I test all compressed instructions?
-    }
+    // #[test]
+    // fn uncompress() {
+    //     let mut cpu = create_cpu();
+    //     // .uncompress() doesn't directly return an instruction but
+    //     // it returns uncompressed word. Then you need to call .decode().
+    //     match cpu.decode(cpu.uncompress(0x20)) {
+    //         Ok(inst) => assert_eq!(inst.name, "ADDI"),
+    //         Err(_e) => panic!("Failed to decode"),
+    //     };
+    //     // @TODO: Should I test all compressed instructions?
+    // }
 
-    #[test]
-    fn wfi() {
-        let wfi_instruction = 0x10500073;
-        let mut cpu = create_cpu();
-        // Just in case
-        match cpu.decode(wfi_instruction) {
-            Ok(inst) => assert_eq!(inst.name, "WFI"),
-            Err(_e) => panic!("Failed to decode"),
-        };
-        cpu.get_mut_mmu().init_memory(4);
-        cpu.update_pc(DRAM_BASE);
-        // write WFI instruction
-        match cpu.get_mut_mmu().store_word(DRAM_BASE, wfi_instruction) {
-            Ok(_) => {}
-            Err(_e) => panic!("Failed to store"),
-        };
-        cpu.tick();
-        assert_eq!(DRAM_BASE + 4, cpu.read_pc());
-        for _i in 0..10 {
-            // Until interrupt happens, .tick() does nothing
-            // @TODO: Check accurately that the state is unchanged
-            cpu.tick();
-            assert_eq!(DRAM_BASE + 4, cpu.read_pc());
-        }
-        // Machine timer interrupt
-        cpu.write_csr_raw(CSR_MIE_ADDRESS, MIP_MTIP);
-        cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
-        cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
-        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, 0x0);
-        cpu.tick();
-        // Interrupt happened and moved to handler
-        assert_eq!(0, cpu.read_pc());
-    }
+    // #[test]
+    // fn wfi() {
+    //     let wfi_instruction = 0x10500073;
+    //     let mut cpu = create_cpu();
+    //     // Just in case
+    //     match cpu.decode(wfi_instruction) {
+    //         Ok(inst) => assert_eq!(inst.name, "WFI"),
+    //         Err(_e) => panic!("Failed to decode"),
+    //     };
+    //     cpu.get_mut_mmu().init_memory(4);
+    //     cpu.update_pc(DRAM_BASE);
+    //     // write WFI instruction
+    //     match cpu.get_mut_mmu().store_word(DRAM_BASE, wfi_instruction) {
+    //         Ok(_) => {}
+    //         Err(_e) => panic!("Failed to store"),
+    //     };
+    //     cpu.tick();
+    //     assert_eq!(DRAM_BASE + 4, cpu.read_pc());
+    //     for _i in 0..10 {
+    //         // Until interrupt happens, .tick() does nothing
+    //         // @TODO: Check accurately that the state is unchanged
+    //         cpu.tick();
+    //         assert_eq!(DRAM_BASE + 4, cpu.read_pc());
+    //     }
+    //     // Machine timer interrupt
+    //     cpu.write_csr_raw(CSR_MIE_ADDRESS, MIP_MTIP);
+    //     cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
+    //     cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
+    //     cpu.write_csr_raw(CSR_MTVEC_ADDRESS, 0x0);
+    //     cpu.tick();
+    //     // Interrupt happened and moved to handler
+    //     assert_eq!(0, cpu.read_pc());
+    // }
 
     #[test]
     fn interrupt() {
@@ -2908,75 +1899,5 @@ mod test_cpu {
 
         // No effect to PC
         assert_eq!(DRAM_BASE, cpu.read_pc());
-    }
-}
-
-#[cfg(test)]
-
-mod test_decode_cache {
-    use super::*;
-
-    #[test]
-    fn initialize() {
-        let _cache = DecodeCache::new();
-    }
-
-    #[test]
-    fn insert() {
-        let mut cache = DecodeCache::new();
-        cache.insert(0, 0);
-    }
-
-    #[test]
-    fn get() {
-        let mut cache = DecodeCache::new();
-        cache.insert(1, 2);
-
-        // Cache hit test
-        match cache.get(1) {
-            Some(index) => assert_eq!(2, index),
-            None => panic!("Unexpected cache miss"),
-        };
-
-        // Cache miss test
-        if let Some(_index) = cache.get(2) {
-            panic!("Unexpected cache hit")
-        };
-    }
-
-    #[test]
-    fn lru() {
-        let mut cache = DecodeCache::new();
-        cache.insert(0, 1);
-
-        match cache.get(0) {
-            Some(index) => assert_eq!(1, index),
-            None => panic!("Unexpected cache miss"),
-        };
-
-        for i in 1..DECODE_CACHE_ENTRY_NUM + 1 {
-            cache.insert(i as u32, i + 1);
-        }
-
-        // The oldest entry should have been removed because of the overflow
-        if let Some(_index) = cache.get(0) {
-            panic!("Unexpected cache hit")
-        };
-
-        // With this .get(), the entry with the word "1" moves to the tail of the list
-        // and the entry with the word "2" becomes the oldest entry.
-        if let Some(index) = cache.get(1) {
-            assert_eq!(2, index)
-        };
-
-        // The oldest entry with the word "2" will be removed due to the overflow
-        cache.insert(
-            DECODE_CACHE_ENTRY_NUM as u32 + 1,
-            DECODE_CACHE_ENTRY_NUM + 2,
-        );
-
-        if let Some(_index) = cache.get(2) {
-            panic!("Unexpected cache hit")
-        };
     }
 }

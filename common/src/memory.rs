@@ -45,7 +45,14 @@ impl MemoryOp {
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
 #[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+    Default,
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
 )]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
@@ -137,7 +144,14 @@ impl JoltDevice {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+    Default,
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
     pub max_input_size: u64,

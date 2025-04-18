@@ -10,18 +10,15 @@ use emulator::{
     Emulator,
 };
 
+use instruction::{RV32IMCycle, RV32IMInstruction};
 use object::{Object, ObjectSection, SectionKind};
 
-mod decode;
 mod emulator;
 mod instruction;
-mod trace;
 
 pub use common::instruction::{ELFInstruction, RV32IM};
 pub use common::memory::{JoltDevice, MemoryState};
 pub use common::rv_trace::{RVTraceRow, RegisterState};
-
-use crate::decode::decode_raw;
 
 #[tracing::instrument(skip_all)]
 pub fn trace(
@@ -29,7 +26,7 @@ pub fn trace(
     inputs: &[u8],
     input_size: u64,
     output_size: u64,
-) -> (Vec<RVTraceRow>, JoltDevice) {
+) -> (Vec<RV32IMCycle>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
@@ -60,18 +57,14 @@ pub fn trace(
         prev_pc = pc;
     }
 
-    let mut rows = emulator.get_mut_cpu().tracer.rows.try_borrow_mut().unwrap();
-    let mut output = Vec::new();
-    output.append(&mut rows);
-    drop(rows);
+    let execution_trace = std::mem::take(&mut emulator.get_mut_cpu().trace);
+    let device = std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
 
-    let device = emulator.get_mut_cpu().get_mut_mmu().jolt_device.clone();
-
-    (output, device)
+    (execution_trace, device)
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
     let obj = object::File::parse(elf).unwrap();
 
     let sections = obj
@@ -90,23 +83,12 @@ pub fn decode(elf: &[u8]) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
                 let word = u32::from_le_bytes(word.try_into().unwrap());
                 let address = chunk as u64 * 4 + section.address();
 
-                if let Ok(inst) = decode_raw(word) {
-                    if let Some(trace) = inst.trace {
-                        let inst = trace(&inst, &get_xlen(), word, address);
-                        instructions.push(inst);
-                        continue;
-                    }
+                if let Ok(inst) = RV32IMInstruction::decode(word, address) {
+                    instructions.push(inst);
+                    continue;
                 }
                 // Unrecognized instruction, or from a ReadOnlyData section
-                instructions.push(ELFInstruction {
-                    address,
-                    opcode: RV32IM::UNIMPL,
-                    rs1: None,
-                    rs2: None,
-                    rd: None,
-                    imm: None,
-                    virtual_sequence_remaining: None,
-                });
+                instructions.push(RV32IMInstruction::UNIMPL);
             }
         }
         let address = section.address();
