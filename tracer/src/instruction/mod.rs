@@ -106,6 +106,9 @@ pub struct MemoryRead(u64, u64); // (address, value)
 pub struct MemoryWrite(u64, u64, u64); // (address, old_value, new_value)
 
 pub trait RISCVInstruction: Sized + Copy {
+    const MASK: u32;
+    const MATCH: u32;
+
     type Format: InstructionFormat;
     type RAMAccess: Default;
 
