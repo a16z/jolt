@@ -43,6 +43,7 @@ use srl::SRL;
 use srli::SRLI;
 use sub::SUB;
 use sw::SW;
+use virtual_advice::VirtualAdvice;
 use xor::XOR;
 use xori::XORI;
 
@@ -96,6 +97,21 @@ pub mod srl;
 pub mod srli;
 pub mod sub;
 pub mod sw;
+pub mod virtual_advice;
+pub mod virtual_assert_eq;
+pub mod virtual_assert_halfword_alignment;
+pub mod virtual_assert_lte;
+pub mod virtual_assert_valid_div0;
+pub mod virtual_assert_valid_signed_remainder;
+pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_move;
+pub mod virtual_movsign;
+pub mod virtual_pow2;
+pub mod virtual_pow2i;
+pub mod virtual_shift_right_bitmask;
+pub mod virtual_shift_right_bitmaski;
+pub mod virtual_sra;
+pub mod virtual_srl;
 pub mod xor;
 pub mod xori;
 
@@ -104,6 +120,7 @@ pub struct MemoryRead {
     pub(crate) address: u64,
     pub(crate) value: u64,
 }
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct MemoryWrite {
     pub(crate) address: u64,
@@ -137,6 +154,11 @@ pub trait RISCVInstruction: Sized + Copy {
     }
 }
 
+pub trait VirtualInstructionSequence: RISCVInstruction {
+    fn virtual_sequence(&self) -> Vec<RV32IMInstruction>;
+    fn virtual_trace(&self, cpu: &mut Cpu) -> Vec<RV32IMCycle>;
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
@@ -144,7 +166,7 @@ pub struct RISCVCycle<T: RISCVInstruction> {
     pub memory_state: T::RAMAccess,
 }
 
-#[derive(From, Serialize, Deserialize)]
+#[derive(Debug, From, Serialize, Deserialize)]
 pub enum RV32IMInstruction {
     ADD(ADD<32>),
     ADDI(ADDI<32>),
@@ -192,6 +214,8 @@ pub enum RV32IMInstruction {
     SW(SW<32>),
     XOR(XOR<32>),
     XORI(XORI<32>),
+    // Virtual
+    Advice(VirtualAdvice<32>),
     UNIMPL,
 }
 
@@ -322,8 +346,20 @@ impl RV32IMInstruction {
         }
     }
 
-    pub fn trace(&self, cpu: &mut Cpu) -> RV32IMCycle {
+    pub fn trace(&self, cpu: &mut Cpu) {
+        // Instruction is mapped to a virtual sequence
         match self {
+            RV32IMInstruction::DIV(div) => {
+                for cycle in div.virtual_trace(cpu) {
+                    cpu.trace.push(cycle);
+                }
+                return;
+            }
+            _ => {}
+        };
+
+        // Otherwise, instruction produces a single cycle
+        let cycle: RV32IMCycle = match self {
             RV32IMInstruction::ADD(add) => add.trace(cpu).into(),
             RV32IMInstruction::ADDI(addi) => addi.trace(cpu).into(),
             RV32IMInstruction::AND(and) => and.trace(cpu).into(),
@@ -335,7 +371,6 @@ impl RV32IMInstruction {
             RV32IMInstruction::BLT(blt) => blt.trace(cpu).into(),
             RV32IMInstruction::BLTU(bltu) => bltu.trace(cpu).into(),
             RV32IMInstruction::BNE(bne) => bne.trace(cpu).into(),
-            RV32IMInstruction::DIV(div) => div.trace(cpu).into(),
             RV32IMInstruction::DIVU(divu) => divu.trace(cpu).into(),
             RV32IMInstruction::FENCE(fence) => fence.trace(cpu).into(),
             RV32IMInstruction::JAL(jal) => jal.trace(cpu).into(),
@@ -373,7 +408,9 @@ impl RV32IMInstruction {
             RV32IMInstruction::UNIMPL => {
                 unimplemented!("UNIMPL")
             }
-        }
+            _ => panic!("Unexpected instruction {:?}", self),
+        };
+        cpu.trace.push(cycle);
     }
 }
 
@@ -425,4 +462,6 @@ pub enum RV32IMCycle {
     SW(RISCVCycle<SW<32>>),
     XOR(RISCVCycle<XOR<32>>),
     XORI(RISCVCycle<XORI<32>>),
+    // Virtual
+    Advice(RISCVCycle<VirtualAdvice<32>>),
 }

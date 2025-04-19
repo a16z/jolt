@@ -327,8 +327,7 @@ impl Cpu {
         let instr = RV32IMInstruction::decode(word, instruction_address)
             .ok()
             .unwrap();
-        let cycle = instr.trace(self);
-        self.trace.push(cycle);
+        instr.trace(self);
         self.x[0] = 0; // hardwired zero
 
         Ok(())
