@@ -267,8 +267,29 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Checks if wasm-pack is installed by attempting to run the command.
+/// Returns true if wasm-pack is installed, false otherwise.
+fn is_wasm_pack_installed() -> bool {
+    let output = std::process::Command::new("wasm-pack")
+        .arg("--version")
+        .output();
+
+    match output {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
 pub fn build_wasm() {
     println!("Building the project with wasm-pack...");
+    
+    // Check if wasm-pack is installed
+    if !is_wasm_pack_installed() {
+        eprintln!("Error: wasm-pack is not installed or not in PATH");
+        eprintln!("Please install wasm-pack by running: cargo install wasm-pack");
+        panic!("wasm-pack not found");
+    }
+    
     let functions = extract_provable_functions();
     let function_names: Vec<String> = functions.iter().map(|f| f.func_name.clone()).collect();
     let is_std = is_std().expect("Failed to check if std feature is enabled");
@@ -279,7 +300,6 @@ pub fn build_wasm() {
 
     create_index_html(function_names).expect("Failed to create example index.html");
 
-    // todo implement test if wasm-pack is installed
     let output = std::process::Command::new("wasm-pack")
         .args(["build", "--release", "--target", "web"])
         .output()
