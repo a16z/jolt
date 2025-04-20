@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
-use super::{format::FormatJ, RISCVInstruction};
+use super::{format::FormatJ, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualAdvice<const WORD_SIZE: usize> {
+pub struct VirtualAdvice {
     pub address: u64,
     pub operands: FormatJ,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -17,7 +17,7 @@ pub struct VirtualAdvice<const WORD_SIZE: usize> {
     pub advice: u64,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAdvice<WORD_SIZE> {
+impl RISCVInstruction for VirtualAdvice {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -36,3 +36,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAdvice<WORD_SIZE> {
         cpu.x[self.operands.rd] = self.advice as i64;
     }
 }
+
+impl RISCVTrace for VirtualAdvice {}

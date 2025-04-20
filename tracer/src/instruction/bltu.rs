@@ -4,11 +4,11 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{FormatB, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct BLTU<const WORD_SIZE: usize> {
+pub struct BLTU {
     pub address: u64,
     pub operands: FormatB,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct BLTU<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for BLTU<WORD_SIZE> {
+impl RISCVInstruction for BLTU {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00006063;
 
@@ -47,3 +47,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for BLTU<WORD_SIZE> {
         }
     }
 }
+
+impl RISCVTrace for BLTU {}

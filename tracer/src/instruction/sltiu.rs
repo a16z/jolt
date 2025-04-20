@@ -4,11 +4,11 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{FormatI, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct SLTIU<const WORD_SIZE: usize> {
+pub struct SLTIU {
     pub address: u64,
     pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct SLTIU<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for SLTIU<WORD_SIZE> {
+impl RISCVInstruction for SLTIU {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00003013;
 
@@ -49,3 +49,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for SLTIU<WORD_SIZE> {
         };
     }
 }
+
+impl RISCVTrace for SLTIU {}

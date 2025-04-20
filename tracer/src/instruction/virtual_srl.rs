@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
-use super::{format::FormatR, RISCVInstruction};
+use super::{format::FormatR, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualSRL<const WORD_SIZE: usize> {
+pub struct VirtualSRL {
     pub address: u64,
     pub operands: FormatR,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -16,7 +16,7 @@ pub struct VirtualSRL<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualSRL<WORD_SIZE> {
+impl RISCVInstruction for VirtualSRL {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -39,3 +39,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualSRL<WORD_SIZE> {
         );
     }
 }
+
+impl RISCVTrace for VirtualSRL {}

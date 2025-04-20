@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{format::FormatB, RISCVInstruction};
+use super::{format::FormatB, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualAssertValidSignedRemainder<const WORD_SIZE: usize> {
+pub struct VirtualAssertValidSignedRemainder {
     pub address: u64,
     pub operands: FormatB,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -16,7 +16,7 @@ pub struct VirtualAssertValidSignedRemainder<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAssertValidSignedRemainder<WORD_SIZE> {
+impl RISCVInstruction for VirtualAssertValidSignedRemainder {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -60,3 +60,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAssertValidSignedRemain
         }
     }
 }
+
+impl RISCVTrace for VirtualAssertValidSignedRemainder {}

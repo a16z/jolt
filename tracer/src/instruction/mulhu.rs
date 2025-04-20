@@ -4,11 +4,11 @@ use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
     format::{FormatR, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct MULHU<const WORD_SIZE: usize> {
+pub struct MULHU {
     pub address: u64,
     pub operands: FormatR,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct MULHU<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for MULHU<WORD_SIZE> {
+impl RISCVInstruction for MULHU {
     const MASK: u32 = 0xfe00707f;
     const MATCH: u32 = 0x02003033;
 
@@ -55,3 +55,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for MULHU<WORD_SIZE> {
         };
     }
 }
+
+impl RISCVTrace for MULHU {}

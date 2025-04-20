@@ -1,6 +1,5 @@
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
 use crate::emulator::cpu::{Cpu, Xlen};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub trait InstructionFormat: Default {
     type RegisterState: Default + Serialize + DeserializeOwned;

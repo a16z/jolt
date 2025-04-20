@@ -43,9 +43,24 @@ use srl::SRL;
 use srli::SRLI;
 use sub::SUB;
 use sw::SW;
-use virtual_advice::VirtualAdvice;
 use xor::XOR;
 use xori::XORI;
+
+use virtual_advice::VirtualAdvice;
+use virtual_assert_eq::VirtualAssertEQ;
+use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
+use virtual_assert_lte::VirtualAssertLTE;
+use virtual_assert_valid_div0::VirtualAssertValidDiv0;
+use virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder;
+use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+use virtual_move::VirtualMove;
+use virtual_movsign::VirtualMovsign;
+use virtual_pow2::VirtualPow2;
+use virtual_pow2i::VirtualPow2I;
+use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
+use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
+use virtual_sra::VirtualSRA;
+use virtual_srl::VirtualSRL;
 
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
@@ -128,7 +143,7 @@ pub struct MemoryWrite {
     pub(crate) post_value: u64,
 }
 
-pub trait RISCVInstruction: Sized + Copy {
+pub trait RISCVInstruction: Sized + Copy + Into<RV32IMInstruction> {
     const MASK: u32;
     const MATCH: u32;
 
@@ -138,85 +153,104 @@ pub trait RISCVInstruction: Sized + Copy {
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64) -> Self;
 
-    fn execute(&self, cpu: &mut Cpu, memory_state: &mut Self::RAMAccess);
-    fn trace(&self, cpu: &mut Cpu) -> RISCVCycle<Self> {
+    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
+}
+
+pub trait RISCVTrace: RISCVInstruction
+where
+    RISCVCycle<Self>: Into<RV32IMCycle>,
+{
+    fn trace(&self, cpu: &mut Cpu) {
         let mut cycle: RISCVCycle<Self> = RISCVCycle {
             instruction: *self,
             register_state: Default::default(),
-            memory_state: Default::default(),
+            ram_access: Default::default(),
         };
         self.operands()
             .capture_pre_execution_state(&mut cycle.register_state, cpu);
-        self.execute(cpu, &mut cycle.memory_state);
+        self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
-        cycle
+        cpu.trace.push(cycle.into());
     }
 }
 
 pub trait VirtualInstructionSequence: RISCVInstruction {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction>;
-    fn virtual_trace(&self, cpu: &mut Cpu) -> Vec<RV32IMCycle>;
 }
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
-    pub memory_state: T::RAMAccess,
+    pub ram_access: T::RAMAccess,
 }
 
 #[derive(Debug, From, Serialize, Deserialize)]
 pub enum RV32IMInstruction {
-    ADD(ADD<32>),
-    ADDI(ADDI<32>),
-    AND(AND<32>),
-    ANDI(ANDI<32>),
-    AUIPC(AUIPC<32>),
-    BEQ(BEQ<32>),
-    BGE(BGE<32>),
-    BGEU(BGEU<32>),
-    BLT(BLT<32>),
-    BLTU(BLTU<32>),
-    BNE(BNE<32>),
-    DIV(DIV<32>),
-    DIVU(DIVU<32>),
-    FENCE(FENCE<32>),
-    JAL(JAL<32>),
-    JALR(JALR<32>),
-    LB(LB<32>),
-    LBU(LBU<32>),
-    LH(LH<32>),
-    LHU(LHU<32>),
-    LUI(LUI<32>),
-    LW(LW<32>),
-    MUL(MUL<32>),
-    MULH(MULH<32>),
-    MULHSU(MULHSU<32>),
-    MULHU(MULHU<32>),
-    OR(OR<32>),
-    ORI(ORI<32>),
-    REM(REM<32>),
-    REMU(REMU<32>),
-    SB(SB<32>),
-    SH(SH<32>),
-    SLL(SLL<32>),
-    SLLI(SLLI<32>),
-    SLT(SLT<32>),
-    SLTI(SLTI<32>),
-    SLTIU(SLTIU<32>),
-    SLTU(SLTU<32>),
-    SRA(SRA<32>),
-    SRAI(SRAI<32>),
-    SRL(SRL<32>),
-    SRLI(SRLI<32>),
-    SUB(SUB<32>),
-    SW(SW<32>),
-    XOR(XOR<32>),
-    XORI(XORI<32>),
+    ADD(ADD),
+    ADDI(ADDI),
+    AND(AND),
+    ANDI(ANDI),
+    AUIPC(AUIPC),
+    BEQ(BEQ),
+    BGE(BGE),
+    BGEU(BGEU),
+    BLT(BLT),
+    BLTU(BLTU),
+    BNE(BNE),
+    DIV(DIV),
+    DIVU(DIVU),
+    FENCE(FENCE),
+    JAL(JAL),
+    JALR(JALR),
+    LB(LB),
+    LBU(LBU),
+    LH(LH),
+    LHU(LHU),
+    LUI(LUI),
+    LW(LW),
+    MUL(MUL),
+    MULH(MULH),
+    MULHSU(MULHSU),
+    MULHU(MULHU),
+    OR(OR),
+    ORI(ORI),
+    REM(REM),
+    REMU(REMU),
+    SB(SB),
+    SH(SH),
+    SLL(SLL),
+    SLLI(SLLI),
+    SLT(SLT),
+    SLTI(SLTI),
+    SLTIU(SLTIU),
+    SLTU(SLTU),
+    SRA(SRA),
+    SRAI(SRAI),
+    SRL(SRL),
+    SRLI(SRLI),
+    SUB(SUB),
+    SW(SW),
+    XOR(XOR),
+    XORI(XORI),
     // Virtual
-    Advice(VirtualAdvice<32>),
     UNIMPL,
+    Advice(VirtualAdvice),
+    AssertEQ(VirtualAssertEQ),
+    AssertHalfwordAlignment(VirtualAssertHalfwordAlignment),
+    AssertLTE(VirtualAssertLTE),
+    AssertValidDiv0(VirtualAssertValidDiv0),
+    AssertValidSignedRemainder(VirtualAssertValidSignedRemainder),
+    AssertValidUnsignedRemainder(VirtualAssertValidUnsignedRemainder),
+    Move(VirtualMove),
+    Movsign(VirtualMovsign),
+    Pow2(VirtualPow2),
+    Pow2I(VirtualPow2I),
+    ShiftRightBitmask(VirtualShiftRightBitmask),
+    ShiftRightBitmaskI(VirtualShiftRightBitmaskI),
+    VirtualSRA(VirtualSRA),
+    VirtualSRL(VirtualSRL),
 }
 
 impl RV32IMInstruction {
@@ -347,121 +381,120 @@ impl RV32IMInstruction {
     }
 
     pub fn trace(&self, cpu: &mut Cpu) {
-        // Instruction is mapped to a virtual sequence
         match self {
-            RV32IMInstruction::DIV(div) => {
-                for cycle in div.virtual_trace(cpu) {
-                    cpu.trace.push(cycle);
-                }
-                return;
-            }
-            _ => {}
-        };
-
-        // Otherwise, instruction produces a single cycle
-        let cycle: RV32IMCycle = match self {
-            RV32IMInstruction::ADD(add) => add.trace(cpu).into(),
-            RV32IMInstruction::ADDI(addi) => addi.trace(cpu).into(),
-            RV32IMInstruction::AND(and) => and.trace(cpu).into(),
-            RV32IMInstruction::ANDI(andi) => andi.trace(cpu).into(),
-            RV32IMInstruction::AUIPC(auipc) => auipc.trace(cpu).into(),
-            RV32IMInstruction::BEQ(beq) => beq.trace(cpu).into(),
-            RV32IMInstruction::BGE(bge) => bge.trace(cpu).into(),
-            RV32IMInstruction::BGEU(bgeu) => bgeu.trace(cpu).into(),
-            RV32IMInstruction::BLT(blt) => blt.trace(cpu).into(),
-            RV32IMInstruction::BLTU(bltu) => bltu.trace(cpu).into(),
-            RV32IMInstruction::BNE(bne) => bne.trace(cpu).into(),
-            RV32IMInstruction::DIVU(divu) => divu.trace(cpu).into(),
-            RV32IMInstruction::FENCE(fence) => fence.trace(cpu).into(),
-            RV32IMInstruction::JAL(jal) => jal.trace(cpu).into(),
-            RV32IMInstruction::JALR(jalr) => jalr.trace(cpu).into(),
-            RV32IMInstruction::LB(lb) => lb.trace(cpu).into(),
-            RV32IMInstruction::LBU(lbu) => lbu.trace(cpu).into(),
-            RV32IMInstruction::LH(lh) => lh.trace(cpu).into(),
-            RV32IMInstruction::LHU(lhu) => lhu.trace(cpu).into(),
-            RV32IMInstruction::LUI(lui) => lui.trace(cpu).into(),
-            RV32IMInstruction::LW(lw) => lw.trace(cpu).into(),
-            RV32IMInstruction::MUL(mul) => mul.trace(cpu).into(),
-            RV32IMInstruction::MULH(mulh) => mulh.trace(cpu).into(),
-            RV32IMInstruction::MULHSU(mulhsu) => mulhsu.trace(cpu).into(),
-            RV32IMInstruction::MULHU(mulhu) => mulhu.trace(cpu).into(),
-            RV32IMInstruction::OR(or) => or.trace(cpu).into(),
-            RV32IMInstruction::ORI(ori) => ori.trace(cpu).into(),
-            RV32IMInstruction::REM(rem) => rem.trace(cpu).into(),
-            RV32IMInstruction::REMU(remu) => remu.trace(cpu).into(),
-            RV32IMInstruction::SB(sb) => sb.trace(cpu).into(),
-            RV32IMInstruction::SH(sh) => sh.trace(cpu).into(),
-            RV32IMInstruction::SLL(sll) => sll.trace(cpu).into(),
-            RV32IMInstruction::SLLI(slli) => slli.trace(cpu).into(),
-            RV32IMInstruction::SLT(slt) => slt.trace(cpu).into(),
-            RV32IMInstruction::SLTI(slti) => slti.trace(cpu).into(),
-            RV32IMInstruction::SLTIU(sltiu) => sltiu.trace(cpu).into(),
-            RV32IMInstruction::SLTU(sltu) => sltu.trace(cpu).into(),
-            RV32IMInstruction::SRA(sra) => sra.trace(cpu).into(),
-            RV32IMInstruction::SRAI(srai) => srai.trace(cpu).into(),
-            RV32IMInstruction::SRL(srl) => srl.trace(cpu).into(),
-            RV32IMInstruction::SRLI(srli) => srli.trace(cpu).into(),
-            RV32IMInstruction::SUB(sub) => sub.trace(cpu).into(),
-            RV32IMInstruction::SW(sw) => sw.trace(cpu).into(),
-            RV32IMInstruction::XOR(xor) => xor.trace(cpu).into(),
-            RV32IMInstruction::XORI(xori) => xori.trace(cpu).into(),
-            RV32IMInstruction::UNIMPL => {
-                unimplemented!("UNIMPL")
-            }
+            RV32IMInstruction::ADD(add) => add.trace(cpu),
+            RV32IMInstruction::ADDI(addi) => addi.trace(cpu),
+            RV32IMInstruction::AND(and) => and.trace(cpu),
+            RV32IMInstruction::ANDI(andi) => andi.trace(cpu),
+            RV32IMInstruction::AUIPC(auipc) => auipc.trace(cpu),
+            RV32IMInstruction::BEQ(beq) => beq.trace(cpu),
+            RV32IMInstruction::BGE(bge) => bge.trace(cpu),
+            RV32IMInstruction::BGEU(bgeu) => bgeu.trace(cpu),
+            RV32IMInstruction::BLT(blt) => blt.trace(cpu),
+            RV32IMInstruction::BLTU(bltu) => bltu.trace(cpu),
+            RV32IMInstruction::BNE(bne) => bne.trace(cpu),
+            RV32IMInstruction::DIV(div) => div.trace(cpu),
+            RV32IMInstruction::DIVU(divu) => divu.trace(cpu),
+            RV32IMInstruction::FENCE(fence) => fence.trace(cpu),
+            RV32IMInstruction::JAL(jal) => jal.trace(cpu),
+            RV32IMInstruction::JALR(jalr) => jalr.trace(cpu),
+            RV32IMInstruction::LB(lb) => lb.trace(cpu),
+            RV32IMInstruction::LBU(lbu) => lbu.trace(cpu),
+            RV32IMInstruction::LH(lh) => lh.trace(cpu),
+            RV32IMInstruction::LHU(lhu) => lhu.trace(cpu),
+            RV32IMInstruction::LUI(lui) => lui.trace(cpu),
+            RV32IMInstruction::LW(lw) => lw.trace(cpu),
+            RV32IMInstruction::MUL(mul) => mul.trace(cpu),
+            RV32IMInstruction::MULH(mulh) => mulh.trace(cpu),
+            RV32IMInstruction::MULHSU(mulhsu) => mulhsu.trace(cpu),
+            RV32IMInstruction::MULHU(mulhu) => mulhu.trace(cpu),
+            RV32IMInstruction::OR(or) => or.trace(cpu),
+            RV32IMInstruction::ORI(ori) => ori.trace(cpu),
+            RV32IMInstruction::REM(rem) => rem.trace(cpu),
+            RV32IMInstruction::REMU(remu) => remu.trace(cpu),
+            RV32IMInstruction::SB(sb) => sb.trace(cpu),
+            RV32IMInstruction::SH(sh) => sh.trace(cpu),
+            RV32IMInstruction::SLL(sll) => sll.trace(cpu),
+            RV32IMInstruction::SLLI(slli) => slli.trace(cpu),
+            RV32IMInstruction::SLT(slt) => slt.trace(cpu),
+            RV32IMInstruction::SLTI(slti) => slti.trace(cpu),
+            RV32IMInstruction::SLTIU(sltiu) => sltiu.trace(cpu),
+            RV32IMInstruction::SLTU(sltu) => sltu.trace(cpu),
+            RV32IMInstruction::SRA(sra) => sra.trace(cpu),
+            RV32IMInstruction::SRAI(srai) => srai.trace(cpu),
+            RV32IMInstruction::SRL(srl) => srl.trace(cpu),
+            RV32IMInstruction::SRLI(srli) => srli.trace(cpu),
+            RV32IMInstruction::SUB(sub) => sub.trace(cpu),
+            RV32IMInstruction::SW(sw) => sw.trace(cpu),
+            RV32IMInstruction::XOR(xor) => xor.trace(cpu),
+            RV32IMInstruction::XORI(xori) => xori.trace(cpu),
             _ => panic!("Unexpected instruction {:?}", self),
         };
-        cpu.trace.push(cycle);
     }
 }
 
 #[derive(From, Serialize, Deserialize)]
 pub enum RV32IMCycle {
-    ADD(RISCVCycle<ADD<32>>),
-    ADDI(RISCVCycle<ADDI<32>>),
-    AND(RISCVCycle<AND<32>>),
-    ANDI(RISCVCycle<ANDI<32>>),
-    AUIPC(RISCVCycle<AUIPC<32>>),
-    BEQ(RISCVCycle<BEQ<32>>),
-    BGE(RISCVCycle<BGE<32>>),
-    BGEU(RISCVCycle<BGEU<32>>),
-    BLT(RISCVCycle<BLT<32>>),
-    BLTU(RISCVCycle<BLTU<32>>),
-    BNE(RISCVCycle<BNE<32>>),
-    DIV(RISCVCycle<DIV<32>>),
-    DIVU(RISCVCycle<DIVU<32>>),
-    FENCE(RISCVCycle<FENCE<32>>),
-    JAL(RISCVCycle<JAL<32>>),
-    JALR(RISCVCycle<JALR<32>>),
-    LB(RISCVCycle<LB<32>>),
-    LBU(RISCVCycle<LBU<32>>),
-    LH(RISCVCycle<LH<32>>),
-    LHU(RISCVCycle<LHU<32>>),
-    LUI(RISCVCycle<LUI<32>>),
-    LW(RISCVCycle<LW<32>>),
-    MUL(RISCVCycle<MUL<32>>),
-    MULH(RISCVCycle<MULH<32>>),
-    MULHSU(RISCVCycle<MULHSU<32>>),
-    MULHU(RISCVCycle<MULHU<32>>),
-    OR(RISCVCycle<OR<32>>),
-    ORI(RISCVCycle<ORI<32>>),
-    REM(RISCVCycle<REM<32>>),
-    REMU(RISCVCycle<REMU<32>>),
-    SB(RISCVCycle<SB<32>>),
-    SH(RISCVCycle<SH<32>>),
-    SLL(RISCVCycle<SLL<32>>),
-    SLLI(RISCVCycle<SLLI<32>>),
-    SLT(RISCVCycle<SLT<32>>),
-    SLTI(RISCVCycle<SLTI<32>>),
-    SLTIU(RISCVCycle<SLTIU<32>>),
-    SLTU(RISCVCycle<SLTU<32>>),
-    SRA(RISCVCycle<SRA<32>>),
-    SRAI(RISCVCycle<SRAI<32>>),
-    SRL(RISCVCycle<SRL<32>>),
-    SRLI(RISCVCycle<SRLI<32>>),
-    SUB(RISCVCycle<SUB<32>>),
-    SW(RISCVCycle<SW<32>>),
-    XOR(RISCVCycle<XOR<32>>),
-    XORI(RISCVCycle<XORI<32>>),
+    ADD(RISCVCycle<ADD>),
+    ADDI(RISCVCycle<ADDI>),
+    AND(RISCVCycle<AND>),
+    ANDI(RISCVCycle<ANDI>),
+    AUIPC(RISCVCycle<AUIPC>),
+    BEQ(RISCVCycle<BEQ>),
+    BGE(RISCVCycle<BGE>),
+    BGEU(RISCVCycle<BGEU>),
+    BLT(RISCVCycle<BLT>),
+    BLTU(RISCVCycle<BLTU>),
+    BNE(RISCVCycle<BNE>),
+    DIV(RISCVCycle<DIV>),
+    DIVU(RISCVCycle<DIVU>),
+    FENCE(RISCVCycle<FENCE>),
+    JAL(RISCVCycle<JAL>),
+    JALR(RISCVCycle<JALR>),
+    LB(RISCVCycle<LB>),
+    LBU(RISCVCycle<LBU>),
+    LH(RISCVCycle<LH>),
+    LHU(RISCVCycle<LHU>),
+    LUI(RISCVCycle<LUI>),
+    LW(RISCVCycle<LW>),
+    MUL(RISCVCycle<MUL>),
+    MULH(RISCVCycle<MULH>),
+    MULHSU(RISCVCycle<MULHSU>),
+    MULHU(RISCVCycle<MULHU>),
+    OR(RISCVCycle<OR>),
+    ORI(RISCVCycle<ORI>),
+    REM(RISCVCycle<REM>),
+    REMU(RISCVCycle<REMU>),
+    SB(RISCVCycle<SB>),
+    SH(RISCVCycle<SH>),
+    SLL(RISCVCycle<SLL>),
+    SLLI(RISCVCycle<SLLI>),
+    SLT(RISCVCycle<SLT>),
+    SLTI(RISCVCycle<SLTI>),
+    SLTIU(RISCVCycle<SLTIU>),
+    SLTU(RISCVCycle<SLTU>),
+    SRA(RISCVCycle<SRA>),
+    SRAI(RISCVCycle<SRAI>),
+    SRL(RISCVCycle<SRL>),
+    SRLI(RISCVCycle<SRLI>),
+    SUB(RISCVCycle<SUB>),
+    SW(RISCVCycle<SW>),
+    XOR(RISCVCycle<XOR>),
+    XORI(RISCVCycle<XORI>),
     // Virtual
-    Advice(RISCVCycle<VirtualAdvice<32>>),
+    Advice(RISCVCycle<VirtualAdvice>),
+    AssertEQ(RISCVCycle<VirtualAssertEQ>),
+    AssertHalfwordAlignment(RISCVCycle<VirtualAssertHalfwordAlignment>),
+    AssertLTE(RISCVCycle<VirtualAssertLTE>),
+    AssertValidDiv0(RISCVCycle<VirtualAssertValidDiv0>),
+    AssertValidSignedRemainder(RISCVCycle<VirtualAssertValidSignedRemainder>),
+    AssertValidUnsignedRemainder(RISCVCycle<VirtualAssertValidUnsignedRemainder>),
+    Move(RISCVCycle<VirtualMove>),
+    Movsign(RISCVCycle<VirtualMovsign>),
+    Pow2(RISCVCycle<VirtualPow2>),
+    Pow2I(RISCVCycle<VirtualPow2I>),
+    ShiftRightBitmask(RISCVCycle<VirtualShiftRightBitmask>),
+    ShiftRightBitmaskI(RISCVCycle<VirtualShiftRightBitmaskI>),
+    VirtualSRA(RISCVCycle<VirtualSRA>),
+    VirtualSRL(RISCVCycle<VirtualSRL>),
 }

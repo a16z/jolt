@@ -4,11 +4,11 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{FormatI, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FENCE<const WORD_SIZE: usize> {
+pub struct FENCE {
     pub address: u64,
     pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct FENCE<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for FENCE<WORD_SIZE> {
+impl RISCVInstruction for FENCE {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x0000000f;
 
@@ -44,3 +44,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for FENCE<WORD_SIZE> {
         // no-op
     }
 }
+
+impl RISCVTrace for FENCE {}

@@ -4,11 +4,11 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{FormatJ, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct JAL<const WORD_SIZE: usize> {
+pub struct JAL {
     pub address: u64,
     pub operands: FormatJ,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct JAL<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for JAL<WORD_SIZE> {
+impl RISCVInstruction for JAL {
     const MASK: u32 = 0x0000007f;
     const MATCH: u32 = 0x0000006f;
 
@@ -45,3 +45,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for JAL<WORD_SIZE> {
         cpu.pc = (cpu.pc as i64 + self.operands.imm) as u64;
     }
 }
+
+impl RISCVTrace for JAL {}

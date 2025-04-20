@@ -1,14 +1,19 @@
+use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
-    format::{FormatR, InstructionFormat},
-    RISCVInstruction,
+    add::ADD,
+    format::{FormatI, FormatR, InstructionFormat},
+    mul::MUL,
+    mulhu::MULHU,
+    virtual_movsign::VirtualMovsign,
+    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct MULH<const WORD_SIZE: usize> {
+pub struct MULH {
     pub address: u64,
     pub operands: FormatR,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +24,7 @@ pub struct MULH<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for MULH<WORD_SIZE> {
+impl RISCVInstruction for MULH {
     const MASK: u32 = 0xfe00707f;
     const MATCH: u32 = 0x02001033;
 
@@ -50,5 +55,107 @@ impl<const WORD_SIZE: usize> RISCVInstruction for MULH<WORD_SIZE> {
                     as i64
             }
         };
+    }
+}
+
+impl RISCVTrace for MULH {
+    fn trace(&self, cpu: &mut Cpu) {
+        let virtual_sequence = self.virtual_sequence();
+        for instr in virtual_sequence {
+            instr.trace(cpu);
+        }
+    }
+}
+
+impl VirtualInstructionSequence for MULH {
+    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+        // Virtual registers used in sequence
+        let v_sx = virtual_register_index(0) as usize;
+        let v_sy = virtual_register_index(1) as usize;
+        let v_0 = virtual_register_index(2) as usize;
+        let v_1 = virtual_register_index(3) as usize;
+        let v_2 = virtual_register_index(4) as usize;
+        let v_3 = virtual_register_index(5) as usize;
+
+        let mut sequence = vec![];
+
+        let movsign_x = VirtualMovsign {
+            address: self.address,
+            operands: FormatI {
+                rd: v_sx,
+                rs1: self.operands.rs1,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(6),
+        };
+        sequence.push(movsign_x.into());
+
+        let movsign_y = VirtualMovsign {
+            address: self.address,
+            operands: FormatI {
+                rd: v_sy,
+                rs1: self.operands.rs2,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(5),
+        };
+        sequence.push(movsign_y.into());
+
+        let mulhu = MULHU {
+            address: self.address,
+            operands: FormatR {
+                rd: v_0,
+                rs1: self.operands.rs1,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(4),
+        };
+        sequence.push(mulhu.into());
+
+        let mulu_sx_y = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: v_1,
+                rs1: v_sx,
+                rs2: self.operands.rs2,
+            },
+            virtual_sequence_remaining: Some(3),
+        };
+        sequence.push(mulu_sx_y.into());
+
+        let mulu_sy_x = MUL {
+            address: self.address,
+            operands: FormatR {
+                rd: v_2,
+                rs1: v_sy,
+                rs2: self.operands.rs1,
+            },
+            virtual_sequence_remaining: Some(2),
+        };
+        sequence.push(mulu_sy_x.into());
+
+        let add_1 = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: v_3,
+                rs1: v_0,
+                rs2: v_1,
+            },
+            virtual_sequence_remaining: Some(1),
+        };
+        sequence.push(add_1.into());
+
+        let add_2 = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: self.operands.rd,
+                rs1: v_3,
+                rs2: v_2,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        sequence.push(add_2.into());
+
+        sequence
     }
 }

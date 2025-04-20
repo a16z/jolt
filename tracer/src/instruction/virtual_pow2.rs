@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{format::FormatI, RISCVInstruction};
+use super::{format::FormatI, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualPow2<const WORD_SIZE: usize> {
+pub struct VirtualPow2 {
     pub address: u64,
     pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -16,7 +16,7 @@ pub struct VirtualPow2<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualPow2<WORD_SIZE> {
+impl RISCVInstruction for VirtualPow2 {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -38,3 +38,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualPow2<WORD_SIZE> {
         }
     }
 }
+
+impl RISCVTrace for VirtualPow2 {}

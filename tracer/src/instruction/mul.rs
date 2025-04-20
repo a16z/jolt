@@ -4,11 +4,11 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{FormatR, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct MUL<const WORD_SIZE: usize> {
+pub struct MUL {
     pub address: u64,
     pub operands: FormatR,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct MUL<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for MUL<WORD_SIZE> {
+impl RISCVInstruction for MUL {
     const MASK: u32 = 0xfe00707f;
     const MATCH: u32 = 0x02000033;
 
@@ -45,3 +45,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for MUL<WORD_SIZE> {
             cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_mul(cpu.x[self.operands.rs2]));
     }
 }
+
+impl RISCVTrace for MUL {}

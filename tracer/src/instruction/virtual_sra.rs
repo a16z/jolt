@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
-use super::{format::FormatR, RISCVInstruction};
+use super::{format::FormatR, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualSRA<const WORD_SIZE: usize> {
+pub struct VirtualSRA {
     pub address: u64,
     pub operands: FormatR,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -16,7 +16,7 @@ pub struct VirtualSRA<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualSRA<WORD_SIZE> {
+impl RISCVInstruction for VirtualSRA {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -36,3 +36,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualSRA<WORD_SIZE> {
         cpu.x[self.operands.rd] = cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_shr(shift));
     }
 }
+
+impl RISCVTrace for VirtualSRA {}

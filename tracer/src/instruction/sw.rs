@@ -6,11 +6,11 @@ use super::MemoryWrite;
 
 use super::{
     format::{FormatS, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct SW<const WORD_SIZE: usize> {
+pub struct SW {
     pub address: u64,
     pub operands: FormatS,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -21,7 +21,7 @@ pub struct SW<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for SW<WORD_SIZE> {
+impl RISCVInstruction for SW {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00002023;
 
@@ -42,8 +42,8 @@ impl<const WORD_SIZE: usize> RISCVInstruction for SW<WORD_SIZE> {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, memory_state: &mut Self::RAMAccess) {
-        *memory_state = cpu
+    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
+        *ram_access = cpu
             .mmu
             .store_word(
                 cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64,
@@ -53,3 +53,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for SW<WORD_SIZE> {
             .unwrap();
     }
 }
+
+impl RISCVTrace for SW {}

@@ -4,7 +4,7 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{normalize_register_value, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 /// `VirtualAssertHalfwordAlignment` is the only instruction that
@@ -37,7 +37,7 @@ impl InstructionFormat for HalfwordAlignFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualAssertHalfwordAlignment<const WORD_SIZE: usize> {
+pub struct VirtualAssertHalfwordAlignment {
     pub address: u64,
     pub operands: HalfwordAlignFormat,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -48,7 +48,7 @@ pub struct VirtualAssertHalfwordAlignment<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAssertHalfwordAlignment<WORD_SIZE> {
+impl RISCVInstruction for VirtualAssertHalfwordAlignment {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -71,3 +71,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAssertHalfwordAlignment
         );
     }
 }
+
+impl RISCVTrace for VirtualAssertHalfwordAlignment {}

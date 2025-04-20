@@ -6,11 +6,11 @@ use super::MemoryRead;
 
 use super::{
     format::{FormatI, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct LW<const WORD_SIZE: usize> {
+pub struct LW {
     pub address: u64,
     pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -21,7 +21,7 @@ pub struct LW<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for LW<WORD_SIZE> {
+impl RISCVInstruction for LW {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00002003;
 
@@ -42,16 +42,18 @@ impl<const WORD_SIZE: usize> RISCVInstruction for LW<WORD_SIZE> {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, memory_state: &mut Self::RAMAccess) {
+    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd] = match cpu
             .mmu
             .load_word(cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64)
         {
             Ok((word, memory_read)) => {
-                *memory_state = memory_read;
+                *ram_access = memory_read;
                 word as i32 as i64
             }
             Err(_) => panic!("MMU load error"),
         };
     }
 }
+
+impl RISCVTrace for LW {}

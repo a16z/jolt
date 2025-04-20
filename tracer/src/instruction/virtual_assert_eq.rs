@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
-use super::{format::FormatB, RISCVInstruction};
+use super::{format::FormatB, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualAssertEQ<const WORD_SIZE: usize> {
+pub struct VirtualAssertEQ {
     pub address: u64,
     pub operands: FormatB,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -16,7 +16,7 @@ pub struct VirtualAssertEQ<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAssertEQ<WORD_SIZE> {
+impl RISCVInstruction for VirtualAssertEQ {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -35,3 +35,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualAssertEQ<WORD_SIZE> {
         assert_eq!(cpu.x[self.operands.rs1], cpu.x[self.operands.rs2]);
     }
 }
+
+impl RISCVTrace for VirtualAssertEQ {}

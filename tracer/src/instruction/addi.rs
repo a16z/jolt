@@ -4,11 +4,11 @@ use crate::emulator::cpu::Cpu;
 
 use super::{
     format::{FormatI, InstructionFormat},
-    RISCVInstruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ADDI<const WORD_SIZE: usize> {
+pub struct ADDI {
     pub address: u64,
     pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -19,7 +19,7 @@ pub struct ADDI<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for ADDI<WORD_SIZE> {
+impl RISCVInstruction for ADDI {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00000013;
 
@@ -45,3 +45,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for ADDI<WORD_SIZE> {
             cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_add(self.operands.imm));
     }
 }
+
+impl RISCVTrace for ADDI {}

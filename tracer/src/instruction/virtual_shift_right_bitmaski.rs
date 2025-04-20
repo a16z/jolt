@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{format::FormatJ, RISCVInstruction};
+use super::{format::FormatJ, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualShiftRightBitmaskI<const WORD_SIZE: usize> {
+pub struct VirtualShiftRightBitmaskI {
     pub address: u64,
     pub operands: FormatJ,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -16,7 +16,7 @@ pub struct VirtualShiftRightBitmaskI<const WORD_SIZE: usize> {
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualShiftRightBitmaskI<WORD_SIZE> {
+impl RISCVInstruction for VirtualShiftRightBitmaskI {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -46,3 +46,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualShiftRightBitmaskI<WORD
         }
     }
 }
+
+impl RISCVTrace for VirtualShiftRightBitmaskI {}

@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{format::FormatI, RISCVInstruction};
+use super::{format::FormatI, RISCVInstruction, RISCVTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VirtualMovsign<const WORD_SIZE: usize> {
+pub struct VirtualMovsign {
     pub address: u64,
     pub operands: FormatI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
@@ -22,7 +22,7 @@ const ALL_ONES_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 const SIGN_BIT_32: u64 = 0x8000_0000;
 const SIGN_BIT_64: u64 = 0x8000_0000_0000_0000;
 
-impl<const WORD_SIZE: usize> RISCVInstruction for VirtualMovsign<WORD_SIZE> {
+impl RISCVInstruction for VirtualMovsign {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
@@ -59,3 +59,5 @@ impl<const WORD_SIZE: usize> RISCVInstruction for VirtualMovsign<WORD_SIZE> {
         cpu.x[self.operands.rd] = cpu.x[self.operands.rs1];
     }
 }
+
+impl RISCVTrace for VirtualMovsign {}
