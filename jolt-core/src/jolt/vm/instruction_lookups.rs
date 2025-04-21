@@ -5,6 +5,7 @@ use crate::poly::multilinear_polynomial::{
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::subprotocols::grand_product::BatchedGrandProduct;
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
+use crate::utils::streaming::Oracle;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
@@ -34,7 +35,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, transcript::AppendToTranscript},
 };
 
-use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
+use super::{JoltCommitments, JoltPolynomials, JoltTraceStep, TraceOracle};
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -43,7 +44,7 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
     pub(crate) dim: Vec<T>,
     /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
     /// the read access counts for each memory.
-    read_cts: Vec<T>,
+    pub(crate) read_cts: Vec<T>,
     /// `num_memories`-sized vector of polynomials/commitments/openings corresponding to
     /// the final access counts for each memory.
     pub(crate) final_cts: Vec<T>,
@@ -58,8 +59,8 @@ pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> 
     /// step of the execution trace.
     pub(crate) lookup_outputs: T,
 
-    a_init_final: VerifierComputedOpening<T>,
-    v_init_final: VerifierComputedOpening<Vec<T>>,
+    pub(crate) a_init_final: VerifierComputedOpening<T>,
+    pub(crate) v_init_final: VerifierComputedOpening<Vec<T>>,
 }
 
 /// Note –– F: JoltField bound is not enforced.
@@ -139,6 +140,152 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 
     fn init_final_values_mut(&mut self) -> Vec<&mut T> {
         self.final_cts.iter_mut().collect()
+    }
+}
+
+pub struct InstructionLookupOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub trace_oracle: TraceOracle<'a, InstructionSet>,
+    pub func: Box<
+        dyn (Fn(&[JoltTraceStep<InstructionSet>]) -> InstructionLookupStuff<MultilinearPolynomial<F>>)
+            + 'a,
+    >,
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet>
+    InstructionLookupOracle<'a, F, InstructionSet>
+{
+    pub fn new<const C: usize, const M: usize>(
+        preprocessing: &'a InstructionLookupsPreprocessing<C, F>,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+    ) -> Self {
+        let trace_oracle = TraceOracle::new(trace);
+
+        let func = |shard: &[JoltTraceStep<InstructionSet>]| {
+            let shard_len = shard.len();
+            let chunked_indices: Vec<Vec<u16>> = shard
+                .iter()
+                .map(|step| {
+                    if let Some(instr) = &step.instruction_lookup {
+                        instr
+                            .to_indices(C, M.log_2())
+                            .iter()
+                            .map(|i| *i as u16)
+                            .collect()
+                    } else {
+                        vec![0; C]
+                    }
+                })
+                .collect();
+
+            let mut subtable_lookup_indices: Vec<Vec<u16>> = Vec::with_capacity(C);
+            for i in 0..C {
+                subtable_lookup_indices
+                    .push(chunked_indices.iter().map(|chunks| chunks[i]).collect());
+            }
+
+            let E_polys: Vec<MultilinearPolynomial<F>> = (0..preprocessing.num_memories)
+                .into_par_iter()
+                .map(|memory_index| {
+                    let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                    let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+                    let access_sequence: &Vec<u16> = &subtable_lookup_indices[dim_index];
+
+                    let mut subtable_lookups = vec![0u32; shard_len];
+
+                    for (j, op) in shard.iter().enumerate() {
+                        if let Some(instr) = &op.instruction_lookup {
+                            let memories_used = &preprocessing.instruction_to_memory_indices
+                                [InstructionSet::enum_index(instr)];
+                            if memories_used.contains(&memory_index) {
+                                let memory_address = access_sequence[j] as usize;
+                                debug_assert!(memory_address < M);
+
+                                subtable_lookups[j] = preprocessing.materialized_subtables
+                                    [subtable_index][memory_address];
+                            }
+                        }
+                    }
+                    MultilinearPolynomial::from(subtable_lookups)
+                })
+                .collect();
+
+            //Computing dim
+            let dim: Vec<MultilinearPolynomial<F>> = subtable_lookup_indices
+                .into_par_iter()
+                .map(MultilinearPolynomial::from)
+                .collect();
+
+            let mut instruction_flag_bitvectors: Vec<Vec<u8>> =
+                vec![vec![0; shard_len]; preprocessing.instruction_to_memory_indices.len()];
+            for (j, op) in shard.iter().enumerate() {
+                if let Some(instr) = &op.instruction_lookup {
+                    instruction_flag_bitvectors[InstructionSet::enum_index(instr)][j] = 1;
+                }
+            }
+
+            let instruction_flag_polys: Vec<MultilinearPolynomial<F>> = instruction_flag_bitvectors
+                .into_par_iter()
+                .map(MultilinearPolynomial::from)
+                .collect();
+
+            let mut lookup_outputs = vec![];
+
+            for i in 0..shard_len {
+                let step = &shard[i];
+                lookup_outputs.push(if let Some(instr) = &step.instruction_lookup {
+                    instr.lookup_entry() as u32
+                } else {
+                    0u32
+                });
+            }
+
+            InstructionLookupStuff {
+                dim,
+                E_polys,
+                instruction_flags: instruction_flag_polys,
+                lookup_outputs: MultilinearPolynomial::from(lookup_outputs),
+                // These are dummy values since they are not required for Twist + Shout.
+                read_cts: vec![MultilinearPolynomial::from(vec![0u64; shard_len])],
+                final_cts: vec![MultilinearPolynomial::from(vec![0u64; shard_len])],
+                a_init_final: None,
+                v_init_final: None,
+            }
+        };
+
+        InstructionLookupOracle {
+            trace_oracle,
+            func: Box::new(func),
+        }
+    }
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for InstructionLookupOracle<'a, F, InstructionSet>
+{
+    type Item = InstructionLookupStuff<MultilinearPolynomial<F>>;
+
+    fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+        (self.func)(self.trace_oracle.next_shard(shard_len))
+    }
+
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
+    }
+
+    fn peek(&mut self) -> Option<Self::Item> {
+        if self.trace_oracle.peek().is_some() {
+            Some((self.func)(self.trace_oracle.peek().unwrap()))
+        } else {
+            None
+        }
+    }
+
+    fn get_len(&self) -> usize {
+        self.trace_oracle.get_len()
+    }
+
+    fn get_step(&self) -> usize {
+        self.trace_oracle.get_step()
     }
 }
 
@@ -224,7 +371,7 @@ where
                         t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
-                let t_adjustment = 1u64.field_mul(gamma_squared);
+                let t_adjustment = (1u64).field_mul(gamma_squared);
                 let write_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| read_fingerprints[i] + t_adjustment)
                     .collect();
@@ -500,7 +647,7 @@ where
 
         assert_eq!(
             read_write_tuples.len().next_power_of_two(),
-            r_read_write_batch_index.len().pow2(),
+            r_read_write_batch_index.len().pow2()
         );
         assert_eq!(
             init_final_tuples.len().next_power_of_two(),
@@ -610,11 +757,11 @@ pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
-    instruction_to_memory_indices: Vec<Vec<usize>>,
-    memory_to_subtable_index: Vec<usize>,
-    memory_to_dimension_index: Vec<usize>,
-    materialized_subtables: Vec<Vec<u32>>,
-    num_memories: usize,
+    pub instruction_to_memory_indices: Vec<Vec<usize>>,
+    pub memory_to_subtable_index: Vec<usize>,
+    pub memory_to_dimension_index: Vec<usize>,
+    pub materialized_subtables: Vec<Vec<u32>>,
+    pub num_memories: usize,
     _field: PhantomData<F>,
 }
 
@@ -817,7 +964,7 @@ where
                 * (Self::combine_lookups(
                     preprocessing,
                     &proof.primary_sumcheck.openings.E_poly_openings,
-                    &proof.primary_sumcheck.openings.flag_openings,
+                    &proof.primary_sumcheck.openings.flag_openings
                 ) - proof.primary_sumcheck.openings.lookup_outputs_opening),
             claim_last,
             "Primary sumcheck check failed."
@@ -1096,7 +1243,7 @@ where
                         let flag_eval = flag_evals[instruction_index][j];
                         if flag_eval.is_zero() {
                             continue;
-                        }; // Early exit if no contribution.
+                        } // Early exit if no contribution.
 
                         let subtable_terms: Vec<F> = memory_indices
                             .iter()

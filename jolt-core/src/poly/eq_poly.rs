@@ -1,7 +1,6 @@
 use crate::field::JoltField;
-use rayon::prelude::*;
-
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
+use rayon::prelude::*;
 
 pub struct EqPolynomial<F> {
     r: Vec<F>,
@@ -128,7 +127,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                     .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
                     .product::<F>();
                 let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
-                let higher_bits_product = ((k + 1)..l)
+                let higher_bits_product = (k + 1..l)
                     .map(|i| {
                         x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
                     })

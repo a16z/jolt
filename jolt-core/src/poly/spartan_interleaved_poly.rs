@@ -65,9 +65,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         // Az
                         let mut az_coeff = 0;
                         if !constraint.a.terms().is_empty() {
-                            az_coeff = constraint
-                                .a
-                                .evaluate_row(flattened_polynomials, step_index);
+                            az_coeff = constraint.a.evaluate_row(flattened_polynomials, step_index);
                             if !az_coeff.is_zero() {
                                 coeffs.push((global_index, az_coeff).into());
                             }
@@ -75,9 +73,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         // Bz
                         let mut bz_coeff = 0;
                         if !constraint.b.terms().is_empty() {
-                            bz_coeff = constraint
-                                .b
-                                .evaluate_row(flattened_polynomials, step_index);
+                            bz_coeff = constraint.b.evaluate_row(flattened_polynomials, step_index);
                             if !bz_coeff.is_zero() {
                                 coeffs.push((global_index + 1, bz_coeff).into());
                             }
@@ -87,21 +83,21 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                             let cz_coeff = az_coeff * bz_coeff;
                             #[cfg(test)]
                             {
-                                if cz_coeff != constraint
-                                    .c
-                                    .evaluate_row(flattened_polynomials, step_index) {
-                                        let mut constraint_string = String::new();
-                                        let _ = constraint
-                                            .pretty_fmt::<4, JoltR1CSInputs, F>(
-                                                &mut constraint_string,
-                                                flattened_polynomials,
-                                                step_index,
-                                            );
-                                        println!("{constraint_string}");
-                                        panic!(
-                                            "Uniform constraint {constraint_index} violated at step {step_index}",
-                                        );
-                                    }
+                                if
+                                    cz_coeff !=
+                                    constraint.c.evaluate_row(flattened_polynomials, step_index)
+                                {
+                                    let mut constraint_string = String::new();
+                                    let _ = constraint.pretty_fmt::<4, JoltR1CSInputs, F>(
+                                        &mut constraint_string,
+                                        flattened_polynomials,
+                                        step_index
+                                    );
+                                    println!("{constraint_string}");
+                                    panic!(
+                                        "Uniform constraint {constraint_index} violated at step {step_index}"
+                                    );
+                                }
                             }
                             coeffs.push((global_index + 2, cz_coeff).into());
                         }
@@ -115,25 +111,27 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     };
 
                     // Cross-step constraints
-                    for (constraint_index, constraint) in cross_step_constraints.iter().enumerate()
-                    {
-                        let global_index = 3
-                            * (step_index * padded_num_constraints
-                                + uniform_constraints.len()
-                                + constraint_index);
+                    for (constraint_index, constraint) in cross_step_constraints
+                        .iter()
+                        .enumerate() {
+                        let global_index =
+                            3 *
+                            (step_index * padded_num_constraints +
+                                uniform_constraints.len() +
+                                constraint_index);
 
                         // Az
                         let eq_a_eval = eval_offset_lc(
                             &constraint.a,
                             flattened_polynomials,
                             step_index,
-                            next_step_index,
+                            next_step_index
                         );
                         let eq_b_eval = eval_offset_lc(
                             &constraint.b,
                             flattened_polynomials,
                             step_index,
-                            next_step_index,
+                            next_step_index
                         );
                         let az_coeff = eq_a_eval - eq_b_eval;
                         if !az_coeff.is_zero() {
@@ -145,9 +143,13 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                     &constraint.cond,
                                     flattened_polynomials,
                                     step_index,
-                                    next_step_index,
+                                    next_step_index
                                 );
-                                assert_eq!(bz_coeff, 0, "Cross-step constraint {constraint_index} violated at step {step_index}");
+                                assert_eq!(
+                                    bz_coeff,
+                                    0,
+                                    "Cross-step constraint {constraint_index} violated at step {step_index}"
+                                );
                             }
                         } else {
                             // Bz
@@ -155,7 +157,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                 &constraint.cond,
                                 flattened_polynomials,
                                 step_index,
-                                next_step_index,
+                                next_step_index
                             );
                             if !bz_coeff.is_zero() {
                                 coeffs.push((global_index + 1, bz_coeff).into());
@@ -196,18 +198,30 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         if !self.is_bound() {
             for coeff in &self.unbound_coeffs {
                 match coeff.index % 3 {
-                    0 => az[coeff.index / 3] = F::from_i128(coeff.value),
-                    1 => bz[coeff.index / 3] = F::from_i128(coeff.value),
-                    2 => cz[coeff.index / 3] = F::from_i128(coeff.value),
+                    0 => {
+                        az[coeff.index / 3] = F::from_i128(coeff.value);
+                    }
+                    1 => {
+                        bz[coeff.index / 3] = F::from_i128(coeff.value);
+                    }
+                    2 => {
+                        cz[coeff.index / 3] = F::from_i128(coeff.value);
+                    }
                     _ => unreachable!(),
                 }
             }
         } else {
             for coeff in &self.bound_coeffs {
                 match coeff.index % 3 {
-                    0 => az[coeff.index / 3] = coeff.value,
-                    1 => bz[coeff.index / 3] = coeff.value,
-                    2 => cz[coeff.index / 3] = coeff.value,
+                    0 => {
+                        az[coeff.index / 3] = coeff.value;
+                    }
+                    1 => {
+                        bz[coeff.index / 3] = coeff.value;
+                    }
+                    2 => {
+                        cz[coeff.index / 3] = coeff.value;
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -223,9 +237,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         !self.bound_coeffs.is_empty()
     }
 
-    /// The first round of the first Spartan sumcheck. Since the polynomials
-    /// are still unbound at the beginning of this round, we can replace some
-    /// of the field arithmetic with `i128` arithmetic.
     pub fn first_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut SplitEqPolynomial<F>,
@@ -388,12 +399,24 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
                     for coeff in block {
                         match coeff.index % 6 {
-                            0 => az_coeff.0 = Some(coeff.value),
-                            1 => bz_coeff.0 = Some(coeff.value),
-                            2 => cz_coeff.0 = Some(coeff.value),
-                            3 => az_coeff.1 = Some(coeff.value),
-                            4 => bz_coeff.1 = Some(coeff.value),
-                            5 => cz_coeff.1 = Some(coeff.value),
+                            0 => {
+                                az_coeff.0 = Some(coeff.value);
+                            }
+                            1 => {
+                                bz_coeff.0 = Some(coeff.value);
+                            }
+                            2 => {
+                                cz_coeff.0 = Some(coeff.value);
+                            }
+                            3 => {
+                                az_coeff.1 = Some(coeff.value);
+                            }
+                            4 => {
+                                bz_coeff.1 = Some(coeff.value);
+                            }
+                            5 => {
+                                cz_coeff.1 = Some(coeff.value);
+                            }
                             _ => unreachable!(),
                         }
                     }
@@ -568,7 +591,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let x1 = block_index & x1_bitmask;
                         let E1_evals = E1_evals[x1];
                         let x2 = block_index >> num_x1_bits;
-
                         if x2 != prev_x2 {
                             eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
                             eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
@@ -623,6 +645,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 );
 
             let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
+
             UniPoly::from_evals(&cubic_evals)
         };
 
@@ -681,12 +704,24 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
                     for coeff in block {
                         match coeff.index % 6 {
-                            0 => az_coeff.0 = Some(coeff.value),
-                            1 => bz_coeff.0 = Some(coeff.value),
-                            2 => cz_coeff.0 = Some(coeff.value),
-                            3 => az_coeff.1 = Some(coeff.value),
-                            4 => bz_coeff.1 = Some(coeff.value),
-                            5 => cz_coeff.1 = Some(coeff.value),
+                            0 => {
+                                az_coeff.0 = Some(coeff.value);
+                            }
+                            1 => {
+                                bz_coeff.0 = Some(coeff.value);
+                            }
+                            2 => {
+                                cz_coeff.0 = Some(coeff.value);
+                            }
+                            3 => {
+                                az_coeff.1 = Some(coeff.value);
+                            }
+                            4 => {
+                                bz_coeff.1 = Some(coeff.value);
+                            }
+                            5 => {
+                                cz_coeff.1 = Some(coeff.value);
+                            }
                             _ => unreachable!(),
                         }
                     }
@@ -781,9 +816,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         for i in 0..3 {
             if let Some(coeff) = self.bound_coeffs.get(i) {
                 match coeff.index {
-                    0 => final_az_eval = coeff.value,
-                    1 => final_bz_eval = coeff.value,
-                    2 => final_cz_eval = coeff.value,
+                    0 => {
+                        final_az_eval = coeff.value;
+                    }
+                    1 => {
+                        final_bz_eval = coeff.value;
+                    }
+                    2 => {
+                        final_cz_eval = coeff.value;
+                    }
                     _ => {}
                 }
             }

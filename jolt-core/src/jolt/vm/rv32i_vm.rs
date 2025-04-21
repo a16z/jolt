@@ -242,8 +242,6 @@ impl Serializable for JoltHyperKZGProof {}
 mod tests {
     use ark_bn254::{Bn254, Fr};
 
-    use std::collections::HashSet;
-
     use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
@@ -253,6 +251,7 @@ mod tests {
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
+    use std::collections::HashSet;
     use std::sync::{LazyLock, Mutex};
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -301,6 +300,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         program.build(crate::host::DEFAULT_TARGET_DIR);
         let (bytecode, memory_init) = program.decode();
+
         let (io_device, trace) = program.trace(&inputs);
         drop(artifact_guard);
 
@@ -378,10 +378,8 @@ mod tests {
             Zeromorph<Bn254, KeccakTranscript>,
             C,
             M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+            KeccakTranscript
+        >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
@@ -421,10 +419,8 @@ mod tests {
             HyperKZG<Bn254, KeccakTranscript>,
             C,
             M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+            KeccakTranscript
+        >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,
@@ -461,10 +457,8 @@ mod tests {
             HyperKZG<Bn254, KeccakTranscript>,
             C,
             M,
-            KeccakTranscript,
-        >>::prove(
-            io_device, trace, preprocessing.clone()
-        );
+            KeccakTranscript
+        >>::prove(io_device, trace, preprocessing.clone());
 
         let verification_result = RV32IJoltVM::verify(
             preprocessing.shared,

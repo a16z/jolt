@@ -1,11 +1,16 @@
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::HashSet;
+
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::rngs::StdRng;
 use rand::RngCore;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-#[cfg(test)]
-use std::collections::HashSet;
+
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use common::rv_trace::ELFInstruction;
 use tracer::RV32IM;
 
 use crate::field::JoltField;
@@ -16,18 +21,14 @@ use crate::lasso::memory_checking::{
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use common::rv_trace::ELFInstruction;
-
-use rayon::prelude::*;
-
-use super::{JoltPolynomials, JoltTraceStep};
+use crate::utils::streaming::Oracle;
 use crate::utils::transcript::Transcript;
-
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::identity_poly::IdentityPolynomial,
 };
+
+use super::{JoltPolynomials, JoltTraceStep, TraceOracle};
 
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -44,8 +45,8 @@ pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub(crate) t_read: T,
     /// Final timestamps for offline memory-checking
     pub(crate) t_final: T,
-    a_init_final: VerifierComputedOpening<T>,
-    v_init_final: VerifierComputedOpening<[T; 6]>,
+    pub a_init_final: VerifierComputedOpening<T>,
+    pub v_init_final: VerifierComputedOpening<[T; 6]>,
 }
 
 /// Note –– F: JoltField bound is not enforced.
@@ -100,26 +101,138 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 pub type BytecodeProof<F, PCS, ProofTranscript> =
     MemoryCheckingProof<F, PCS, BytecodeOpenings<F>, NoExogenousOpenings, ProofTranscript>;
 
+pub struct BytecodeOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub trace_oracle: TraceOracle<'a, InstructionSet>,
+    pub func: Box<
+        dyn (Fn(&[JoltTraceStep<InstructionSet>]) -> BytecodeStuff<MultilinearPolynomial<F>>) + 'a,
+    >,
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BytecodeOracle<'a, F, InstructionSet> {
+    pub fn new(
+        preprocessing: &'a BytecodePreprocessing<F>,
+        trace: &'a Vec<JoltTraceStep<InstructionSet>>,
+    ) -> Self {
+        let trace_oracle = TraceOracle::new(trace);
+
+        let func = |shard: &[JoltTraceStep<InstructionSet>]| {
+            let shard_len = shard.len();
+            let mut a_read_write = vec![];
+            let mut address = vec![];
+            let mut bitflags = vec![];
+            let mut rd = vec![];
+            let mut rs1 = vec![];
+            let mut rs2 = vec![];
+            let mut imm = vec![];
+
+            for i in 0..shard_len {
+                let step = &shard[i];
+                let virtual_address = preprocessing
+                    .virtual_address_map
+                    .get(&(
+                        step.bytecode_row.address,
+                        step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
+                    ))
+                    .unwrap();
+
+                a_read_write.push(*virtual_address as u64);
+
+                address.push(step.bytecode_row.address as u64);
+                bitflags.push(step.bytecode_row.bitflags);
+                rd.push(step.bytecode_row.rd);
+                rs1.push(step.bytecode_row.rs1);
+                rs2.push(step.bytecode_row.rs2);
+                imm.push(step.bytecode_row.imm);
+            }
+
+            let v_read_write = [
+                MultilinearPolynomial::from(address),
+                MultilinearPolynomial::from(bitflags),
+                MultilinearPolynomial::from(rd),
+                MultilinearPolynomial::from(rs1),
+                MultilinearPolynomial::from(rs2),
+                MultilinearPolynomial::from(imm),
+            ];
+
+            BytecodeStuff {
+                a_read_write: MultilinearPolynomial::from(a_read_write),
+                v_read_write,
+                // These are dummy values since they are not required for Twist + Shout.
+                t_read: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                t_final: MultilinearPolynomial::from(vec![0u64; shard_len]),
+                a_init_final: None,
+                v_init_final: None,
+            }
+        };
+
+        BytecodeOracle {
+            trace_oracle,
+            func: Box::new(func),
+        }
+    }
+
+    pub fn update_trace(trace: &mut [JoltTraceStep<InstructionSet>]) {
+        for step in trace.iter_mut() {
+            if !step.bytecode_row.address.is_zero() {
+                assert!(step.bytecode_row.address >= (RAM_START_ADDRESS as usize));
+                assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
+                // Compress instruction address for more efficient commitment:
+                step.bytecode_row.address = 1
+                    + (step.bytecode_row.address - (RAM_START_ADDRESS as usize))
+                        / BYTES_PER_INSTRUCTION;
+            }
+        }
+    }
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for BytecodeOracle<'a, F, InstructionSet>
+{
+    type Item = BytecodeStuff<MultilinearPolynomial<F>>;
+
+    fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+        (self.func)(self.trace_oracle.next_shard(shard_len))
+    }
+
+    fn reset(&mut self) {
+        self.trace_oracle.reset();
+    }
+
+    fn peek(&mut self) -> Option<Self::Item> {
+        if self.trace_oracle.peek().is_some() {
+            Some((self.func)(self.trace_oracle.peek().unwrap()))
+        } else {
+            None
+        }
+    }
+    fn get_len(&self) -> usize {
+        self.trace_oracle.get_len()
+    }
+    fn get_step(&self) -> usize {
+        self.trace_oracle.get_step()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
     /// Memory address as read from the ELF.
-    address: usize,
+    pub address: usize,
     /// Packed instruction/circuit flags, used for r1cs
     pub bitflags: u64,
     /// Index of the destination register for this instruction (0 if register is unused).
-    rd: u8,
+    pub rd: u8,
     /// Index of the first source register for this instruction (0 if register is unused).
-    rs1: u8,
+    pub rs1: u8,
     /// Index of the second source register for this instruction (0 if register is unused).
-    rs2: u8,
+    pub rs2: u8,
     /// "Immediate" value for this instruction (0 if unused).
-    imm: i64,
+    pub imm: i64,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    virtual_sequence_remaining: Option<usize>,
+    pub virtual_sequence_remaining: Option<usize>,
 }
 
 impl BytecodeRow {
@@ -192,7 +305,7 @@ impl BytecodeRow {
             | RV32IM::BGE
             | RV32IM::BLTU
             | RV32IM::BGEU => instruction.imm.unwrap_or(0),
-            _ => instruction.imm.unwrap_or(0) & u32::MAX as i64,
+            _ => instruction.imm.unwrap_or(0) & (u32::MAX as i64),
         };
 
         Self {
@@ -214,7 +327,7 @@ pub fn random_bytecode_trace(
 ) -> Vec<BytecodeRow> {
     let mut trace: Vec<BytecodeRow> = Vec::with_capacity(num_ops);
     for _ in 0..num_ops {
-        trace.push(bytecode[rng.next_u64() as usize % bytecode.len()].clone());
+        trace.push(bytecode[(rng.next_u64() as usize) % bytecode.len()].clone());
     }
     trace
 }
@@ -231,7 +344,7 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
-    virtual_address_map: BTreeMap<(usize, usize), usize>,
+    pub virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 
 impl<F: JoltField> BytecodePreprocessing<F> {
@@ -240,11 +353,11 @@ impl<F: JoltField> BytecodePreprocessing<F> {
         let mut virtual_address_map = BTreeMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
         for instruction in bytecode.iter_mut() {
-            assert!(instruction.address >= RAM_START_ADDRESS as usize);
+            assert!(instruction.address >= (RAM_START_ADDRESS as usize));
             assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
             // Compress instruction address for more efficient commitment:
             instruction.address =
-                1 + (instruction.address - RAM_START_ADDRESS as usize) / BYTES_PER_INSTRUCTION;
+                1 + (instruction.address - (RAM_START_ADDRESS as usize)) / BYTES_PER_INSTRUCTION;
             assert_eq!(
                 virtual_address_map.insert(
                     (
@@ -318,11 +431,11 @@ where
 
         for (step_index, step) in trace.iter_mut().enumerate() {
             if !step.bytecode_row.address.is_zero() {
-                assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
+                assert!(step.bytecode_row.address >= (RAM_START_ADDRESS as usize));
                 assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
                 // Compress instruction address for more efficient commitment:
                 step.bytecode_row.address = 1
-                    + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
+                    + (step.bytecode_row.address - (RAM_START_ADDRESS as usize))
                         / BYTES_PER_INSTRUCTION;
             }
 
@@ -333,6 +446,7 @@ where
                     step.bytecode_row.virtual_sequence_remaining.unwrap_or(0),
                 ))
                 .unwrap();
+
             a_read_write[step_index] = *virtual_address as u32;
             let counter = final_cts[*virtual_address];
             read_cts[step_index] = counter;
@@ -570,15 +684,15 @@ where
         let init_leaves: Vec<F> = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
-                F::from_i64(v_imm[i])
-                    + (i as u64).field_mul(gamma_terms[0])
-                    + v_address[i].field_mul(gamma_terms[1])
-                    + v_bitflags[i].field_mul(gamma_terms[2])
-                    + v_rd[i].field_mul(gamma_terms[3])
-                    + v_rs1[i].field_mul(gamma_terms[4])
-                    + v_rs2[i].field_mul(gamma_terms[5])
+                F::from_i64(v_imm[i]) +
+                    (i as u64).field_mul(gamma_terms[0]) +
+                    v_address[i].field_mul(gamma_terms[1]) +
+                    v_bitflags[i].field_mul(gamma_terms[2]) +
+                    v_rd[i].field_mul(gamma_terms[3]) +
+                    v_rs1[i].field_mul(gamma_terms[4]) +
+                    v_rs2[i].field_mul(gamma_terms[5]) -
                     // + gamma_terms[6] * 0
-                    - tau
+                    tau
             })
             .collect();
 
@@ -708,15 +822,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::jolt::vm::rv32i_vm::RV32I;
+    use std::collections::HashSet;
 
-    use super::*;
     use ark_bn254::Fr;
+
     use common::{
         constants::MEMORY_OPS_PER_INSTRUCTION,
         rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
     };
-    use std::collections::HashSet;
+
+    use crate::jolt::vm::rv32i_vm::RV32I;
+
+    use super::*;
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
         let set1: HashSet<_> = vec1.iter().cloned().collect();
@@ -734,7 +851,7 @@ mod tests {
     }
 
     fn to_ram_address(index: usize) -> usize {
-        index * BYTES_PER_INSTRUCTION + RAM_START_ADDRESS as usize
+        index * BYTES_PER_INSTRUCTION + (RAM_START_ADDRESS as usize)
     }
 
     #[test]
