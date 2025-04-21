@@ -17,10 +17,8 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::memory::MemoryOp;
 use rayon::prelude::*;
-
-use super::JoltTraceStep;
+use tracer::instruction::{RAMAccess, RV32IMCycle};
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
@@ -64,9 +62,9 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "TwistProof::prove")]
-    pub fn prove<const WORD_SIZE: usize>(
+    pub fn prove(
         // generators: &PCS::Setup,
-        trace: &[JoltTraceStep<WORD_SIZE>],
+        trace: &[RV32IMCycle],
         K: usize,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
@@ -136,8 +134,8 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
 impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
-    pub fn prove<const WORD_SIZE: usize>(
-        trace: &[JoltTraceStep<WORD_SIZE>],
+    pub fn prove(
+        trace: &[RV32IMCycle],
         r: Vec<F>,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
@@ -165,11 +163,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .par_chunks_exact(chunk_size)
             .map(|trace_chunk| {
                 let mut delta = vec![0i64; K];
-                for step in trace_chunk.iter() {
-                    let ram_op = step.memory_ops[3];
-                    if let MemoryOp::Write(k, old_val, new_val) = ram_op {
-                        let increment = new_val as i64 - old_val as i64;
-                        delta[k as usize] += increment;
+                for cycle in trace_chunk.iter() {
+                    let ram_op = cycle.ram_access();
+                    if let RAMAccess::Write(write) = ram_op {
+                        let increment = write.post_value as i64 - write.pre_value as i64;
+                        delta[write.address as usize] += increment;
                     }
                 }
                 delta
@@ -235,14 +233,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 let mut j = chunk_index * chunk_size;
                 let I_chunk = trace_chunk
                     .iter()
-                    .map(|step| {
-                        let ram_op = step.memory_ops[3];
+                    .map(|cycle| {
+                        let ram_op = cycle.ram_access();
                         let inc = match ram_op {
-                            MemoryOp::Read(k, _) => (j, k as usize, F::zero(), F::zero()),
-                            MemoryOp::Write(k, old_val, new_val) => {
-                                let increment = new_val as i64 - old_val as i64;
-                                (j, k as usize, F::zero(), F::from_i64(increment))
+                            RAMAccess::Read(read) => {
+                                (j, read.address as usize, F::zero(), F::zero())
                             }
+                            RAMAccess::Write(write) => {
+                                let increment = write.post_value as i64 - write.pre_value as i64;
+                                (j, write.address as usize, F::zero(), F::from_i64(increment))
+                            }
+                            RAMAccess::NoOp => (j, 0, F::zero(), F::zero()),
                         };
                         j += 1;
                         inc
@@ -257,22 +258,24 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         let read_values: Vec<u64> = trace
             .par_iter()
-            .map(|step| {
-                let ram_op = step.memory_ops[3];
+            .map(|cycle| {
+                let ram_op = cycle.ram_access();
                 match ram_op {
-                    MemoryOp::Read(_, value) => value,
-                    MemoryOp::Write(_, old_value, _) => old_value,
+                    RAMAccess::Read(read) => read.value,
+                    RAMAccess::Write(write) => write.pre_value,
+                    RAMAccess::NoOp => 0,
                 }
             })
             .collect();
         let rv = MultilinearPolynomial::from(read_values);
         let write_values: Vec<u64> = trace
             .par_iter()
-            .map(|step| {
-                let ram_op = step.memory_ops[3];
+            .map(|cycle| {
+                let ram_op = cycle.ram_access();
                 match ram_op {
-                    MemoryOp::Read(_, value) => value,
-                    MemoryOp::Write(_, _, new_value) => new_value,
+                    RAMAccess::Read(read) => read.value,
+                    RAMAccess::Write(write) => write.post_value,
+                    RAMAccess::NoOp => 0,
                 }
             })
             .collect();
@@ -293,15 +296,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let inc_eval: F = trace
             .par_iter()
             .enumerate()
-            .map(|(cycle, step)| {
-                let ram_op = step.memory_ops[3];
+            .map(|(j, cycle)| {
+                let ram_op = cycle.ram_access();
                 let (address, increment) = match ram_op {
-                    MemoryOp::Read(address, _) => (address, F::zero()),
-                    MemoryOp::Write(address, old_value, new_value) => {
-                        (address, F::from_i64(new_value as i64 - old_value as i64))
-                    }
+                    RAMAccess::Read(read) => (read.address, F::zero()),
+                    RAMAccess::Write(write) => (
+                        write.address,
+                        F::from_i64(write.post_value as i64 - write.pre_value as i64),
+                    ),
+                    RAMAccess::NoOp => (0, F::zero()),
                 };
-                z_eq_r.get_coeff(address as usize) * eq_r_prime.get_coeff(cycle) * increment
+                z_eq_r.get_coeff(address as usize) * eq_r_prime.get_coeff(j) * increment
             })
             .sum();
 
@@ -380,7 +385,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                let k = trace[j].memory_ops[3].address() as usize;
+                                let k = trace[j].ram_access().address();
                                 if ra[0][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
@@ -389,7 +394,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                let k = trace[j].memory_ops[3].address() as usize;
+                                let k = trace[j].ram_access().address();
                                 if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
@@ -572,12 +577,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         ra.par_chunks_mut(K)
             .enumerate()
             .for_each(|(chunk_index, ra_chunk)| {
-                for (j_bound, step) in trace
+                for (j_bound, cycle) in trace
                     [chunk_index * chunk_size..(chunk_index + 1) * chunk_size]
                     .iter()
                     .enumerate()
                 {
-                    let ram_op = step.memory_ops[3];
+                    let ram_op = cycle.ram_access();
                     ra_chunk[ram_op.address() as usize] += A[j_bound];
                 }
             });
@@ -813,8 +818,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 /// Section 8.1 and Appendix B of the Twist+Shout paper
 /// TODO(moodlezoup): incorporate optimization from Appendix B.2
 #[tracing::instrument(skip_all)]
-pub fn prove_val_evaluation<const WORD_SIZE: usize, F: JoltField, ProofTranscript: Transcript>(
-    trace: &[JoltTraceStep<WORD_SIZE>],
+pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
+    trace: &[RV32IMCycle],
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     claimed_evaluation: F,
@@ -832,14 +837,14 @@ pub fn prove_val_evaluation<const WORD_SIZE: usize, F: JoltField, ProofTranscrip
     // Compute the Inc polynomial using the above table
     let inc: Vec<F> = trace
         .par_iter()
-        .map(|step| {
-            let ram_op = step.memory_ops[3];
+        .map(|cycle| {
+            let ram_op = cycle.ram_access();
             match ram_op {
-                MemoryOp::Read(_, _) => F::zero(),
-                MemoryOp::Write(k, old_val, new_val) => {
-                    let increment = new_val as i64 - old_val as i64;
-                    eq_r_address[k as usize] * F::from_i64(increment)
+                RAMAccess::Write(write) => {
+                    let increment = write.post_value as i64 - write.pre_value as i64;
+                    eq_r_address[write.address as usize] * F::from_i64(increment)
                 }
+                _ => F::zero(),
             }
         })
         .collect();

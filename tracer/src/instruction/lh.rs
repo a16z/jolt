@@ -13,7 +13,7 @@ use super::virtual_assert_halfword_alignment::{
 };
 use super::xori::XORI;
 use super::{addi::ADDI, RV32IMInstruction};
-use super::{MemoryRead, VirtualInstructionSequence};
+use super::{RAMRead, VirtualInstructionSequence};
 use common::constants::virtual_register_index;
 
 use super::{
@@ -38,7 +38,7 @@ impl RISCVInstruction for LH {
     const MATCH: u32 = 0x00001003;
 
     type Format = FormatI;
-    type RAMAccess = MemoryRead;
+    type RAMAccess = RAMRead;
 
     fn operands(&self) -> &Self::Format {
         &self.operands

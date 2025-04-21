@@ -16,7 +16,7 @@ use super::sw::SW;
 use super::virtual_assert_halfword_alignment::HalfwordAlignFormat;
 use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use super::xor::XOR;
-use super::MemoryWrite;
+use super::RAMWrite;
 use super::RV32IMInstruction;
 use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
@@ -43,7 +43,7 @@ impl RISCVInstruction for SH {
     const MATCH: u32 = 0x00001023;
 
     type Format = FormatS;
-    type RAMAccess = MemoryWrite;
+    type RAMAccess = RAMWrite;
 
     fn operands(&self) -> &Self::Format {
         &self.operands

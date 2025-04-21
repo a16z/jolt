@@ -1,10 +1,10 @@
-use tracer::instruction::{fence::FENCE, RISCVCycle};
+use tracer::instruction::{sw::SW, RISCVCycle};
 
 use crate::jolt::lookup_table::LookupTables;
 
 use super::InstructionLookup;
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<FENCE> {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<SW> {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         None
     }

@@ -4,17 +4,17 @@ use crate::jolt::lookup_table::{shift_right_bitmask::ShiftRightBitmaskTable, Loo
 
 use super::InstructionLookup;
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualShiftRightBitmask {
-    fn lookup_table() -> Option<LookupTables<WORD_SIZE>> {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<VirtualShiftRightBitmask> {
+    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         Some(ShiftRightBitmaskTable.into())
     }
 
-    fn lookup_query(cycle: &RISCVCycle<Self>) -> (u64, u64) {
-        (cycle.register_state.rs1, 0)
+    fn to_lookup_query(&self) -> (u64, u64) {
+        (self.register_state.rs1, 0)
     }
 
-    fn lookup_entry(cycle: &RISCVCycle<Self>) -> u64 {
-        let (x, _) = InstructionLookup::<WORD_SIZE>::lookup_query(cycle);
+    fn to_lookup_output(&self) -> u64 {
+        let (x, _) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => {

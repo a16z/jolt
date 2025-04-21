@@ -2,9 +2,10 @@ use crate::emulator::cpu::{Cpu, Xlen};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::fmt::Debug;
 
 pub trait InstructionFormat: Default {
-    type RegisterState: Default + Clone + Serialize + DeserializeOwned;
+    type RegisterState: Default + Clone + Serialize + DeserializeOwned + Debug;
 
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
@@ -18,7 +19,7 @@ pub struct FormatB {
     pub imm: i64,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatB {
     pub rs1: u64,
     pub rs2: u64,
@@ -61,7 +62,7 @@ pub struct FormatI {
     pub imm: i64,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatI {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
@@ -101,7 +102,7 @@ pub struct FormatJ {
     pub imm: i64,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatJ {
     pub rd: (u64, u64), // (old_value, new_value)
 }
@@ -141,7 +142,7 @@ pub struct FormatR {
     pub rs2: usize,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatR {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
@@ -177,7 +178,7 @@ pub struct FormatS {
     pub imm: i64,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatS {
     pub rs1: u64,
     pub rs2: u64,
@@ -218,7 +219,7 @@ pub struct FormatU {
     pub imm: i64,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatU {
     pub rd: (u64, u64), // (old_value, new_value)
 }

@@ -6,7 +6,7 @@ const DTB_SIZE: usize = 0xfe0;
 
 extern crate fnv;
 
-use crate::instruction::{MemoryRead, MemoryWrite};
+use crate::instruction::{RAMRead, RAMWrite};
 use common::memory::JoltDevice;
 
 use self::fnv::FnvHashMap;
@@ -311,7 +311,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load(&mut self, v_address: u64) -> Result<(u8, MemoryRead), Trap> {
+    pub fn load(&mut self, v_address: u64) -> Result<(u8, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         let memory_read = self.trace_load(effective_address);
         match self.translate_address(effective_address, &MemoryAccessType::Read) {
@@ -371,7 +371,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, MemoryRead), Trap> {
+    pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 2 == 0, "Unaligned load_halfword");
         let memory_read = self.trace_load(effective_address);
@@ -386,7 +386,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_word(&mut self, v_address: u64) -> Result<(u32, MemoryRead), Trap> {
+    pub fn load_word(&mut self, v_address: u64) -> Result<(u32, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 4 == 0, "Unaligned load_word");
         let memory_read = self.trace_load(effective_address);
@@ -416,7 +416,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value`
-    pub fn store(&mut self, v_address: u64, value: u8) -> Result<MemoryWrite, Trap> {
+    pub fn store(&mut self, v_address: u64, value: u8) -> Result<RAMWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         let memory_write = self.trace_store_byte(effective_address, value as u64);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
@@ -481,7 +481,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<MemoryWrite, Trap> {
+    pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<RAMWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 2 == 0, "Unaligned store_halfword");
         let memory_write = self.trace_store_halfword(effective_address, value as u64);
@@ -495,7 +495,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<MemoryWrite, Trap> {
+    pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<RAMWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(effective_address % 4 == 0, "Unaligned store_word");
         let memory_write = self.trace_store(effective_address, value as u64);
@@ -548,7 +548,7 @@ impl Mmu {
 
     /// Records the memory word being accessed by a load instruction. The memory
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
-    fn trace_load(&self, effective_address: u64) -> MemoryRead {
+    fn trace_load(&self, effective_address: u64) -> RAMRead {
         let word_address = (effective_address >> 2) << 2;
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -560,7 +560,7 @@ impl Mmu {
                 for i in 0..bytes {
                     value_bytes[i as usize] = self.jolt_device.load(word_address + i);
                 }
-                MemoryRead {
+                RAMRead {
                     address: word_address,
                     value: u64::from_le_bytes(value_bytes),
                 }
@@ -572,7 +572,7 @@ impl Mmu {
             for i in 0..bytes {
                 value_bytes[i as usize] = self.memory.read_byte(word_address + i);
             }
-            MemoryRead {
+            RAMRead {
                 address: word_address,
                 value: u64::from_le_bytes(value_bytes),
             }
@@ -582,7 +582,7 @@ impl Mmu {
     /// Records the state of the memory word containing the accessed byte
     /// before and after the store instruction. The memory state is used in Jolt to
     /// construct the witnesses in `read_write_memory.rs`.
-    fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> MemoryWrite {
+    fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -613,7 +613,7 @@ impl Mmu {
             _ => unreachable!(),
         };
 
-        MemoryWrite {
+        RAMWrite {
             address: word_address,
             pre_value,
             post_value,
@@ -623,7 +623,7 @@ impl Mmu {
     /// Records the state of the memory word containing the accessed halfword
     /// before and after the store instruction. The memory state is used in Jolt to
     /// construct the witnesses in `read_write_memory.rs`.
-    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> MemoryWrite {
+    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -654,7 +654,7 @@ impl Mmu {
             panic!("Unaligned store {:x}", effective_address);
         };
 
-        MemoryWrite {
+        RAMWrite {
             address: word_address,
             pre_value,
             post_value,
@@ -664,7 +664,7 @@ impl Mmu {
     /// Records the state of the accessed memory word before and after the store
     /// instruction. The memory state is used in Jolt to construct the witnesses
     /// in `read_write_memory.rs`.
-    fn trace_store(&mut self, effective_address: u64, value: u64) -> MemoryWrite {
+    fn trace_store(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
@@ -677,7 +677,7 @@ impl Mmu {
                 pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
-            MemoryWrite {
+            RAMWrite {
                 address: effective_address,
                 pre_value,
                 post_value: value,
@@ -688,7 +688,7 @@ impl Mmu {
                 pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
             }
             let pre_value = u64::from_le_bytes(pre_value_bytes);
-            MemoryWrite {
+            RAMWrite {
                 address: effective_address,
                 pre_value,
                 post_value: value,

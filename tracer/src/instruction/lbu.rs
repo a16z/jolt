@@ -10,7 +10,7 @@ use super::slli::SLLI;
 use super::srli::SRLI;
 use super::xori::XORI;
 use super::{addi::ADDI, VirtualInstructionSequence};
-use super::{MemoryRead, RV32IMInstruction};
+use super::{RAMRead, RV32IMInstruction};
 use common::constants::virtual_register_index;
 
 use super::{
@@ -35,7 +35,7 @@ impl RISCVInstruction for LBU {
     const MATCH: u32 = 0x00004003;
 
     type Format = FormatI;
-    type RAMAccess = MemoryRead;
+    type RAMAccess = RAMRead;
 
     fn operands(&self) -> &Self::Format {
         &self.operands

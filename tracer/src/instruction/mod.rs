@@ -131,17 +131,51 @@ pub mod virtual_srl;
 pub mod xor;
 pub mod xori;
 
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct MemoryRead {
-    pub(crate) address: u64,
-    pub(crate) value: u64,
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct RAMRead {
+    pub address: u64,
+    pub value: u64,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct MemoryWrite {
-    pub(crate) address: u64,
-    pub(crate) pre_value: u64,
-    pub(crate) post_value: u64,
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct RAMWrite {
+    pub address: u64,
+    pub pre_value: u64,
+    pub post_value: u64,
+}
+
+pub enum RAMAccess {
+    Read(RAMRead),
+    Write(RAMWrite),
+    NoOp,
+}
+
+impl RAMAccess {
+    pub fn address(&self) -> usize {
+        match self {
+            RAMAccess::Read(read) => read.address as usize,
+            RAMAccess::Write(write) => write.address as usize,
+            RAMAccess::NoOp => 0,
+        }
+    }
+}
+
+impl From<RAMRead> for RAMAccess {
+    fn from(read: RAMRead) -> Self {
+        Self::Read(read)
+    }
+}
+
+impl From<RAMWrite> for RAMAccess {
+    fn from(write: RAMWrite) -> Self {
+        Self::Write(write)
+    }
+}
+
+impl From<()> for RAMAccess {
+    fn from(_: ()) -> Self {
+        Self::NoOp
+    }
 }
 
 pub trait RISCVInstruction: Sized + Copy + Into<RV32IMInstruction> {
@@ -149,7 +183,7 @@ pub trait RISCVInstruction: Sized + Copy + Into<RV32IMInstruction> {
     const MATCH: u32;
 
     type Format: InstructionFormat;
-    type RAMAccess: Default;
+    type RAMAccess: Default + Into<RAMAccess> + Copy;
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64) -> Self;
@@ -428,14 +462,14 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
     pub ram_access: T::RAMAccess,
 }
 
-#[derive(From, Clone, Serialize, Deserialize, IntoStaticStr)]
+#[derive(From, Debug, Clone, Serialize, Deserialize, IntoStaticStr)]
 pub enum RV32IMCycle {
     NoOp,
     ADD(RISCVCycle<ADD>),
@@ -500,4 +534,73 @@ pub enum RV32IMCycle {
     ShiftRightBitmaskI(RISCVCycle<VirtualShiftRightBitmaskI>),
     VirtualSRA(RISCVCycle<VirtualSRA>),
     VirtualSRL(RISCVCycle<VirtualSRL>),
+}
+
+impl RV32IMCycle {
+    pub fn ram_access(&self) -> RAMAccess {
+        match self {
+            RV32IMCycle::NoOp => RAMAccess::NoOp,
+            RV32IMCycle::ADD(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::ADDI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AND(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::ANDI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AUIPC(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::BEQ(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::BGE(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::BGEU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::BLT(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::BLTU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::BNE(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::DIV(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::DIVU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::FENCE(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::JAL(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::JALR(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::LB(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::LBU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::LH(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::LHU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::LUI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::LW(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::MUL(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::MULH(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::MULHSU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::MULHU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::OR(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::ORI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::REM(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::REMU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SB(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SH(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SLL(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SLLI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SLT(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SLTI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SLTIU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SLTU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SRA(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SRAI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SRL(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SRLI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SUB(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::SW(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::XOR(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::XORI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::Advice(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AssertEQ(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AssertHalfwordAlignment(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AssertLTE(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AssertValidDiv0(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AssertValidSignedRemainder(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::Move(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::Movsign(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::Pow2(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::Pow2I(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::ShiftRightBitmask(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::VirtualSRA(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::VirtualSRL(cycle) => cycle.ram_access.into(),
+        }
+    }
 }

@@ -13,7 +13,7 @@ use super::sll::SLL;
 use super::slli::SLLI;
 use super::sw::SW;
 use super::xor::XOR;
-use super::{MemoryWrite, RV32IMInstruction, VirtualInstructionSequence};
+use super::{RAMWrite, RV32IMInstruction, VirtualInstructionSequence};
 
 use super::{
     format::{FormatS, InstructionFormat},
@@ -37,7 +37,7 @@ impl RISCVInstruction for SB {
     const MATCH: u32 = 0x00000023;
 
     type Format = FormatS;
-    type RAMAccess = MemoryWrite;
+    type RAMAccess = RAMWrite;
 
     fn operands(&self) -> &Self::Format {
         &self.operands

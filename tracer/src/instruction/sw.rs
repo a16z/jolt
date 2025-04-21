@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
-use super::MemoryWrite;
+use super::RAMWrite;
 
 use super::{
     format::{FormatS, InstructionFormat},
@@ -26,7 +26,7 @@ impl RISCVInstruction for SW {
     const MATCH: u32 = 0x00002023;
 
     type Format = FormatS;
-    type RAMAccess = MemoryWrite;
+    type RAMAccess = RAMWrite;
 
     fn operands(&self) -> &Self::Format {
         &self.operands

@@ -11,7 +11,7 @@ use super::sll::SLL;
 use super::slli::SLLI;
 use super::srai::SRAI;
 use super::xori::XORI;
-use super::{MemoryRead, RV32IMInstruction, VirtualInstructionSequence};
+use super::{RAMRead, RV32IMInstruction, VirtualInstructionSequence};
 
 use super::{
     format::{FormatI, InstructionFormat},
@@ -35,7 +35,7 @@ impl RISCVInstruction for LB {
     const MATCH: u32 = 0x00000003;
 
     type Format = FormatI;
-    type RAMAccess = MemoryRead;
+    type RAMAccess = RAMRead;
 
     fn operands(&self) -> &Self::Format {
         &self.operands

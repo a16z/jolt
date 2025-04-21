@@ -1,9 +1,12 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::lookup_table::{
-        prefixes::{PrefixCheckpoint, Prefixes},
-        JoltLookupTable, LookupTables, PrefixSuffixDecomposition,
+    jolt::{
+        instruction::InstructionLookup,
+        lookup_table::{
+            prefixes::{PrefixCheckpoint, Prefixes},
+            JoltLookupTable, LookupTables, PrefixSuffixDecomposition,
+        },
     },
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -307,12 +310,11 @@ pub fn prove_sparse_dense_shout<
     let _guard = span.enter();
     let lookup_indices: Vec<_> = trace
         .par_iter()
-        .map(|step| {
-            let lookup_index = match step.instruction_lookup {
-                Some(lookup) => lookup.to_lookup_index(),
-                None => 0,
-            };
-            LookupBits::new(lookup_index, log_K)
+        .map(|cycle| {
+            LookupBits::new(
+                InstructionLookup::<WORD_SIZE>::to_lookup_index(cycle),
+                log_K,
+            )
         })
         .collect();
     drop(_guard);
@@ -332,9 +334,12 @@ pub fn prove_sparse_dense_shout<
         .par_iter()
         .zip(lookup_indices.par_iter())
         .zip(u_evals.par_iter())
-        .map(|((step, k), u)| match step.instruction_lookup {
-            Some(lookup) => u.mul_u64_unchecked(lookup.materialize_entry(k.into())),
-            None => F::zero(),
+        .map(|((cycle, k), u)| {
+            let table: Option<LookupTables<WORD_SIZE>> = cycle.lookup_table();
+            match table {
+                Some(table) => u.mul_u64_unchecked(table.materialize_entry(k.into())),
+                None => F::zero(),
+            }
         })
         .sum();
     drop(_guard);
@@ -388,9 +393,10 @@ pub fn prove_sparse_dense_shout<
                     .iter()
                     .zip(lookup_indices.iter())
                     .zip(u_evals.iter())
-                    .filter_map(|((step, k), u)| match step.instruction_lookup {
+                    .filter_map(|((cycle, k), u)| match cycle.lookup_table() {
                         Some(lookup) => {
-                            if LookupTables::enum_index(&lookup) == LookupTables::enum_index(table)
+                            if LookupTables::<WORD_SIZE>::enum_index(&lookup)
+                                == LookupTables::enum_index(table)
                             {
                                 Some((k, u))
                             } else {
@@ -510,7 +516,8 @@ pub fn prove_sparse_dense_shout<
         .par_iter_mut()
         .zip(trace.par_iter())
         .for_each(|(val, step)| {
-            if let Some(table) = step.instruction_lookup {
+            let table: Option<LookupTables<WORD_SIZE>> = step.lookup_table();
+            if let Some(table) = table {
                 let suffixes: Vec<_> = table
                     .suffixes()
                     .iter()
@@ -614,8 +621,8 @@ pub fn prove_sparse_dense_shout<
                 .iter()
                 .enumerate()
                 .filter_map(|(j, step)| {
-                    if let Some(lookup) = step.instruction_lookup {
-                        if LookupTables::enum_index(&lookup) == table_index {
+                    if let Some(table) = step.lookup_table() {
+                        if LookupTables::<WORD_SIZE>::enum_index(&table) == table_index {
                             return Some(eq_r_cycle_prime[j]);
                         }
                     }
