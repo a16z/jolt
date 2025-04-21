@@ -1,10 +1,14 @@
+use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{format::FormatB, RISCVInstruction, RISCVTrace};
+use super::{
+    format::{FormatB, InstructionFormat},
+    RISCVInstruction, RISCVTrace,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualAssertValidUnsignedRemainder {
     pub address: u64,
     pub operands: FormatB,
@@ -27,8 +31,16 @@ impl RISCVInstruction for VirtualAssertValidUnsignedRemainder {
         &self.operands
     }
 
-    fn new(_: u32, _: u64) -> Self {
+    fn new(_: u32, _: u64, _: bool) -> Self {
         unimplemented!("virtual instruction")
+    }
+
+    fn random(rng: &mut StdRng) -> Self {
+        Self {
+            address: rng.next_u64(),
+            operands: FormatB::random(rng),
+            virtual_sequence_remaining: None,
+        }
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {

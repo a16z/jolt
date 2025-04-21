@@ -13,6 +13,10 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<Virtual
         (self.register_state.rs1, 0)
     }
 
+    fn to_lookup_index(&self) -> u64 {
+        self.register_state.rs1
+    }
+
     fn to_lookup_output(&self) -> u64 {
         let (x, _) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
         match WORD_SIZE {
@@ -22,5 +26,18 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<Virtual
             64 => 1u64 << (x % 64),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::jolt::instruction::test::materialize_entry_test;
+
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn materialize_entry() {
+        materialize_entry_test::<Fr, VirtualPow2>();
     }
 }

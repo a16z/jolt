@@ -42,27 +42,21 @@ mod test {
 
     use super::RangeCheckTable;
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     #[test]
-    fn add_prefix_suffix() {
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, RangeCheckTable<32>>();
     }
 
     #[test]
-    fn add_materialize_entry() {
-        materialize_entry_test::<Fr, RangeCheckTable<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, RangeCheckTable<8>>();
     }
 
     #[test]
-    fn add_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, RangeCheckTable<8>>();
-    }
-
-    #[test]
-    fn add_mle_random() {
-        instruction_mle_random_test::<Fr, RangeCheckTable<32>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, RangeCheckTable<32>>();
     }
 }

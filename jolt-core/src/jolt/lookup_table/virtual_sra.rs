@@ -76,27 +76,22 @@ mod test {
 
     use super::VirtualSRATable;
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     #[test]
-    fn virtual_sra_materialize_entry() {
-        materialize_entry_test::<Fr, VirtualSRATable<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualSRATable<8>>();
     }
 
     #[test]
-    fn virtual_sra_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, VirtualSRATable<8>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, VirtualSRATable<32>>();
     }
 
     #[test]
-    fn virtual_sra_mle_random() {
-        instruction_mle_random_test::<Fr, VirtualSRATable<32>>();
-    }
-
-    #[test]
-    fn virtual_sra_prefix_suffix() {
+    #[ignore = "Cannot generate lookup_index at random"]
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, VirtualSRATable<32>>();
     }
 }

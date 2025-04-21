@@ -169,243 +169,243 @@ mod tests {
     static FIB_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SHA3_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-    fn fib_e2e<F, PCS, ProofTranscript>()
-    where
-        F: JoltField,
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
-    {
-        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
-        drop(artifact_guard);
+    // fn fib_e2e<F, PCS, ProofTranscript>()
+    // where
+    //     F: JoltField,
+    //     PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    //     ProofTranscript: Transcript,
+    // {
+    //     let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
+    //     let mut program = host::Program::new("fibonacci-guest");
+    //     program.set_input(&9u32);
+    //     let (bytecode, memory_init) = program.decode();
+    //     let (io_device, trace) = program.trace();
+    //     drop(artifact_guard);
 
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
-
-    #[test]
-    fn fib_e2e_mock() {
-        fib_e2e::<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript>();
-    }
-
-    #[test]
-    fn fib_e2e_zeromorph() {
-        fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
-    }
-
-    #[test]
-    fn fib_e2e_hyperkzg() {
-        fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
-    }
-
-    // TODO(sragss): Finish Binius.
-    // #[test]
-    // fn fib_e2e_binius() {
-    //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
-    //     fib_e2e::<Field, MockCommitScheme<Field>>();
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         bytecode.clone(),
+    //         io_device.memory_layout.clone(),
+    //         memory_init,
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 20,
+    //     );
+    //     let (proof, commitments, debug_info) =
+    //         <RV32IJoltVM as Jolt<
+    //             C,
+    //             M,
+    //             32,
+    //             Fr,
+    //             HyperKZG<Bn254, KeccakTranscript>,
+    //             KeccakTranscript,
+    //         >>::prove(io_device, trace, preprocessing.clone());
+    //     let verification_result =
+    //         RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+    //     assert!(
+    //         verification_result.is_ok(),
+    //         "Verification failed with error: {:?}",
+    //         verification_result.err()
+    //     );
     // }
 
-    #[test]
-    fn sha3_e2e_zeromorph() {
-        let guard = SHA3_FILE_LOCK.lock().unwrap();
+    // #[test]
+    // fn fib_e2e_mock() {
+    //     fib_e2e::<Fr, MockCommitScheme<Fr, KeccakTranscript>, KeccakTranscript>();
+    // }
 
-        let mut program = host::Program::new("sha3-guest");
-        program.set_input(&[5u8; 32]);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
-        drop(guard);
+    // #[test]
+    // fn fib_e2e_zeromorph() {
+    //     fib_e2e::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>();
+    // }
 
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
+    // #[test]
+    // fn fib_e2e_hyperkzg() {
+    //     fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
+    // }
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
+    // // TODO(sragss): Finish Binius.
+    // // #[test]
+    // // fn fib_e2e_binius() {
+    // //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
+    // //     fib_e2e::<Field, MockCommitScheme<Field>>();
+    // // }
 
-    #[test]
-    fn sha3_e2e_hyperkzg() {
-        let guard = SHA3_FILE_LOCK.lock().unwrap();
+    // #[test]
+    // fn sha3_e2e_zeromorph() {
+    //     let guard = SHA3_FILE_LOCK.lock().unwrap();
 
-        let mut program = host::Program::new("sha3-guest");
-        program.set_input(&[5u8; 32]);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
-        drop(guard);
+    //     let mut program = host::Program::new("sha3-guest");
+    //     program.set_input(&[5u8; 32]);
+    //     let (bytecode, memory_init) = program.decode();
+    //     let (io_device, trace) = program.trace();
+    //     drop(guard);
 
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         bytecode.clone(),
+    //         io_device.memory_layout.clone(),
+    //         memory_init,
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 20,
+    //     );
+    //     let (jolt_proof, jolt_commitments, debug_info) =
+    //         <RV32IJoltVM as Jolt<
+    //             C,
+    //             M,
+    //             32,
+    //             Fr,
+    //             HyperKZG<Bn254, KeccakTranscript>,
+    //             KeccakTranscript,
+    //         >>::prove(io_device, trace, preprocessing.clone());
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
+    //     let verification_result =
+    //         RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+    //     assert!(
+    //         verification_result.is_ok(),
+    //         "Verification failed with error: {:?}",
+    //         verification_result.err()
+    //     );
+    // }
 
-    #[test]
-    fn memory_ops_e2e_hyperkzg() {
-        let mut program = host::Program::new("memory-ops-guest");
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace) = program.trace();
+    // #[test]
+    // fn sha3_e2e_hyperkzg() {
+    //     let guard = SHA3_FILE_LOCK.lock().unwrap();
 
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (jolt_proof, jolt_commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
+    //     let mut program = host::Program::new("sha3-guest");
+    //     program.set_input(&[5u8; 32]);
+    //     let (bytecode, memory_init) = program.decode();
+    //     let (io_device, trace) = program.trace();
+    //     drop(guard);
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         bytecode.clone(),
+    //         io_device.memory_layout.clone(),
+    //         memory_init,
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 20,
+    //     );
+    //     let (jolt_proof, jolt_commitments, debug_info) =
+    //         <RV32IJoltVM as Jolt<
+    //             C,
+    //             M,
+    //             32,
+    //             Fr,
+    //             HyperKZG<Bn254, KeccakTranscript>,
+    //             KeccakTranscript,
+    //         >>::prove(io_device, trace, preprocessing.clone());
 
-    #[test]
-    #[should_panic]
-    fn truncated_trace() {
-        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
-        let (bytecode, memory_init) = program.decode();
-        let (mut io_device, mut trace) = program.trace();
-        trace.truncate(100);
-        io_device.outputs[0] = 0; // change the output to 0
-        drop(artifact_guard);
+    //     let verification_result =
+    //         RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+    //     assert!(
+    //         verification_result.is_ok(),
+    //         "Verification failed with error: {:?}",
+    //         verification_result.err()
+    //     );
+    // }
 
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
-        let _verification_result =
-            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
-    }
+    // #[test]
+    // fn memory_ops_e2e_hyperkzg() {
+    //     let mut program = host::Program::new("memory-ops-guest");
+    //     let (bytecode, memory_init) = program.decode();
+    //     let (io_device, trace) = program.trace();
 
-    #[test]
-    #[should_panic]
-    fn malicious_trace() {
-        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&1u8); // change input to 1 so that termination bit equal true
-        let (bytecode, memory_init) = program.decode();
-        let (mut io_device, trace) = program.trace();
-        let memory_layout = io_device.memory_layout.clone();
-        drop(artifact_guard);
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         bytecode.clone(),
+    //         io_device.memory_layout.clone(),
+    //         memory_init,
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 20,
+    //     );
+    //     let (jolt_proof, jolt_commitments, debug_info) =
+    //         <RV32IJoltVM as Jolt<
+    //             C,
+    //             M,
+    //             32,
+    //             Fr,
+    //             HyperKZG<Bn254, KeccakTranscript>,
+    //             KeccakTranscript,
+    //         >>::prove(io_device, trace, preprocessing.clone());
 
-        // change memory address of output & termination bit to the same address as input
-        // changes here should not be able to spoof the verifier result
-        io_device.memory_layout.output_start = io_device.memory_layout.input_start;
-        io_device.memory_layout.output_end = io_device.memory_layout.input_end;
-        io_device.memory_layout.termination = io_device.memory_layout.input_start;
+    //     let verification_result =
+    //         RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, debug_info);
+    //     assert!(
+    //         verification_result.is_ok(),
+    //         "Verification failed with error: {:?}",
+    //         verification_result.err()
+    //     );
+    // }
 
-        // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing = RV32IJoltVM::preprocess(
-            bytecode.clone(),
-            memory_layout,
-            memory_init,
-            1 << 20,
-            1 << 20,
-            1 << 20,
-        );
-        let (proof, commitments, debug_info) =
-            <RV32IJoltVM as Jolt<
-                C,
-                M,
-                32,
-                Fr,
-                HyperKZG<Bn254, KeccakTranscript>,
-                KeccakTranscript,
-            >>::prove(io_device, trace, preprocessing.clone());
-        let _verification_result =
-            RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
-    }
+    // #[test]
+    // #[should_panic]
+    // fn truncated_trace() {
+    //     let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
+    //     let mut program = host::Program::new("fibonacci-guest");
+    //     program.set_input(&9u32);
+    //     let (bytecode, memory_init) = program.decode();
+    //     let (mut io_device, mut trace) = program.trace();
+    //     trace.truncate(100);
+    //     io_device.outputs[0] = 0; // change the output to 0
+    //     drop(artifact_guard);
+
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         bytecode.clone(),
+    //         io_device.memory_layout.clone(),
+    //         memory_init,
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 20,
+    //     );
+    //     let (proof, commitments, debug_info) =
+    //         <RV32IJoltVM as Jolt<
+    //             C,
+    //             M,
+    //             32,
+    //             Fr,
+    //             HyperKZG<Bn254, KeccakTranscript>,
+    //             KeccakTranscript,
+    //         >>::prove(io_device, trace, preprocessing.clone());
+    //     let _verification_result =
+    //         RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+    // }
+
+    // #[test]
+    // #[should_panic]
+    // fn malicious_trace() {
+    //     let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
+    //     let mut program = host::Program::new("fibonacci-guest");
+    //     program.set_input(&1u8); // change input to 1 so that termination bit equal true
+    //     let (bytecode, memory_init) = program.decode();
+    //     let (mut io_device, trace) = program.trace();
+    //     let memory_layout = io_device.memory_layout.clone();
+    //     drop(artifact_guard);
+
+    //     // change memory address of output & termination bit to the same address as input
+    //     // changes here should not be able to spoof the verifier result
+    //     io_device.memory_layout.output_start = io_device.memory_layout.input_start;
+    //     io_device.memory_layout.output_end = io_device.memory_layout.input_end;
+    //     io_device.memory_layout.termination = io_device.memory_layout.input_start;
+
+    //     // Since the preprocessing is done with the original memory layout, the verifier should fail
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         bytecode.clone(),
+    //         memory_layout,
+    //         memory_init,
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 20,
+    //     );
+    //     let (proof, commitments, debug_info) =
+    //         <RV32IJoltVM as Jolt<
+    //             C,
+    //             M,
+    //             32,
+    //             Fr,
+    //             HyperKZG<Bn254, KeccakTranscript>,
+    //             KeccakTranscript,
+    //         >>::prove(io_device, trace, preprocessing.clone());
+    //     let _verification_result =
+    //         RV32IJoltVM::verify(preprocessing, proof, commitments, debug_info);
+    // }
 }

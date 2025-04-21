@@ -203,52 +203,6 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         }
     }
 
-    // pub fn random(rng: &mut StdRng, instruction: Option<Self>) -> Self {
-    //     let instruction = instruction.unwrap_or_else(|| {
-    //         let index = rng.next_u64() as usize % Self::COUNT;
-    //         Self::iter()
-    //             .enumerate()
-    //             .filter(|(i, _)| *i == index)
-    //             .map(|(_, x)| x)
-    //             .next()
-    //             .unwrap()
-    //     });
-    //     match instruction {
-    //         LookupTables::RangeCheck(instr) => LookupTables::RangeCheck(instr.random(rng)),
-    //         LookupTables::Sub(instr) => LookupTables::Sub(instr.random(rng)),
-    //         LookupTables::And(instr) => LookupTables::And(instr.random(rng)),
-    //         LookupTables::Or(instr) => LookupTables::Or(instr.random(rng)),
-    //         LookupTables::Xor(instr) => LookupTables::Xor(instr.random(rng)),
-    //         LookupTables::Beq(instr) => LookupTables::Beq(instr.random(rng)),
-    //         LookupTables::Bge(instr) => LookupTables::Bge(instr.random(rng)),
-    //         LookupTables::Bgeu(instr) => LookupTables::Bgeu(instr.random(rng)),
-    //         LookupTables::Bne(instr) => LookupTables::Bne(instr.random(rng)),
-    //         LookupTables::Slt(instr) => LookupTables::Slt(instr.random(rng)),
-    //         LookupTables::Sltu(instr) => LookupTables::Sltu(instr.random(rng)),
-    //         LookupTables::Move(instr) => LookupTables::Move(instr.random(rng)),
-    //         LookupTables::Movsign(instr) => LookupTables::Movsign(instr.random(rng)),
-    //         LookupTables::Mul(instr) => LookupTables::Mul(instr.random(rng)),
-    //         LookupTables::Mulhu(instr) => LookupTables::Mulhu(instr.random(rng)),
-    //         LookupTables::Advice(instr) => LookupTables::Advice(instr.random(rng)),
-    //         LookupTables::AssertLte(instr) => LookupTables::AssertLte(instr.random(rng)),
-    //         LookupTables::AssertValidSignedRemainder(instr) => {
-    //             LookupTables::AssertValidSignedRemainder(instr.random(rng))
-    //         }
-    //         LookupTables::AssertValidUnsignedRemainder(instr) => {
-    //             LookupTables::AssertValidUnsignedRemainder(instr.random(rng))
-    //         }
-    //         LookupTables::AssertValidDiv0(instr) => {
-    //             LookupTables::AssertValidDiv0(instr.random(rng))
-    //         }
-    //         LookupTables::AssertHalfwordAlignment(instr) => {
-    //             LookupTables::AssertHalfwordAlignment(instr.random(rng))
-    //         }
-    //         LookupTables::Pow2(instr) => LookupTables::Pow2(instr.random(rng)),
-    //         LookupTables::Srl(instr) => LookupTables::Srl(instr.random(rng)),
-    //         LookupTables::Sra(instr) => LookupTables::Sra(instr.random(rng)),
-    //     }
-    // }
-
     pub fn suffixes(&self) -> Vec<Suffixes> {
         match self {
             LookupTables::RangeCheck(table) => table.suffixes(),

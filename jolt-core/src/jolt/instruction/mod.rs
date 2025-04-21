@@ -1,5 +1,4 @@
-use rand::rngs::StdRng;
-use tracer::instruction::{RISCVCycle, RISCVInstruction, RV32IMCycle};
+use tracer::instruction::RV32IMCycle;
 
 use crate::utils::interleave_bits;
 
@@ -21,8 +20,6 @@ pub trait InstructionLookup<const WORD_SIZE: usize> {
 
     /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
-
-    // fn random(&self, rng: &mut StdRng) -> RISCVCycle<Self>;
 }
 
 impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
@@ -190,3 +187,6 @@ pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod xor;
 pub mod xori;
+
+#[cfg(test)]
+pub mod test;

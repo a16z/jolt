@@ -44,27 +44,21 @@ mod test {
 
     use super::Pow2Table;
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     #[test]
-    fn pow2_materialize_entry() {
-        materialize_entry_test::<Fr, Pow2Table<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, Pow2Table<8>>();
     }
 
     #[test]
-    fn pow2_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, Pow2Table<8>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, Pow2Table<32>>();
     }
 
     #[test]
-    fn pow2_mle_random() {
-        instruction_mle_random_test::<Fr, Pow2Table<32>>();
-    }
-
-    #[test]
-    fn pow2_prefix_suffix() {
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, Pow2Table<32>>();
     }
 }

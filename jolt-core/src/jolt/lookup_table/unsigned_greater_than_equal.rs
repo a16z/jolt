@@ -47,29 +47,23 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     use super::UnsignedGreaterThanEqualTable;
 
     #[test]
-    fn bgeu_materialize_entry() {
-        materialize_entry_test::<Fr, UnsignedGreaterThanEqualTable<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, UnsignedGreaterThanEqualTable<8>>();
     }
 
     #[test]
-    fn bgeu_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, UnsignedGreaterThanEqualTable<8>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, UnsignedGreaterThanEqualTable<32>>();
     }
 
     #[test]
-    fn bgeu_mle_random() {
-        instruction_mle_random_test::<Fr, UnsignedGreaterThanEqualTable<32>>();
-    }
-
-    #[test]
-    fn bgeu_prefix_suffix() {
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, UnsignedGreaterThanEqualTable<32>>();
     }
 }

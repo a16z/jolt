@@ -234,7 +234,7 @@ pub fn uninterleave_bits(val: u64) -> (u32, u32) {
 ///
 /// ```
 /// # use jolt_core::utils::interleave_bits;
-/// assert_eq!(interleave_bits(0b01, 0b10), 0b100);
+/// assert_eq!(interleave_bits(0b01, 0b10), 0b110);
 /// ```
 pub fn interleave_bits(even_bits: u32, odd_bits: u32) -> u64 {
     // Insert zeros between each bit of `x_bits`

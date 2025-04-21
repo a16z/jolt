@@ -9,12 +9,6 @@ use crate::field::JoltField;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MovsignTable<const WORD_SIZE: usize>;
 
-// Constants for 32-bit and 64-bit word sizes
-const ALL_ONES_32: u64 = 0xFFFF_FFFF;
-const ALL_ONES_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
-const SIGN_BIT_32: u64 = 0x8000_0000;
-const SIGN_BIT_64: u64 = 0x8000_0000_0000_0000;
-
 impl<const WORD_SIZE: usize> JoltLookupTable for MovsignTable<WORD_SIZE> {
     fn materialize_entry(&self, index: u64) -> u64 {
         let sign_bit = 1 << (2 * WORD_SIZE - 1);
@@ -53,29 +47,23 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     use super::MovsignTable;
 
     #[test]
-    fn virtual_movsign_materialize_entry() {
-        materialize_entry_test::<Fr, MovsignTable<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, MovsignTable<8>>();
     }
 
     #[test]
-    fn virtual_movsign_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, MovsignTable<8>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, MovsignTable<32>>();
     }
 
     #[test]
-    fn virtual_movsign_mle_random() {
-        instruction_mle_random_test::<Fr, MovsignTable<32>>();
-    }
-
-    #[test]
-    fn virtual_movsign_prefix_suffix() {
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, MovsignTable<32>>();
     }
 }

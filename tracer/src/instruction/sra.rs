@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
-    format::{FormatI, FormatR, InstructionFormat},
+    format::{FormatI, FormatR, FormatVirtualRightShift, InstructionFormat},
     virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_sra::VirtualSRA,
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SRA {
     pub address: u64,
     pub operands: FormatR,
@@ -33,8 +33,10 @@ impl RISCVInstruction for SRA {
         &self.operands
     }
 
-    fn new(word: u32, address: u64) -> Self {
-        debug_assert_eq!(word & Self::MASK, Self::MATCH);
+    fn new(word: u32, address: u64, validate: bool) -> Self {
+        if validate {
+            debug_assert_eq!(word & Self::MASK, Self::MATCH);
+        }
 
         Self {
             address,
@@ -84,7 +86,7 @@ impl VirtualInstructionSequence for SRA {
 
         let sra = VirtualSRA {
             address: self.address,
-            operands: FormatR {
+            operands: FormatVirtualRightShift {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
                 rs2: v_bitmask,

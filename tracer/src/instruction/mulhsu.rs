@@ -11,7 +11,7 @@ use super::{
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct MULHSU {
     pub address: u64,
     pub operands: FormatR,
@@ -34,8 +34,10 @@ impl RISCVInstruction for MULHSU {
         &self.operands
     }
 
-    fn new(word: u32, address: u64) -> Self {
-        debug_assert_eq!(word & Self::MASK, Self::MATCH);
+    fn new(word: u32, address: u64, validate: bool) -> Self {
+        if validate {
+            debug_assert_eq!(word & Self::MASK, Self::MATCH);
+        }
 
         Self {
             address,

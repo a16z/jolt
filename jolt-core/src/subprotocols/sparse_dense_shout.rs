@@ -5,7 +5,7 @@ use crate::{
         instruction::InstructionLookup,
         lookup_table::{
             prefixes::{PrefixCheckpoint, Prefixes},
-            JoltLookupTable, LookupTables, PrefixSuffixDecomposition,
+            LookupTables,
         },
     },
     poly::{
@@ -696,39 +696,78 @@ pub fn verify_sparse_dense_shout<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        jolt::lookup_table::{
-            add::ADDInstruction, and::AndTable, beq::BEQInstruction, bge::BGEInstruction,
-            bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction,
-            mulhu::MULHUInstruction, mulu::MULUInstruction, or::OrTable, slt::SLTInstruction,
-            sltu::SLTUInstruction, sub::SubTable, virtual_advice::ADVICEInstruction,
-            virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
-            virtual_assert_lte::ASSERTLTEInstruction,
-            virtual_assert_valid_div0::AssertValidDiv0Instruction,
-            virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
-            virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
-            virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
-            virtual_pow2::POW2Instruction, virtual_sra::VirtualSRATable,
-            virtual_srl::VirtualSRLTable, xor::XorTable,
-        },
-        utils::transcript::KeccakTranscript,
-    };
+    use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     const WORD_SIZE: usize = 8;
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn test_sparse_dense_shout(instruction: Option<LookupTables<WORD_SIZE>>) {
+    fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
+        let instruction = instruction.unwrap_or_else(|| {
+            let index = rng.next_u64() as usize % RV32IMCycle::COUNT;
+            RV32IMCycle::iter()
+                .enumerate()
+                .filter(|(i, _)| *i == index)
+                .map(|(_, x)| x)
+                .next()
+                .unwrap()
+        });
+
+        match instruction {
+            RV32IMCycle::ADD(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::ADDI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AND(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::ANDI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AUIPC(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::BEQ(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::BGE(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::BGEU(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::BLT(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::BLTU(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::BNE(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::FENCE(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::JAL(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::JALR(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::LUI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::LW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::MUL(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::MULHU(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::OR(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::ORI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SLT(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SLTI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SLTIU(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SLTU(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SUB(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::SW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::Advice(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AssertEQ(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AssertLTE(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AssertValidDiv0(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::Move(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::Movsign(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::Pow2(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::Pow2I(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::ShiftRightBitmask(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
+            _ => RV32IMCycle::NoOp,
+        }
+    }
+
+    fn test_sparse_dense_shout(instruction: Option<RV32IMCycle>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
         let trace: Vec<_> = (0..T)
-            .map(|_| {
-                let mut step = JoltTraceStep::no_op();
-                step.instruction_lookup = Some(LookupTables::random(&mut rng, instruction));
-                step
-            })
+            .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
@@ -763,136 +802,222 @@ mod tests {
 
     #[test]
     fn test_add() {
-        test_sparse_dense_shout(Some(LookupTables::RangeCheck(ADDInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::ADD(Default::default())));
     }
 
     #[test]
-    fn test_sub() {
-        test_sparse_dense_shout(Some(LookupTables::Sub(SubTable::default())));
+    fn test_addi() {
+        test_sparse_dense_shout(Some(RV32IMCycle::ADDI(Default::default())));
     }
 
     #[test]
     fn test_and() {
-        test_sparse_dense_shout(Some(LookupTables::And(AndTable::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::AND(Default::default())));
     }
 
     #[test]
-    fn test_or() {
-        test_sparse_dense_shout(Some(LookupTables::Or(OrTable::default())));
+    fn test_andi() {
+        test_sparse_dense_shout(Some(RV32IMCycle::ANDI(Default::default())));
     }
 
     #[test]
-    fn test_xor() {
-        test_sparse_dense_shout(Some(LookupTables::Xor(XorTable::default())));
+    fn test_auipc() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AUIPC(Default::default())));
     }
 
     #[test]
     fn test_beq() {
-        test_sparse_dense_shout(Some(LookupTables::Beq(BEQInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::BEQ(Default::default())));
     }
 
     #[test]
     fn test_bge() {
-        test_sparse_dense_shout(Some(LookupTables::Bge(BGEInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::BGE(Default::default())));
     }
 
     #[test]
     fn test_bgeu() {
-        test_sparse_dense_shout(Some(LookupTables::Bgeu(BGEUInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::BGEU(Default::default())));
+    }
+
+    #[test]
+    fn test_blt() {
+        test_sparse_dense_shout(Some(RV32IMCycle::BLT(Default::default())));
+    }
+
+    #[test]
+    fn test_bltu() {
+        test_sparse_dense_shout(Some(RV32IMCycle::BLTU(Default::default())));
     }
 
     #[test]
     fn test_bne() {
-        test_sparse_dense_shout(Some(LookupTables::Bne(BNEInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::BNE(Default::default())));
     }
 
     #[test]
-    fn test_slt() {
-        test_sparse_dense_shout(Some(LookupTables::Slt(SLTInstruction::default())));
+    fn test_fence() {
+        test_sparse_dense_shout(Some(RV32IMCycle::FENCE(Default::default())));
     }
 
     #[test]
-    fn test_sltu() {
-        test_sparse_dense_shout(Some(LookupTables::Sltu(SLTUInstruction::default())));
+    fn test_jal() {
+        test_sparse_dense_shout(Some(RV32IMCycle::JAL(Default::default())));
     }
 
     #[test]
-    fn test_move() {
-        test_sparse_dense_shout(Some(LookupTables::Move(MOVEInstruction::default())));
+    fn test_jalr() {
+        test_sparse_dense_shout(Some(RV32IMCycle::JALR(Default::default())));
     }
 
     #[test]
-    fn test_movsign() {
-        test_sparse_dense_shout(Some(LookupTables::Movsign(MOVSIGNInstruction::default())));
+    fn test_lui() {
+        test_sparse_dense_shout(Some(RV32IMCycle::LUI(Default::default())));
+    }
+
+    #[test]
+    fn test_lw() {
+        test_sparse_dense_shout(Some(RV32IMCycle::LW(Default::default())));
     }
 
     #[test]
     fn test_mul() {
-        test_sparse_dense_shout(Some(LookupTables::Mul(MULInstruction::default())));
-    }
-
-    #[test]
-    fn test_mulu() {
-        test_sparse_dense_shout(Some(LookupTables::Mulu(MULUInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::MUL(Default::default())));
     }
 
     #[test]
     fn test_mulhu() {
-        test_sparse_dense_shout(Some(LookupTables::Mulhu(MULHUInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::MULHU(Default::default())));
+    }
+
+    #[test]
+    fn test_or() {
+        test_sparse_dense_shout(Some(RV32IMCycle::OR(Default::default())));
+    }
+
+    #[test]
+    fn test_ori() {
+        test_sparse_dense_shout(Some(RV32IMCycle::ORI(Default::default())));
+    }
+
+    #[test]
+    fn test_slt() {
+        test_sparse_dense_shout(Some(RV32IMCycle::SLT(Default::default())));
+    }
+
+    #[test]
+    fn test_slti() {
+        test_sparse_dense_shout(Some(RV32IMCycle::SLTI(Default::default())));
+    }
+
+    #[test]
+    fn test_sltiu() {
+        test_sparse_dense_shout(Some(RV32IMCycle::SLTIU(Default::default())));
+    }
+
+    #[test]
+    fn test_sltu() {
+        test_sparse_dense_shout(Some(RV32IMCycle::SLTU(Default::default())));
+    }
+
+    #[test]
+    fn test_sub() {
+        test_sparse_dense_shout(Some(RV32IMCycle::SUB(Default::default())));
+    }
+
+    #[test]
+    fn test_sw() {
+        test_sparse_dense_shout(Some(RV32IMCycle::SW(Default::default())));
+    }
+
+    #[test]
+    fn test_xor() {
+        test_sparse_dense_shout(Some(RV32IMCycle::XOR(Default::default())));
+    }
+
+    #[test]
+    fn test_xori() {
+        test_sparse_dense_shout(Some(RV32IMCycle::XORI(Default::default())));
     }
 
     #[test]
     fn test_advice() {
-        test_sparse_dense_shout(Some(LookupTables::Advice(ADVICEInstruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::Advice(Default::default())));
     }
 
     #[test]
-    fn test_assert_lte() {
-        test_sparse_dense_shout(Some(LookupTables::AssertLte(
-            ASSERTLTEInstruction::default(),
+    fn test_asserteq() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AssertEQ(Default::default())));
+    }
+
+    #[test]
+    fn test_asserthalfwordalignment() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AssertHalfwordAlignment(
+            Default::default(),
         )));
     }
 
     #[test]
-    fn test_assert_valid_signed_remainder() {
-        test_sparse_dense_shout(Some(LookupTables::AssertValidSignedRemainder(
-            AssertValidSignedRemainderInstruction::default(),
+    fn test_assertlte() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AssertLTE(Default::default())));
+    }
+
+    #[test]
+    fn test_assertvaliddiv0() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AssertValidDiv0(Default::default())));
+    }
+
+    #[test]
+    fn test_assertvalidsignedremainder() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AssertValidSignedRemainder(
+            Default::default(),
         )));
     }
 
     #[test]
-    fn test_assert_valid_unsigned_remainder() {
-        test_sparse_dense_shout(Some(LookupTables::AssertValidUnsignedRemainder(
-            AssertValidUnsignedRemainderInstruction::default(),
+    fn test_assertvalidunsignedremainder() {
+        test_sparse_dense_shout(Some(RV32IMCycle::AssertValidUnsignedRemainder(
+            Default::default(),
         )));
     }
 
     #[test]
-    fn test_assert_valid_div0() {
-        test_sparse_dense_shout(Some(LookupTables::AssertValidDiv0(
-            AssertValidDiv0Instruction::default(),
-        )));
+    fn test_move() {
+        test_sparse_dense_shout(Some(RV32IMCycle::Move(Default::default())));
     }
 
     #[test]
-    fn test_assert_halfword_alignment() {
-        test_sparse_dense_shout(Some(LookupTables::AssertHalfwordAlignment(
-            AssertHalfwordAlignmentInstruction::default(),
-        )));
+    fn test_movsign() {
+        test_sparse_dense_shout(Some(RV32IMCycle::Movsign(Default::default())));
     }
 
     #[test]
     fn test_pow2() {
-        test_sparse_dense_shout(Some(LookupTables::Pow2(POW2Instruction::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::Pow2(Default::default())));
     }
 
     #[test]
-    fn test_virtual_srl() {
-        test_sparse_dense_shout(Some(LookupTables::Srl(VirtualSRLTable::default())));
+    fn test_pow2i() {
+        test_sparse_dense_shout(Some(RV32IMCycle::Pow2I(Default::default())));
     }
 
     #[test]
-    fn test_virtual_sra() {
-        test_sparse_dense_shout(Some(LookupTables::Sra(VirtualSRATable::default())));
+    fn test_shiftrightbitmask() {
+        test_sparse_dense_shout(Some(RV32IMCycle::ShiftRightBitmask(Default::default())));
+    }
+
+    #[test]
+    fn test_shiftrightbitmaski() {
+        test_sparse_dense_shout(Some(RV32IMCycle::ShiftRightBitmaskI(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualsra() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRA(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualsrl() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRL(Default::default())));
     }
 }

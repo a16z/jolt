@@ -20,7 +20,7 @@ use super::{
     RISCVInstruction, RISCVTrace,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SB {
     pub address: u64,
     pub operands: FormatS,
@@ -43,8 +43,10 @@ impl RISCVInstruction for SB {
         &self.operands
     }
 
-    fn new(word: u32, address: u64) -> Self {
-        debug_assert_eq!(word & Self::MASK, Self::MATCH);
+    fn new(word: u32, address: u64, validate: bool) -> Self {
+        if validate {
+            debug_assert_eq!(word & Self::MASK, Self::MATCH);
+        }
 
         Self {
             address,

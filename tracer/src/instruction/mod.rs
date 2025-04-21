@@ -26,6 +26,7 @@ use mulhsu::MULHSU;
 use mulhu::MULHU;
 use or::OR;
 use ori::ORI;
+use rand::{rngs::StdRng, RngCore};
 use rem::REM;
 use remu::REMU;
 use sb::SB;
@@ -41,7 +42,8 @@ use sra::SRA;
 use srai::SRAI;
 use srl::SRL;
 use srli::SRLI;
-use strum_macros::IntoStaticStr;
+use strum::{EnumCount, IntoEnumIterator};
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use sub::SUB;
 use sw::SW;
 use xor::XOR;
@@ -65,7 +67,7 @@ use virtual_srl::VirtualSRL;
 
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
-use format::InstructionFormat;
+use format::{InstructionFormat, InstructionRegisterState};
 
 pub mod format;
 
@@ -131,6 +133,9 @@ pub mod virtual_srl;
 pub mod xor;
 pub mod xori;
 
+#[cfg(test)]
+pub mod test;
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct RAMRead {
     pub address: u64,
@@ -186,7 +191,10 @@ pub trait RISCVInstruction: Sized + Copy + Into<RV32IMInstruction> {
     type RAMAccess: Default + Into<RAMAccess> + Copy;
 
     fn operands(&self) -> &Self::Format;
-    fn new(word: u32, address: u64) -> Self;
+    fn new(word: u32, address: u64, validate: bool) -> Self;
+    fn random(rng: &mut StdRng) -> Self {
+        Self::new(rng.next_u32(), rng.next_u64(), false)
+    }
 
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 }
@@ -288,15 +296,15 @@ impl RV32IMInstruction {
         match opcode {
             0b0110111 => {
                 // LUI: U-type => [imm(31:12), rd, opcode]
-                Ok(LUI::new(instr, address).into())
+                Ok(LUI::new(instr, address, true).into())
             }
             0b0010111 => {
                 // AUIPC: U-type => [imm(31:12), rd, opcode]
-                Ok(AUIPC::new(instr, address).into())
+                Ok(AUIPC::new(instr, address, true).into())
             }
             0b1101111 => {
                 // JAL: UJ-type instruction.
-                Ok(JAL::new(instr, address).into())
+                Ok(JAL::new(instr, address, true).into())
             }
             0b1100111 => {
                 // JALR: I-type, where funct3 must be 0.
@@ -304,37 +312,37 @@ impl RV32IMInstruction {
                 if funct3 != 0 {
                     return Err("Invalid funct3 for JALR");
                 }
-                Ok(JALR::new(instr, address).into())
+                Ok(JALR::new(instr, address, true).into())
             }
             0b1100011 => {
                 // Branch instructions (SB-type): BEQ, BNE, BLT, BGE, BLTU, BGEU.
                 match (instr >> 12) & 0x7 {
-                    0b000 => Ok(BEQ::new(instr, address).into()),
-                    0b001 => Ok(BNE::new(instr, address).into()),
-                    0b100 => Ok(BLT::new(instr, address).into()),
-                    0b101 => Ok(BGE::new(instr, address).into()),
-                    0b110 => Ok(BLTU::new(instr, address).into()),
-                    0b111 => Ok(BGEU::new(instr, address).into()),
+                    0b000 => Ok(BEQ::new(instr, address, true).into()),
+                    0b001 => Ok(BNE::new(instr, address, true).into()),
+                    0b100 => Ok(BLT::new(instr, address, true).into()),
+                    0b101 => Ok(BGE::new(instr, address, true).into()),
+                    0b110 => Ok(BLTU::new(instr, address, true).into()),
+                    0b111 => Ok(BGEU::new(instr, address, true).into()),
                     _ => Err("Invalid branch funct3"),
                 }
             }
             0b0000011 => {
                 // Load instructions (I-type): LB, LH, LW, LBU, LHU.
                 match (instr >> 12) & 0x7 {
-                    0b000 => Ok(LB::new(instr, address).into()),
-                    0b001 => Ok(LH::new(instr, address).into()),
-                    0b010 => Ok(LW::new(instr, address).into()),
-                    0b100 => Ok(LBU::new(instr, address).into()),
-                    0b101 => Ok(LHU::new(instr, address).into()),
+                    0b000 => Ok(LB::new(instr, address, true).into()),
+                    0b001 => Ok(LH::new(instr, address, true).into()),
+                    0b010 => Ok(LW::new(instr, address, true).into()),
+                    0b100 => Ok(LBU::new(instr, address, true).into()),
+                    0b101 => Ok(LHU::new(instr, address, true).into()),
                     _ => Err("Invalid load funct3"),
                 }
             }
             0b0100011 => {
                 // Store instructions (S-type): SB, SH, SW.
                 match (instr >> 12) & 0x7 {
-                    0b000 => Ok(SB::new(instr, address).into()),
-                    0b001 => Ok(SH::new(instr, address).into()),
-                    0b010 => Ok(SW::new(instr, address).into()),
+                    0b000 => Ok(SB::new(instr, address, true).into()),
+                    0b001 => Ok(SH::new(instr, address, true).into()),
+                    0b010 => Ok(SW::new(instr, address, true).into()),
                     _ => Err("Invalid store funct3"),
                 }
             }
@@ -346,26 +354,26 @@ impl RV32IMInstruction {
                 if funct3 == 0b001 {
                     // SLLI uses shamt and expects funct7 == 0.
                     if funct7 == 0 {
-                        Ok(SLLI::new(instr, address).into())
+                        Ok(SLLI::new(instr, address, true).into())
                     } else {
                         Err("Invalid funct7 for SLLI")
                     }
                 } else if funct3 == 0b101 {
                     if funct7 == 0b0000000 {
-                        Ok(SRLI::new(instr, address).into())
+                        Ok(SRLI::new(instr, address, true).into())
                     } else if funct7 == 0b0100000 {
-                        Ok(SRAI::new(instr, address).into())
+                        Ok(SRAI::new(instr, address, true).into())
                     } else {
                         Err("Invalid ALU shift funct7")
                     }
                 } else {
                     match funct3 {
-                        0b000 => Ok(ADDI::new(instr, address).into()),
-                        0b010 => Ok(SLTI::new(instr, address).into()),
-                        0b011 => Ok(SLTIU::new(instr, address).into()),
-                        0b100 => Ok(XORI::new(instr, address).into()),
-                        0b110 => Ok(ORI::new(instr, address).into()),
-                        0b111 => Ok(ANDI::new(instr, address).into()),
+                        0b000 => Ok(ADDI::new(instr, address, true).into()),
+                        0b010 => Ok(SLTI::new(instr, address, true).into()),
+                        0b011 => Ok(SLTIU::new(instr, address, true).into()),
+                        0b100 => Ok(XORI::new(instr, address, true).into()),
+                        0b110 => Ok(ORI::new(instr, address, true).into()),
+                        0b111 => Ok(ANDI::new(instr, address, true).into()),
                         _ => Err("Invalid I-type ALU funct3"),
                     }
                 }
@@ -375,31 +383,31 @@ impl RV32IMInstruction {
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
                 match (funct3, funct7) {
-                    (0b000, 0b0000000) => Ok(ADD::new(instr, address).into()),
-                    (0b000, 0b0100000) => Ok(SUB::new(instr, address).into()),
-                    (0b001, 0b0000000) => Ok(SLL::new(instr, address).into()),
-                    (0b010, 0b0000000) => Ok(SLT::new(instr, address).into()),
-                    (0b011, 0b0000000) => Ok(SLTU::new(instr, address).into()),
-                    (0b100, 0b0000000) => Ok(XOR::new(instr, address).into()),
-                    (0b101, 0b0000000) => Ok(SRL::new(instr, address).into()),
-                    (0b101, 0b0100000) => Ok(SRA::new(instr, address).into()),
-                    (0b110, 0b0000000) => Ok(OR::new(instr, address).into()),
-                    (0b111, 0b0000000) => Ok(AND::new(instr, address).into()),
+                    (0b000, 0b0000000) => Ok(ADD::new(instr, address, true).into()),
+                    (0b000, 0b0100000) => Ok(SUB::new(instr, address, true).into()),
+                    (0b001, 0b0000000) => Ok(SLL::new(instr, address, true).into()),
+                    (0b010, 0b0000000) => Ok(SLT::new(instr, address, true).into()),
+                    (0b011, 0b0000000) => Ok(SLTU::new(instr, address, true).into()),
+                    (0b100, 0b0000000) => Ok(XOR::new(instr, address, true).into()),
+                    (0b101, 0b0000000) => Ok(SRL::new(instr, address, true).into()),
+                    (0b101, 0b0100000) => Ok(SRA::new(instr, address, true).into()),
+                    (0b110, 0b0000000) => Ok(OR::new(instr, address, true).into()),
+                    (0b111, 0b0000000) => Ok(AND::new(instr, address, true).into()),
                     // RV32M extension
-                    (0b000, 0b0000001) => Ok(MUL::new(instr, address).into()),
-                    (0b001, 0b0000001) => Ok(MULH::new(instr, address).into()),
-                    (0b010, 0b0000001) => Ok(MULHSU::new(instr, address).into()),
-                    (0b011, 0b0000001) => Ok(MULHU::new(instr, address).into()),
-                    (0b100, 0b0000001) => Ok(DIV::new(instr, address).into()),
-                    (0b101, 0b0000001) => Ok(DIVU::new(instr, address).into()),
-                    (0b110, 0b0000001) => Ok(REM::new(instr, address).into()),
-                    (0b111, 0b0000001) => Ok(REMU::new(instr, address).into()),
+                    (0b000, 0b0000001) => Ok(MUL::new(instr, address, true).into()),
+                    (0b001, 0b0000001) => Ok(MULH::new(instr, address, true).into()),
+                    (0b010, 0b0000001) => Ok(MULHSU::new(instr, address, true).into()),
+                    (0b011, 0b0000001) => Ok(MULHU::new(instr, address, true).into()),
+                    (0b100, 0b0000001) => Ok(DIV::new(instr, address, true).into()),
+                    (0b101, 0b0000001) => Ok(DIVU::new(instr, address, true).into()),
+                    (0b110, 0b0000001) => Ok(REM::new(instr, address, true).into()),
+                    (0b111, 0b0000001) => Ok(REMU::new(instr, address, true).into()),
                     _ => Err("Invalid R-type arithmetic instruction"),
                 }
             }
             0b0001111 => {
                 // FENCE: I-type; the immediate encodes "pred" and "succ" flags.
-                Ok(FENCE::new(instr, address).into())
+                Ok(FENCE::new(instr, address, true).into())
             }
             0b1110011 => {
                 // SYSTEM instructions: ECALL/EBREAK (I-type)
@@ -462,14 +470,31 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
     pub ram_access: T::RAMAccess,
 }
 
-#[derive(From, Debug, Clone, Serialize, Deserialize, IntoStaticStr)]
+impl<T: RISCVInstruction> RISCVCycle<T> {
+    pub fn random(&self, rng: &mut StdRng) -> Self {
+        let instruction = T::random(rng);
+        let register_state =
+            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
+                rng,
+            );
+        Self {
+            instruction,
+            ram_access: Default::default(),
+            register_state,
+        }
+    }
+}
+
+#[derive(
+    From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro,
+)]
 pub enum RV32IMCycle {
     NoOp,
     ADD(RISCVCycle<ADD>),

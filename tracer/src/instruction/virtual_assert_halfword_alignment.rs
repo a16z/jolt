@@ -1,9 +1,11 @@
+use common::constants::REGISTER_COUNT;
+use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{normalize_register_value, InstructionFormat},
+    format::{normalize_register_value, InstructionFormat, InstructionRegisterState},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -15,9 +17,17 @@ pub struct HalfwordAlignFormat {
     pub imm: i64,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct HalfwordAlignRegisterState {
     pub rs1: u64,
+}
+
+impl InstructionRegisterState for HalfwordAlignRegisterState {
+    fn random(rng: &mut StdRng) -> Self {
+        Self {
+            rs1: rng.next_u64(),
+        }
+    }
 }
 
 impl InstructionFormat for HalfwordAlignFormat {
@@ -34,9 +44,16 @@ impl InstructionFormat for HalfwordAlignFormat {
     fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
         // No register write
     }
+
+    fn random(rng: &mut StdRng) -> Self {
+        Self {
+            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
+            imm: rng.next_u64() as i64,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualAssertHalfwordAlignment {
     pub address: u64,
     pub operands: HalfwordAlignFormat,
@@ -59,8 +76,16 @@ impl RISCVInstruction for VirtualAssertHalfwordAlignment {
         &self.operands
     }
 
-    fn new(_: u32, _: u64) -> Self {
+    fn new(_: u32, _: u64, _: bool) -> Self {
         unimplemented!("virtual instruction")
+    }
+
+    fn random(rng: &mut StdRng) -> Self {
+        Self {
+            address: rng.next_u64(),
+            operands: HalfwordAlignFormat::random(rng),
+            virtual_sequence_remaining: None,
+        }
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {

@@ -1,10 +1,14 @@
+use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::Cpu;
 
-use super::{format::FormatI, RISCVInstruction, RISCVTrace};
+use super::{
+    format::{FormatI, InstructionFormat},
+    RISCVInstruction, RISCVTrace,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualMove {
     pub address: u64,
     pub operands: FormatI,
@@ -27,8 +31,16 @@ impl RISCVInstruction for VirtualMove {
         &self.operands
     }
 
-    fn new(_: u32, _: u64) -> Self {
+    fn new(_: u32, _: u64, _: bool) -> Self {
         unimplemented!("virtual instruction")
+    }
+
+    fn random(rng: &mut StdRng) -> Self {
+        Self {
+            address: rng.next_u64(),
+            operands: FormatI::random(rng),
+            virtual_sequence_remaining: None,
+        }
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {

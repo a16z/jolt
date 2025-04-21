@@ -59,27 +59,22 @@ mod test {
 
     use super::VirtualSRLTable;
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     #[test]
-    fn virtual_srl_materialize_entry() {
-        materialize_entry_test::<Fr, VirtualSRLTable<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualSRLTable<8>>();
     }
 
     #[test]
-    fn virtual_srl_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, VirtualSRLTable<8>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, VirtualSRLTable<32>>();
     }
 
     #[test]
-    fn virtual_srl_mle_random() {
-        instruction_mle_random_test::<Fr, VirtualSRLTable<32>>();
-    }
-
-    #[test]
-    fn virtual_srl_prefix_suffix() {
+    #[ignore = "Cannot generate lookup_index at random"]
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, VirtualSRLTable<32>>();
     }
 }

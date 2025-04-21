@@ -1,10 +1,14 @@
+use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{format::FormatI, RISCVInstruction, RISCVTrace};
+use super::{
+    format::{FormatI, InstructionFormat},
+    RISCVInstruction, RISCVTrace,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualPow2 {
     pub address: u64,
     pub operands: FormatI,
@@ -27,14 +31,22 @@ impl RISCVInstruction for VirtualPow2 {
         &self.operands
     }
 
-    fn new(_: u32, _: u64) -> Self {
+    fn new(_: u32, _: u64, _: bool) -> Self {
         unimplemented!("virtual instruction")
+    }
+
+    fn random(rng: &mut StdRng) -> Self {
+        Self {
+            address: rng.next_u64(),
+            operands: FormatI::random(rng),
+            virtual_sequence_remaining: None,
+        }
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         match cpu.xlen {
-            Xlen::Bit32 => cpu.x[self.operands.rd] = 1 << (cpu.x[self.operands.rs1] as u64) % 32,
-            Xlen::Bit64 => cpu.x[self.operands.rd] = 1 << (cpu.x[self.operands.rs1] as u64) % 64,
+            Xlen::Bit32 => cpu.x[self.operands.rd] = 1 << (cpu.x[self.operands.rs1] as u64 % 32),
+            Xlen::Bit64 => cpu.x[self.operands.rd] = 1 << (cpu.x[self.operands.rs1] as u64 % 64),
         }
     }
 }

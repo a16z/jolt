@@ -1,6 +1,9 @@
 use tracer::instruction::{virtual_srl::VirtualSRL, RISCVCycle};
 
-use crate::jolt::lookup_table::{virtual_srl::VirtualSRLTable, LookupTables};
+use crate::{
+    jolt::lookup_table::{virtual_srl::VirtualSRLTable, LookupTables},
+    subprotocols::sparse_dense_shout::LookupBits,
+};
 
 use super::InstructionLookup;
 
@@ -15,12 +18,29 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<Virtual
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => (x as u8 >> y.trailing_zeros()) as u64,
-            32 => ((x as u32) >> y.trailing_zeros()) as u64,
-            64 => x >> y.trailing_zeros(),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        let mut x = LookupBits::new(x as u64, WORD_SIZE);
+        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+
+        let mut entry = 0;
+        for _ in 0..WORD_SIZE {
+            let x_i = x.pop_msb();
+            let y_i = y.pop_msb();
+            entry *= 1 + y_i as u64;
+            entry += (x_i * y_i) as u64;
         }
+        entry
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::jolt::instruction::test::materialize_entry_test;
+
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn materialize_entry() {
+        materialize_entry_test::<Fr, VirtualSRL>();
     }
 }

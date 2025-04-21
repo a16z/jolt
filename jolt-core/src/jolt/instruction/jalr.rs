@@ -11,20 +11,26 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<JALR> {
 
     fn to_lookup_index(&self) -> u64 {
         let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => x + y,
-            32 => x + y,
-            // 64 => x.wrapping_add(y),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
+        x + y
     }
 
     fn to_lookup_query(&self) -> (u64, u64) {
-        (
-            self.register_state.rs1,
-            self.instruction.operands.imm as u64,
-        )
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (
+                self.register_state.rs1 as u8 as u64,
+                self.instruction.operands.imm as u8 as u64,
+            ),
+            32 => (
+                self.register_state.rs1 as u32 as u64,
+                self.instruction.operands.imm as u32 as u64,
+            ),
+            64 => (
+                self.register_state.rs1,
+                self.instruction.operands.imm as u64,
+            ),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
     }
 
     fn to_lookup_output(&self) -> u64 {
@@ -36,5 +42,18 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<JALR> {
             64 => x.wrapping_add(y),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::jolt::instruction::test::materialize_entry_test;
+
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn materialize_entry() {
+        materialize_entry_test::<Fr, JALR>();
     }
 }

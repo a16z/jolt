@@ -42,27 +42,21 @@ mod test {
 
     use super::UpperWordTable;
     use crate::jolt::lookup_table::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
 
     #[test]
-    fn mulhu_prefix_suffix() {
+    fn prefix_suffix() {
         prefix_suffix_test::<Fr, UpperWordTable<32>>();
     }
 
     #[test]
-    fn mulhu_materialize_entry() {
-        materialize_entry_test::<Fr, UpperWordTable<32>>();
+    fn mle_full_hypercube() {
+        lookup_table_mle_full_hypercube_test::<Fr, UpperWordTable<8>>();
     }
 
     #[test]
-    fn mulhu_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, UpperWordTable<8>>();
-    }
-
-    #[test]
-    fn mulhu_mle_random() {
-        instruction_mle_random_test::<Fr, UpperWordTable<32>>();
+    fn mle_random() {
+        lookup_table_mle_random_test::<Fr, UpperWordTable<32>>();
     }
 }

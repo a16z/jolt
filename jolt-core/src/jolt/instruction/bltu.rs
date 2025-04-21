@@ -15,10 +15,23 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<BLTU> {
         let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
         match WORD_SIZE {
             #[cfg(test)]
-            8 => (x as u8) < (y as u8) as u64,
+            8 => ((x as u8) < (y as u8)) as u64,
             32 => ((x as u32) < (y as u32)) as u64,
             64 => (x < y) as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::jolt::instruction::test::materialize_entry_test;
+
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn materialize_entry() {
+        materialize_entry_test::<Fr, BLTU>();
     }
 }
