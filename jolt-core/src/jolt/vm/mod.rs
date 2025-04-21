@@ -1,18 +1,16 @@
 #![allow(clippy::type_complexity)]
 #![allow(dead_code)]
 
-use std::marker::PhantomData;
-use std::slice::Iter;
-
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use rayon::iter::IntoParallelIterator;
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
 };
+
 use strum::EnumCount;
 
 use bytecode::BytecodeOracle;
@@ -26,6 +24,7 @@ use read_write_memory::ReadWriteMemoryOracle;
 use timestamp_range_check::TimestampRangeCheckStuff;
 
 use crate::field::JoltField;
+
 use crate::join_conditional;
 use crate::jolt::{
     instruction::{
@@ -52,7 +51,6 @@ use crate::r1cs::inputs::{
 };
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -204,7 +202,7 @@ impl<'a, InstructionSet: JoltInstructionSet> Oracle for TraceOracle<'a, Instruct
         }
     }
 
-    fn get_length(&self) -> usize {
+    fn get_len(&self) -> usize {
         self.length
     }
 
@@ -423,8 +421,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         None
     }
 
-    fn get_length(&self) -> usize {
-        self.trace_oracle.get_length()
+    fn get_len(&self) -> usize {
+        self.trace_oracle.get_len()
     }
 
     fn get_step(&self) -> usize {
@@ -701,6 +699,8 @@ where
 
         // TODO(JP): Drop padding on number of steps
         JoltTraceStep::pad(&mut trace);
+
+        #[cfg(test)]
         let mut trace_1 = trace.clone();
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -743,7 +743,12 @@ where
         );
 
         // Streaming polynomials
+        #[cfg(test)]
+        let shard_len = (128).min(padded_trace_length);
+        #[cfg(test)]
+        let no_of_shards = padded_trace_length / shard_len;
 
+        #[cfg(test)]
         let program_io_clone = program_io.clone();
         #[cfg(test)]
         {
@@ -763,18 +768,15 @@ where
                 PhantomData::<F>,
             );
 
-            let shard_len = (1024).min(padded_trace_length);
-            let no_of_shards = padded_trace_length / shard_len;
-
             // Testing bytecode oralce.
-            for n in 0..no_of_shards {
+            for shard_idx in 0..no_of_shards {
                 let streamed_polys = bytecode_oracle.next_shard(shard_len);
                 for i in 0..shard_len {
                     assert_eq!(
                         streamed_polys.a_read_write.get_coeff(i),
                         bytecode_polynomials
                             .a_read_write
-                            .get_coeff(n * shard_len + i)
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                 }
 
@@ -782,7 +784,8 @@ where
                     for i in 0..shard_len {
                         assert_eq!(
                             streamed_polys.v_read_write[j].get_coeff(i),
-                            bytecode_polynomials.v_read_write[j].get_coeff(n * shard_len + i)
+                            bytecode_polynomials.v_read_write[j]
+                                .get_coeff(shard_idx * shard_len + i)
                         );
                     }
                 }
@@ -790,27 +793,28 @@ where
             bytecode_oracle.reset();
 
             // Testing instruction lookups oralce.
-            for n in 0..no_of_shards {
+            for shard_idx in 0..no_of_shards {
                 let streamed_polys = instruction_lookups_oracle.next_shard(shard_len);
                 for i in 0..shard_len {
                     for poly_index in 0..instruction_polynomials.dim.len() {
                         assert_eq!(
                             streamed_polys.dim[poly_index].get_coeff(i),
-                            instruction_polynomials.dim[poly_index].get_coeff(n * shard_len + i)
+                            instruction_polynomials.dim[poly_index]
+                                .get_coeff(shard_idx * shard_len + i)
                         );
                     }
                     for poly_index in 0..instruction_polynomials.E_polys.len() {
                         assert_eq!(
                             streamed_polys.E_polys[poly_index].get_coeff(i),
                             instruction_polynomials.E_polys[poly_index]
-                                .get_coeff(n * shard_len + i)
+                                .get_coeff(shard_idx * shard_len + i)
                         );
                     }
                     for poly_index in 0..instruction_polynomials.instruction_flags.len() {
                         assert_eq!(
                             streamed_polys.instruction_flags[poly_index].get_coeff(i),
                             instruction_polynomials.instruction_flags[poly_index]
-                                .get_coeff(n * shard_len + i)
+                                .get_coeff(shard_idx * shard_len + i)
                         );
                     }
                 }
@@ -819,48 +823,61 @@ where
                         streamed_polys.lookup_outputs.get_coeff(i),
                         instruction_polynomials
                             .lookup_outputs
-                            .get_coeff(n * shard_len + i)
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                 }
             }
             instruction_lookups_oracle.reset();
 
             // Testing read write memory oracle.
-            for n in 0..no_of_shards {
+            for shard_idx in 0..no_of_shards {
                 let streamed_polys = read_write_memory_oracle.next_shard(shard_len);
                 for i in 0..shard_len {
                     assert_eq!(
                         streamed_polys.a_ram.get_coeff(i),
-                        memory_polynomials.a_ram.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .a_ram
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                     assert_eq!(
                         streamed_polys.v_read_rs1.get_coeff(i),
-                        memory_polynomials.v_read_rs1.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .v_read_rs1
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                     assert_eq!(
                         streamed_polys.v_read_rs2.get_coeff(i),
-                        memory_polynomials.v_read_rs2.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .v_read_rs2
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                     assert_eq!(
                         streamed_polys.v_read_rd.get_coeff(i),
-                        memory_polynomials.v_read_rd.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .v_read_rd
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                     assert_eq!(
                         streamed_polys.v_write_rd.get_coeff(i),
-                        memory_polynomials.v_write_rd.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .v_write_rd
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                     assert_eq!(
                         streamed_polys.v_read_ram.get_coeff(i),
-                        memory_polynomials.v_read_ram.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .v_read_ram
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                     assert_eq!(
                         streamed_polys.v_write_ram.get_coeff(i),
-                        memory_polynomials.v_write_ram.get_coeff(n * shard_len + i)
+                        memory_polynomials
+                            .v_write_ram
+                            .get_coeff(shard_idx * shard_len + i)
                     );
                 }
             }
             read_write_memory_oracle.reset();
-            println!("Bytecode, InstructionLookups, ReadWriteMemory oracle tests passed.");
         }
 
         let r1cs_builder = Self::Constraints::construct_constraints(
@@ -890,18 +907,18 @@ where
         };
 
         r1cs_builder.compute_aux(&mut jolt_polynomials);
-        let mut jolt_oracle = JoltOracle::new::<
-            C,
-            M,
-            PCS,
-            ProofTranscript,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
 
         #[cfg(test)]
         {
-            let shard_len = (1024).min(padded_trace_length);
-            let no_of_shards = padded_trace_length / shard_len;
+            let mut jolt_oracle =
+                JoltOracle::new::<
+                    C,
+                    M,
+                    PCS,
+                    ProofTranscript,
+                    <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+                >(&preprocessing, &program_io_clone, &r1cs_builder, &trace_1);
+
             // Testing jolt oracle.
             for n in 0..no_of_shards {
                 let streamed_polys = jolt_oracle.next_shard(shard_len);
@@ -1001,7 +1018,6 @@ where
                 }
             }
             jolt_oracle.reset();
-            println!("Jolt oracle tests passed.");
         }
 
         let jolt_commitments =
@@ -1047,6 +1063,7 @@ where
             &mut transcript,
         );
 
+        #[cfg(not(test))]
         let spartan_proof = UniformSpartanProof::<
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
@@ -1062,26 +1079,24 @@ where
         .expect("r1cs proof failed");
 
         #[cfg(test)]
-        {
-            let shard_len = (1024).min(padded_trace_length);
-            let no_of_shards = padded_trace_length / shard_len;
-
-            UniformSpartanProof::<
-                C,
-                <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-                F,
-                ProofTranscript,
-            >::streaming_prove::<PCS, Self::InstructionSet>(
-                no_of_shards,
-                shard_len,
-                &r1cs_builder,
-                &spartan_key,
-                jolt_oracle,
-                &jolt_polynomials,
-                &mut opening_accumulator,
-                &mut transcript,
-            );
-        }
+        let spartan_proof = UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            ProofTranscript,
+        >::streaming_prove::<PCS, Self::InstructionSet, M>(
+            no_of_shards,
+            shard_len,
+            &preprocessing,
+            &program_io_clone,
+            &trace_1,
+            &r1cs_builder,
+            &spartan_key,
+            &jolt_polynomials,
+            &mut opening_accumulator,
+            &mut transcript,
+        )
+        .expect("r1cs proof failed");
 
         // Batch-prove all openings
         let opening_proof = opening_accumulator

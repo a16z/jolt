@@ -5,9 +5,15 @@ pub trait Oracle {
 
     fn reset(&mut self);
 
-    fn peek(&mut self) -> Option<Self::Item>;
+    fn peek(&mut self) -> Option<Self::Item> {
+        unimplemented!("Not required for all impl")
+    }
 
-    fn get_length(&self) -> usize;
+    fn get_len(&self) -> usize {
+        unimplemented!("Not required for all impl")
+    }
 
-    fn get_step(&self) -> usize;
+    fn get_step(&self) -> usize {
+        unimplemented!("Not required for all impl")
+    }
 }

@@ -237,9 +237,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         !self.bound_coeffs.is_empty()
     }
 
-    /// The first round of the first Spartan sumcheck. Since the polynomials
-    /// are still unbound at the beginning of this round, we can replace some
-    /// of the field arithmetic with `i128` arithmetic.
     pub fn first_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut SplitEqPolynomial<F>,
@@ -594,7 +591,6 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let x1 = block_index & x1_bitmask;
                         let E1_evals = E1_evals[x1];
                         let x2 = block_index >> num_x1_bits;
-
                         if x2 != prev_x2 {
                             eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
                             eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
@@ -649,6 +645,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 );
 
             let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
+
             UniPoly::from_evals(&cubic_evals)
         };
 

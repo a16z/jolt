@@ -22,3 +22,5 @@ temp_file
 # ide
 .idea
 .vscode
+
+.log

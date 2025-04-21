@@ -280,8 +280,8 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         }
     }
 
-    fn get_length(&self) -> usize {
-        self.trace_oracle.get_length()
+    fn get_len(&self) -> usize {
+        self.trace_oracle.get_len()
     }
 
     fn get_step(&self) -> usize {

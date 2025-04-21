@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashSet;
-use std::marker::PhantomData;
 
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -206,11 +205,9 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
             None
         }
     }
-
-    fn get_length(&self) -> usize {
-        self.trace_oracle.get_length()
+    fn get_len(&self) -> usize {
+        self.trace_oracle.get_len()
     }
-
     fn get_step(&self) -> usize {
         self.trace_oracle.get_step()
     }

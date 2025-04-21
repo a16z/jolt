@@ -1,29 +1,35 @@
 use std::marker::PhantomData;
 
-use ark_ff::Zero;
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
-use rayon::prelude::*;
-use thiserror::Error;
-use tracing::{span, Level};
+use super::builder::{
+    eval_offset_lc, shard_last_step_eval_offset_lc, CombinedUniformBuilder, Constraint,
+    OffsetEqConstraint,
+};
 
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::jolt::vm::JoltCommitments;
-use crate::jolt::vm::JoltOracle;
 use crate::jolt::vm::JoltPolynomials;
 use crate::jolt::vm::JoltStuff;
+use crate::jolt::vm::{JoltCommitments, JoltTraceStep};
+use crate::jolt::vm::{JoltOracle, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
+use crate::poly::sparse_interleaved_poly::SparseCoefficient;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::unipoly::CompressedUniPoly;
+use crate::poly::unipoly::UniPoly;
+use crate::r1cs::inputs::ConstraintInput;
+#[cfg(test)]
 use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::key::UniformSpartanKey;
+use crate::subprotocols::sumcheck::{OracleItem, Stream};
 use crate::utils::math::Math;
 use crate::utils::streaming::Oracle;
 use crate::utils::thread::drop_in_background_thread;
+use crate::utils::transcript::AppendToTranscript;
 use crate::utils::transcript::Transcript;
 use crate::{
     poly::{
@@ -32,13 +38,13 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
-
-use super::builder::eval_offset_lc;
-use super::builder::shard_last_step_eval_offset_lc;
-use super::builder::CombinedUniformBuilder;
-use super::builder::Constraint;
-use super::builder::OffsetEqConstraint;
-use super::inputs::ConstraintInput;
+use ark_ff::Zero;
+use ark_serialize::CanonicalDeserialize;
+use ark_serialize::CanonicalSerialize;
+use common::rv_trace::JoltDevice;
+use rayon::prelude::*;
+use thiserror::Error;
+use tracing::{span, Level};
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -77,7 +83,7 @@ pub enum SpartanError {
 
 #[derive(Debug)]
 pub struct AzBzCz {
-    pub interleaved_az_bz_cz: Vec<(usize, i128)>,
+    pub interleaved_az_bz_cz: Vec<SparseCoefficient<i128>>,
 }
 
 pub struct AzBzCzOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
@@ -99,7 +105,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
         padded_num_constraints: usize,
         jolt_oracle: JoltOracle<'a, F, InstructionSet>,
     ) -> Self {
-        let total_num_steps = jolt_oracle.get_length();
+        let total_num_steps = jolt_oracle.get_len();
 
         let polynomial_stream =
             move |shard_idx: usize,
@@ -118,7 +124,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                 let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
                 let chunk_size = num_steps.div_ceil(num_chunks);
 
-                let interleaved_az_bz_cz: Vec<(usize, i128)> = (0..num_chunks)
+                let interleaved_az_bz_cz: Vec<SparseCoefficient<i128>> = (0..num_chunks)
                 .into_par_iter()
                 .flat_map_iter(|chunk_index| {
                     let mut coeffs = Vec::with_capacity(3 * chunk_size * padded_num_constraints);
@@ -138,7 +144,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.a.terms().is_empty() {
                                 az_coeff = constraint.a.evaluate_row(&streaming_z, step_index);
                                 if !az_coeff.is_zero() {
-                                    coeffs.push((global_index, az_coeff));
+                                    coeffs.push((global_index, az_coeff).into());
                                 }
                             }
                             // Bz
@@ -146,7 +152,7 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                             if !constraint.b.terms().is_empty() {
                                 bz_coeff = constraint.b.evaluate_row(&streaming_z, step_index);
                                 if !bz_coeff.is_zero() {
-                                    coeffs.push((global_index + 1, bz_coeff));
+                                    coeffs.push((global_index + 1, bz_coeff).into());
                                 }
                             }
                             // Cz = Az ⊙ Bz
@@ -170,103 +176,108 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
                                         );
                                     }
                                 }
-                                coeffs.push((global_index + 2, cz_coeff));
+                                coeffs.push((global_index + 2, cz_coeff).into());
                             }
                         }
 
-                        // Cross step constraints
-                        if step_index + shard_idx * shard_length + 1 < total_num_steps {
-                            let next_step_index = step_index + 1;
+                        let next_step_index = if
+                            step_index + shard_idx * shard_length + 1 < total_num_steps
+                        {
+                            Some(step_index + 1)
+                        } else {
+                            None
+                        };
 
-                            for (constraint_index, constraint) in cross_step_constraints
-                                .iter()
-                                .enumerate() {
-                                let global_index =
-                                    3 *
-                                    ((step_index + shard_idx * shard_length) *
-                                        padded_num_constraints +
-                                        uniform_constraints.len() +
-                                        constraint_index);
+                        for (constraint_index, constraint) in cross_step_constraints
+                            .iter()
+                            .enumerate() {
+                            let global_index =
+                                3 *
+                                ((step_index + shard_idx * shard_length) * padded_num_constraints +
+                                    uniform_constraints.len() +
+                                    constraint_index);
 
-                                if next_step_index < shard_length {
-                                    // Az
-                                    let eq_a_eval = eval_offset_lc(
-                                        &constraint.a,
-                                        &streaming_z,
-                                        step_index,
-                                        Some(next_step_index)
-                                    );
-                                    let eq_b_eval = eval_offset_lc(
-                                        &constraint.b,
-                                        &streaming_z,
-                                        step_index,
-                                        Some(next_step_index)
-                                    );
-                                    let az_coeff = eq_a_eval - eq_b_eval;
-                                    if !az_coeff.is_zero() {
-                                        coeffs.push((global_index, az_coeff));
-                                        // If Az != 0, then the condition must be false (i.e. Bz = 0)
-                                        #[cfg(test)]
-                                        {
-                                            let bz_coeff = eval_offset_lc(
-                                                &constraint.cond,
-                                                &streaming_z,
-                                                step_index,
-                                                Some(next_step_index)
-                                            );
-                                            assert_eq!(
-                                                bz_coeff,
-                                                0,
-                                                "Cross-step constraint {constraint_index} violated at step {step_index}"
-                                            );
-                                        }
-                                    } else {
+                            if
+                                next_step_index.is_none() ||
+                                (next_step_index.is_some() &&
+                                    next_step_index.unwrap() < shard_length)
+                            {
+                                // Az
+                                let eq_a_eval = eval_offset_lc(
+                                    &constraint.a,
+                                    &streaming_z,
+                                    step_index,
+                                    next_step_index
+                                );
+                                let eq_b_eval = eval_offset_lc(
+                                    &constraint.b,
+                                    &streaming_z,
+                                    step_index,
+                                    next_step_index
+                                );
+                                let az_coeff = eq_a_eval - eq_b_eval;
+                                if !az_coeff.is_zero() {
+                                    coeffs.push((global_index, az_coeff).into());
+                                    // If Az != 0, then the condition must be false (i.e. Bz = 0)
+                                    #[cfg(test)]
+                                    {
                                         let bz_coeff = eval_offset_lc(
                                             &constraint.cond,
                                             &streaming_z,
                                             step_index,
-                                            Some(next_step_index)
+                                            next_step_index
                                         );
-                                        if !bz_coeff.is_zero() {
-                                            coeffs.push((global_index + 1, bz_coeff));
-                                        }
+                                        assert_eq!(
+                                            bz_coeff,
+                                            0,
+                                            "Cross-step constraint {constraint_index} violated at step {step_index}"
+                                        );
                                     }
                                 } else {
-                                    let extra_eval_z: Vec<&MultilinearPolynomial<F>> =
-                                        I::flatten::<C>()
-                                            .iter()
-                                            .map(|var| var.get_ref(&extra_eval))
-                                            .collect();
+                                    let bz_coeff = eval_offset_lc(
+                                        &constraint.cond,
+                                        &streaming_z,
+                                        step_index,
+                                        next_step_index
+                                    );
+                                    if !bz_coeff.is_zero() {
+                                        coeffs.push((global_index + 1, bz_coeff).into());
+                                    }
+                                }
+                            } else {
+                                let extra_eval_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                                    .iter()
+                                    .map(|var| var.get_ref(&extra_eval))
+                                    .collect();
 
-                                    let eq_a_eval = shard_last_step_eval_offset_lc(
-                                        &constraint.a,
+                                let eq_a_eval = shard_last_step_eval_offset_lc(
+                                    &constraint.a,
+                                    &streaming_z,
+                                    &extra_eval_z,
+                                    step_index,
+                                    next_step_index
+                                );
+                                let eq_b_eval = shard_last_step_eval_offset_lc(
+                                    &constraint.b,
+                                    &streaming_z,
+                                    &extra_eval_z,
+                                    step_index,
+                                    next_step_index
+                                );
+
+                                let az_coeff = eq_a_eval - eq_b_eval;
+                                if !az_coeff.is_zero() {
+                                    coeffs.push((global_index, az_coeff).into());
+                                } else {
+                                    let bz_coeff = shard_last_step_eval_offset_lc(
+                                        &constraint.cond,
                                         &streaming_z,
                                         &extra_eval_z,
                                         step_index,
-                                        Some(next_step_index)
+                                        next_step_index
                                     );
-                                    let eq_b_eval = shard_last_step_eval_offset_lc(
-                                        &constraint.b,
-                                        &streaming_z,
-                                        &extra_eval_z,
-                                        step_index,
-                                        Some(next_step_index)
-                                    );
-
-                                    let az_coeff = eq_a_eval - eq_b_eval;
-                                    if !az_coeff.is_zero() {
-                                        coeffs.push((global_index, az_coeff));
-                                    } else {
-                                        let bz_coeff = shard_last_step_eval_offset_lc(
-                                            &constraint.cond,
-                                            &streaming_z,
-                                            &extra_eval_z,
-                                            step_index,
-                                            Some(next_step_index)
-                                        );
-                                        if !bz_coeff.is_zero() {
-                                            coeffs.push((global_index + 1, bz_coeff));
-                                        }
+                                    if !bz_coeff.is_zero() {
+                                        coeffs.push((global_index + 1, bz_coeff).into());
                                     }
                                 }
                             }
@@ -286,10 +297,300 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> AzBzCzOracle<'a, F, I
             func: Box::new(polynomial_stream),
         }
     }
+
+    pub fn streaming_sumcheck_first_half<ProofTranscript>(
+        &mut self,
+        num_rounds: usize,
+        num_shards: usize,
+        shard_length: usize,
+        eq_tau: &mut SplitEqPolynomial<F>,
+        r: &mut Vec<F>,
+        evals_1: &mut Vec<F>,
+        uni_polys: &mut Vec<UniPoly<F>>,
+        compressed_polys: &mut Vec<CompressedUniPoly<F>>,
+        transcript: &mut ProofTranscript,
+    ) where
+        ProofTranscript: Transcript,
+    {
+        let update_evals = |evals: &mut Vec<F>, r: F, size: usize| {
+            for i in 0..size {
+                let temp = evals[i];
+                evals[size + i] = temp * r;
+                evals[i] = temp - evals[size + i];
+            }
+        };
+
+        let mid = num_rounds - num_rounds / 2;
+        for round in 0..mid {
+            let mut accumulator = vec![F::zero(); 4];
+            let mut int_accumulator = vec![F::zero(); 4];
+            let num_x1_bits = eq_tau.E1_len.log_2();
+            let x1_bitmask = (1 << (num_x1_bits + round)) - 1;
+            let E1_evals: Vec<_> = eq_tau.E1[..eq_tau.E1_len]
+                .par_chunks(2)
+                .map(|E1_chunk| {
+                    let eval_point_0 = E1_chunk[0];
+                    let m_eq = E1_chunk[1] - E1_chunk[0];
+                    let eval_point_2 = E1_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    [eval_point_0, E1_chunk[1], eval_point_2, eval_point_3]
+                })
+                .collect();
+
+            let mut witness_eval = vec![vec![F::zero(); 4]; 4];
+            let mut prev_idx = 0;
+            let mut idx = 0;
+
+            for _ in 0..num_shards {
+                let az_bz_cz_shard = self.next_shard(shard_length).interleaved_az_bz_cz;
+                let blocks = az_bz_cz_shard.chunk_by(|a, b| a.index / 3 == b.index / 3);
+
+                for block in blocks {
+                    idx = block[0].index / 3;
+
+                    let prev_acc_window = prev_idx >> (round + 1);
+                    let current_acc_window = idx >> (round + 1);
+
+                    if prev_acc_window != current_acc_window {
+                        let x1 = (prev_idx & x1_bitmask) >> (round + 1);
+
+                        for s in 0..=3 {
+                            witness_eval[0][s] = E1_evals[x1][s];
+                            let eval = witness_eval[0][s]
+                                * (witness_eval[1][s] * witness_eval[2][s] - witness_eval[3][s]);
+                            int_accumulator[s] += eval;
+                        }
+                        witness_eval = vec![vec![F::zero(); 4]; 4];
+
+                        let prev_eq_window = prev_idx >> mid;
+                        let current_eq_window = idx >> mid;
+
+                        if prev_eq_window != current_eq_window {
+                            let x2 = prev_idx >> (num_x1_bits + round);
+                            let e2_eval = eq_tau.E2[x2];
+                            for s in 0..=3 {
+                                accumulator[s] += int_accumulator[s] * e2_eval;
+                            }
+                            int_accumulator = vec![F::zero(); 4];
+                        }
+                    }
+
+                    let mut az_eval = 0;
+                    let mut bz_eval = 0;
+                    let mut cz_eval = 0;
+
+                    for entry in block {
+                        if entry.index % 3 == 0 {
+                            az_eval = entry.value;
+                        }
+                        if entry.index % 3 == 1 {
+                            bz_eval = entry.value;
+                        }
+                        if entry.index % 3 == 2 {
+                            cz_eval = entry.value;
+                        }
+                    }
+
+                    let bit = (idx >> round) & 1;
+
+                    for s in 0..=3 {
+                        let val = F::from_u64(s as u64);
+                        let eq_eval_idx_s = if bit == 0 { F::one() - val } else { val };
+                        witness_eval[1][s] +=
+                            evals_1[idx % (1 << round)] * eq_eval_idx_s * F::from_i128(az_eval);
+                        witness_eval[2][s] +=
+                            evals_1[idx % (1 << round)] * eq_eval_idx_s * F::from_i128(bz_eval);
+                        witness_eval[3][s] +=
+                            evals_1[idx % (1 << round)] * eq_eval_idx_s * F::from_i128(cz_eval);
+                    }
+                    prev_idx = idx;
+                }
+            }
+
+            for s in 0..=3 {
+                let x1 = (idx & x1_bitmask) >> (round + 1);
+                let x2 = idx >> (num_x1_bits + round);
+
+                let eval = E1_evals[x1][s]
+                    * (witness_eval[1][s] * witness_eval[2][s] - witness_eval[3][s]);
+                int_accumulator[s] += eval;
+                accumulator[s] += int_accumulator[s] * eq_tau.E2[x2];
+            }
+
+            let univariate_poly = UniPoly::from_evals(&accumulator);
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+
+            let r_i = transcript.challenge_scalar();
+            r.push(r_i);
+            compressed_polys.push(compressed_poly);
+            uni_polys.push(univariate_poly);
+
+            update_evals(evals_1, r_i, 1 << round);
+            eq_tau.bind(r_i);
+
+            self.reset();
+        }
+    }
+
+    pub fn streaming_sumcheck_second_half<ProofTranscript>(
+        &mut self,
+        num_rounds: usize,
+        num_shards: usize,
+        shard_length: usize,
+        eq_tau: &mut SplitEqPolynomial<F>,
+        r: &mut Vec<F>,
+        evals_1: &mut Vec<F>,
+        evals_2: &mut Vec<F>,
+        uni_polys: &mut Vec<UniPoly<F>>,
+        compressed_polys: &mut Vec<CompressedUniPoly<F>>,
+        final_evals: &mut Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) where
+        ProofTranscript: Transcript,
+    {
+        let mut witness_eval = vec![vec![F::zero(); 4]; 4];
+
+        let update_evals = |evals: &mut Vec<F>, r: F, size: usize| {
+            for i in 0..size {
+                let temp = evals[i];
+                evals[size + i] = temp * r;
+                evals[i] = temp - evals[size + i];
+            }
+        };
+
+        let mid = num_rounds - num_rounds / 2;
+
+        for round in mid..num_rounds {
+            let mut accumulator = vec![F::zero(); 4];
+            // Since we are in the second half, E_1 has been completely bound.
+            assert_eq!(eq_tau.E1_len, 1);
+            let eq_evals: Vec<[F; 4]> = eq_tau.E2[..eq_tau.E2_len]
+                .par_chunks(2)
+                .map(|eq_chunk| {
+                    let eval_point_0 = eq_chunk[0];
+                    let m_eq = eq_chunk[1] - eq_chunk[0];
+                    let eval_point_2 = eq_chunk[1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    [eval_point_0, eq_chunk[1], eval_point_2, eval_point_3]
+                })
+                .collect();
+
+            let mut int_witness_eval = vec![vec![F::zero(); 4]; 4];
+            witness_eval = vec![vec![F::zero(); 4]; 4];
+            let mut prev_idx = 0;
+            let mut idx;
+
+            for _ in 0..num_shards {
+                let az_bz_cz_shard = self.next_shard(shard_length).interleaved_az_bz_cz;
+                let blocks = az_bz_cz_shard.chunk_by(|a, b| a.index / 3 == b.index / 3);
+
+                for block in blocks {
+                    idx = block[0].index / 3;
+
+                    let prev_eq_window = prev_idx >> mid;
+                    let current_eq_window = idx >> mid;
+
+                    if prev_eq_window != current_eq_window {
+                        for s in 0..=3 {
+                            for k in 1..=3 {
+                                witness_eval[k][s] += evals_2
+                                    [prev_eq_window % (1 << (round - mid))]
+                                    * int_witness_eval[k][s];
+                            }
+                        }
+                        int_witness_eval = vec![vec![F::zero(); 4]; 4];
+
+                        let prev_acc_window = prev_idx >> (round + 1);
+                        let current_acc_window = idx >> (round + 1);
+
+                        if prev_acc_window != current_acc_window {
+                            witness_eval[0] = eq_evals[prev_acc_window].to_vec();
+                            for s in 0..=3 {
+                                let eval = witness_eval[0][s]
+                                    * (witness_eval[1][s] * witness_eval[2][s]
+                                        - witness_eval[3][s]);
+                                accumulator[s] += eval;
+                            }
+                            witness_eval = vec![vec![F::zero(); 4]; 4];
+                        }
+                    }
+
+                    let mut az_eval = 0;
+                    let mut bz_eval = 0;
+                    let mut cz_eval = 0;
+
+                    for entry in block {
+                        if entry.index % 3 == 0 {
+                            az_eval = entry.value;
+                        }
+                        if entry.index % 3 == 1 {
+                            bz_eval = entry.value;
+                        }
+                        if entry.index % 3 == 2 {
+                            cz_eval = entry.value;
+                        }
+                    }
+
+                    let bit = (idx >> round) & 1;
+
+                    for s in 0..=3 {
+                        let val = F::from_u64(s as u64);
+                        let eq_eval_idx_s = if bit == 0 { F::one() - val } else { val };
+                        int_witness_eval[1][s] +=
+                            evals_1[idx % (1 << mid)] * eq_eval_idx_s * F::from_i128(az_eval);
+                        int_witness_eval[2][s] +=
+                            evals_1[idx % (1 << mid)] * eq_eval_idx_s * F::from_i128(bz_eval);
+                        int_witness_eval[3][s] +=
+                            evals_1[idx % (1 << mid)] * eq_eval_idx_s * F::from_i128(cz_eval);
+                    }
+                    prev_idx = idx;
+                }
+            }
+
+            let prev_eq_window = prev_idx >> mid;
+
+            for s in 0..=3 {
+                for k in 1..=3 {
+                    witness_eval[k][s] +=
+                        evals_2[prev_eq_window % (1 << (round - mid))] * int_witness_eval[k][s];
+                }
+            }
+
+            let prev_acc_window = prev_idx >> (round + 1);
+
+            witness_eval[0] = eq_evals[prev_acc_window].to_vec();
+            for s in 0..=3 {
+                let eval = witness_eval[0][s]
+                    * (witness_eval[1][s] * witness_eval[2][s] - witness_eval[3][s]);
+                accumulator[s] += eval;
+            }
+
+            let univariate_poly = UniPoly::from_evals(&accumulator);
+            let compressed_poly = univariate_poly.compress();
+            compressed_poly.append_to_transcript(transcript);
+            uni_polys.push(univariate_poly);
+
+            let r_i = transcript.challenge_scalar();
+            r.push(r_i);
+            compressed_polys.push(compressed_poly);
+
+            update_evals(evals_2, r_i, 1 << (round - mid));
+
+            eq_tau.bind(r_i);
+
+            self.reset();
+        }
+        // Final claims are in witness_eval.
+        for i in 0..3 {
+            final_evals[i] = (F::one() - r[num_rounds - 1]) * witness_eval[i + 1][0]
+                + r[num_rounds - 1] * witness_eval[i + 1][1];
+        }
+    }
 }
 
-impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
-    for AzBzCzOracle<'a, F, InstructionSet>
+impl<F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for AzBzCzOracle<'_, F, InstructionSet>
 {
     type Item = AzBzCz;
     fn next_shard(&mut self, shard_len: usize) -> Self::Item {
@@ -308,12 +609,69 @@ impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> Oracle
         self.jolt_oracle.reset();
     }
 
-    fn peek(&mut self) -> Option<Self::Item> {
-        unimplemented!();
+    fn get_len(&self) -> usize {
+        self.jolt_oracle.get_len()
     }
 
-    fn get_length(&self) -> usize {
-        self.jolt_oracle.get_length()
+    fn get_step(&self) -> usize {
+        self.jolt_oracle.get_step()
+    }
+}
+
+pub struct BindZRyVarOracle<'a, F: JoltField, InstructionSet: JoltInstructionSet> {
+    pub jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+    pub func: Box<dyn (Fn(JoltStuff<MultilinearPolynomial<F>>) -> MultilinearPolynomial<F>) + 'a>,
+}
+
+impl<'a, F: JoltField, InstructionSet: JoltInstructionSet> BindZRyVarOracle<'a, F, InstructionSet> {
+    pub fn new<const C: usize, I: ConstraintInput>(
+        jolt_oracle: JoltOracle<'a, F, InstructionSet>,
+        eq_ry_var: &'a [F],
+        eq_ry_var_r2: &'a [F],
+    ) -> Self {
+        let polynomial_stream = move |shard: JoltStuff<MultilinearPolynomial<F>>| {
+            let streaming_z: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                .iter()
+                .map(|var| var.get_ref(&shard))
+                .collect();
+            let shard_length = shard.bytecode.a_read_write.len();
+
+            let sum_vec: Vec<F> = (0..shard_length)
+                .map(|t| {
+                    streaming_z
+                        .iter()
+                        .enumerate()
+                        .fold(F::zero(), |sum, (i, poly)| {
+                            sum + poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i])
+                        })
+                })
+                .collect();
+
+            MultilinearPolynomial::from(sum_vec)
+        };
+
+        BindZRyVarOracle {
+            jolt_oracle,
+            func: Box::new(polynomial_stream),
+        }
+    }
+}
+
+impl<F: JoltField, InstructionSet: JoltInstructionSet> Oracle
+    for BindZRyVarOracle<'_, F, InstructionSet>
+{
+    type Item = MultilinearPolynomial<F>;
+
+    fn next_shard(&mut self, shard_len: usize) -> Self::Item {
+        (self.func)(self.jolt_oracle.next_shard(shard_len))
+    }
+
+    fn reset(&mut self) {
+        self.jolt_oracle.reset();
+    }
+
+    fn get_len(&self) -> usize {
+        self.jolt_oracle.get_len()
     }
 
     fn get_step(&self) -> usize {
@@ -383,6 +741,7 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
+
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
@@ -398,6 +757,7 @@ where
         drop_in_background_thread((az_bz_cz_poly, eq_tau));
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
+
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
@@ -499,9 +859,9 @@ where
         let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
 
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
-
         let span = span!(Level::INFO, "bind_z_ry_var");
         let _guard = span.enter();
+
         let num_steps_unpadded = constraint_builder.uniform_repeat();
         (0..num_steps_unpadded) // unpadded number of steps is sufficient
             .into_par_iter()
@@ -544,7 +904,6 @@ where
                 2,
                 transcript,
             );
-
         drop_in_background_thread(shift_sumcheck_polys);
 
         // Inner sumcheck evaluations: evaluate z on rx_step
@@ -590,67 +949,539 @@ where
         })
     }
 
-    // TODO: Change the return type back to Result<Self, SpartanError>.
     #[tracing::instrument(skip_all, name = "Spartan::streaming_prove")]
-    pub fn streaming_prove<PCS, InstructionSet>(
-        no_of_shards: usize,
-        shard_len: usize,
+    pub fn streaming_prove<PCS, InstructionSet, const M: usize>(
+        num_shards: usize,
+        shard_length: usize,
+        preprocessing: &JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+        program_io: &JoltDevice,
+        trace: &Vec<JoltTraceStep<InstructionSet>>,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
-        jolt_oracle: JoltOracle<F, InstructionSet>,
         polynomials: &JoltPolynomials<F>,
-        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
-        _transcript: &mut ProofTranscript,
-    ) where
+        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<Self, SpartanError>
+    where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         InstructionSet: JoltInstructionSet,
     {
-        let _num_rounds_x = key.num_rows_bits();
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+            .iter()
+            .map(|var| var.get_ref(polynomials))
+            .collect();
+
+        let num_rounds_x = key.num_rows_bits();
+
+        let tau = (0..num_rounds_x)
+            .map(|_i| transcript.challenge_scalar())
+            .collect::<Vec<F>>();
+
         let num_padded_rows = constraint_builder.padded_rows_per_step();
+
+        let jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
+
+        let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
+            &constraint_builder.uniform_builder.constraints,
+            &constraint_builder.offset_equality_constraints,
+            num_padded_rows,
+            jolt_oracle,
+        );
 
         #[cfg(test)]
         {
-            let mut streaming_az_bz_cz_poly = AzBzCzOracle::new::<C, I>(
-                &constraint_builder.uniform_builder.constraints,
-                &constraint_builder.offset_equality_constraints,
-                num_padded_rows,
-                jolt_oracle,
-            );
-
-            let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
-                .iter()
-                .map(|var| var.get_ref(polynomials))
-                .collect();
-
             let az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
 
             let mut streamed_polys_vec: Vec<AzBzCz> = Vec::new();
-            for _ in 0..no_of_shards {
-                let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_len);
+            for _ in 0..num_shards {
+                let streamed_polys = streaming_az_bz_cz_poly.next_shard(shard_length);
                 streamed_polys_vec.push(streamed_polys);
             }
 
             let mut j = 0;
-            for n in 0..no_of_shards {
+            for n in 0..num_shards {
                 let len = streamed_polys_vec[n].interleaved_az_bz_cz.len();
                 for i in 0..len {
                     assert_eq!(
-                        streamed_polys_vec[n].interleaved_az_bz_cz[i].0,
+                        streamed_polys_vec[n].interleaved_az_bz_cz[i].index,
                         az_bz_cz_poly.unbound_coeffs[j].index
                     );
                     assert_eq!(
-                        streamed_polys_vec[n].interleaved_az_bz_cz[i].1,
+                        streamed_polys_vec[n].interleaved_az_bz_cz[i].value,
                         az_bz_cz_poly.unbound_coeffs[j].value
                     );
                     j += 1;
                 }
             }
-            println!("AzBzCz oracle test passing.");
+            assert_eq!(j, az_bz_cz_poly.unbound_coeffs.len());
+            streaming_az_bz_cz_poly.reset();
         }
 
-        // TODO: Add outer sum-check, inner sum-check, and pc-next sum-check.
-    }
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
+            SumcheckInstanceProof::stream_prove_cubic(
+                num_shards,
+                num_rounds_x,
+                &mut streaming_az_bz_cz_poly,
+                shard_length,
+                tau.clone(),
+                transcript,
+            );
+        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
+        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
+
+        // claims from the end of sum-check
+        // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
+        let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
+            outer_sumcheck_claims[0],
+            outer_sumcheck_claims[1],
+            outer_sumcheck_claims[2],
+        );
+
+        /* Sumcheck 2: Inner sumcheck
+            RLC of claims Az, Bz, Cz
+            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
+                                + A_shift(..) * z_shift(..)
+            and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
+            - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
+            - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
+        */
+
+        let num_steps = key.num_steps;
+        let num_steps_bits = num_steps.ilog2() as usize;
+        let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
+
+        let inner_sumcheck_RLC: F = transcript.challenge_scalar();
+        let claim_inner_joint = claim_Az
+            + inner_sumcheck_RLC * claim_Bz
+            + inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
+
+        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+
+        /* Compute the two polynomials provided as input to the second sumcheck:
+           - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
+           - poly_z: z(y_var || rx_step), z_shift(..)
+        */
+
+        let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
+            rx_constr,
+            rx_step,
+            inner_sumcheck_RLC,
+        ));
+
+        // Binding z and z_shift polynomials at point rx_step
+        let span = span!(Level::INFO, "binding_z_and_shift_z");
+        let _guard = span.enter();
+
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
+
+        let mut bind_z_stream = vec![F::zero(); num_vars_uniform * 2];
+        let mut bind_shift_z_stream = vec![F::zero(); num_vars_uniform * 2];
+
+        let eq_rx_step = SplitEqPolynomial::new(rx_step);
+        let mut eq_rx_step_r2 = eq_rx_step.clone();
+        eq_rx_step_r2
+            .E2
+            .iter_mut()
+            .for_each(|elem| *elem = elem.mul(F::montgomery_r2().unwrap()));
+
+        let e1_len = eq_rx_step.E1_len;
+        let num_x1_bits = eq_rx_step.E1_len.log_2();
+        let x1_bitmask = (1 << (num_x1_bits)) - 1;
+
+        let peek = &jolt_oracle.peek().unwrap();
+        let num_polys = I::flatten::<C>()
+            .iter()
+            .map(|var| var.get_ref(peek))
+            .collect::<Vec<&MultilinearPolynomial<F>>>()
+            .len();
+
+        let mut bind_z_int = vec![F::zero(); num_polys];
+        let mut bind_shift_z_int = vec![F::zero(); num_polys];
+
+        for shard_idx in 0..num_shards {
+            let polynomials = jolt_oracle.next_shard(shard_length);
+            let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                .iter()
+                .map(|var| var.get_ref(&polynomials))
+                .collect();
+
+            flattened_polys
+                .par_iter()
+                .zip(
+                    bind_z_int
+                        .par_iter_mut()
+                        .zip(bind_z_stream.par_iter_mut().take(num_polys))
+                        .zip(
+                            bind_shift_z_int
+                                .par_iter_mut()
+                                .zip(bind_shift_z_stream.par_iter_mut().take(num_polys)),
+                        ),
+                )
+                .for_each(
+                    |(
+                        poly,
+                        (
+                            (bind_z_int_eval, bind_z_eval),
+                            (bind_shift_z_int_eval, bind_shift_z_eval),
+                        ),
+                    )| {
+                        match poly {
+                            MultilinearPolynomial::LargeScalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *bind_z_int_eval +=
+                                        poly.Z[i].mul_01_optimized(eq_rx_step.E1[x1]);
+
+                                    if poly_idx != 0 {
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.Z[i] * eq_rx_step.E1[e1_index];
+                                    }
+
+                                    if x1 == e1_len - 1 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step.E2[x2];
+                                        *bind_z_int_eval = F::zero();
+                                    }
+
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
+                                        *bind_shift_z_eval +=
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
+                                        *bind_shift_z_int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U8Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *bind_z_int_eval +=
+                                        poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
+
+                                    if poly_idx != 0 {
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
+                                    }
+
+                                    if x1 == e1_len - 1 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
+                                        *bind_z_int_eval = F::zero();
+                                    }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
+                                        *bind_shift_z_eval +=
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
+                                        *bind_shift_z_int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U16Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *bind_z_int_eval +=
+                                        poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
+
+                                    if poly_idx != 0 {
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
+                                    }
+
+                                    if x1 == e1_len - 1 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
+                                        *bind_z_int_eval = F::zero();
+                                    }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
+                                        *bind_shift_z_eval +=
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
+                                        *bind_shift_z_int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U32Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *bind_z_int_eval +=
+                                        poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
+
+                                    if poly_idx != 0 {
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
+                                    }
+
+                                    if x1 == e1_len - 1 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
+                                        *bind_z_int_eval = F::zero();
+                                    }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
+                                        *bind_shift_z_eval +=
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
+                                        *bind_shift_z_int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U64Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *bind_z_int_eval +=
+                                        poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
+
+                                    if poly_idx != 0 {
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
+                                    }
+
+                                    if x1 == e1_len - 1 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
+                                        *bind_z_int_eval = F::zero();
+                                    }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
+                                        *bind_shift_z_eval +=
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
+                                        *bind_shift_z_int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::I64Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *bind_z_int_eval +=
+                                        poly.coeffs[i].field_mul(eq_rx_step_r2.E1[x1]);
+
+                                    if poly_idx != 0 {
+                                        let e1_index = x1.wrapping_sub(1) & x1_bitmask;
+                                        *bind_shift_z_int_eval +=
+                                            poly.coeffs[i].field_mul(eq_rx_step_r2.E1[e1_index]);
+                                    }
+
+                                    if x1 == e1_len - 1 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *bind_z_eval += *bind_z_int_eval * eq_rx_step_r2.E2[x2];
+                                        *bind_z_int_eval = F::zero();
+                                    }
+                                    let boundary_case = (x1 == 0)
+                                        | (shard_idx == num_shards - 1 && x1 == (e1_len - 1));
+
+                                    if boundary_case && poly_idx != 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        let e2_index = x2 - (x1 == 0) as usize;
+                                        *bind_shift_z_eval +=
+                                            *bind_shift_z_int_eval * eq_rx_step_r2.E2[e2_index];
+                                        *bind_shift_z_int_eval = F::zero();
+                                    }
+                                }
+                            }
+                        };
+                    },
+                );
+        }
+        bind_z_stream[num_vars_uniform] = F::one();
+
+        jolt_oracle.reset();
+
+        drop(_guard);
+        drop(span);
+
+        let poly_z = DensePolynomial::new(
+            bind_z_stream
+                .into_iter()
+                .chain(bind_shift_z_stream.into_iter())
+                .collect(),
+        );
+        assert_eq!(poly_z.len(), poly_ABC.len());
+
+        let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
+
+        let mut polys = vec![
+            MultilinearPolynomial::LargeScalars(poly_ABC),
+            MultilinearPolynomial::LargeScalars(poly_z),
+        ];
+
+        let comb_func = |poly_evals: &[F]| -> F {
+            assert_eq!(poly_evals.len(), 2);
+            poly_evals[0] * poly_evals[1]
+        };
+
+        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
+            SumcheckInstanceProof::prove_arbitrary(
+                &claim_inner_joint,
+                num_rounds_inner_sumcheck,
+                &mut polys,
+                comb_func,
+                2,
+                transcript,
+            );
+
+        drop_in_background_thread(polys);
+
+        /*  Sumcheck 3: Shift sumcheck
+            sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
+        */
+
+        let ry_var = inner_sumcheck_r[1..].to_vec();
+        let eq_ry_var = EqPolynomial::evals(&ry_var);
+        let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
+
+        let span = span!(Level::INFO, "bind_z_ry_var");
+        let _guard = span.enter();
+
+        let num_rounds_shift_sumcheck = num_steps_bits;
+
+        let bind_z_ry_var_oracle =
+            BindZRyVarOracle::new::<C, I>(jolt_oracle, &eq_ry_var, &eq_ry_var_r2);
+
+        let mut oracle = Stream::SpartanSumCheck((bind_z_ry_var_oracle, eq_rx_step));
+
+        let extract_poly_fn = |stream_data: &OracleItem<F>| -> Vec<MultilinearPolynomial<F>> {
+            match stream_data {
+                OracleItem::SpartanSumCheck(stream) => stream.to_vec(),
+                _ => vec![],
+            }
+        };
+
+        let shift_sumcheck_claim: F = (0..num_shards)
+            .map(|_| {
+                let shards = oracle.next_shard(shard_length);
+                let polys = extract_poly_fn(&shards);
+                (0..shard_length)
+                    .map(|j| {
+                        let params: Vec<F> = polys.iter().map(|poly| poly.get_coeff(j)).collect();
+                        comb_func(&params)
+                    })
+                    .fold(F::zero(), |acc, x| acc + x)
+            })
+            .sum();
+
+        oracle.reset();
+
+        drop(_guard);
+        drop(span);
+
+        let (shift_sumcheck_proof, shift_sumcheck_rev, _shift_sumcheck_claims) =
+            SumcheckInstanceProof::stream_prove_arbitrary(
+                num_rounds_shift_sumcheck,
+                &mut oracle,
+                extract_poly_fn,
+                comb_func,
+                2,
+                shard_length,
+                2,
+                transcript,
+            );
+        let shift_sumcheck_r: Vec<F> = shift_sumcheck_rev.iter().rev().copied().collect();
+
+        // Inner sumcheck evaluations: evaluate z on rx_step
+        let mut jolt_oracle = JoltOracle::new::<C, M, PCS, ProofTranscript, I>(
+            preprocessing,
+            program_io,
+            constraint_builder,
+            trace,
+        );
+
+        //TODO: Required for opening accumulator can be removed after streaming version of opening accumulator
+        let chis = EqPolynomial::evals(rx_step);
+
+        let claimed_witness_evals = MultilinearPolynomial::stream_batch_evaluate::<
+            C,
+            InstructionSet,
+            I,
+        >(&mut jolt_oracle, rx_step, num_shards, shard_length);
+
+        jolt_oracle.reset();
+
+        opening_accumulator.append(
+            &flattened_polys,
+            DensePolynomial::new(chis),
+            rx_step.to_vec(),
+            &claimed_witness_evals,
+            transcript,
+        );
+
+        //TODO: Required for opening accumulator can be removed after streaming version of opening accumulator
+        let chis2 = EqPolynomial::evals(&shift_sumcheck_r);
+
+        // Shift sumcheck evaluations: evaluate z on ry_var
+        let shift_sumcheck_witness_evals =
+            MultilinearPolynomial::stream_batch_evaluate::<C, InstructionSet, I>(
+                &mut jolt_oracle,
+                &shift_sumcheck_r,
+                num_shards,
+                shard_length,
+            );
+
+        opening_accumulator.append(
+            &flattened_polys,
+            DensePolynomial::new(chis2),
+            shift_sumcheck_r.to_vec(),
+            &shift_sumcheck_witness_evals,
+            transcript,
+        );
+
+        // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
+        let outer_sumcheck_claims = (
+            outer_sumcheck_claims[0],
+            outer_sumcheck_claims[1],
+            outer_sumcheck_claims[2],
+        );
+        Ok(UniformSpartanProof {
+            _inputs: PhantomData,
+            outer_sumcheck_proof,
+            outer_sumcheck_claims,
+            inner_sumcheck_proof,
+            shift_sumcheck_proof,
+            shift_sumcheck_claim,
+            claimed_witness_evals,
+            shift_sumcheck_witness_evals,
+            _marker: PhantomData,
+        })
+    }
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
@@ -711,7 +1542,6 @@ where
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
-
         let num_steps_bits = key.num_steps.log_2();
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
@@ -751,11 +1581,15 @@ where
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
+        #[cfg(test)]
+        let shift_sumcheck_r: Vec<F> = shift_sumcheck_r.iter().rev().copied().collect();
+
         let eval_z_shift_sumcheck = key.evaluate_z_mle_with_segment_evals(
             &self.shift_sumcheck_witness_evals,
             &ry_var,
             false,
         );
+
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
         let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck;
@@ -786,54 +1620,3 @@ where
         Ok(())
     }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use ark_bn254::Fr;
-//     use ark_std::One;
-
-//     use crate::poly::commitment::{ commitment_scheme::CommitShape, hyrax::HyraxScheme };
-
-//     use super::*;
-
-//     #[test]
-//     fn integration() {
-//         let (builder, key) = simp_test_builder_key();
-//         let witness_segments: Vec<Vec<Fr>> = vec![
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* Q */,
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* R */,
-//             vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)] /* S */
-//         ];
-
-//         // Create a witness and commit
-//         let witness_segments_ref: Vec<&[Fr]> = witness_segments
-//             .iter()
-//             .map(|segment| segment.as_slice())
-//             .collect();
-//         let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
-//         let witness_commitment = HyraxScheme::batch_commit(
-//             &witness_segments_ref,
-//             &gens,
-//             BatchType::Small
-//         );
-
-//         // Prove spartan!
-//         let mut prover_transcript = ProofTranscript::new(b"stuff");
-//         let proof = UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>
-//             ::prove_precommitted::<SimpTestIn>(
-//                 &gens,
-//                 builder,
-//                 &key,
-//                 witness_segments,
-//                 todo!("opening accumulator"),
-//                 &mut prover_transcript
-//             )
-//             .unwrap();
-
-//         let mut verifier_transcript = ProofTranscript::new(b"stuff");
-//         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
-//         proof
-//             .verify_precommitted(&key, witness_commitment_ref, &gens, &mut verifier_transcript)
-//             .expect("Spartan verifier failed");
-//     }
-// }

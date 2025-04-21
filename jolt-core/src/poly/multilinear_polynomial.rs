@@ -1,4 +1,8 @@
-use crate::utils::{compute_dotproduct, math::Math};
+use crate::{
+    jolt::{instruction::JoltInstructionSet, vm::JoltOracle},
+    r1cs::inputs::ConstraintInput,
+    utils::{compute_dotproduct, math::Math, streaming::Oracle},
+};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -10,6 +14,7 @@ use super::{
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
 };
+use crate::poly::split_eq_poly::SplitEqPolynomial;
 use crate::{
     field::{JoltField, OptimizedMul},
     utils::thread::unsafe_allocate_zero_vec,
@@ -567,6 +572,20 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>);
+
+    fn stream_batch_evaluate<
+        'a,
+        const C: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput,
+    >(
+        _: &mut JoltOracle<'a, F, InstructionSet>,
+        _: &[F],
+        _: usize,
+        _: usize,
+    ) -> Vec<F> {
+        unimplemented!("stream batch evaluate not implemented")
+    }
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
@@ -666,6 +685,162 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 .collect();
             (evals, eq)
         }
+    }
+
+    fn stream_batch_evaluate<
+        const C: usize,
+        InstructionSet: JoltInstructionSet,
+        I: ConstraintInput,
+    >(
+        jolt_oracle: &mut JoltOracle<'_, F, InstructionSet>,
+        r: &[F],
+        num_shards: usize,
+        shard_length: usize,
+    ) -> Vec<F> {
+        let peek = &jolt_oracle.peek().unwrap();
+
+        let peek_polys = I::flatten::<C>()
+            .iter()
+            .map(|var| var.get_ref(peek))
+            .collect::<Vec<&MultilinearPolynomial<F>>>();
+
+        let num_polys = peek_polys.len();
+        let eq = SplitEqPolynomial::new(r);
+        let e1_len = eq.E1_len;
+        let num_x1_bits = eq.E1_len.log_2();
+        let x1_bitmask = (1 << (num_x1_bits)) - 1;
+
+        let mut int_evals = vec![F::zero(); num_polys];
+        let mut final_evals = vec![F::zero(); num_polys];
+
+        if peek_polys
+            .iter()
+            .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
+        {
+            let mut eq_r2 = eq.clone();
+            eq_r2
+                .E2
+                .iter_mut()
+                .for_each(|elem| *elem = elem.mul(F::montgomery_r2().unwrap()));
+
+            for shard_idx in 0..num_shards {
+                let shards = jolt_oracle.next_shard(shard_length);
+                let polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                    .iter()
+                    .map(|var| var.get_ref(&shards))
+                    .collect();
+                polys
+                    .par_iter()
+                    .zip(int_evals.par_iter_mut().zip(final_evals.par_iter_mut()))
+                    .for_each(|(poly, (int_eval, final_eval))| {
+                        match poly {
+                            MultilinearPolynomial::LargeScalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *int_eval += poly.Z[i].mul_01_optimized(eq.E1[x1]);
+
+                                    if (poly_idx + 1) % e1_len == 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *final_eval += *int_eval * eq.E2[x2];
+                                        *int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U8Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
+
+                                    if (poly_idx + 1) % e1_len == 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *final_eval += *int_eval * eq_r2.E2[x2];
+                                        *int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U16Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
+
+                                    if (poly_idx + 1) % e1_len == 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *final_eval += *int_eval * eq_r2.E2[x2];
+                                        *int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U32Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
+
+                                    if (poly_idx + 1) % e1_len == 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *final_eval += *int_eval * eq_r2.E2[x2];
+                                        *int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::U64Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
+                                    if (poly_idx + 1) % e1_len == 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *final_eval += *int_eval * eq_r2.E2[x2];
+                                        *int_eval = F::zero();
+                                    }
+                                }
+                            }
+                            MultilinearPolynomial::I64Scalars(poly) => {
+                                for i in 0..shard_length {
+                                    let poly_idx = shard_length * shard_idx + i;
+                                    let x1 = poly_idx & x1_bitmask;
+                                    *int_eval += poly.coeffs[i].field_mul(eq_r2.E1[x1]);
+
+                                    if (poly_idx + 1) % e1_len == 0 {
+                                        let x2 = poly_idx >> num_x1_bits;
+                                        *final_eval += *int_eval * eq_r2.E2[x2];
+                                        *int_eval = F::zero();
+                                    }
+                                }
+                            }
+                        };
+                    });
+            }
+        } else {
+            for shard_idx in 0..num_shards {
+                let shards = jolt_oracle.next_shard(shard_length);
+                let polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+                    .iter()
+                    .map(|var| var.get_ref(&shards))
+                    .collect();
+                polys
+                    .into_par_iter()
+                    .zip(int_evals.par_iter_mut().zip(final_evals.par_iter_mut()))
+                    .for_each(|(poly, (int_eval, final_eval))| {
+                        let poly: &DensePolynomial<F> = poly.try_into().unwrap();
+                        for i in 0..shard_length {
+                            let poly_idx = shard_length * shard_idx + i;
+                            let x1 = poly_idx & x1_bitmask;
+                            *int_eval += poly.Z[i].mul_01_optimized(eq.E1[x1]);
+
+                            if (poly_idx + 1) % e1_len == 0 {
+                                let x2 = poly_idx >> num_x1_bits;
+                                *final_eval += *int_eval * eq.E2[x2];
+                                *int_eval = F::zero();
+                            }
+                        }
+                    });
+            }
+        }
+        final_evals.to_vec()
     }
 
     #[inline]
