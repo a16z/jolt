@@ -1,104 +1,37 @@
-use rand::prelude::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use tracer::instruction::{add::ADD, RISCVCycle};
 
-use super::prefixes::{PrefixEval, Prefixes};
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltInstruction;
-use crate::field::JoltField;
-use crate::subprotocols::sparse_dense_shout::PrefixSuffixDecomposition;
+use crate::jolt::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ADDInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
+use super::InstructionLookup;
 
-impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
-    fn operands(&self) -> (u64, u64) {
-        (self.0, self.1)
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for ADD {
+    fn lookup_table() -> Option<LookupTables<WORD_SIZE>> {
+        Some(RangeCheckTable.into())
     }
 
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index % (1 << WORD_SIZE)
-    }
-
-    fn to_lookup_index(&self) -> u64 {
+    fn to_lookup_index(cycle: &RISCVCycle<Self>) -> u64 {
+        let (x, y) = InstructionLookup::<WORD_SIZE>::lookup_query(cycle);
         match WORD_SIZE {
             #[cfg(test)]
-            8 => self.0 + self.1,
-            32 => self.0 + self.1,
+            8 => x + y,
+            32 => x + y,
             // 64 => (self.0 as u128) + (self.1 as u128),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
 
-    fn lookup_entry(&self) -> u64 {
+    fn lookup_query(cycle: &RISCVCycle<Self>) -> (u64, u64) {
+        (cycle.register_state.rs1, cycle.register_state.rs2)
+    }
+
+    fn lookup_entry(cycle: &RISCVCycle<Self>) -> u64 {
+        let (x, y) = InstructionLookup::<WORD_SIZE>::lookup_query(cycle);
         match WORD_SIZE {
             #[cfg(test)]
-            8 => (self.0 as u8).overflowing_add(self.1 as u8).0.into(),
-            32 => (self.0 as u32).overflowing_add(self.1 as u32).0.into(),
-            64 => self.0.overflowing_add(self.1).0,
+            8 => (x as u8).overflowing_add(y as u8).0.into(),
+            32 => (x as u32).overflowing_add(y as u32).0.into(),
+            64 => x.overflowing_add(y).0,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
-    }
-
-    fn random(&self, rng: &mut StdRng) -> Self {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
-            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
-            64 => Self(rng.next_u64(), rng.next_u64()),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
-        let mut result = F::zero();
-        for i in 0..WORD_SIZE {
-            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
-        }
-        result
-    }
-}
-
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for ADDInstruction<WORD_SIZE> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::LowerWord]
-    }
-
-    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, lower_word] = suffixes.try_into().unwrap();
-        prefixes[Prefixes::LowerWord] * one + lower_word
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use ark_bn254::Fr;
-
-    use super::ADDInstruction;
-    use crate::jolt::instruction::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
-    };
-
-    #[test]
-    fn add_prefix_suffix() {
-        prefix_suffix_test::<Fr, ADDInstruction<32>>();
-    }
-
-    #[test]
-    fn add_materialize_entry() {
-        materialize_entry_test::<Fr, ADDInstruction<32>>();
-    }
-
-    #[test]
-    fn add_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, ADDInstruction<8>>();
-    }
-
-    #[test]
-    fn add_mle_random() {
-        instruction_mle_random_test::<Fr, ADDInstruction<32>>();
     }
 }

@@ -1,10 +1,11 @@
 use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use tracer::instruction::RV32IMCycle;
 
 use crate::{
     field::JoltField,
-    jolt::instruction::LookupTables,
+    jolt::lookup_table::LookupTables,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::CompactPolynomial,
@@ -16,8 +17,6 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
-
-use super::JoltTraceStep;
 
 pub struct LookupsWitness<F: JoltField> {
     ra: [CompactPolynomial<u16, F>; 4],
@@ -49,7 +48,7 @@ where
 
     pub fn prove(
         generators: &PCS::Setup,
-        trace: &[JoltTraceStep<WORD_SIZE>],
+        trace: &[RV32IMCycle],
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {

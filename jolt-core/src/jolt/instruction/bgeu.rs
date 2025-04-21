@@ -1,97 +1,28 @@
-use rand::prelude::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use tracer::instruction::{bgeu::BGEU, RISCVCycle};
 
-use super::{
-    prefixes::{PrefixEval, Prefixes},
-    sltu::SLTUInstruction,
-    suffixes::SuffixEval,
-    JoltInstruction,
-};
-use crate::{
-    field::JoltField, jolt::instruction::suffixes::Suffixes,
-    subprotocols::sparse_dense_shout::PrefixSuffixDecomposition, utils::uninterleave_bits,
+use crate::jolt::lookup_table::{
+    unsigned_greater_than_equal::UnsignedGreaterThanEqualTable, LookupTables,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct BGEUInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
+use super::InstructionLookup;
 
-impl<const WORD_SIZE: usize> JoltInstruction for BGEUInstruction<WORD_SIZE> {
-    fn operands(&self) -> (u64, u64) {
-        (self.0, self.1)
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for BGEU {
+    fn lookup_table() -> Option<LookupTables<WORD_SIZE>> {
+        Some(UnsignedGreaterThanEqualTable.into())
     }
 
-    fn lookup_entry(&self) -> u64 {
-        // This is the same for 32-bit and 64-bit
-        (self.0 >= self.1).into()
+    fn lookup_query(cycle: &RISCVCycle<Self>) -> (u64, u64) {
+        (cycle.register_state.rs1, cycle.register_state.rs2)
     }
 
-    fn materialize_entry(&self, index: u64) -> u64 {
-        let (x, y) = uninterleave_bits(index);
+    fn lookup_entry(cycle: &RISCVCycle<Self>) -> u64 {
+        let (x, y) = InstructionLookup::<WORD_SIZE>::lookup_query(cycle);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x >= y).into(),
             32 => (x >= y).into(),
+            64 => (x >= y).into(),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
-    }
-
-    fn random(&self, rng: &mut StdRng) -> Self {
-        match WORD_SIZE {
-            #[cfg(test)]
-            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
-            32 => Self(rng.next_u32() as u64, rng.next_u32() as u64),
-            64 => Self(rng.next_u64(), rng.next_u64()),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
-        }
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - SLTUInstruction::<WORD_SIZE>::default().evaluate_mle::<F>(r)
-    }
-}
-
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for BGEUInstruction<WORD_SIZE> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::LessThan]
-    }
-
-    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, less_than] = suffixes.try_into().unwrap();
-        // 1 - LTU(x, y)
-        one - prefixes[Prefixes::LessThan] * one - prefixes[Prefixes::Eq] * less_than
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use ark_bn254::Fr;
-
-    use crate::jolt::instruction::test::{
-        instruction_mle_full_hypercube_test, instruction_mle_random_test, materialize_entry_test,
-        prefix_suffix_test,
-    };
-
-    use super::BGEUInstruction;
-
-    #[test]
-    fn bgeu_materialize_entry() {
-        materialize_entry_test::<Fr, BGEUInstruction<32>>();
-    }
-
-    #[test]
-    fn bgeu_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, BGEUInstruction<8>>();
-    }
-
-    #[test]
-    fn bgeu_mle_random() {
-        instruction_mle_random_test::<Fr, BGEUInstruction<32>>();
-    }
-
-    #[test]
-    fn bgeu_prefix_suffix() {
-        prefix_suffix_test::<Fr, BGEUInstruction<32>>();
     }
 }

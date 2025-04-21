@@ -5,7 +5,7 @@
 )]
 
 use crate::impl_r1cs_input_lc_conversions;
-use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::lookup_table::JoltInstructionSet;
 use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -260,22 +260,22 @@ pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'sta
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, EnumIter)]
 pub enum JoltR1CSInputs {
-    Bytecode_A, // Virtual address
-    // Bytecode_V
-    Bytecode_ELFAddress,
-    Bytecode_Bitflags,
-    Bytecode_RS1,
-    Bytecode_RS2,
-    Bytecode_RD,
-    Bytecode_Imm,
+    // Bytecode_A, // Virtual address
+    // // Bytecode_V
+    // Bytecode_ELFAddress,
+    // Bytecode_Bitflags,
+    // Bytecode_RS1,
+    // Bytecode_RS2,
+    // Bytecode_RD,
+    // Bytecode_Imm,
 
-    RAM_Address,
-    RS1_Read,
-    RS2_Read,
-    RD_Read,
-    RAM_Read,
-    RD_Write,
-    RAM_Write,
+    // RAM_Address,
+    // RS1_Read,
+    // RS2_Read,
+    // RD_Read,
+    // RAM_Read,
+    // RD_Write,
+    // RAM_Write,
 
     // ChunksQuery(usize),
     // LookupOutput,
@@ -326,20 +326,20 @@ impl ConstraintInput for JoltR1CSInputs {
     ) -> &'a T {
         let aux_polynomials = &jolt.r1cs.aux;
         match self {
-            JoltR1CSInputs::Bytecode_A => &jolt.bytecode.a_read_write,
-            JoltR1CSInputs::Bytecode_ELFAddress => &jolt.bytecode.v_read_write[0],
-            JoltR1CSInputs::Bytecode_Bitflags => &jolt.bytecode.v_read_write[1],
-            JoltR1CSInputs::Bytecode_RD => &jolt.bytecode.v_read_write[2],
-            JoltR1CSInputs::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
-            JoltR1CSInputs::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
-            JoltR1CSInputs::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
-            JoltR1CSInputs::RAM_Address => &jolt.read_write_memory.a_ram,
-            JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read_rs1,
-            JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read_rs2,
-            JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read_rd,
-            JoltR1CSInputs::RAM_Read => &jolt.read_write_memory.v_read_ram,
-            JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
-            JoltR1CSInputs::RAM_Write => &jolt.read_write_memory.v_write_ram,
+            // JoltR1CSInputs::Bytecode_A => &jolt.bytecode.a_read_write,
+            // JoltR1CSInputs::Bytecode_ELFAddress => &jolt.bytecode.v_read_write[0],
+            // JoltR1CSInputs::Bytecode_Bitflags => &jolt.bytecode.v_read_write[1],
+            // JoltR1CSInputs::Bytecode_RD => &jolt.bytecode.v_read_write[2],
+            // JoltR1CSInputs::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
+            // JoltR1CSInputs::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
+            // JoltR1CSInputs::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
+            // JoltR1CSInputs::RAM_Address => &jolt.read_write_memory.a_ram,
+            // JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read_rs1,
+            // JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read_rs2,
+            // JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read_rd,
+            // JoltR1CSInputs::RAM_Read => &jolt.read_write_memory.v_read_ram,
+            // JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
+            // JoltR1CSInputs::RAM_Write => &jolt.read_write_memory.v_write_ram,
             JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
             // JoltR1CSInputs::InstructionFlags(i) => {
             //     &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]

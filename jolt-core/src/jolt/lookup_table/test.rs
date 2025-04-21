@@ -1,13 +1,14 @@
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::{
+        lookup_table::{
             prefixes::{PrefixCheckpoint, Prefixes},
             suffixes::SuffixEval,
+            PrefixSuffixDecomposition,
         },
         vm::rv32i_vm::RV32I,
     },
-    subprotocols::sparse_dense_shout::{LookupBits, PrefixSuffixDecomposition},
+    subprotocols::sparse_dense_shout::LookupBits,
     utils::index_to_field_bitvector,
 };
 use common::{constants::REGISTER_COUNT, virtual_sequence::VirtualInstructionSequence};
@@ -16,7 +17,7 @@ use rand::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
-use super::JoltInstruction;
+use super::JoltLookupTable;
 
 /// Tests the consistency and correctness of a virtual instruction sequence.
 /// In detail:
@@ -128,7 +129,7 @@ pub fn jolt_virtual_sequence_test<I: VirtualInstructionSequence>(opcode: RV32IM)
     }
 }
 
-pub fn instruction_mle_random_test<F: JoltField, I: JoltInstruction + Default>() {
+pub fn instruction_mle_random_test<F: JoltField, I: JoltLookupTable + Default>() {
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..1000 {
@@ -141,7 +142,7 @@ pub fn instruction_mle_random_test<F: JoltField, I: JoltInstruction + Default>()
     }
 }
 
-pub fn instruction_mle_full_hypercube_test<F: JoltField, I: JoltInstruction + Default>() {
+pub fn instruction_mle_full_hypercube_test<F: JoltField, I: JoltLookupTable + Default>() {
     let materialized = I::default().materialize();
     for (i, entry) in materialized.iter().enumerate() {
         assert_eq!(
@@ -152,7 +153,7 @@ pub fn instruction_mle_full_hypercube_test<F: JoltField, I: JoltInstruction + De
     }
 }
 
-pub fn materialize_entry_test<F: JoltField, I: JoltInstruction + Default>() {
+pub fn materialize_entry_test<F: JoltField, I: JoltLookupTable + Default>() {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10000 {
         let instr = I::default().random(&mut rng);

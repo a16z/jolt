@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::host;
-use crate::jolt::instruction::LookupTables;
+use crate::jolt::lookup_table::LookupTables;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::{Jolt, JoltTraceStep};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -121,57 +121,58 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    let small_value_lookup_tables = F::compute_lookup_tables();
-    F::initialize_lookup_tables(small_value_lookup_tables);
+    todo!()
+    // let small_value_lookup_tables = F::compute_lookup_tables();
+    // F::initialize_lookup_tables(small_value_lookup_tables);
 
-    let mut tasks = Vec::new();
+    // let mut tasks = Vec::new();
 
-    const WORD_SIZE: usize = 32;
-    const LOG_K: usize = 2 * WORD_SIZE;
-    const LOG_T: usize = 19;
-    const T: u64 = 1 << LOG_T;
+    // const WORD_SIZE: usize = 32;
+    // const LOG_K: usize = 2 * WORD_SIZE;
+    // const LOG_T: usize = 19;
+    // const T: u64 = 1 << LOG_T;
 
-    let mut rng = StdRng::seed_from_u64(12345);
+    // let mut rng = StdRng::seed_from_u64(12345);
 
-    let trace: Vec<_> = (0..T)
-        .map(|_| {
-            let mut step = JoltTraceStep::no_op();
-            step.instruction_lookup = Some(LookupTables::random(&mut rng, None));
-            step
-        })
-        .collect();
+    // let trace: Vec<_> = (0..T)
+    //     .map(|_| {
+    //         let mut step = JoltTraceStep::no_op();
+    //         step.instruction_lookup = Some(LookupTables::random(&mut rng, None));
+    //         step
+    //     })
+    //     .collect();
 
-    let mut prover_transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
+    // let mut prover_transcript = ProofTranscript::new(b"test_transcript");
+    // let r_cycle: Vec<F> = prover_transcript.challenge_vector(LOG_T);
 
-    let task = move || {
-        let (proof, rv_claim, ra_claims, flag_claims) =
-            prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
+    // let task = move || {
+    //     let (proof, rv_claim, ra_claims, flag_claims) =
+    //         prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
 
-        let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
-        let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
-        let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
-            &proof,
-            LOG_T,
-            r_cycle,
-            rv_claim,
-            ra_claims,
-            &flag_claims,
-            &mut verifier_transcript,
-        );
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    };
+    //     let mut verifier_transcript = ProofTranscript::new(b"test_transcript");
+    //     let r_cycle: Vec<F> = verifier_transcript.challenge_vector(LOG_T);
+    //     let verification_result = verify_sparse_dense_shout::<WORD_SIZE, _, _>(
+    //         &proof,
+    //         LOG_T,
+    //         r_cycle,
+    //         rv_claim,
+    //         ra_claims,
+    //         &flag_claims,
+    //         &mut verifier_transcript,
+    //     );
+    //     assert!(
+    //         verification_result.is_ok(),
+    //         "Verification failed with error: {:?}",
+    //         verification_result.err()
+    //     );
+    // };
 
-    tasks.push((
-        tracing::info_span!("Sparse-dense shout d=4"),
-        Box::new(task) as Box<dyn FnOnce()>,
-    ));
+    // tasks.push((
+    //     tracing::info_span!("Sparse-dense shout d=4"),
+    //     Box::new(task) as Box<dyn FnOnce()>,
+    // ));
 
-    tasks
+    // tasks
 }
 
 fn twist<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
@@ -307,26 +308,24 @@ where
                 1 << 18,
             );
 
-        let (jolt_proof, jolt_commitments, _) =
-            <RV32IJoltVM as Jolt<C, M, 32, _, PCS, ProofTranscript>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
+        let (jolt_proof, _) = <RV32IJoltVM as Jolt<C, M, 32, _, PCS, ProofTranscript>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+        );
 
         println!("Proof sizing:");
-        serialize_and_print_size("jolt_commitments", &jolt_commitments);
+        // serialize_and_print_size("jolt_commitments", &jolt_commitments);
         serialize_and_print_size("jolt_proof", &jolt_proof);
         // serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
-        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
+        // serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
         serialize_and_print_size(" jolt_proof.ram", &jolt_proof.ram);
         serialize_and_print_size(
             " jolt_proof.instruction_lookups",
             &jolt_proof.instruction_lookups,
         );
 
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -367,14 +366,12 @@ where
                 1 << 22,
             );
 
-        let (jolt_proof, jolt_commitments, _) =
-            <RV32IJoltVM as Jolt<C, M, 32, _, PCS, ProofTranscript>>::prove(
-                io_device,
-                trace,
-                preprocessing.clone(),
-            );
-        let verification_result =
-            RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments, None);
+        let (jolt_proof, _) = <RV32IJoltVM as Jolt<C, M, 32, _, PCS, ProofTranscript>>::prove(
+            io_device,
+            trace,
+            preprocessing.clone(),
+        );
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

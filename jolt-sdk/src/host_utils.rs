@@ -7,7 +7,7 @@ pub use common::{
     rv_trace::{MemoryLayout, MemoryOp, RV32IM},
 };
 pub use jolt_core::host;
-pub use jolt_core::jolt::instruction;
+pub use jolt_core::jolt::lookup_table;
 pub use jolt_core::jolt::vm::{
     bytecode::BytecodeRow,
     rv32i_vm::{

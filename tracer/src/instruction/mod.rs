@@ -41,6 +41,7 @@ use sra::SRA;
 use srai::SRAI;
 use srl::SRL;
 use srli::SRLI;
+use strum_macros::IntoStaticStr;
 use sub::SUB;
 use sw::SW;
 use xor::XOR;
@@ -130,13 +131,13 @@ pub mod virtual_srl;
 pub mod xor;
 pub mod xori;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct MemoryRead {
     pub(crate) address: u64,
     pub(crate) value: u64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct MemoryWrite {
     pub(crate) address: u64,
     pub(crate) pre_value: u64,
@@ -179,15 +180,9 @@ pub trait VirtualInstructionSequence: RISCVInstruction {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction>;
 }
 
-#[derive(Default, Serialize, Deserialize)]
-pub struct RISCVCycle<T: RISCVInstruction> {
-    pub instruction: T,
-    pub register_state: <T::Format as InstructionFormat>::RegisterState,
-    pub ram_access: T::RAMAccess,
-}
-
-#[derive(Debug, From, Serialize, Deserialize)]
+#[derive(Debug, From, Clone, Serialize, Deserialize)]
 pub enum RV32IMInstruction {
+    NoOp,
     ADD(ADD),
     ADDI(ADDI),
     AND(AND),
@@ -433,8 +428,16 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(From, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct RISCVCycle<T: RISCVInstruction> {
+    pub instruction: T,
+    pub register_state: <T::Format as InstructionFormat>::RegisterState,
+    pub ram_access: T::RAMAccess,
+}
+
+#[derive(From, Clone, Serialize, Deserialize, IntoStaticStr)]
 pub enum RV32IMCycle {
+    NoOp,
     ADD(RISCVCycle<ADD>),
     ADDI(RISCVCycle<ADDI>),
     AND(RISCVCycle<AND>),

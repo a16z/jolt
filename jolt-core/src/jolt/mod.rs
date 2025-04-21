@@ -1,3 +1,3 @@
 pub mod instruction;
-pub mod trace;
+pub mod lookup_table;
 pub mod vm;

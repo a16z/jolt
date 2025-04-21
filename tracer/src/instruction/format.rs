@@ -1,8 +1,10 @@
 use crate::emulator::cpu::{Cpu, Xlen};
+use rand::rngs::StdRng;
+use rand::RngCore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub trait InstructionFormat: Default {
-    type RegisterState: Default + Serialize + DeserializeOwned;
+    type RegisterState: Default + Clone + Serialize + DeserializeOwned;
 
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
@@ -16,10 +18,10 @@ pub struct FormatB {
     pub imm: i64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatB {
-    rs1: u64,
-    rs2: u64,
+    pub rs1: u64,
+    pub rs2: u64,
 }
 
 impl InstructionFormat for FormatB {
@@ -59,10 +61,10 @@ pub struct FormatI {
     pub imm: i64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatI {
-    rd: (u64, u64), // (old_value, new_value)
-    rs1: u64,
+    pub rd: (u64, u64), // (old_value, new_value)
+    pub rs1: u64,
 }
 
 impl InstructionFormat for FormatI {
@@ -99,9 +101,9 @@ pub struct FormatJ {
     pub imm: i64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatJ {
-    rd: (u64, u64), // (old_value, new_value)
+    pub rd: (u64, u64), // (old_value, new_value)
 }
 
 impl InstructionFormat for FormatJ {
@@ -139,11 +141,11 @@ pub struct FormatR {
     pub rs2: usize,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatR {
-    rd: (u64, u64), // (old_value, new_value)
-    rs1: u64,
-    rs2: u64,
+    pub rd: (u64, u64), // (old_value, new_value)
+    pub rs1: u64,
+    pub rs2: u64,
 }
 
 impl InstructionFormat for FormatR {
@@ -175,10 +177,10 @@ pub struct FormatS {
     pub imm: i64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatS {
-    rs1: u64,
-    rs2: u64,
+    pub rs1: u64,
+    pub rs2: u64,
 }
 
 impl InstructionFormat for FormatS {
@@ -216,9 +218,9 @@ pub struct FormatU {
     pub imm: i64,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RegisterStateFormatU {
-    rd: (u64, u64), // (old_value, new_value)
+    pub rd: (u64, u64), // (old_value, new_value)
 }
 
 impl InstructionFormat for FormatU {

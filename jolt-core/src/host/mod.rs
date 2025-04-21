@@ -9,23 +9,18 @@ use std::{
 };
 
 use postcard;
-use rayon::prelude::*;
 use serde::Serialize;
 
 use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    instruction::RV32IM,
     memory::JoltDevice,
 };
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 pub use tracer::ELFInstruction;
 
-use crate::{
-    field::JoltField,
-    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
-};
+use crate::field::JoltField;
 
 use self::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
@@ -176,55 +171,24 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self) -> (JoltDevice, Vec<JoltTraceStep<32>>) {
+    pub fn trace(&mut self) -> (JoltDevice, Vec<RV32IMCycle>) {
         self.build();
         let elf = self.elf.clone().unwrap();
-        let (raw_trace, io_device) =
+        let (trace, io_device) =
             tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
-
-        let trace: Vec<_> = raw_trace
-            .into_par_iter()
-            .flat_map(|row| match row.instruction.opcode {
-                RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
-                RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
-                RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
-                RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
-                RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
-                RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
-                RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
-                RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
-                RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
-                RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
-                RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
-                RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
-                _ => vec![row],
-            })
-            .map(|row| JoltTraceStep {
-                instruction_lookup: LookupTables::try_from(&row).ok(),
-                bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
-                memory_ops: row.to_memory_ops(),
-                circuit_flags: row.instruction.to_circuit_flags(),
-            })
-            .collect();
 
         (io_device, trace)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary {
-        self.build();
-        let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) =
-            tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
-
         let (bytecode, memory_init) = self.decode();
-        let (io_device, processed_trace) = self.trace();
+        let (io_device, trace) = self.trace();
 
         ProgramSummary {
-            raw_trace,
+            trace,
             bytecode,
             memory_init,
             io_device,
-            processed_trace,
         }
     }
 

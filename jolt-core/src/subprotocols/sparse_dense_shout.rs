@@ -1,13 +1,9 @@
 use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
-    jolt::{
-        instruction::{
-            prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
-            suffixes::{SuffixEval, Suffixes},
-            JoltInstruction, LookupTables,
-        },
-        vm::JoltTraceStep,
+    jolt::lookup_table::{
+        prefixes::{PrefixCheckpoint, Prefixes},
+        JoltLookupTable, LookupTables, PrefixSuffixDecomposition,
     },
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -28,6 +24,7 @@ use crate::{
 use rayon::{prelude::*, slice::Iter};
 use std::{fmt::Display, ops::Index};
 use strum::{EnumCount, IntoEnumIterator};
+use tracer::instruction::RV32IMCycle;
 
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
 /// built up incrementally as we receive random challenges `r_j` over the
@@ -221,11 +218,6 @@ pub fn current_suffix_len(log_K: usize, j: usize) -> usize {
     log_K - (j / phase_length + 1) * phase_length
 }
 
-pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltInstruction + Default {
-    fn suffixes(&self) -> Vec<Suffixes>;
-    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
-}
-
 /// Compute the sumcheck prover message in round `j` using the prefix-suffix
 /// decomposition. In the first log(K) rounds of sumcheck, while we're
 /// binding the "address" variables (and the "cycle" variables remain unbound),
@@ -295,7 +287,7 @@ pub fn prove_sparse_dense_shout<
     F: JoltField,
     ProofTranscript: Transcript,
 >(
-    trace: &[JoltTraceStep<WORD_SIZE>],
+    trace: &[RV32IMCycle],
     r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4], Vec<F>) {
@@ -315,8 +307,8 @@ pub fn prove_sparse_dense_shout<
     let _guard = span.enter();
     let lookup_indices: Vec<_> = trace
         .par_iter()
-        .map(|steo| {
-            let lookup_index = match steo.instruction_lookup {
+        .map(|step| {
+            let lookup_index = match step.instruction_lookup {
                 Some(lookup) => lookup.to_lookup_index(),
                 None => 0,
             };
@@ -698,19 +690,19 @@ pub fn verify_sparse_dense_shout<
 mod tests {
     use super::*;
     use crate::{
-        jolt::instruction::{
-            add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+        jolt::lookup_table::{
+            add::ADDInstruction, and::AndTable, beq::BEQInstruction, bge::BGEInstruction,
             bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction,
-            mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction, slt::SLTInstruction,
-            sltu::SLTUInstruction, sub::SUBInstruction, virtual_advice::ADVICEInstruction,
+            mulhu::MULHUInstruction, mulu::MULUInstruction, or::OrTable, slt::SLTInstruction,
+            sltu::SLTUInstruction, sub::SubTable, virtual_advice::ADVICEInstruction,
             virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
             virtual_assert_lte::ASSERTLTEInstruction,
             virtual_assert_valid_div0::AssertValidDiv0Instruction,
             virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
             virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
             virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
-            virtual_pow2::POW2Instruction, virtual_sra::VirtualSRAInstruction,
-            virtual_srl::VirtualSRLInstruction, xor::XORInstruction,
+            virtual_pow2::POW2Instruction, virtual_sra::VirtualSRATable,
+            virtual_srl::VirtualSRLTable, xor::XorTable,
         },
         utils::transcript::KeccakTranscript,
     };
@@ -764,27 +756,27 @@ mod tests {
 
     #[test]
     fn test_add() {
-        test_sparse_dense_shout(Some(LookupTables::Add(ADDInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::RangeCheck(ADDInstruction::default())));
     }
 
     #[test]
     fn test_sub() {
-        test_sparse_dense_shout(Some(LookupTables::Sub(SUBInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::Sub(SubTable::default())));
     }
 
     #[test]
     fn test_and() {
-        test_sparse_dense_shout(Some(LookupTables::And(ANDInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::And(AndTable::default())));
     }
 
     #[test]
     fn test_or() {
-        test_sparse_dense_shout(Some(LookupTables::Or(ORInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::Or(OrTable::default())));
     }
 
     #[test]
     fn test_xor() {
-        test_sparse_dense_shout(Some(LookupTables::Xor(XORInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::Xor(XorTable::default())));
     }
 
     #[test]
@@ -889,11 +881,11 @@ mod tests {
 
     #[test]
     fn test_virtual_srl() {
-        test_sparse_dense_shout(Some(LookupTables::Srl(VirtualSRLInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::Srl(VirtualSRLTable::default())));
     }
 
     #[test]
     fn test_virtual_sra() {
-        test_sparse_dense_shout(Some(LookupTables::Sra(VirtualSRAInstruction::default())));
+        test_sparse_dense_shout(Some(LookupTables::Sra(VirtualSRATable::default())));
     }
 }

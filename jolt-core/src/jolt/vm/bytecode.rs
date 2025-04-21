@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use tracer::RV32IM;
 
 use crate::field::JoltField;
-use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::lookup_table::JoltInstructionSet;
 use crate::lasso::memory_checking::{
     Initializable, NoExogenousOpenings, StructuredPolynomialData, VerifierComputedOpening,
 };
