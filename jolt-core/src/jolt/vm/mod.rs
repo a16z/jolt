@@ -16,6 +16,11 @@ use ram::RAMTwistProof;
 use registers::RegistersTwistProof;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 use strum::EnumCount;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
@@ -35,8 +40,8 @@ use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, Bytecode
 
 use super::lookup_table::LookupTables;
 
-#[derive(Clone)]
-pub struct JoltPreprocessing<const C: usize, F, PCS, ProofTranscript>
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltVerifierPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -46,7 +51,65 @@ where
     // pub bytecode: BytecodePreprocessing<F>,
     // pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
+}
+
+impl<const C: usize, F, PCS, ProofTranscript> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltProverPreprocessing<const C: usize, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub shared: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
     field: F::SmallValueLookupTables,
+}
+
+impl<const C: usize, F, PCS, ProofTranscript> JoltProverPreprocessing<C, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -104,7 +167,6 @@ pub struct JoltProof<
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    pub program_io: JoltDevice,
     // pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
     // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
@@ -176,16 +238,14 @@ where
     type Constraints: R1CSConstraints<C, F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn preprocess(
+    fn verifier_preprocess(
         bytecode: Vec<RV32IMInstruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltPreprocessing<C, F, PCS, ProofTranscript> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
+    ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         icicle::icicle_init();
 
         // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
@@ -203,11 +263,40 @@ where
         .unwrap();
         let generators = PCS::setup(max_poly_len);
 
-        JoltPreprocessing {
+        JoltVerifierPreprocessing {
             generators,
             memory_layout,
             // bytecode: bytecode_preprocessing,
             // read_write_memory: read_write_memory_preprocessing,
+            // instruction_lookups: instruction_lookups_preprocessing,
+            // bytecode: bytecode_preprocessing,
+            // read_write_memory: read_write_memory_preprocessing,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
+    fn prover_preprocess(
+        bytecode: Vec<RV32IMInstruction>,
+        memory_layout: MemoryLayout,
+        memory_init: Vec<(u64, u8)>,
+        max_bytecode_size: usize,
+        max_memory_address: usize,
+        max_trace_length: usize,
+    ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
+        let small_value_lookup_tables = F::compute_lookup_tables();
+        F::initialize_lookup_tables(small_value_lookup_tables.clone());
+
+        let shared = Self::verifier_preprocess(
+            bytecode,
+            memory_layout,
+            memory_init,
+            max_bytecode_size,
+            max_memory_address,
+            max_trace_length,
+        );
+
+        JoltProverPreprocessing {
+            shared,
             field: small_value_lookup_tables,
         }
     }
@@ -216,7 +305,7 @@ where
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
-        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             WORD_SIZE,
@@ -228,6 +317,7 @@ where
             ProofTranscript,
         >,
         // JoltCommitments<PCS, ProofTranscript>,
+        JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
         icicle::icicle_init();
@@ -264,7 +354,7 @@ where
             ProverOpeningAccumulator::new();
 
         let instruction_proof = LookupsProof::prove(
-            &preprocessing.generators,
+            &preprocessing.shared.generators,
             &trace,
             &mut opening_accumulator,
             &mut transcript,
@@ -288,7 +378,6 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            program_io,
             // bytecode: bytecode_proof,
             instruction_lookups: instruction_proof,
             ram: ram_proof,
@@ -305,12 +394,12 @@ where
         });
         #[cfg(not(test))]
         let debug_info = None;
-        (jolt_proof, debug_info)
+        (jolt_proof, program_io, debug_info)
     }
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         proof: JoltProof<
             WORD_SIZE,
             C,
@@ -321,6 +410,7 @@ where
             ProofTranscript,
         >,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
+        program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -335,7 +425,7 @@ where
         }
         Self::fiat_shamir_preamble(
             &mut transcript,
-            &proof.program_io,
+            &program_io,
             &preprocessing.memory_layout,
             proof.trace_length,
         );

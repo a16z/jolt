@@ -219,7 +219,7 @@ pub fn random_bytecode_trace(
     trace
 }
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing<F: JoltField> {
     /// Size of the (padded) bytecode.
     code_size: usize,

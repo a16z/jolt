@@ -233,7 +233,6 @@ mod tests {
     // #[test]
     // fn sha3_e2e_zeromorph() {
     //     let guard = SHA3_FILE_LOCK.lock().unwrap();
-
     //     let mut program = host::Program::new("sha3-guest");
     //     program.set_input(&[5u8; 32]);
     //     let (bytecode, memory_init) = program.decode();
