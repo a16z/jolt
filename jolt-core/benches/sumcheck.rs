@@ -1,5 +1,6 @@
 use std::cmp::min;
 use std::collections::HashMap;
+use std::time::Instant;
 use ark_bn254::Fr;
 use ark_std::test_rng;
 use criterion::Criterion;
@@ -9,6 +10,7 @@ use icicle_bn254::curve::ScalarField;
 use icicle_bn254::program::bn254::FieldReturningValueProgram;
 #[cfg(feature = "icicle")]
 use icicle_bn254::sumcheck::SumcheckWrapper;
+#[cfg(feature = "icicle")]
 use icicle_core::curve::Curve;
 #[cfg(feature = "icicle")]
 use icicle_core::program::ReturningValueProgram;
@@ -23,10 +25,13 @@ use jolt_core::subprotocols::shout::prove_core_shout_piop;
 use icicle_core::sumcheck::{Sumcheck, SumcheckConfig, SumcheckTranscriptConfig};
 #[cfg(feature = "icicle")]
 use icicle_core::sumcheck::SumcheckProofOps;
+#[cfg(feature = "icicle")]
 use icicle_core::traits::FieldImpl;
 #[cfg(feature = "icicle")]
 use icicle_core::traits::GenerateRandom;
+#[cfg(feature = "icicle")]
 use icicle_runtime::memory::{DeviceVec, HostSlice};
+#[cfg(feature = "icicle")]
 use icicle_runtime::stream::IcicleStream;
 use rayon::prelude::*;
 use jolt_core::msm::Icicle;
@@ -36,7 +41,7 @@ use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::utils::math::Math;
 use jolt_core::utils::thread::unsafe_allocate_zero_vec;
 
-const TABLE_SIZE: usize = 1 << 16;
+const TABLE_SIZE: usize = 1 << 26;
 const NUM_LOOKUPS: usize = 1 << 22;
 
 #[inline]
@@ -65,7 +70,7 @@ pub fn setup_F<F: JoltField, ProofTranscript: Transcript>(
 
     let E: Vec<F> = EqPolynomial::evals(&r_cycle);
 
-    if T <= 1 << 20 {
+    // if T <= 1 << 20 {
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
 
         for (cycle, &address) in read_addresses.iter().enumerate() {
@@ -74,62 +79,65 @@ pub fn setup_F<F: JoltField, ProofTranscript: Transcript>(
             }
         }
         F
-    } else {
-        let num_chunks = rayon::current_num_threads();
-        let chunk_size = (read_addresses.len() / num_chunks).max(1);
-        let F: Vec<_> = read_addresses
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, addresses)| {
-                let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut cycle = chunk_index * chunk_size;
-                for address in addresses {
-                    result[*address] += E[cycle];
-                    cycle += 1;
-                }
-                result
-            })
-            .reduce(
-                || unsafe_allocate_zero_vec(K),
-                |mut running, new| {
-                    running
-                        .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running
-                },
-            );
-        F
-    }
+    // } else {
+    //     let num_chunks = rayon::current_num_threads()
+    //     .next_power_of_two()
+    //     .min(read_addresses.len());
+    //     let chunk_size = (read_addresses.len() / num_chunks).max(1);
+    //     let F: Vec<_> = read_addresses
+    //         .par_chunks(chunk_size)
+    //         .enumerate()
+    //         .map(|(chunk_index, addresses)| {
+    //             let mut result: Vec<F> = unsafe_allocate_zero_vec(K);
+    //             let mut cycle = chunk_index * chunk_size;
+    //             for address in addresses {
+    //                 result[*address] += E[cycle];
+    //                 cycle += 1;
+    //             }
+    //             result
+    //         })
+    //         .reduce(
+    //             || unsafe_allocate_zero_vec(K),
+    //             |mut running, new| {
+    //                 running
+    //                     .iter_mut()
+    //                     .zip(new.into_iter())
+    //                     .for_each(|(x, y)| *x += y);
+    //                 running
+    //             },
+    //         );
+    //     F
+    // }
 }
 
-pub fn setup_sumcheck_claim2<F: JoltField, ProofTranscript: Transcript>(
-    lookup_table: &[F],
-    F: &[F]) -> F {
-    let stream = IcicleStream::create().unwrap();
-    let mut vals = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(lookup_table.len(), &stream).unwrap();
-    let mut ra = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(F.len(), &stream).unwrap();
-    let mut result = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(F.len(), &stream).unwrap();
-    unsafe {
-        vals.copy_from_host_async(HostSlice::from_slice(reinterpret_field_slice(lookup_table)), &stream).unwrap();
-        ra.copy_from_host_async(HostSlice::from_slice(reinterpret_field_slice(F)), &stream).unwrap();
-    }
+// pub fn setup_sumcheck_claim2<F: JoltField, ProofTranscript: Transcript>(
+//     lookup_table: &[F],
+//     F: &[F]) -> F {
+//     let mut stream = IcicleStream::create().unwrap();
+//     let mut vals = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(lookup_table.len(), &stream).unwrap();
+//     let mut ra = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(F.len(), &stream).unwrap();
+//     let mut result = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(F.len(), &stream).unwrap();
+//     unsafe {
+//         vals.copy_from_host_async(HostSlice::from_slice(reinterpret_field_slice(lookup_table)), &stream).unwrap();
+//         ra.copy_from_host_async(HostSlice::from_slice(reinterpret_field_slice(F)), &stream).unwrap();
+//     }
 
-    // Element-wise multiply on GPU
-    let cfg = icicle_core::vec_ops::VecOpsConfig::default();
-    icicle_core::vec_ops::mul_scalars(&vals, &ra, &mut result, &cfg).unwrap();
+//     // Element-wise multiply on GPU
+//     let cfg = icicle_core::vec_ops::VecOpsConfig::default();
+//     icicle_core::vec_ops::mul_scalars(&vals, &ra, &mut result, &cfg).unwrap();
 
-    // Copy result back to host
-    let mut res = vec![<SumcheckWrapper as Sumcheck>::Field::zero(); F.len()];
-    let mut host_result = HostSlice::from_mut_slice(&mut res);
-    result.copy_to_host_async(&mut host_result, &stream).unwrap();
+//     // Copy result back to host
+//     let mut res = vec![<SumcheckWrapper as Sumcheck>::Field::zero(); F.len()];
+//     let mut host_result = HostSlice::from_mut_slice(&mut res);
+//     result.copy_to_host_async(&mut host_result, &stream).unwrap();
 
-    // Wait for stream to finish before summing on CPU
-    stream.synchronize().unwrap();
+//     // Wait for stream to finish before summing on CPU
+//     stream.synchronize().unwrap();
+//     stream.destroy().unwrap();
 
-    // Sum on CPU
-    host_result.as_slice().par_iter().map(|scalar| icicle_to_jolt::<F, ScalarField>(scalar)).sum()
-}
+//     // Sum on CPU
+//     host_result.as_slice().par_iter().map(|scalar| icicle_to_jolt::<F, ScalarField>(scalar)).sum()
+// }
 
 pub fn setup_sumcheck_claim<F: JoltField, ProofTranscript: Transcript>(
     lookup_table: &[F],
@@ -146,6 +154,7 @@ pub fn setup_sumcheck<F: JoltField, ProofTranscript: Transcript>(
     Vec<Vec<F>>,
     F,
 ) {
+    // K becomes the number of variables in the poly
     let K = lookup_table.len();
     let F = setup_F(&lookup_table, read_addresses, transcript);
 
@@ -228,30 +237,33 @@ where
 }
 
 #[cfg(feature = "icicle")]
-fn icicle_sumcheck2<F>(prover_transcript: &mut KeccakTranscript, K: usize, mle_polys: &[Vec<F>], sumcheck_claim: F)
+fn icicle_sumcheck2<F>(prover_transcript: &mut KeccakTranscript, K: usize, mle_poly_device: &[&DeviceVec<ScalarField>], stream: &mut IcicleStream, sumcheck_claim: F)
 where
     F: JoltField
 {
-    let stream = IcicleStream::create().unwrap();
+    // let mut stream = IcicleStream::create().unwrap();
     let sumcheck_claim_icicle  = unsafe { reinterpret_field(&sumcheck_claim) };
     let mut sumcheck_config = SumcheckConfig::default();
     sumcheck_config.are_inputs_on_device = true;
     sumcheck_config.is_async = true;
-    sumcheck_config.stream = stream.clone();
-    let mle_poly_hosts: Vec<DeviceVec<ScalarField>> = mle_polys
-        .iter()
-        .map(|coeffs| {
-            let coeffs = unsafe {
-                reinterpret_field_slice(coeffs)
-            };
+    sumcheck_config.stream = stream.clone().into();
+    // print the available memory on the device now
+    println!("Available Memory Start: {:?}", icicle_runtime::get_available_memory());
 
-            let host_slice = HostSlice::from_slice(coeffs);
-            let mut device_vec = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(coeffs.len(), &stream).unwrap();
-            device_vec.copy_from_host_async(host_slice, &stream).unwrap();
-            device_vec
-        })
-        .collect::<Vec<_>>();
-        let mle_poly_hosts = mle_poly_hosts.iter().collect::<Vec<_>>();
+    // let mle_poly_hosts: Vec<DeviceVec<ScalarField>> = mle_polys
+    //     .iter()
+    //     .map(|coeffs| {
+    //         let coeffs = unsafe {
+    //             reinterpret_field_slice(coeffs)
+    //         };
+
+    //         let host_slice = HostSlice::from_slice(coeffs);
+    //         let mut device_vec = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(coeffs.len(), &stream).unwrap();
+    //         device_vec.copy_from_host_async(host_slice, &stream).unwrap();
+    //         device_vec
+    //     })
+    //     .collect::<Vec<_>>();
+    //     let mle_poly_hosts = mle_poly_hosts.iter().collect::<Vec<_>>();
 
     let hasher = icicle_hash::keccak::Keccak256::new(32u64).unwrap();
     let seed_rng = <<SumcheckWrapper as Sumcheck>::FieldConfig>::generate_random(1)[0];
@@ -273,17 +285,20 @@ where
     );
 
 
+    println!("Available Memory Before Prove: {:?}", icicle_runtime::get_available_memory());
     let sumcheck = SumcheckWrapper::new().unwrap();
     let proof = sumcheck.prove(
-        &mle_poly_hosts,
+        mle_poly_device,
         K as u64,
         sumcheck_claim_icicle,
         combine_func,
         &config,
         &sumcheck_config,
     );
+    println!("Available Memory After Prove: {:?}", icicle_runtime::get_available_memory());
 
     stream.synchronize().expect("Failed to synchronize the stream");
+    // stream.destroy().unwrap();
 
     let proof_round_polys =
         <<SumcheckWrapper as Sumcheck>::Proof>::get_round_polys(&proof).unwrap();
@@ -292,6 +307,7 @@ where
         let coeffs = coeffs.iter().map(|c| icicle_to_jolt(c)).collect::<Vec<_>>();
         UniPoly::from_evals(&coeffs).compress()
     }).collect::<Vec<CompressedUniPoly<F>>>();
+    drop(proof_round_polys);
 
     // Add these to our transcript to remain consistent with the rest of the proof
     compressed_polys.iter().for_each(|p| {
@@ -357,6 +373,7 @@ where
     let mut rng = test_rng();
 
     let lookup_table: Vec<F> = (0..TABLE_SIZE).map(|_| F::random(&mut rng)).collect();
+    println!("lookup_table.len() = {}", lookup_table.len());
     let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
         .map(|_| rng.next_u32() as usize % TABLE_SIZE)
         .collect();
@@ -367,8 +384,39 @@ where
     // setup the benchmark
     let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
     // #[cfg(feature = "icicle")]
-    // let (K, mle_polys, sumcheck_claim) =
-    //     setup_sumcheck::<F, KeccakTranscript>(lookup_table, read_addresses.clone(), &mut prover_transcript);
+    let (K, mle_polys, sumcheck_claim) =
+        setup_sumcheck::<F, KeccakTranscript>(lookup_table.clone(), &read_addresses.clone(), &mut prover_transcript);
+    println!("mle_polys.len() = {}", mle_polys[0].len());
+
+    #[cfg(feature = "icicle")]
+    let mut stream = IcicleStream::create().unwrap();
+    #[cfg(feature = "icicle")]
+    let mut mle_polys_device: Vec<DeviceVec<ScalarField>> = vec![];
+    #[cfg(feature = "icicle")]
+    if benchmark_mode == BenchmarkMode::Full2 {
+        let now = Instant::now();
+        mle_polys_device = mle_polys
+            .iter()
+            .map(|coeffs| {
+                let coeffs = unsafe {
+                    reinterpret_field_slice(coeffs)
+                };
+    
+                let host_slice = HostSlice::from_slice(coeffs);
+                let mut device_vec = DeviceVec::<<SumcheckWrapper as Sumcheck>::Field>::device_malloc_async(coeffs.len(), &stream).unwrap();
+                println!("Copying to device item of len {}", coeffs.len());
+                device_vec.copy_from_host_async(host_slice, &stream).unwrap();
+                device_vec
+            })
+            .collect::<Vec<_>>();
+    
+        #[cfg(feature = "icicle")]
+        stream.synchronize().unwrap();
+        println!("Copy to Device took {:.2?}", now.elapsed());
+    }
+    #[cfg(feature = "icicle")]
+    let mle_polys_device = mle_polys_device.iter().collect::<Vec<_>>();
+
     // #[cfg(not(feature = "icicle"))]
     // let (K, mle_polys, sumcheck_claim) =
     //     crate::setup_sumcheck::<F, KeccakTranscript>(lookup_table, read_addresses.clone(), &mut prover_transcript);
@@ -383,9 +431,9 @@ where
             match benchmark_mode {
                 BenchmarkMode::F => { setup_F(&lookup_table, &read_addresses, &mut prover_transcript); },
                 BenchmarkMode::Claim => { setup_sumcheck_claim::<F, ProofTranscript>(&lookup_table, &F); },
-                BenchmarkMode::Claim2 => { setup_sumcheck_claim2::<F, ProofTranscript>(&lookup_table, &F); },
+                // BenchmarkMode::Claim2 => { setup_sumcheck_claim2::<F, ProofTranscript>(&lookup_table, &F); },
                 BenchmarkMode::Full => {
-                    let (K, mle_polys, sumcheck_claim ) = setup_sumcheck(lookup_table.clone(), &read_addresses, &mut prover_transcript);
+                    // let (K, mle_polys, sumcheck_claim ) = setup_sumcheck(lookup_table.clone(), &read_addresses, &mut prover_transcript);
                     {
                         #[cfg(feature = "icicle")]
                         icicle_sumcheck(&mut prover_transcript, K, &mle_polys, sumcheck_claim);
@@ -399,28 +447,32 @@ where
                     }
                 },
                 BenchmarkMode::Full2 => {
-                    let (K, mle_polys, sumcheck_claim ) = setup_sumcheck(lookup_table.clone(), &read_addresses, &mut prover_transcript);
-                    {
-                        #[cfg(feature = "icicle")]
-                        icicle_sumcheck2(&mut prover_transcript, K, &mle_polys, sumcheck_claim);
-                        #[cfg(not(feature = "icicle"))]
-                        sumcheck(
-                            &mut prover_transcript,
-                            K,
-                            &mle_polys,
-                            sumcheck_claim,
-                        );
-                    }
+                    // let (K, mle_polys, sumcheck_claim ) = setup_sumcheck(lookup_table.clone(), &read_addresses, &mut prover_transcript);
+                    #[cfg(feature = "icicle")]
+                    icicle_sumcheck2(&mut prover_transcript, K, &mle_polys_device, &mut stream, sumcheck_claim);
+                    #[cfg(not(feature = "icicle"))]
+                    sumcheck(
+                        &mut prover_transcript,
+                        K,
+                        &mle_polys,
+                        sumcheck_claim,
+                    );
+
                 },
             }
         });
     });
+    #[cfg(feature = "icicle")]
+    stream.destroy().unwrap();
+    #[cfg(feature = "icicle")]
+    drop(mle_polys_device);
 }
 
+#[derive(PartialEq)]
 enum BenchmarkMode {
     F,
     Claim,
-    Claim2,
+    // Claim2,
     Full,
     Full2,
 }
@@ -428,6 +480,7 @@ enum BenchmarkMode {
 fn main() {
     let small_value_lookup_tables = <Fr as JoltField>::compute_lookup_tables();
     <Fr as JoltField>::initialize_lookup_tables(small_value_lookup_tables);
+    jolt_core::msm::icicle_init();
 
     let mut criterion = Criterion::default()
         .configure_from_args()
@@ -442,25 +495,25 @@ fn main() {
     //   "Sumcheck::shout_setup_F",
     //   BenchmarkMode::F
     // );
-    benchmark_sumcheck::<Fr, KeccakTranscript>(
-        &mut criterion,
-        "Sumcheck::shout_setup_sumcheck_claim",
-        BenchmarkMode::Claim
-    );
-    benchmark_sumcheck::<Fr, KeccakTranscript>(
-        &mut criterion,
-        "Sumcheck::shout_setup_sumcheck_claim_gpu",
-        BenchmarkMode::Claim2
-    );
+    // benchmark_sumcheck::<Fr, KeccakTranscript>(
+    //     &mut criterion,
+    //     "Sumcheck::shout_setup_sumcheck_claim",
+    //     BenchmarkMode::Claim
+    // );
+    // benchmark_sumcheck::<Fr, KeccakTranscript>(
+    //     &mut criterion,
+    //     "Sumcheck::shout_setup_sumcheck_claim_gpu",
+    //     BenchmarkMode::Claim2
+    // );
 
+    // benchmark_sumcheck::<Fr, KeccakTranscript>(
+    //     &mut criterion,
+    //     "Sumcheck::shout_setup_sumcheck_prove",
+    //     BenchmarkMode::Full
+    // );
     benchmark_sumcheck::<Fr, KeccakTranscript>(
         &mut criterion,
-        "Sumcheck::shout_setup_sumcheck_prove",
-        BenchmarkMode::Full
-    );
-    benchmark_sumcheck::<Fr, KeccakTranscript>(
-        &mut criterion,
-        "Sumcheck::shout_setup_sumcheck_prove_gpu",
+        "Sumcheck::shout_setup_sumcheck_prove_gpu2",
         BenchmarkMode::Full2
     );
     criterion.final_summary();
