@@ -69,7 +69,7 @@ impl VirtualInstructionSequence for SRA {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         let v_bitmask = virtual_register_index(6) as usize;
 
-        let mut virtual_sequence_remaining = 1 + self.virtual_sequence_remaining.unwrap_or(0);
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];
 
         let bitmask = VirtualShiftRightBitmask {

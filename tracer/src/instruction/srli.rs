@@ -71,7 +71,7 @@ impl VirtualInstructionSequence for SRLI {
         // Virtual registers used in sequence
         let v_bitmask = virtual_register_index(6) as usize;
 
-        let mut virtual_sequence_remaining = 1 + self.virtual_sequence_remaining.unwrap_or(0);
+        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];
 
         let bitmask = VirtualShiftRightBitmaskI {
@@ -85,7 +85,7 @@ impl VirtualInstructionSequence for SRLI {
         sequence.push(bitmask.into());
         virtual_sequence_remaining -= 1;
 
-        let sra = VirtualSRL {
+        let srl = VirtualSRL {
             address: self.address,
             operands: FormatVirtualRightShift {
                 rd: self.operands.rd,
@@ -94,7 +94,7 @@ impl VirtualInstructionSequence for SRLI {
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };
-        sequence.push(sra.into());
+        sequence.push(srl.into());
 
         sequence
     }

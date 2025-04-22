@@ -46,7 +46,7 @@ impl RISCVInstruction for LH {
 
     fn new(word: u32, address: u64, validate: bool) -> Self {
         if validate {
-            debug_assert_eq!(word & Self::MASK, Self::MATCH);
+            assert_eq!(word & Self::MASK, Self::MATCH);
         }
 
         Self {

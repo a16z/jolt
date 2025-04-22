@@ -43,7 +43,7 @@ impl RISCVInstruction for AUIPC {
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64 + self.operands.imm);
+        cpu.x[self.operands.rd] = cpu.sign_extend(self.address as i64 + self.operands.imm);
     }
 }
 

@@ -45,7 +45,7 @@ impl RISCVInstruction for BLTU {
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         if cpu.unsigned_data(cpu.x[self.operands.rs1]) < cpu.unsigned_data(cpu.x[self.operands.rs2])
         {
-            cpu.pc = (cpu.pc as i64 + self.operands.imm) as u64;
+            cpu.pc = (self.address as i64 + self.operands.imm) as u64;
         }
     }
 }

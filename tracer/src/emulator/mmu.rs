@@ -235,19 +235,19 @@ impl Mmu {
     fn assert_effective_address(&self, effective_address: u64) {
         if effective_address < DRAM_BASE {
             // less then DRAM_BASE and greater then panic => zero_padding region
-            assert!(
-                effective_address <= self.jolt_device.memory_layout.termination,
-                "Stack overflow: Attempted to write to 0x{:X}",
-                effective_address
-            );
+            // assert!(
+            //     effective_address <= self.jolt_device.memory_layout.termination,
+            //     "Stack overflow: Attempted to write to 0x{:X}",
+            //     effective_address
+            // );
             // less then panic => jolt_device region (i.e. input/output)
-            assert!(
-                self.jolt_device.is_output(effective_address)
-                    || self.jolt_device.is_panic(effective_address)
-                    || self.jolt_device.is_termination(effective_address),
-                "Unknown memory mapping: 0x{:X}",
-                effective_address
-            );
+            // assert!(
+            //     self.jolt_device.is_output(effective_address)
+            //         || self.jolt_device.is_panic(effective_address)
+            //         || self.jolt_device.is_termination(effective_address),
+            //     "Unknown memory mapping: 0x{:X}",
+            //     effective_address
+            // );
         } else {
             // greater then memory capacity
             assert!(
@@ -535,13 +535,7 @@ impl Mmu {
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),
                 0x10000000..=0x100000ff => self.uart.load(effective_address),
                 0x10001000..=0x10001FFF => self.disk.load(effective_address),
-                _ => {
-                    if self.jolt_device.is_input(effective_address) {
-                        self.jolt_device.load(effective_address)
-                    } else {
-                        panic!("Unknown memory mapping {:X}.", effective_address);
-                    }
-                }
+                _ => self.jolt_device.load(effective_address),
             },
         }
     }
@@ -555,17 +549,13 @@ impl Mmu {
             Xlen::Bit64 => 8,
         };
         if word_address < DRAM_BASE {
-            if self.jolt_device.is_input(word_address) {
-                let mut value_bytes = [0u8; 8];
-                for i in 0..bytes {
-                    value_bytes[i as usize] = self.jolt_device.load(word_address + i);
-                }
-                RAMRead {
-                    address: word_address,
-                    value: u64::from_le_bytes(value_bytes),
-                }
-            } else {
-                panic!("Unknown memory mapping {:X}.", word_address);
+            let mut value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                value_bytes[i as usize] = self.jolt_device.load(word_address + i);
+            }
+            RAMRead {
+                address: word_address,
+                value: u64::from_le_bytes(value_bytes),
             }
         } else {
             let mut value_bytes = [0u8; 8];

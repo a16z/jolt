@@ -44,7 +44,7 @@ impl RISCVInstruction for JAL {
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64);
-        cpu.pc = (cpu.pc as i64 + self.operands.imm) as u64;
+        cpu.pc = (self.address as i64 + self.operands.imm) as u64;
     }
 }
 

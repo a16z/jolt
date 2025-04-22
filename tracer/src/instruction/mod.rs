@@ -42,7 +42,6 @@ use sra::SRA;
 use srai::SRAI;
 use srl::SRL;
 use srli::SRLI;
-use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use sub::SUB;
 use sw::SW;
@@ -183,12 +182,12 @@ impl From<()> for RAMAccess {
     }
 }
 
-pub trait RISCVInstruction: Sized + Copy + Into<RV32IMInstruction> {
+pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<RV32IMInstruction> {
     const MASK: u32;
     const MATCH: u32;
 
     type Format: InstructionFormat;
-    type RAMAccess: Default + Into<RAMAccess> + Copy;
+    type RAMAccess: Default + Into<RAMAccess> + Copy + std::fmt::Debug;
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool) -> Self;
@@ -222,7 +221,7 @@ pub trait VirtualInstructionSequence: RISCVInstruction {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction>;
 }
 
-#[derive(Debug, From, Clone, Serialize, Deserialize)]
+#[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize)]
 pub enum RV32IMInstruction {
     NoOp,
     ADD(ADD),
@@ -419,52 +418,68 @@ impl RV32IMInstruction {
 
     pub fn trace(&self, cpu: &mut Cpu) {
         match self {
-            RV32IMInstruction::ADD(add) => add.trace(cpu),
-            RV32IMInstruction::ADDI(addi) => addi.trace(cpu),
-            RV32IMInstruction::AND(and) => and.trace(cpu),
-            RV32IMInstruction::ANDI(andi) => andi.trace(cpu),
-            RV32IMInstruction::AUIPC(auipc) => auipc.trace(cpu),
-            RV32IMInstruction::BEQ(beq) => beq.trace(cpu),
-            RV32IMInstruction::BGE(bge) => bge.trace(cpu),
-            RV32IMInstruction::BGEU(bgeu) => bgeu.trace(cpu),
-            RV32IMInstruction::BLT(blt) => blt.trace(cpu),
-            RV32IMInstruction::BLTU(bltu) => bltu.trace(cpu),
-            RV32IMInstruction::BNE(bne) => bne.trace(cpu),
-            RV32IMInstruction::DIV(div) => div.trace(cpu),
-            RV32IMInstruction::DIVU(divu) => divu.trace(cpu),
-            RV32IMInstruction::FENCE(fence) => fence.trace(cpu),
-            RV32IMInstruction::JAL(jal) => jal.trace(cpu),
-            RV32IMInstruction::JALR(jalr) => jalr.trace(cpu),
-            RV32IMInstruction::LB(lb) => lb.trace(cpu),
-            RV32IMInstruction::LBU(lbu) => lbu.trace(cpu),
-            RV32IMInstruction::LH(lh) => lh.trace(cpu),
-            RV32IMInstruction::LHU(lhu) => lhu.trace(cpu),
-            RV32IMInstruction::LUI(lui) => lui.trace(cpu),
-            RV32IMInstruction::LW(lw) => lw.trace(cpu),
-            RV32IMInstruction::MUL(mul) => mul.trace(cpu),
-            RV32IMInstruction::MULH(mulh) => mulh.trace(cpu),
-            RV32IMInstruction::MULHSU(mulhsu) => mulhsu.trace(cpu),
-            RV32IMInstruction::MULHU(mulhu) => mulhu.trace(cpu),
-            RV32IMInstruction::OR(or) => or.trace(cpu),
-            RV32IMInstruction::ORI(ori) => ori.trace(cpu),
-            RV32IMInstruction::REM(rem) => rem.trace(cpu),
-            RV32IMInstruction::REMU(remu) => remu.trace(cpu),
-            RV32IMInstruction::SB(sb) => sb.trace(cpu),
-            RV32IMInstruction::SH(sh) => sh.trace(cpu),
-            RV32IMInstruction::SLL(sll) => sll.trace(cpu),
-            RV32IMInstruction::SLLI(slli) => slli.trace(cpu),
-            RV32IMInstruction::SLT(slt) => slt.trace(cpu),
-            RV32IMInstruction::SLTI(slti) => slti.trace(cpu),
-            RV32IMInstruction::SLTIU(sltiu) => sltiu.trace(cpu),
-            RV32IMInstruction::SLTU(sltu) => sltu.trace(cpu),
-            RV32IMInstruction::SRA(sra) => sra.trace(cpu),
-            RV32IMInstruction::SRAI(srai) => srai.trace(cpu),
-            RV32IMInstruction::SRL(srl) => srl.trace(cpu),
-            RV32IMInstruction::SRLI(srli) => srli.trace(cpu),
-            RV32IMInstruction::SUB(sub) => sub.trace(cpu),
-            RV32IMInstruction::SW(sw) => sw.trace(cpu),
-            RV32IMInstruction::XOR(xor) => xor.trace(cpu),
-            RV32IMInstruction::XORI(xori) => xori.trace(cpu),
+            RV32IMInstruction::ADD(instr) => instr.trace(cpu),
+            RV32IMInstruction::ADDI(instr) => instr.trace(cpu),
+            RV32IMInstruction::AND(instr) => instr.trace(cpu),
+            RV32IMInstruction::ANDI(instr) => instr.trace(cpu),
+            RV32IMInstruction::AUIPC(instr) => instr.trace(cpu),
+            RV32IMInstruction::BEQ(instr) => instr.trace(cpu),
+            RV32IMInstruction::BGE(instr) => instr.trace(cpu),
+            RV32IMInstruction::BGEU(instr) => instr.trace(cpu),
+            RV32IMInstruction::BLT(instr) => instr.trace(cpu),
+            RV32IMInstruction::BLTU(instr) => instr.trace(cpu),
+            RV32IMInstruction::BNE(instr) => instr.trace(cpu),
+            RV32IMInstruction::DIV(instr) => instr.trace(cpu),
+            RV32IMInstruction::DIVU(instr) => instr.trace(cpu),
+            RV32IMInstruction::FENCE(instr) => instr.trace(cpu),
+            RV32IMInstruction::JAL(instr) => instr.trace(cpu),
+            RV32IMInstruction::JALR(instr) => instr.trace(cpu),
+            RV32IMInstruction::LB(instr) => instr.trace(cpu),
+            RV32IMInstruction::LBU(instr) => instr.trace(cpu),
+            RV32IMInstruction::LH(instr) => instr.trace(cpu),
+            RV32IMInstruction::LHU(instr) => instr.trace(cpu),
+            RV32IMInstruction::LUI(instr) => instr.trace(cpu),
+            RV32IMInstruction::LW(instr) => instr.trace(cpu),
+            RV32IMInstruction::MUL(instr) => instr.trace(cpu),
+            RV32IMInstruction::MULH(instr) => instr.trace(cpu),
+            RV32IMInstruction::MULHSU(instr) => instr.trace(cpu),
+            RV32IMInstruction::MULHU(instr) => instr.trace(cpu),
+            RV32IMInstruction::OR(instr) => instr.trace(cpu),
+            RV32IMInstruction::ORI(instr) => instr.trace(cpu),
+            RV32IMInstruction::REM(instr) => instr.trace(cpu),
+            RV32IMInstruction::REMU(instr) => instr.trace(cpu),
+            RV32IMInstruction::SB(instr) => instr.trace(cpu),
+            RV32IMInstruction::SH(instr) => instr.trace(cpu),
+            RV32IMInstruction::SLL(instr) => instr.trace(cpu),
+            RV32IMInstruction::SLLI(instr) => instr.trace(cpu),
+            RV32IMInstruction::SLT(instr) => instr.trace(cpu),
+            RV32IMInstruction::SLTI(instr) => instr.trace(cpu),
+            RV32IMInstruction::SLTIU(instr) => instr.trace(cpu),
+            RV32IMInstruction::SLTU(instr) => instr.trace(cpu),
+            RV32IMInstruction::SRA(instr) => instr.trace(cpu),
+            RV32IMInstruction::SRAI(instr) => instr.trace(cpu),
+            RV32IMInstruction::SRL(instr) => instr.trace(cpu),
+            RV32IMInstruction::SRLI(instr) => instr.trace(cpu),
+            RV32IMInstruction::SUB(instr) => instr.trace(cpu),
+            RV32IMInstruction::SW(instr) => instr.trace(cpu),
+            RV32IMInstruction::XOR(instr) => instr.trace(cpu),
+            RV32IMInstruction::XORI(instr) => instr.trace(cpu),
+            // Virtual
+            RV32IMInstruction::Advice(instr) => instr.trace(cpu),
+            RV32IMInstruction::AssertEQ(instr) => instr.trace(cpu),
+            RV32IMInstruction::AssertHalfwordAlignment(instr) => instr.trace(cpu),
+            RV32IMInstruction::AssertLTE(instr) => instr.trace(cpu),
+            RV32IMInstruction::AssertValidDiv0(instr) => instr.trace(cpu),
+            RV32IMInstruction::AssertValidSignedRemainder(instr) => instr.trace(cpu),
+            RV32IMInstruction::AssertValidUnsignedRemainder(instr) => instr.trace(cpu),
+            RV32IMInstruction::Move(instr) => instr.trace(cpu),
+            RV32IMInstruction::Movsign(instr) => instr.trace(cpu),
+            RV32IMInstruction::Pow2(instr) => instr.trace(cpu),
+            RV32IMInstruction::Pow2I(instr) => instr.trace(cpu),
+            RV32IMInstruction::ShiftRightBitmask(instr) => instr.trace(cpu),
+            RV32IMInstruction::ShiftRightBitmaskI(instr) => instr.trace(cpu),
+            RV32IMInstruction::VirtualSRA(instr) => instr.trace(cpu),
+            RV32IMInstruction::VirtualSRL(instr) => instr.trace(cpu),
             _ => panic!("Unexpected instruction {:?}", self),
         };
     }

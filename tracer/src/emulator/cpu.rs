@@ -72,7 +72,7 @@ pub struct Cpu {
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
-    pub x: [i64; 32],
+    pub x: [i64; 64],
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
@@ -231,7 +231,7 @@ impl Cpu {
             xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
             wfi: false,
-            x: [0; 32],
+            x: [0; 64],
             f: [0.0; 32],
             pc: 0,
             csr: [0; CSR_CAPACITY],

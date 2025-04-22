@@ -44,7 +44,7 @@ impl RISCVInstruction for BNE {
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         if cpu.sign_extend(cpu.x[self.operands.rs1]) != cpu.sign_extend(cpu.x[self.operands.rs2]) {
-            cpu.pc = (cpu.pc as i64 + self.operands.imm) as u64;
+            cpu.pc = (self.address as i64 + self.operands.imm) as u64;
         }
     }
 }

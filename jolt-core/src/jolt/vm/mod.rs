@@ -273,6 +273,7 @@ where
         let ram_proof = RAMTwistProof::prove(
             // &preprocessing.generators,
             &trace,
+            &program_io,
             1 << 16, // TODO(moodlezoup)
             &mut opening_accumulator,
             &mut transcript,

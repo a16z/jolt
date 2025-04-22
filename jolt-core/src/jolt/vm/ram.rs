@@ -17,8 +17,12 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::memory::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::{RAMAccess, RV32IMCycle};
+use tracer::{
+    instruction::{RAMAccess, RV32IMCycle},
+    JoltDevice,
+};
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
@@ -65,6 +69,7 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
     pub fn prove(
         // generators: &PCS::Setup,
         trace: &[RV32IMCycle],
+        program_io: &JoltDevice,
         K: usize,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
@@ -75,10 +80,11 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
         let (read_write_checking_proof, r_address, r_cycle) =
-            ReadWriteCheckingProof::prove(trace, r, r_prime, transcript);
+            ReadWriteCheckingProof::prove(trace, &program_io.memory_layout, r, r_prime, transcript);
 
         let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
             trace,
+            &program_io.memory_layout,
             r_address,
             r_cycle,
             read_write_checking_proof.val_claim,
@@ -136,6 +142,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
         trace: &[RV32IMCycle],
+        memory_layout: &MemoryLayout,
         r: Vec<F>,
         r_prime: Vec<F>,
         transcript: &mut ProofTranscript,
@@ -167,7 +174,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     let ram_op = cycle.ram_access();
                     if let RAMAccess::Write(write) = ram_op {
                         let increment = write.post_value as i64 - write.pre_value as i64;
-                        delta[write.address as usize] += increment;
+                        let k = remap_address(write.address, memory_layout) as usize;
+                        delta[k] += increment;
                     }
                 }
                 delta
@@ -237,11 +245,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         let ram_op = cycle.ram_access();
                         let inc = match ram_op {
                             RAMAccess::Read(read) => {
-                                (j, read.address as usize, F::zero(), F::zero())
+                                let k = remap_address(read.address, memory_layout) as usize;
+                                (j, k, F::zero(), F::zero())
                             }
                             RAMAccess::Write(write) => {
+                                let k = remap_address(write.address, memory_layout) as usize;
                                 let increment = write.post_value as i64 - write.pre_value as i64;
-                                (j, write.address as usize, F::zero(), F::from_i64(increment))
+                                (j, k, F::zero(), F::from_i64(increment))
                             }
                             RAMAccess::NoOp => (j, 0, F::zero(), F::zero()),
                         };
@@ -299,9 +309,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             .map(|(j, cycle)| {
                 let ram_op = cycle.ram_access();
                 let (address, increment) = match ram_op {
-                    RAMAccess::Read(read) => (read.address, F::zero()),
+                    RAMAccess::Read(read) => {
+                        (remap_address(read.address, memory_layout), F::zero())
+                    }
                     RAMAccess::Write(write) => (
-                        write.address,
+                        remap_address(write.address, memory_layout),
                         F::from_i64(write.post_value as i64 - write.pre_value as i64),
                     ),
                     RAMAccess::NoOp => (0, F::zero()),
@@ -385,7 +397,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             for j in j_prime << round..(j_prime + 1) << round {
                                 let j_bound = j % (1 << round);
-                                let k = trace[j].ram_access().address();
+                                let k = remap_address(
+                                    trace[j].ram_access().address() as u64,
+                                    memory_layout,
+                                ) as usize;
                                 if ra[0][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
@@ -394,7 +409,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
                             for j in (j_prime + 1) << round..(j_prime + 2) << round {
                                 let j_bound = j % (1 << round);
-                                let k = trace[j].ram_access().address();
+                                let k = remap_address(
+                                    trace[j].ram_access().address() as u64,
+                                    memory_layout,
+                                ) as usize;
                                 if ra[0][k].is_zero() && ra[1][k].is_zero() {
                                     dirty_indices.push(k);
                                 }
@@ -583,7 +601,8 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                     .enumerate()
                 {
                     let ram_op = cycle.ram_access();
-                    ra_chunk[ram_op.address() as usize] += A[j_bound];
+                    let k = remap_address(ram_op.address() as u64, memory_layout) as usize;
+                    ra_chunk[k] += A[j_bound];
                 }
             });
         let mut ra = MultilinearPolynomial::from(ra);
@@ -820,6 +839,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 #[tracing::instrument(skip_all)]
 pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     trace: &[RV32IMCycle],
+    memory_layout: &MemoryLayout,
     r_address: Vec<F>,
     r_cycle: Vec<F>,
     claimed_evaluation: F,
@@ -841,8 +861,9 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
             let ram_op = cycle.ram_access();
             match ram_op {
                 RAMAccess::Write(write) => {
+                    let k = remap_address(write.address, memory_layout) as usize;
                     let increment = write.post_value as i64 - write.pre_value as i64;
-                    eq_r_address[write.address as usize] * F::from_i64(increment)
+                    eq_r_address[k] * F::from_i64(increment)
                 }
                 _ => F::zero(),
             }
@@ -943,4 +964,15 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     drop_in_background_thread((inc, eq_r_address, lt));
 
     (proof, r_cycle_prime)
+}
+
+fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
+    if address == 0 {
+        return 0; // TODO(moodlezoup): Better handling for no-ops
+    }
+    if address >= memory_layout.input_start {
+        (address - memory_layout.input_start) / 4
+    } else {
+        panic!("Unexpected address {}", address)
+    }
 }

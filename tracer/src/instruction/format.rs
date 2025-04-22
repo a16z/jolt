@@ -5,7 +5,7 @@ use rand::RngCore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt::Debug;
 
-pub trait InstructionFormat: Default {
+pub trait InstructionFormat: Default + Debug {
     type RegisterState: InstructionRegisterState;
 
     fn parse(word: u32) -> Self;

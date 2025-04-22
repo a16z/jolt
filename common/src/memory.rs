@@ -91,6 +91,7 @@ impl JoltDevice {
                 self.outputs[internal_address]
             }
         } else {
+            assert!(address <= RAM_START_ADDRESS - 4);
             0 // zero-padding
         }
     }
