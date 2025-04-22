@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::andi::ANDI;
-use super::format::FormatR;
+use super::format::format_r::FormatR;
 use super::lw::LW;
 use super::sll::SLL;
 use super::slli::SLLI;
@@ -14,7 +14,7 @@ use super::{RAMRead, RV32IMInstruction};
 use common::constants::virtual_register_index;
 
 use super::{
-    format::{FormatI, InstructionFormat},
+    format::{format_i::FormatI, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 

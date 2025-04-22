@@ -643,4 +643,815 @@ impl RV32IMCycle {
             RV32IMCycle::VirtualSRL(cycle) => cycle.ram_access.into(),
         }
     }
+
+    pub fn rs1_read(&self) -> (usize, u64) {
+        match self {
+            RV32IMCycle::NoOp => (0, 0),
+            RV32IMCycle::ADD(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::ADDI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AND(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::ANDI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AUIPC(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::BEQ(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::BGE(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::BGEU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::BLT(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::BLTU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::BNE(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::DIV(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::DIVU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::FENCE(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::JAL(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::JALR(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::LB(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::LBU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::LH(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::LHU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::LUI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::LW(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::MUL(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::MULH(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::MULHSU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::MULHU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::OR(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::ORI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::REM(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::REMU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SB(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SH(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SLL(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SLLI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SLT(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SLTI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SLTIU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SLTU(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SRA(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SRAI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SRL(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SRLI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SUB(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::SW(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::XOR(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::XORI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::Advice(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AssertEQ(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AssertHalfwordAlignment(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AssertLTE(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AssertValidDiv0(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AssertValidSignedRemainder(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::Move(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::Movsign(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::Pow2(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::Pow2I(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::ShiftRightBitmask(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::ShiftRightBitmaskI(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::VirtualSRA(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::VirtualSRL(cycle) => (
+                cycle.instruction.operands.rs1(),
+                cycle.register_state.rs1_value(),
+            ),
+        }
+    }
+
+    pub fn rs2_read(&self) -> (usize, u64) {
+        match self {
+            RV32IMCycle::NoOp => (0, 0),
+            RV32IMCycle::ADD(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::ADDI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AND(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::ANDI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AUIPC(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::BEQ(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::BGE(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::BGEU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::BLT(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::BLTU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::BNE(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::DIV(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::DIVU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::FENCE(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::JAL(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::JALR(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::LB(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::LBU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::LH(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::LHU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::LUI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::LW(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::MUL(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::MULH(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::MULHSU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::MULHU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::OR(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::ORI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::REM(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::REMU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SB(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SH(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SLL(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SLLI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SLT(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SLTI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SLTIU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SLTU(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SRA(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SRAI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SRL(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SRLI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SUB(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::SW(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::XOR(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::XORI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::Advice(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AssertEQ(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AssertHalfwordAlignment(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AssertLTE(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AssertValidDiv0(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AssertValidSignedRemainder(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::Move(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::Movsign(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::Pow2(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::Pow2I(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::ShiftRightBitmask(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::ShiftRightBitmaskI(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::VirtualSRA(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::VirtualSRL(cycle) => (
+                cycle.instruction.operands.rs2(),
+                cycle.register_state.rs2_value(),
+            ),
+        }
+    }
+
+    pub fn rd_write(&self) -> (usize, u64, u64) {
+        match self {
+            RV32IMCycle::NoOp => (0, 0, 0),
+            RV32IMCycle::ADD(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::ADDI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AND(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::ANDI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AUIPC(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::BEQ(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::BGE(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::BGEU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::BLT(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::BLTU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::BNE(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::DIV(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::DIVU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::FENCE(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::JAL(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::JALR(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::LB(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::LBU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::LH(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::LHU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::LUI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::LW(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::MUL(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::MULH(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::MULHSU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::MULHU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::OR(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::ORI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::REM(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::REMU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SB(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SH(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SLL(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SLLI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SLT(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SLTI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SLTIU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SLTU(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SRA(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SRAI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SRL(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SRLI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SUB(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::SW(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::XOR(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::XORI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::Advice(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AssertEQ(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AssertHalfwordAlignment(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AssertLTE(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AssertValidDiv0(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AssertValidSignedRemainder(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::Move(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::Movsign(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::Pow2(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::Pow2I(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::ShiftRightBitmask(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::ShiftRightBitmaskI(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::VirtualSRA(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+            RV32IMCycle::VirtualSRL(cycle) => (
+                cycle.instruction.operands.rd(),
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
+        }
+    }
 }

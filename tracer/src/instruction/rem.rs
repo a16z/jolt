@@ -5,7 +5,10 @@ use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
     add::ADD,
-    format::{FormatB, FormatI, FormatJ, FormatR, InstructionFormat},
+    format::{
+        format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_r::FormatR,
+        InstructionFormat,
+    },
     mul::MUL,
     virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,

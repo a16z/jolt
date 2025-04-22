@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
-    format::{FormatI, FormatJ, FormatVirtualRightShift, InstructionFormat},
+    format::{
+        format_i::FormatI, format_j::FormatJ, format_virtual_right_shift::FormatVirtualRightShift,
+        InstructionFormat,
+    },
     virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI,
     virtual_srl::VirtualSRL,
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,

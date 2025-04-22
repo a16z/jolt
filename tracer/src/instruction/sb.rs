@@ -6,7 +6,7 @@ use crate::emulator::cpu::Cpu;
 use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
-use super::format::{FormatI, FormatR, FormatU};
+use super::format::{format_i::FormatI, format_r::FormatR, format_u::FormatU};
 use super::lui::LUI;
 use super::lw::LW;
 use super::sll::SLL;
@@ -16,7 +16,7 @@ use super::xor::XOR;
 use super::{RAMWrite, RV32IMInstruction, VirtualInstructionSequence};
 
 use super::{
-    format::{FormatS, InstructionFormat},
+    format::{format_s::FormatS, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 

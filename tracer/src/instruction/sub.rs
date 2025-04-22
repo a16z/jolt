@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{FormatR, InstructionFormat},
+    format::{format_r::FormatR, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 

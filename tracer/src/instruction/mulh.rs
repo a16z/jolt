@@ -5,7 +5,7 @@ use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
     add::ADD,
-    format::{FormatI, FormatR, InstructionFormat},
+    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
     mul::MUL,
     mulhu::MULHU,
     virtual_movsign::VirtualMovsign,

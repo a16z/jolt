@@ -5,7 +5,7 @@ use crate::emulator::cpu::Cpu;
 use super::RAMRead;
 
 use super::{
-    format::{FormatI, InstructionFormat},
+    format::{format_i::FormatI, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 

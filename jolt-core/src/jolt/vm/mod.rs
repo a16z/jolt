@@ -13,6 +13,7 @@ use common::instruction::NUM_CIRCUIT_FLAGS;
 use common::memory::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::RAMTwistProof;
+use registers::RegistersTwistProof;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use strum::EnumCount;
@@ -108,8 +109,9 @@ pub struct JoltProof<
     // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     pub ram: RAMTwistProof<F, ProofTranscript>,
+    pub registers: RegistersTwistProof<F, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
-    pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    // pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     _marker: PhantomData<I>,
 }
 
@@ -230,7 +232,6 @@ where
     ) {
         icicle::icicle_init();
         let trace_length = trace.len();
-        let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
@@ -238,8 +239,7 @@ where
         // TODO(moodlezoup): Truncate generators
 
         // TODO(JP): Drop padding on number of steps
-        let unpadded_len = trace.len();
-        trace.resize(unpadded_len.next_power_of_two(), RV32IMCycle::NoOp);
+        trace.resize(trace_length.next_power_of_two(), RV32IMCycle::NoOp);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(
@@ -279,9 +279,12 @@ where
             &mut transcript,
         );
 
+        let registers_proof =
+            RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
+
         // Batch-prove all openings
-        let opening_proof =
-            opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+        // let opening_proof =
+        //     opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -289,8 +292,9 @@ where
             // bytecode: bytecode_proof,
             instruction_lookups: instruction_proof,
             ram: ram_proof,
+            registers: registers_proof,
             // r1cs: spartan_proof,
-            opening_proof,
+            // opening_proof,
             _marker: PhantomData,
         };
 
@@ -375,11 +379,11 @@ where
         // )?;
 
         // Batch-verify all openings
-        opening_accumulator.reduce_and_verify(
-            &preprocessing.generators,
-            &proof.opening_proof,
-            &mut transcript,
-        )?;
+        // opening_accumulator.reduce_and_verify(
+        //     &preprocessing.generators,
+        //     &proof.opening_proof,
+        //     &mut transcript,
+        // )?;
 
         Ok(())
     }
@@ -447,4 +451,5 @@ where
 pub mod bytecode;
 pub mod instruction_lookups;
 pub mod ram;
+pub mod registers;
 pub mod rv32i_vm;

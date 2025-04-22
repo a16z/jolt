@@ -5,7 +5,8 @@ extern crate fnv;
 use std::convert::TryInto;
 
 use crate::instruction::format::{
-    FormatB, FormatI, FormatJ, FormatR, FormatS, FormatU, InstructionFormat,
+    format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_r::FormatR, format_s::FormatS,
+    format_u::FormatU, InstructionFormat,
 };
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
 use common::instruction::*;
@@ -242,7 +243,7 @@ impl Cpu {
             unsigned_data_mask: 0xffffffffffffffff,
             trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
         };
-        cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
+        // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
         cpu
     }

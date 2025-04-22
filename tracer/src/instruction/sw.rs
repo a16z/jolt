@@ -5,7 +5,7 @@ use crate::emulator::cpu::Cpu;
 use super::RAMWrite;
 
 use super::{
-    format::{FormatS, InstructionFormat},
+    format::{format_s::FormatS, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 

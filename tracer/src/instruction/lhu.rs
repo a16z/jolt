@@ -3,21 +3,20 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::andi::ANDI;
-use super::format::FormatR;
+use super::format::format_r::FormatR;
+use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use super::lw::LW;
 use super::sll::SLL;
 use super::slli::SLLI;
 use super::srli::SRLI;
-use super::virtual_assert_halfword_alignment::{
-    HalfwordAlignFormat, VirtualAssertHalfwordAlignment,
-};
+use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use super::xori::XORI;
 use super::{addi::ADDI, RV32IMInstruction};
 use super::{RAMRead, VirtualInstructionSequence};
 use common::constants::virtual_register_index;
 
 use super::{
-    format::{FormatI, InstructionFormat},
+    format::{format_i::FormatI, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 

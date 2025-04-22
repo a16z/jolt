@@ -5,15 +5,15 @@ use crate::emulator::cpu::Cpu;
 use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
-use super::format::FormatI;
-use super::format::FormatR;
-use super::format::FormatU;
+use super::format::format_i::FormatI;
+use super::format::format_r::FormatR;
+use super::format::format_u::FormatU;
+use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use super::lui::LUI;
 use super::lw::LW;
 use super::sll::SLL;
 use super::slli::SLLI;
 use super::sw::SW;
-use super::virtual_assert_halfword_alignment::HalfwordAlignFormat;
 use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use super::xor::XOR;
 use super::RAMWrite;
@@ -22,7 +22,7 @@ use super::VirtualInstructionSequence;
 use common::constants::virtual_register_index;
 
 use super::{
-    format::{FormatS, InstructionFormat},
+    format::{format_s::FormatS, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
