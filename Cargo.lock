@@ -1609,8 +1609,8 @@ dependencies = [
 
 [[package]]
 name = "icicle-bn254"
-version = "3.5.0"
-source = "git+https://github.com/ingonyama-zk/icicle.git#a776d7b9f77e07b20509bef1061f0fe2360c11bb"
+version = "3.7.1"
+source = "git+https://github.com/ingonyama-zk/icicle.git#f4083864bbfc3420ab31697453102ebe94780708"
 dependencies = [
  "cmake",
  "icicle-core",
@@ -1620,8 +1620,8 @@ dependencies = [
 
 [[package]]
 name = "icicle-core"
-version = "3.5.0"
-source = "git+https://github.com/ingonyama-zk/icicle.git#a776d7b9f77e07b20509bef1061f0fe2360c11bb"
+version = "3.7.1"
+source = "git+https://github.com/ingonyama-zk/icicle.git#f4083864bbfc3420ab31697453102ebe94780708"
 dependencies = [
  "hex",
  "icicle-runtime",
@@ -1632,8 +1632,8 @@ dependencies = [
 
 [[package]]
 name = "icicle-hash"
-version = "3.5.0"
-source = "git+https://github.com/ingonyama-zk/icicle.git#a776d7b9f77e07b20509bef1061f0fe2360c11bb"
+version = "3.7.1"
+source = "git+https://github.com/ingonyama-zk/icicle.git#f4083864bbfc3420ab31697453102ebe94780708"
 dependencies = [
  "cmake",
  "icicle-core",
@@ -1643,8 +1643,8 @@ dependencies = [
 
 [[package]]
 name = "icicle-runtime"
-version = "3.5.0"
-source = "git+https://github.com/ingonyama-zk/icicle.git#a776d7b9f77e07b20509bef1061f0fe2360c11bb"
+version = "3.7.1"
+source = "git+https://github.com/ingonyama-zk/icicle.git#f4083864bbfc3420ab31697453102ebe94780708"
 dependencies = [
  "cmake",
  "once_cell",
