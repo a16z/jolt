@@ -9,6 +9,7 @@ use crate::poly::opening_proof::{
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use bytecode_shout::{BytecodePreprocessing, BytecodeShoutProof};
 use common::instruction::NUM_CIRCUIT_FLAGS;
 use common::memory::MemoryLayout;
 use instruction_lookups::LookupsProof;
@@ -36,7 +37,7 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, memory::MemoryOp};
 
-use self::bytecode::{BytecodePreprocessing, BytecodeProof, BytecodeRow, BytecodeStuff};
+use self::bytecode::BytecodeRow;
 
 use super::lookup_table::LookupTables;
 
@@ -48,7 +49,7 @@ where
     ProofTranscript: Transcript,
 {
     pub generators: PCS::Setup,
-    // pub bytecode: BytecodePreprocessing<F>,
+    pub bytecode: BytecodePreprocessing,
     // pub read_write_memory: ReadWriteMemoryPreprocessing,
     pub memory_layout: MemoryLayout,
 }
@@ -167,7 +168,7 @@ pub struct JoltProof<
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    // pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
+    pub bytecode: BytecodeShoutProof<F, ProofTranscript>,
     // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     pub ram: RAMTwistProof<F, ProofTranscript>,
@@ -250,7 +251,7 @@ where
 
         // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
-        // let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode);
+        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
 
         let max_poly_len: usize = [
             (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
@@ -266,10 +267,9 @@ where
         JoltVerifierPreprocessing {
             generators,
             memory_layout,
-            // bytecode: bytecode_preprocessing,
+            bytecode: bytecode_preprocessing,
             // read_write_memory: read_write_memory_preprocessing,
             // instruction_lookups: instruction_lookups_preprocessing,
-            // bytecode: bytecode_preprocessing,
             // read_write_memory: read_write_memory_preprocessing,
         }
     }
@@ -353,6 +353,9 @@ where
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
             ProverOpeningAccumulator::new();
 
+        let bytecode_proof =
+            BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
+
         let instruction_proof = LookupsProof::prove(
             &preprocessing.shared.generators,
             &trace,
@@ -378,7 +381,7 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            // bytecode: bytecode_proof,
+            bytecode: bytecode_proof,
             instruction_lookups: instruction_proof,
             ram: ram_proof,
             registers: registers_proof,
@@ -539,6 +542,7 @@ where
 }
 
 pub mod bytecode;
+pub mod bytecode_shout;
 pub mod instruction_lookups;
 pub mod ram;
 pub mod registers;

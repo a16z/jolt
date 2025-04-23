@@ -1,13 +1,16 @@
-use crate::{field::JoltField, jolt::instruction::InstructionLookup};
+use crate::{field::JoltField, jolt::instruction::LookupQuery};
 use rand::prelude::*;
 use tracer::instruction::{RISCVCycle, RISCVInstruction};
 
+use super::InstructionLookup;
+
 pub fn materialize_entry_test<F: JoltField, T: RISCVInstruction + Default>()
 where
-    RISCVCycle<T>: InstructionLookup<32>,
+    RISCVCycle<T>: LookupQuery<32>,
+    T: InstructionLookup<32>,
 {
     let cycle: RISCVCycle<T> = Default::default();
-    let table = cycle.lookup_table().unwrap();
+    let table = cycle.instruction.lookup_table().unwrap();
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10000 {
         let random_cycle = cycle.random(&mut rng);

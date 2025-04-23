@@ -2,15 +2,29 @@ use tracer::instruction::{jalr::JALR, RISCVCycle};
 
 use crate::jolt::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
-use super::InstructionLookup;
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<JALR> {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for JALR {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         Some(RangeCheckTable.into())
     }
+}
 
+impl InstructionFlags for JALR {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::RightOperandIsImm as usize] = true;
+        flags[CircuitFlags::Jump as usize] = true;
+        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdatePC as usize] =
+            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+        flags
+    }
+}
+
+impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JALR> {
     fn to_lookup_index(&self) -> u64 {
-        let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
         x + y
     }
 
@@ -33,8 +47,9 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<JALR> {
         }
     }
 
+    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x as u8).wrapping_add(y as u8) as u64,

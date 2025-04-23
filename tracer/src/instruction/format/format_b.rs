@@ -5,7 +5,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{normalize_register_value, InstructionFormat, InstructionRegisterState};
+use super::{
+    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatB {
@@ -74,11 +76,12 @@ impl InstructionFormat for FormatB {
         }
     }
 
-    fn rs1(&self) -> usize {
-        self.rs1
-    }
-
-    fn rs2(&self) -> usize {
-        self.rs2
+    fn normalize(&self) -> NormalizedOperands {
+        NormalizedOperands {
+            rs1: self.rs1,
+            rs2: self.rs2,
+            rd: 0,
+            imm: self.imm,
+        }
     }
 }

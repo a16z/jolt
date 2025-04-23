@@ -2,15 +2,29 @@ use tracer::instruction::{mulhu::MULHU, RISCVCycle};
 
 use crate::jolt::lookup_table::{upper_word::UpperWordTable, LookupTables};
 
-use super::InstructionLookup;
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<MULHU> {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for MULHU {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         Some(UpperWordTable.into())
     }
+}
 
+impl InstructionFlags for MULHU {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::MultiplyOperands as usize] = true;
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
+        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdatePC as usize] =
+            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+        flags
+    }
+}
+
+impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<MULHU> {
     fn to_lookup_index(&self) -> u64 {
-        let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
         x * y
     }
 
@@ -30,8 +44,9 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<MULHU> 
         }
     }
 
+    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = InstructionLookup::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x * y) >> 8,

@@ -313,7 +313,7 @@ impl Cpu {
         }
 
         let original_word = self.fetch()?;
-        let instruction_address = self.pc;
+        let instruction_address = normalize_u64(self.pc, &self.xlen);
         let word = match (original_word & 0x3) == 0x3 {
             true => {
                 self.pc = self.pc.wrapping_add(4); // 32-bit length non-compressed instruction
@@ -1499,7 +1499,6 @@ fn dump_format_s(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> Str
 }
 
 fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    println!("f format: {:x}", word);
     let f = FormatU::parse(word);
     let mut s = String::new();
     s += &format!("{}", get_register_name(f.rd));

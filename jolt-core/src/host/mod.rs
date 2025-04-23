@@ -8,16 +8,14 @@ use std::{
     process::Command,
 };
 
-use postcard;
-use serde::Serialize;
-
 use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
     memory::JoltDevice,
 };
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use rayon::prelude::*;
+use tracer::instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence};
 pub use tracer::ELFInstruction;
 
 use crate::field::JoltField;
@@ -162,7 +160,33 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {:?}", elf));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        tracer::decode(&elf_contents)
+        let (mut instructions, raw_bytes) = tracer::decode(&elf_contents);
+        // Expand virtual sequences
+        instructions = instructions
+            .into_par_iter()
+            .flat_map_iter(|instr| match instr {
+                RV32IMInstruction::DIV(div) => div.virtual_sequence(),
+                RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(),
+                RV32IMInstruction::LB(lb) => lb.virtual_sequence(),
+                RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(),
+                RV32IMInstruction::LH(lh) => lh.virtual_sequence(),
+                RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(),
+                RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(),
+                RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(),
+                RV32IMInstruction::REM(rem) => rem.virtual_sequence(),
+                RV32IMInstruction::REMU(remu) => remu.virtual_sequence(),
+                RV32IMInstruction::SB(sb) => sb.virtual_sequence(),
+                RV32IMInstruction::SH(sh) => sh.virtual_sequence(),
+                RV32IMInstruction::SLL(sll) => sll.virtual_sequence(),
+                RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(),
+                RV32IMInstruction::SRA(sra) => sra.virtual_sequence(),
+                RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
+                RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
+                RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
+                _ => vec![instr],
+            })
+            .collect();
+        (instructions, raw_bytes)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet

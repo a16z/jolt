@@ -12,6 +12,14 @@ pub mod format_u;
 pub mod format_virtual_halfword_alignment;
 pub mod format_virtual_right_shift;
 
+#[derive(Default)]
+pub struct NormalizedOperands {
+    pub rs1: usize,
+    pub rs2: usize,
+    pub rd: usize,
+    pub imm: i64,
+}
+
 pub trait InstructionFormat: Default + Debug {
     type RegisterState: InstructionRegisterState;
 
@@ -19,15 +27,7 @@ pub trait InstructionFormat: Default + Debug {
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn random(rng: &mut StdRng) -> Self;
-    fn rs1(&self) -> usize {
-        0
-    }
-    fn rs2(&self) -> usize {
-        0
-    }
-    fn rd(&self) -> usize {
-        0
-    }
+    fn normalize(&self) -> NormalizedOperands;
 }
 
 pub trait InstructionRegisterState:

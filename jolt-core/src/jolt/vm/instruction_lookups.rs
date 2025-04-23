@@ -46,6 +46,7 @@ where
 {
     pub fn generate_witness(preprocessing: (), lookups: &[LookupTables<WORD_SIZE>]) {}
 
+    #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
         generators: &PCS::Setup,
         trace: &[RV32IMCycle],

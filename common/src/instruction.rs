@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -251,64 +249,4 @@ pub enum RV32IM {
     VIRTUAL_SHIFT_RIGHT_BITMASKI,
     VIRTUAL_SRL,
     VIRTUAL_SRA,
-}
-
-impl FromStr for RV32IM {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<RV32IM, String> {
-        match s {
-            "ADD" => Ok(Self::ADD),
-            "SUB" => Ok(Self::SUB),
-            "XOR" => Ok(Self::XOR),
-            "OR" => Ok(Self::OR),
-            "AND" => Ok(Self::AND),
-            "SLL" => Ok(Self::SLL),
-            "SRL" => Ok(Self::SRL),
-            "SRA" => Ok(Self::SRA),
-            "SLT" => Ok(Self::SLT),
-            "SLTU" => Ok(Self::SLTU),
-            "ADDI" => Ok(Self::ADDI),
-            "XORI" => Ok(Self::XORI),
-            "ORI" => Ok(Self::ORI),
-            "ANDI" => Ok(Self::ANDI),
-            "SLLI" => Ok(Self::SLLI),
-            "SRLI" => Ok(Self::SRLI),
-            "SRAI" => Ok(Self::SRAI),
-            "SLTI" => Ok(Self::SLTI),
-            "SLTIU" => Ok(Self::SLTIU),
-            "LB" => Ok(Self::LB),
-            "LH" => Ok(Self::LH),
-            "LW" => Ok(Self::LW),
-            "LBU" => Ok(Self::LBU),
-            "LHU" => Ok(Self::LHU),
-            "SB" => Ok(Self::SB),
-            "SH" => Ok(Self::SH),
-            "SW" => Ok(Self::SW),
-            "BEQ" => Ok(Self::BEQ),
-            "BNE" => Ok(Self::BNE),
-            "BLT" => Ok(Self::BLT),
-            "BGE" => Ok(Self::BGE),
-            "BLTU" => Ok(Self::BLTU),
-            "BGEU" => Ok(Self::BGEU),
-            "JAL" => Ok(Self::JAL),
-            "JALR" => Ok(Self::JALR),
-            "LUI" => Ok(Self::LUI),
-            "AUIPC" => Ok(Self::AUIPC),
-            "ECALL" => Ok(Self::ECALL),
-            "EBREAK" => Ok(Self::EBREAK),
-            "MUL" => Ok(Self::MUL),
-            "MULH" => Ok(Self::MULH),
-            "MULHU" => Ok(Self::MULHU),
-            "MULHSU" => Ok(Self::MULHSU),
-            "MULU" => Ok(Self::MULU),
-            "DIV" => Ok(Self::DIV),
-            "DIVU" => Ok(Self::DIVU),
-            "REM" => Ok(Self::REM),
-            "REMU" => Ok(Self::REMU),
-            "FENCE" => Ok(Self::FENCE),
-            "UNIMPL" => Ok(Self::UNIMPL),
-            _ => Err("Could not match instruction to RV32IM set.".to_string()),
-        }
-    }
 }

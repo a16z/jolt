@@ -2,13 +2,26 @@ use tracer::instruction::{virtual_advice::VirtualAdvice, RISCVCycle};
 
 use crate::jolt::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
-use super::InstructionLookup;
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<VirtualAdvice> {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualAdvice {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         Some(RangeCheckTable.into())
     }
+}
 
+impl InstructionFlags for VirtualAdvice {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
+        flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdatePC as usize] =
+            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+        flags
+    }
+}
+
+impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAdvice> {
     fn to_lookup_index(&self) -> u64 {
         self.instruction.advice
     }
@@ -17,6 +30,7 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<Virtual
         (self.instruction.advice, 0)
     }
 
+    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
         match WORD_SIZE {
             #[cfg(test)]

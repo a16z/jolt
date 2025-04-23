@@ -2,17 +2,26 @@ use tracer::instruction::{fence::FENCE, RISCVCycle};
 
 use crate::jolt::lookup_table::LookupTables;
 
-use super::InstructionLookup;
+use super::{InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RISCVCycle<FENCE> {
+impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for FENCE {
     fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
         None
     }
+}
 
+impl InstructionFlags for FENCE {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        [false; NUM_CIRCUIT_FLAGS]
+    }
+}
+
+impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<FENCE> {
     fn to_lookup_query(&self) -> (u64, u64) {
         (0, 0)
     }
 
+    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
         0
     }

@@ -2,7 +2,7 @@ use super::sumcheck::SumcheckInstanceProof;
 use crate::{
     field::JoltField,
     jolt::{
-        instruction::InstructionLookup,
+        instruction::{InstructionLookup, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, Prefixes},
             LookupTables,
@@ -310,12 +310,7 @@ pub fn prove_sparse_dense_shout<
     let _guard = span.enter();
     let lookup_indices: Vec<_> = trace
         .par_iter()
-        .map(|cycle| {
-            LookupBits::new(
-                InstructionLookup::<WORD_SIZE>::to_lookup_index(cycle),
-                log_K,
-            )
-        })
+        .map(|cycle| LookupBits::new(LookupQuery::<WORD_SIZE>::to_lookup_index(cycle), log_K))
         .collect();
     drop(_guard);
     drop(span);

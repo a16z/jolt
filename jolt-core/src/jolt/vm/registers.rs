@@ -70,7 +70,7 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> RegistersTwistProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "TwistProof::prove")]
+    #[tracing::instrument(skip_all, name = "RegistersTwistProof::prove")]
     pub fn prove(
         // generators: &PCS::Setup,
         trace: &[RV32IMCycle],

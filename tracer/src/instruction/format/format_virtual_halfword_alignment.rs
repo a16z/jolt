@@ -5,7 +5,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{normalize_register_value, InstructionFormat, InstructionRegisterState};
+use super::{
+    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+};
 
 /// `VirtualAssertHalfwordAlignment` is the only instruction that
 /// uses `rs1` and `imm` but does not write to a destination register.
@@ -54,7 +56,12 @@ impl InstructionFormat for HalfwordAlignFormat {
         }
     }
 
-    fn rs1(&self) -> usize {
-        self.rs1
+    fn normalize(&self) -> NormalizedOperands {
+        NormalizedOperands {
+            rs1: self.rs1,
+            rs2: 0,
+            rd: 0,
+            imm: self.imm,
+        }
     }
 }

@@ -448,7 +448,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     let eq_r_r = B.final_sumcheck_claim();
-    let H: Vec<F> = read_addresses.iter().map(|&k| F[k]).collect();
+    let H: Vec<F> = read_addresses.par_iter().map(|&k| F[k]).collect();
     let mut H = MultilinearPolynomial::from(H);
     let mut D = MultilinearPolynomial::from(D);
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());

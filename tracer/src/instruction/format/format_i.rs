@@ -5,7 +5,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{normalize_register_value, InstructionFormat, InstructionRegisterState};
+use super::{
+    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatI {
@@ -71,12 +73,12 @@ impl InstructionFormat for FormatI {
             rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
         }
     }
-
-    fn rs1(&self) -> usize {
-        self.rs1
-    }
-
-    fn rd(&self) -> usize {
-        self.rd
+    fn normalize(&self) -> NormalizedOperands {
+        NormalizedOperands {
+            rs1: self.rs1,
+            rs2: 0,
+            rd: self.rd,
+            imm: self.imm,
+        }
     }
 }
