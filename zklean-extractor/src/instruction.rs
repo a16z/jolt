@@ -13,6 +13,7 @@ declare_instructions_enum! {
     instruction::bne::BNEInstruction,
     instruction::mul::MULInstruction,
     instruction::mulhu::MULHUInstruction,
+    instruction::mulu::MULUInstruction,
     instruction::or::ORInstruction,
     instruction::sll::SLLInstruction,
     instruction::slt::SLTInstruction,
@@ -21,6 +22,17 @@ declare_instructions_enum! {
     instruction::srl::SRLInstruction,
     instruction::sub::SUBInstruction,
     instruction::xor::XORInstruction,
+    instruction::virtual_advice::ADVICEInstruction,
+    // The const-generic corresponds to the allignment. This instruction is only instantiated for
+    // alignments of 2 and 4 in the ISA.
+    instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction<2>,
+    instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction<4>,
+    instruction::virtual_assert_lte::ASSERTLTEInstruction,
+    instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction,
+    instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+    instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
+    instruction::virtual_move::MOVEInstruction,
+    instruction::virtual_movsign::MOVSIGNInstruction,
 }
 
 /// Helper function to print a list of subtables as a Lean Vector.

@@ -86,7 +86,7 @@ impl ZkLeanR1CSConstraints {
     }
 }
 
-fn input_to_field_name(input: &JoltR1CSInputs) -> String {
+pub fn input_to_field_name(input: &JoltR1CSInputs) -> String {
     let paren = Regex::new(r"\((.*)\)").unwrap();
     let comma = Regex::new(r", *").unwrap();
 

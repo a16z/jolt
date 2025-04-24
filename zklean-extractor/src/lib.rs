@@ -180,6 +180,7 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
     let mut combine_cases = vec![];
     let mut subtables_cases = vec![];
     let mut enum_cases = vec![];
+    let mut to_instruction_set_cases = vec![];
     //let mut tests = vec![];
 
     for entry in entries {
@@ -202,9 +203,11 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
         subtables_cases.push(quote! {
             Self::#name(i) => i.subtables(c, m)
         });
-        // FIXME: How do we handle the arguments in the instantiation?
         enum_cases.push(quote! {
-            Self::#name(#path #id(42, 9001))
+            Self::#name(#path #id::default())
+        });
+        to_instruction_set_cases.push(quote! {
+            Self::#name(i) => jolt_core::jolt::vm::rv32i_vm::RV32I::from(i.clone())
         });
         // TODO: tests
         //tests.push(quote! {
@@ -275,6 +278,14 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
                 vec![
                     #(#enum_cases),*
                 ]
+            }
+        }
+
+        impl #enum_id<32> {
+            pub fn to_instruction_set(&self) -> jolt_core::jolt::vm::rv32i_vm::RV32I {
+                match self {
+                    #(#to_instruction_set_cases),*
+                }
             }
         }
 

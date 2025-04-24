@@ -21,6 +21,7 @@ binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "bini
 clap = { version = "4.3.10", features = ["derive"] }
 rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
+strum = "0.26.3"
 
 syn = {version = "1.0", features = ["full"]}
 quote = "1.0"

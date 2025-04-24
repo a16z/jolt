@@ -4624,5 +4624,6 @@ dependencies = [
  "quote",
  "rand_core 0.6.4",
  "regex",
+ "strum",
  "syn 1.0.109",
 ]

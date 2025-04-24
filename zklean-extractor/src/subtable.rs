@@ -20,6 +20,7 @@ declare_subtables_enum! {
     subtable::right_is_zero::RightIsZeroSubtable,
     subtable::right_msb::RightMSBSubtable,
     subtable::sign_extend::SignExtendSubtable<8>,
+    subtable::sign_extend::SignExtendSubtable<16>,
     subtable::sll::SllSubtable<0, 32>,
     subtable::sll::SllSubtable<1, 32>,
     subtable::sll::SllSubtable<2, 32>,

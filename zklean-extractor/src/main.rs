@@ -10,6 +10,8 @@ mod instruction;
 use crate::instruction::NamedInstruction;
 mod r1cs;
 use crate::r1cs::*;
+mod flags;
+use crate::flags::*;
 
 use clap::Parser;
 
@@ -68,6 +70,9 @@ fn main() -> std::io::Result<()> {
 
     let r1cs = ZkLeanR1CSConstraints::extract(DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE);
     r1cs.zklean_pretty_print(&mut f)?;
+
+    let cases = ZkLeanLookupCases::extract();
+    cases.zklean_pretty_print(&mut f)?;
 
     Ok(())
 }
