@@ -42,7 +42,7 @@ use self::bytecode::BytecodeRow;
 use super::lookup_table::LookupTables;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltVerifierPreprocessing<const C: usize, F, PCS, ProofTranscript>
+pub struct JoltVerifierPreprocessing<F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -54,7 +54,7 @@ where
     pub memory_layout: MemoryLayout,
 }
 
-impl<const C: usize, F, PCS, ProofTranscript> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>
+impl<F, PCS, ProofTranscript> JoltVerifierPreprocessing<F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -79,17 +79,17 @@ where
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProverPreprocessing<const C: usize, F, PCS, ProofTranscript>
+pub struct JoltProverPreprocessing<F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    pub shared: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+    pub shared: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
     field: F::SmallValueLookupTables,
 }
 
-impl<const C: usize, F, PCS, ProofTranscript> JoltProverPreprocessing<C, F, PCS, ProofTranscript>
+impl<F, PCS, ProofTranscript> JoltProverPreprocessing<F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -153,15 +153,8 @@ impl<const WORD_SIZE: usize> JoltTraceStep<WORD_SIZE> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<
-    const WORD_SIZE: usize,
-    const C: usize,
-    const M: usize,
-    I,
-    F,
-    PCS,
-    ProofTranscript,
-> where
+pub struct JoltProof<const WORD_SIZE: usize, I, F, PCS, ProofTranscript>
+where
     I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -229,14 +222,14 @@ pub type JoltCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript
 //     }
 // }
 
-pub trait Jolt<const C: usize, const M: usize, const WORD_SIZE: usize, F, PCS, ProofTranscript>
+pub trait Jolt<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
     // type InstructionSet: JoltInstructionSet;
-    type Constraints: R1CSConstraints<C, F>;
+    type Constraints: R1CSConstraints<F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn verifier_preprocess(
@@ -246,7 +239,7 @@ where
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
+    ) -> JoltVerifierPreprocessing<F, PCS, ProofTranscript> {
         icicle::icicle_init();
 
         // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
@@ -257,7 +250,6 @@ where
             (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
             max_trace_length.next_power_of_two(),
             max_memory_address.next_power_of_two(),
-            M,
         ]
         .into_iter()
         .max()
@@ -282,7 +274,7 @@ where
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
+    ) -> JoltProverPreprocessing<F, PCS, ProofTranscript> {
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
 
@@ -305,13 +297,11 @@ where
     fn prove(
         program_io: JoltDevice,
         mut trace: Vec<RV32IMCycle>,
-        mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             WORD_SIZE,
-            C,
-            M,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            <Self::Constraints as R1CSConstraints<F>>::Inputs,
             F,
             PCS,
             ProofTranscript,
@@ -402,12 +392,10 @@ where
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<
             WORD_SIZE,
-            C,
-            M,
-            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            <Self::Constraints as R1CSConstraints<F>>::Inputs,
             F,
             PCS,
             ProofTranscript,

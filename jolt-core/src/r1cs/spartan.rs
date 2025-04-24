@@ -72,12 +72,7 @@ pub enum SpartanError {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<
-    const C: usize,
-    I: ConstraintInput,
-    F: JoltField,
-    ProofTranscript: Transcript,
-> {
+pub struct UniformSpartanProof<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript> {
     _inputs: PhantomData<I>,
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
@@ -89,7 +84,7 @@ pub struct UniformSpartanProof<
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<const C: usize, I, F, ProofTranscript> UniformSpartanProof<C, I, F, ProofTranscript>
+impl<I, F, ProofTranscript> UniformSpartanProof<I, F, ProofTranscript>
 where
     I: ConstraintInput,
     F: JoltField,
@@ -97,9 +92,9 @@ where
 {
     #[tracing::instrument(skip_all, name = "Spartan::setup")]
     pub fn setup(
-        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+        constraint_builder: &CombinedUniformBuilder<F, I>,
         padded_num_steps: usize,
-    ) -> UniformSpartanKey<C, I, F> {
+    ) -> UniformSpartanKey<I, F> {
         assert_eq!(
             padded_num_steps,
             constraint_builder.uniform_repeat().next_power_of_two()
@@ -109,8 +104,8 @@ where
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS>(
-        constraint_builder: &CombinedUniformBuilder<C, F, I>,
-        key: &UniformSpartanKey<C, I, F>,
+        constraint_builder: &CombinedUniformBuilder<F, I>,
+        key: &UniformSpartanKey<I, F>,
         polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
@@ -118,7 +113,7 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten()
             .iter()
             .map(|var| var.get_ref(polynomials))
             .collect();
@@ -339,7 +334,7 @@ where
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
-        key: &UniformSpartanKey<C, I, F>,
+        key: &UniformSpartanKey<I, F>,
         commitments: &JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
@@ -449,7 +444,7 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        let flattened_commitments: Vec<_> = I::flatten::<C>()
+        let flattened_commitments: Vec<_> = I::flatten()
             .iter()
             .map(|var| var.get_ref(commitments))
             .collect();

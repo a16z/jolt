@@ -13,90 +13,23 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use super::{Jolt, JoltCommitments, JoltProof};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
-// /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
-// /// are callable on the enum type via enum_dispatch.
-// macro_rules! instruction_set {
-//     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-//         #[allow(non_camel_case_types)]
-//         #[repr(u8)]
-//         #[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumCountMacro, Serialize, Deserialize)]
-//         #[enum_dispatch(JoltInstruction)]
-//         pub enum $enum_name {
-//             $($alias($struct)),+
-//         }
-//         impl JoltInstructionSet for $enum_name {}
-//         impl $enum_name {
-//             pub fn random_instruction(rng: &mut StdRng) -> Self {
-//                 let index = rng.next_u64() as usize % $enum_name::COUNT;
-//                 let instruction = $enum_name::iter()
-//                     .enumerate()
-//                     .filter(|(i, _)| *i == index)
-//                     .map(|(_, x)| x)
-//                     .next()
-//                     .unwrap();
-//                 instruction.random(rng)
-//             }
-//         }
-//         // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
-//         impl Default for $enum_name {
-//             fn default() -> Self {
-//                 $enum_name::iter().collect::<Vec<_>>()[0]
-//             }
-//         }
-//     };
-// }
-
 const WORD_SIZE: usize = 32;
-
-// instruction_set!(
-//   RV32I,
-//   ADD: ADDInstruction<WORD_SIZE>,
-//   SUB: SubTable<WORD_SIZE>,
-//   AND: AndTable<WORD_SIZE>,
-//   OR: OrTable<WORD_SIZE>,
-//   XOR: XorTable<WORD_SIZE>,
-//   BEQ: BEQInstruction<WORD_SIZE>,
-//   BGE: BGEInstruction<WORD_SIZE>,
-//   BGEU: BGEUInstruction<WORD_SIZE>,
-//   BNE: BNEInstruction<WORD_SIZE>,
-//   SLT: SLTInstruction<WORD_SIZE>,
-//   SLTU: SLTUInstruction<WORD_SIZE>,
-//   MOVSIGN: MOVSIGNInstruction<WORD_SIZE>,
-//   MUL: MULInstruction<WORD_SIZE>,
-//   MULU: MULUInstruction<WORD_SIZE>,
-//   MULHU: MULHUInstruction<WORD_SIZE>,
-//   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
-//   VIRTUAL_MOVE: MOVEInstruction<WORD_SIZE>,
-//   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction<WORD_SIZE>,
-//   VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
-//   VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction<WORD_SIZE>,
-//   VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>,
-//   VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertHalfwordAlignmentInstruction<WORD_SIZE>,
-//   VIRTUAL_POW2: POW2Instruction<WORD_SIZE>,
-//   VIRTUAL_SHIFT_RIGHT_BITMASK: ShiftRightBitmaskInstruction<WORD_SIZE>,
-//   VIRTUAL_SRL: VirtualSRLTable<WORD_SIZE>,
-//   VIRTUAL_SRA: VirtualSRATable<WORD_SIZE>
-// );
 
 // ==================== JOLT ====================
 
 pub enum RV32IJoltVM {}
 
-pub const C: usize = 4;
-pub const M: usize = 1 << 16;
-
-impl<F, PCS, ProofTranscript> Jolt<C, M, WORD_SIZE, F, PCS, ProofTranscript> for RV32IJoltVM
+impl<F, PCS, ProofTranscript> Jolt<WORD_SIZE, F, PCS, ProofTranscript> for RV32IJoltVM
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    // type InstructionSet = RV32I;
     type Constraints = JoltRV32IMConstraints;
 }
 
 pub type RV32IJoltProof<F, PCS, ProofTranscript> =
-    JoltProof<WORD_SIZE, C, M, JoltR1CSInputs, F, PCS, ProofTranscript>;
+    JoltProof<WORD_SIZE, JoltR1CSInputs, F, PCS, ProofTranscript>;
 
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use eyre::Result;
@@ -157,7 +90,7 @@ mod tests {
 
     use crate::field::JoltField;
     use crate::host;
-    use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
+    use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::mock::MockCommitScheme;

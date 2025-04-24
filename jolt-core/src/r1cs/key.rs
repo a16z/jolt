@@ -15,7 +15,7 @@ use sha3::Digest;
 use crate::utils::math::Math;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<const C: usize, I: ConstraintInput, F: JoltField> {
+pub struct UniformSpartanKey<I: ConstraintInput, F: JoltField> {
     _inputs: PhantomData<I>,
     pub uniform_r1cs: UniformR1CS<F>,
 
@@ -135,8 +135,8 @@ impl<F: JoltField> SparseEqualityItem<F> {
     }
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput> UniformSpartanKey<C, I, F> {
-    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<C, F, I>) -> Self {
+impl<F: JoltField, I: ConstraintInput> UniformSpartanKey<I, F> {
+    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<F, I>) -> Self {
         let uniform_r1cs = constraint_builder.materialize_uniform();
         let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 

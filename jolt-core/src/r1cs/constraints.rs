@@ -11,16 +11,14 @@ use super::{
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
-const LOG_M: usize = 16;
-const OPERAND_SIZE: usize = LOG_M / 2;
 
-pub trait R1CSConstraints<const C: usize, F: JoltField> {
+pub trait R1CSConstraints<F: JoltField> {
     type Inputs: ConstraintInput;
     fn construct_constraints(
         padded_trace_length: usize,
         memory_start: u64,
-    ) -> CombinedUniformBuilder<C, F, Self::Inputs> {
-        let mut uniform_builder = R1CSBuilder::<C, F, Self::Inputs>::new();
+    ) -> CombinedUniformBuilder<F, Self::Inputs> {
+        let mut uniform_builder = R1CSBuilder::<F, Self::Inputs>::new();
         Self::uniform_constraints(&mut uniform_builder, memory_start);
         let cross_step_constraints = Self::cross_step_constraints();
 
@@ -33,7 +31,7 @@ pub trait R1CSConstraints<const C: usize, F: JoltField> {
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of
     /// the execution trace.
-    fn uniform_constraints(builder: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64);
+    fn uniform_constraints(builder: &mut R1CSBuilder<F, Self::Inputs>, memory_start: u64);
     /// Construct's Jolt's cross-step constraints.
     /// Cross-step constraints are constraints whose inputs involve witness
     /// values from multiple steps of the execution trace.
@@ -44,10 +42,10 @@ pub trait R1CSConstraints<const C: usize, F: JoltField> {
 }
 
 pub struct JoltRV32IMConstraints;
-impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstraints {
+impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
     type Inputs = JoltR1CSInputs;
 
-    fn uniform_constraints(cs: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64) {
+    fn uniform_constraints(cs: &mut R1CSBuilder<F, Self::Inputs>, memory_start: u64) {
         // for flag in RV32I::iter() {
         //     cs.constrain_binary(JoltR1CSInputs::InstructionFlags(flag));
         // }

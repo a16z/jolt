@@ -30,7 +30,7 @@ pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub left_lookup_operand: T,
     pub right_lookup_operand: T,
     pub product: T,
-    pub relevant_y_chunks: Vec<T>,
+    // pub relevant_y_chunks: Vec<T>,
     pub write_lookup_output_to_rd: T,
     pub write_pc_to_rd: T,
     pub next_pc_jump: T,
@@ -38,15 +38,9 @@ pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub next_pc: T,
 }
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, ()>
     for AuxVariableStuff<T>
 {
-    #[allow(clippy::field_reassign_with_default)]
-    fn initialize(C: &usize) -> Self {
-        let mut result = Self::default();
-        result.relevant_y_chunks = std::iter::repeat_with(|| T::default()).take(*C).collect();
-        result
-    }
 }
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
@@ -58,7 +52,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             &self.right_lookup_operand,
             &self.product,
         ];
-        values.extend(self.relevant_y_chunks.iter());
+        // values.extend(self.relevant_y_chunks.iter());
         values.extend([
             &self.write_lookup_output_to_rd,
             &self.write_pc_to_rd,
@@ -75,7 +69,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
             &mut self.right_lookup_operand,
             &mut self.product,
         ];
-        values.extend(self.relevant_y_chunks.iter_mut());
+        // values.extend(self.relevant_y_chunks.iter_mut());
         values.extend([
             &mut self.write_lookup_output_to_rd,
             &mut self.write_pc_to_rd,
@@ -95,18 +89,7 @@ pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     pub aux: AuxVariableStuff<T>,
 }
 
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, usize>
-    for R1CSStuff<T>
-{
-    fn initialize(C: &usize) -> Self {
-        Self {
-            // chunks_x: std::iter::repeat_with(|| T::default()).take(*C).collect(),
-            // chunks_y: std::iter::repeat_with(|| T::default()).take(*C).collect(),
-            circuit_flags: std::array::from_fn(|_| T::default()),
-            aux: AuxVariableStuff::initialize(C),
-        }
-    }
-}
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, ()> for R1CSStuff<T> {}
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
@@ -152,13 +135,7 @@ pub type R1CSCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript
 
 impl<F: JoltField> R1CSPolynomials<F> {
     #[tracing::instrument(skip_all, name = "R1CSPolynomials::new")]
-    pub fn new<
-        const C: usize,
-        const M: usize,
-        const WORD_SIZE: usize,
-        InstructionSet: JoltInstructionSet,
-        I: ConstraintInput,
-    >(
+    pub fn new<const WORD_SIZE: usize, InstructionSet: JoltInstructionSet, I: ConstraintInput>(
         trace: &[JoltTraceStep<WORD_SIZE>],
     ) -> Self {
         let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
@@ -180,21 +157,20 @@ impl<F: JoltField> R1CSPolynomials<F> {
                 .try_into()
                 .unwrap(),
             // Actual aux variable polynomials will be computed afterwards
-            aux: AuxVariableStuff::initialize(&C),
+            aux: AuxVariableStuff::initialize(&()),
         }
     }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
-{
-    pub key: UniformSpartanKey<C, I, F>,
-    pub proof: UniformSpartanProof<C, I, F, ProofTranscript>,
+pub struct R1CSProof<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript> {
+    pub key: UniformSpartanKey<I, F>,
+    pub proof: UniformSpartanProof<I, F, ProofTranscript>,
     pub _marker: PhantomData<ProofTranscript>,
 }
 
-impl<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
-    R1CSProof<C, I, F, ProofTranscript>
+impl<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
+    R1CSProof<I, F, ProofTranscript>
 {
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
     pub fn verify<PCS>(
@@ -221,22 +197,22 @@ impl<const C: usize, I: ConstraintInput, F: JoltField, ProofTranscript: Transcri
 pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'static {
     /// Returns a flat vector of all unique constraint inputs.
     /// This also serves as a canonical ordering over the inputs.
-    fn flatten<const C: usize>() -> Vec<Self>;
+    fn flatten() -> Vec<Self>;
 
     /// The total number of unique constraint inputs
-    fn num_inputs<const C: usize>() -> usize {
-        Self::flatten::<C>().len()
+    fn num_inputs() -> usize {
+        Self::flatten().len()
     }
 
     /// Converts an index to the corresponding constraint input.
-    fn from_index<const C: usize>(index: usize) -> Self {
-        Self::flatten::<C>()[index]
+    fn from_index(index: usize) -> Self {
+        Self::flatten()[index]
     }
 
     /// Converts a constraint input to its index in the canonical
     /// ordering over inputs given by `ConstraintInput::flatten`.
-    fn to_index<const C: usize>(&self) -> usize {
-        match Self::flatten::<C>().iter().position(|x| x == self) {
+    fn to_index(&self) -> usize {
+        match Self::flatten().iter().position(|x| x == self) {
             Some(index) => index,
             None => panic!("Invalid variant {:?}", self),
         }
@@ -292,7 +268,7 @@ pub enum AuxVariable {
     LeftLookupOperand,
     RightLookupOperand,
     Product,
-    RelevantYChunk(usize),
+    // RelevantYChunk(usize),
     WriteLookupOutputToRD,
     WritePCtoRD,
     NextPCJump,
@@ -300,18 +276,18 @@ pub enum AuxVariable {
     NextPC,
 }
 
-impl_r1cs_input_lc_conversions!(JoltR1CSInputs, 4);
+impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
 impl ConstraintInput for JoltR1CSInputs {
-    fn flatten<const C: usize>() -> Vec<Self> {
+    fn flatten() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
                 // Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
-                        AuxVariable::RelevantYChunk(_) => (0..C)
-                            .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
-                            .collect(),
+                        // AuxVariable::RelevantYChunk(_) => (0..C)
+                        //     .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
+                        //     .collect(),
                         _ => vec![Self::Aux(aux)],
                     })
                     .collect(),
@@ -348,7 +324,7 @@ impl ConstraintInput for JoltR1CSInputs {
                 AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,
                 AuxVariable::RightLookupOperand => &aux_polynomials.right_lookup_operand,
                 AuxVariable::Product => &aux_polynomials.product,
-                AuxVariable::RelevantYChunk(i) => &aux_polynomials.relevant_y_chunks[*i],
+                // AuxVariable::RelevantYChunk(i) => &aux_polynomials.relevant_y_chunks[*i],
                 AuxVariable::WriteLookupOutputToRD => &aux_polynomials.write_lookup_output_to_rd,
                 AuxVariable::WritePCtoRD => &aux_polynomials.write_pc_to_rd,
                 AuxVariable::NextPCJump => &aux_polynomials.next_pc_jump,
@@ -368,7 +344,7 @@ impl ConstraintInput for JoltR1CSInputs {
                 AuxVariable::LeftLookupOperand => &mut aux_polynomials.left_lookup_operand,
                 AuxVariable::RightLookupOperand => &mut aux_polynomials.right_lookup_operand,
                 AuxVariable::Product => &mut aux_polynomials.product,
-                AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
+                // AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
                 AuxVariable::WriteLookupOutputToRD => {
                     &mut aux_polynomials.write_lookup_output_to_rd
                 }
@@ -392,28 +368,26 @@ mod tests {
 
     #[test]
     fn from_index_to_index() {
-        const C: usize = 4;
-        for i in 0..JoltR1CSInputs::num_inputs::<C>() {
-            assert_eq!(i, JoltR1CSInputs::from_index::<C>(i).to_index::<C>());
+        for i in 0..JoltR1CSInputs::num_inputs() {
+            assert_eq!(i, JoltR1CSInputs::from_index(i).to_index());
         }
-        for var in JoltR1CSInputs::flatten::<C>() {
+        for var in JoltR1CSInputs::flatten() {
             assert_eq!(
                 var,
-                JoltR1CSInputs::from_index::<C>(JoltR1CSInputs::to_index::<C>(&var))
+                JoltR1CSInputs::from_index(JoltR1CSInputs::to_index(&var))
             );
         }
     }
 
     #[test]
     fn get_ref() {
-        const C: usize = 4;
         let mut jolt_polys: JoltPolynomials<Fr> = JoltPolynomials::default();
-        jolt_polys.r1cs = R1CSPolynomials::initialize(&C);
+        jolt_polys.r1cs = R1CSPolynomials::initialize(&());
 
         for aux in AuxVariable::iter().flat_map(|aux| match aux {
-            AuxVariable::RelevantYChunk(_) => (0..C)
-                .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
-                .collect(),
+            // AuxVariable::RelevantYChunk(_) => (0..C)
+            //     .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
+            //     .collect(),
             _ => vec![JoltR1CSInputs::Aux(aux)],
         }) {
             let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
@@ -424,7 +398,6 @@ mod tests {
 
     #[test]
     fn r1cs_stuff_ordering() {
-        const C: usize = 4;
-        R1CSOpenings::<Fr>::test_ordering_consistency(&C);
+        R1CSOpenings::<Fr>::test_ordering_consistency(&());
     }
 }

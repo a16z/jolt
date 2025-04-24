@@ -28,7 +28,7 @@ pub struct Constraint {
 
 impl Constraint {
     #[cfg(test)]
-    pub(crate) fn pretty_fmt<const C: usize, I: ConstraintInput, F: JoltField>(
+    pub(crate) fn pretty_fmt<I: ConstraintInput, F: JoltField>(
         &self,
         f: &mut String,
         flattened_polynomials: &[&MultilinearPolynomial<F>],
@@ -36,11 +36,11 @@ impl Constraint {
     ) -> std::fmt::Result {
         use std::fmt::Write as _;
 
-        self.a.pretty_fmt::<C, I>(f)?;
+        self.a.pretty_fmt::<I>(f)?;
         write!(f, " ⋅ ")?;
-        self.b.pretty_fmt::<C, I>(f)?;
+        self.b.pretty_fmt::<I>(f)?;
         write!(f, " == ")?;
-        self.c.pretty_fmt::<C, I>(f)?;
+        self.c.pretty_fmt::<I>(f)?;
         writeln!(f)?;
 
         let mut terms = Vec::new();
@@ -62,7 +62,7 @@ impl Constraint {
                     writeln!(
                         f,
                         "    {:?} = {}",
-                        I::from_index::<C>(var_index),
+                        I::from_index(var_index),
                         flattened_polynomials[var_index].get_coeff(step_index)
                     )?;
                 }
@@ -125,12 +125,12 @@ impl<F: JoltField> AuxComputation<F> {
         }
     }
 
-    fn compute_aux_poly<const C: usize, I: ConstraintInput>(
+    fn compute_aux_poly<I: ConstraintInput>(
         &self,
         jolt_polynomials: &JoltPolynomials<F>,
         poly_len: usize,
     ) -> MultilinearPolynomial<F> {
-        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten::<C>()
+        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten()
             .iter()
             .map(|var| var.get_ref(jolt_polynomials))
             .collect();
@@ -181,19 +181,19 @@ impl<F: JoltField> AuxComputation<F> {
     }
 }
 
-pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
+pub struct R1CSBuilder<F: JoltField, I: ConstraintInput> {
     _inputs: PhantomData<I>,
     constraints: Vec<Constraint>,
     aux_computations: BTreeMap<usize, AuxComputation<F>>,
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput> Default for R1CSBuilder<C, F, I> {
+impl<F: JoltField, I: ConstraintInput> Default for R1CSBuilder<F, I> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
+impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     pub fn new() -> Self {
         Self {
             _inputs: PhantomData,
@@ -208,7 +208,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         symbolic_inputs: Vec<LC>,
         compute: Box<AuxComputationFunction>,
     ) -> Variable {
-        let aux_index = aux_symbol.to_index::<C>();
+        let aux_index = aux_symbol.to_index();
         let new_aux = Variable::Auxiliary(aux_index);
         let computation = AuxComputation::new(new_aux, symbolic_inputs, compute);
         self.aux_computations.insert(aux_index, computation);
@@ -447,7 +447,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
             a: a_sparse,
             b: b_sparse,
             c: c_sparse,
-            num_vars: I::num_inputs::<C>(),
+            num_vars: I::num_inputs(),
             num_rows: self.constraints.len(),
         }
     }
@@ -505,8 +505,8 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
 }
 
 // TODO(sragss): Detailed documentation with wiki.
-pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
-    uniform_builder: R1CSBuilder<C, F, I>,
+pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
+    uniform_builder: R1CSBuilder<F, I>,
 
     /// Padded to the nearest power of 2
     uniform_repeat: usize, // TODO(JP): Remove padding of steps
@@ -514,9 +514,9 @@ pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInp
     offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
-impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C, F, I> {
+impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     pub fn construct(
-        uniform_builder: R1CSBuilder<C, F, I>,
+        uniform_builder: R1CSBuilder<F, I>,
         uniform_repeat: usize,
         offset_equality_constraints: Vec<OffsetEqConstraint>,
     ) -> Self {
@@ -530,10 +530,10 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
 
     #[tracing::instrument(skip_all)]
     pub fn compute_aux(&self, jolt_polynomials: &mut JoltPolynomials<F>) {
-        let flattened_vars = I::flatten::<C>();
+        let flattened_vars = I::flatten();
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
             *flattened_vars[*aux_index].get_ref_mut(jolt_polynomials) =
-                aux_compute.compute_aux_poly::<C, I>(jolt_polynomials, self.uniform_repeat);
+                aux_compute.compute_aux_poly::<I>(jolt_polynomials, self.uniform_repeat);
         }
     }
 

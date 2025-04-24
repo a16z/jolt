@@ -92,7 +92,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                     .evaluate_row(flattened_polynomials, step_index) {
                                         let mut constraint_string = String::new();
                                         let _ = constraint
-                                            .pretty_fmt::<4, JoltR1CSInputs, F>(
+                                            .pretty_fmt::<JoltR1CSInputs, F>(
                                                 &mut constraint_string,
                                                 flattened_polynomials,
                                                 step_index,

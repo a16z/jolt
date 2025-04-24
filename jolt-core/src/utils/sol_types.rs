@@ -158,9 +158,8 @@ pub fn into_uint256<F: JoltField>(from: F) -> U256 {
     U256::from_le_slice(&buf)
 }
 
-const C: usize = 4;
 impl<ProofTranscript: Transcript> Into<SpartanProof>
-    for &UniformSpartanProof<C, JoltR1CSInputs, Fp<MontBackend<FrConfig, 4>, 4>, ProofTranscript>
+    for &UniformSpartanProof<JoltR1CSInputs, Fp<MontBackend<FrConfig, 4>, 4>, ProofTranscript>
 {
     fn into(self) -> SpartanProof {
         let claimed_evals = self

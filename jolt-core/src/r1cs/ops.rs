@@ -20,11 +20,11 @@ pub enum Variable {
 pub struct Term(pub Variable, pub i64);
 impl Term {
     #[cfg(test)]
-    fn pretty_fmt<const C: usize, I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
+    fn pretty_fmt<I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
         match self.0 {
             Variable::Input(var_index) | Variable::Auxiliary(var_index) => match self.1.abs() {
-                1 => write!(f, "{:?}", I::from_index::<C>(var_index)),
-                _ => write!(f, "{}⋅{:?}", self.1, I::from_index::<C>(var_index)),
+                1 => write!(f, "{:?}", I::from_index(var_index)),
+                _ => write!(f, "{}⋅{:?}", self.1, I::from_index(var_index)),
             },
             Variable::Constant => write!(f, "{}", self.1),
         }
@@ -102,10 +102,7 @@ impl LC {
     }
 
     #[cfg(test)]
-    pub fn pretty_fmt<const C: usize, I: ConstraintInput>(
-        &self,
-        f: &mut String,
-    ) -> std::fmt::Result {
+    pub fn pretty_fmt<I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
         if self.0.is_empty() {
             write!(f, "0")
         } else {
@@ -123,7 +120,7 @@ impl LC {
                         write!(f, " + ")?;
                     }
                 }
-                term.pretty_fmt::<C, I>(f)?;
+                term.pretty_fmt::<I>(f)?;
             }
             if self.0.len() > 1 {
                 write!(f, ")")?;
@@ -295,29 +292,23 @@ impl std::ops::Mul<Variable> for i64 {
 /// Conversions and arithmetic for concrete ConstraintInput
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
-    ($ConcreteInput:ty, $C:expr) => {
+    ($ConcreteInput:ty) => {
         impl Into<$crate::r1cs::ops::Variable> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Variable {
-                $crate::r1cs::ops::Variable::Input(self.to_index::<$C>())
+                $crate::r1cs::ops::Variable::Input(self.to_index())
             }
         }
 
         impl Into<$crate::r1cs::ops::Term> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Term {
-                $crate::r1cs::ops::Term(
-                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
-                    1,
-                )
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.to_index()), 1)
             }
         }
 
         impl Into<$crate::r1cs::ops::LC> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::LC {
-                $crate::r1cs::ops::Term(
-                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
-                    1,
-                )
-                .into()
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.to_index()), 1)
+                    .into()
             }
         }
 
@@ -353,10 +344,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                $crate::r1cs::ops::Term(
-                    $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
-                    rhs,
-                )
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.to_index()), rhs)
             }
         }
 
@@ -364,20 +352,15 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                $crate::r1cs::ops::Term(
-                    $crate::r1cs::ops::Variable::Input(rhs.to_index::<$C>()),
-                    self,
-                )
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), self)
             }
         }
         impl std::ops::Add<$ConcreteInput> for i64 {
             type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 = $crate::r1cs::ops::Term(
-                    $crate::r1cs::ops::Variable::Input(rhs.to_index::<$C>()),
-                    1,
-                );
+                let term1 =
+                    $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), 1);
                 let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, self);
                 $crate::r1cs::ops::LC::new(vec![term1, term2])
             }
