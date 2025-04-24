@@ -7,7 +7,7 @@ const DTB_SIZE: usize = 0xfe0;
 extern crate fnv;
 
 use crate::instruction::{RAMRead, RAMWrite};
-use common::memory::JoltDevice;
+use common::jolt_device::JoltDevice;
 
 use self::fnv::FnvHashMap;
 

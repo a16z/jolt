@@ -17,7 +17,7 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::memory::MemoryLayout;
+use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::{
     instruction::{RAMAccess, RV32IMCycle},

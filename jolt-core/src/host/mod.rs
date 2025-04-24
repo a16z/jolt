@@ -12,11 +12,10 @@ use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    memory::JoltDevice,
+    jolt_device::JoltDevice,
 };
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence};
-pub use tracer::ELFInstruction;
 
 use crate::field::JoltField;
 

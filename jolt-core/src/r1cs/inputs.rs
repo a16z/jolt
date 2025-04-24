@@ -5,7 +5,6 @@
 )]
 
 use crate::impl_r1cs_input_lc_conversions;
-use crate::jolt::lookup_table::JoltInstructionSet;
 use crate::jolt::vm::{JoltCommitments, JoltStuff};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -18,7 +17,6 @@ use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use strum::IntoEnumIterator;
@@ -138,9 +136,7 @@ pub type R1CSCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript
 
 impl<F: JoltField> R1CSPolynomials<F> {
     #[tracing::instrument(skip_all, name = "R1CSPolynomials::new")]
-    pub fn new<const WORD_SIZE: usize, InstructionSet: JoltInstructionSet, I: ConstraintInput>(
-        trace: &[RV32IMCycle],
-    ) -> Self {
+    pub fn new<const WORD_SIZE: usize, I: ConstraintInput>(trace: &[RV32IMCycle]) -> Self {
         // let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
 
         // // TODO(moodlezoup): Can be parallelized

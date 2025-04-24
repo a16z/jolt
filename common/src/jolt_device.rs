@@ -3,42 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum MemoryState {
-    Read {
-        address: u64,
-        value: u64,
-    },
-    Write {
-        address: u64,
-        pre_value: u64,
-        post_value: u64,
-    },
-}
-
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub enum MemoryOp {
-    Read(u64, u64),       // (address, value)
-    Write(u64, u64, u64), // (address, old_value, new_value)
-}
-
-impl MemoryOp {
-    pub fn noop_read() -> Self {
-        Self::Read(0, 0)
-    }
-
-    pub fn noop_write() -> Self {
-        Self::Write(0, 0, 0)
-    }
-
-    pub fn address(&self) -> u64 {
-        match self {
-            MemoryOp::Read(a, _) => *a,
-            MemoryOp::Write(a, _, _) => *a,
-        }
-    }
-}
-
 #[allow(clippy::too_long_first_doc_paragraph)]
 /// Represented as a "peripheral device" in the RISC-V emulator, this captures
 /// all reads from the reserved memory address space for program inputs and all writes

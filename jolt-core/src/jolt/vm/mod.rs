@@ -10,8 +10,7 @@ use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
-use common::instruction::NUM_CIRCUIT_FLAGS;
-use common::memory::MemoryLayout;
+use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::RAMTwistProof;
 use registers::RegistersTwistProof;
@@ -35,7 +34,7 @@ use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION, memory::MemoryOp};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 
 use super::lookup_table::LookupTables;
 

@@ -16,9 +16,7 @@ use object::{Object, ObjectSection, SectionKind};
 mod emulator;
 pub mod instruction;
 
-pub use common::instruction::{ELFInstruction, RV32IM};
-pub use common::memory::{JoltDevice, MemoryState};
-pub use common::rv_trace::{RVTraceRow, RegisterState};
+pub use common::jolt_device::JoltDevice;
 
 #[tracing::instrument(skip_all)]
 pub fn trace(

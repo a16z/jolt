@@ -13,10 +13,8 @@ use shift_right_bitmask::ShiftRightBitmaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
 use std::marker::Sync;
-use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use suffixes::{SuffixEval, Suffixes};
-use tracer::ELFInstruction;
 use unsigned_greater_than_equal::UnsignedGreaterThanEqualTable;
 use unsigned_less_than::UnsignedLessThanTable;
 use unsigned_less_than_equal::UnsignedLessThanEqualTable;
@@ -50,16 +48,6 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
 pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {
     fn suffixes(&self) -> Vec<Suffixes>;
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
-}
-
-pub trait JoltInstructionSet:
-    JoltLookupTable + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + Send + Sync
-{
-    fn enum_index(instruction: &Self) -> usize {
-        // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-        let byte = unsafe { *(instruction as *const Self as *const u8) };
-        byte as usize
-    }
 }
 
 pub mod prefixes;

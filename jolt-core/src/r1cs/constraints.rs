@@ -1,4 +1,4 @@
-use common::{constants::REGISTER_COUNT, instruction::CircuitFlags};
+use common::constants::REGISTER_COUNT;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;

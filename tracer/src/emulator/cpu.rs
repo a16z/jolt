@@ -9,7 +9,6 @@ use crate::instruction::format::{
     format_u::FormatU, InstructionFormat,
 };
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
-use common::instruction::*;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
@@ -1396,17 +1395,6 @@ impl Cpu {
     pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
         self.mmu.get_mut_uart().get_mut_terminal()
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Instruction {
-    pub mask: u32,
-    pub data: u32, // @TODO: rename
-    pub name: &'static str,
-    operation: fn(cpu: &mut Cpu, word: u32, address: u64) -> Result<(), Trap>,
-    disassemble: fn(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String,
-    pub trace:
-        Option<fn(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction>,
 }
 
 fn dump_format_b(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String {
