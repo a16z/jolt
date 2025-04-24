@@ -1,15 +1,17 @@
 use std::marker::PhantomData;
+use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
-use crate::jolt::vm::JoltCommitments;
-use crate::jolt::vm::JoltPolynomials;
+use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -29,7 +31,6 @@ use crate::{
 };
 
 use super::builder::CombinedUniformBuilder;
-use super::inputs::ConstraintInput;
 
 use rayon::prelude::*;
 
@@ -72,8 +73,7 @@ pub enum SpartanError {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript> {
-    _inputs: PhantomData<I>,
+pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) outer_sumcheck_claims: (F, F, F),
     pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -84,17 +84,16 @@ pub struct UniformSpartanProof<I: ConstraintInput, F: JoltField, ProofTranscript
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<I, F, ProofTranscript> UniformSpartanProof<I, F, ProofTranscript>
+impl<F, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
 where
-    I: ConstraintInput,
     F: JoltField,
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "Spartan::setup")]
     pub fn setup(
-        constraint_builder: &CombinedUniformBuilder<F, I>,
+        constraint_builder: &CombinedUniformBuilder<F>,
         padded_num_steps: usize,
-    ) -> UniformSpartanKey<I, F> {
+    ) -> UniformSpartanKey<F> {
         assert_eq!(
             padded_num_steps,
             constraint_builder.uniform_repeat().next_power_of_two()
@@ -104,18 +103,19 @@ where
 
     #[tracing::instrument(skip_all, name = "Spartan::prove")]
     pub fn prove<PCS>(
-        constraint_builder: &CombinedUniformBuilder<F, I>,
-        key: &UniformSpartanKey<I, F>,
-        polynomials: &JoltPolynomials<F>,
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+        constraint_builder: &CombinedUniformBuilder<F>,
+        key: &UniformSpartanKey<F>,
+        trace: &[RV32IMCycle],
         opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let flattened_polys: Vec<&MultilinearPolynomial<F>> = I::flatten()
-            .iter()
-            .map(|var| var.get_ref(polynomials))
+        let flattened_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
+            .par_iter()
+            .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
 
         let num_rounds_x = key.num_rows_bits();
@@ -288,12 +288,13 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
+        let flattened_polys_ref: Vec<_> = flattened_polys.iter().collect();
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, rx_step);
 
         opening_accumulator.append(
-            &flattened_polys,
+            &flattened_polys_ref,
             DensePolynomial::new(chis),
             rx_step.to_vec(),
             &claimed_witness_evals,
@@ -302,10 +303,10 @@ where
 
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, &shift_sumcheck_r);
 
         opening_accumulator.append(
-            &flattened_polys,
+            &flattened_polys_ref,
             DensePolynomial::new(chis2),
             shift_sumcheck_r.to_vec(),
             &shift_sumcheck_witness_evals,
@@ -319,7 +320,6 @@ where
             outer_sumcheck_claims[2],
         );
         Ok(UniformSpartanProof {
-            _inputs: PhantomData,
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
@@ -334,8 +334,8 @@ where
     #[tracing::instrument(skip_all, name = "Spartan::verify")]
     pub fn verify<PCS>(
         &self,
-        key: &UniformSpartanKey<I, F>,
-        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        key: &UniformSpartanKey<F>,
+        // commitments: &JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
@@ -444,24 +444,26 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        let flattened_commitments: Vec<_> = I::flatten()
-            .iter()
-            .map(|var| var.get_ref(commitments))
-            .collect();
+        // TODO(moodlezoup): Openings
 
-        opening_accumulator.append(
-            &flattened_commitments,
-            rx_step.to_vec(),
-            &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
-            transcript,
-        );
+        // let flattened_commitments: Vec<_> = I::flatten()
+        //     .iter()
+        //     .map(|var| var.get_ref(commitments))
+        //     .collect();
 
-        opening_accumulator.append(
-            &flattened_commitments,
-            shift_sumcheck_r.to_vec(),
-            &self.shift_sumcheck_witness_evals.iter().collect::<Vec<_>>(),
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &flattened_commitments,
+        //     rx_step.to_vec(),
+        //     &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
+        //     transcript,
+        // );
+
+        // opening_accumulator.append(
+        //     &flattened_commitments,
+        //     shift_sumcheck_r.to_vec(),
+        //     &self.shift_sumcheck_witness_evals.iter().collect::<Vec<_>>(),
+        //     transcript,
+        // );
 
         Ok(())
     }

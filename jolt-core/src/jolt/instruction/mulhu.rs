@@ -14,6 +14,7 @@ impl InstructionFlags for MULHU {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::MultiplyOperands as usize] = true;
+        flags[CircuitFlags::SingleOperandLookup as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
@@ -23,12 +24,17 @@ impl InstructionFlags for MULHU {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<MULHU> {
-    fn to_lookup_index(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
-        x * y
+    fn to_lookup_operands(&self) -> (u64, u64) {
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        (0, x * y)
     }
 
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_lookup_index(&self) -> u64 {
+        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
+        y
+    }
+
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
@@ -44,9 +50,8 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<MULHU> {
         }
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x * y) >> 8,

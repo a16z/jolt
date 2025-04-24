@@ -30,7 +30,7 @@ pub struct BytecodePreprocessing {
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     /// Key: (ELF address, virtual sequence index or 0)
-    virtual_address_map: BTreeMap<(usize, usize), usize>,
+    pub(crate) virtual_address_map: BTreeMap<(usize, usize), usize>,
 }
 
 impl BytecodePreprocessing {
@@ -80,7 +80,7 @@ fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Ve
             let NormalizedInstruction {
                 address,
                 operands,
-                virtual_sequence_remaining,
+                virtual_sequence_remaining: _,
             } = instruction.normalize();
             let mut linear_combination = F::zero();
             linear_combination += (address as u64).field_mul(gamma_powers[0]);
@@ -88,8 +88,6 @@ fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Ve
             linear_combination += (operands.rs1 as u64).field_mul(gamma_powers[2]);
             linear_combination += (operands.rs2 as u64).field_mul(gamma_powers[3]);
             linear_combination += operands.imm.field_mul(gamma_powers[4]);
-            linear_combination +=
-                (virtual_sequence_remaining.unwrap_or(0) as u64).field_mul(gamma_powers[5]);
             // TODO(moodlezoup): Circuit and lookup flags
             linear_combination
         })

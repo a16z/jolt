@@ -14,6 +14,7 @@ impl InstructionFlags for SUB {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::SubtractOperands as usize] = true;
+        flags[CircuitFlags::SingleOperandLookup as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
@@ -23,14 +24,19 @@ impl InstructionFlags for SUB {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SUB> {
-    fn to_lookup_index(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+    fn to_lookup_operands(&self) -> (u64, u64) {
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         let x = x as u128;
         let y = (1u128 << WORD_SIZE) - y as u128;
-        (x + y) as u64
+        (0, (x + y) as u64)
     }
 
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_lookup_index(&self) -> u64 {
+        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
+        y
+    }
+
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
@@ -46,9 +52,8 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SUB> {
         }
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x as u8).overflowing_sub(y as u8).0.into(),

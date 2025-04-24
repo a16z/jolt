@@ -23,11 +23,10 @@ impl InstructionFlags for SW {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SW> {
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         (0, 0)
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
         0
     }

@@ -15,6 +15,8 @@ impl InstructionFlags for JALR {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::Jump as usize] = true;
+        flags[CircuitFlags::AddOperands as usize] = true;
+        flags[CircuitFlags::SingleOperandLookup as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
@@ -23,12 +25,17 @@ impl InstructionFlags for JALR {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JALR> {
-    fn to_lookup_index(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
-        x + y
+    fn to_lookup_operands(&self) -> (u64, u64) {
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        (0, x + y)
     }
 
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_lookup_index(&self) -> u64 {
+        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
+        y
+    }
+
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
@@ -47,9 +54,8 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JALR> {
         }
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => (x as u8).wrapping_add(y as u8) as u64,

@@ -18,10 +18,6 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
 };
 
-pub struct LookupsWitness<F: JoltField> {
-    ra: [CompactPolynomial<u16, F>; 4],
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct LookupsProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
@@ -57,6 +53,8 @@ where
         let r_cycle: Vec<F> = transcript.challenge_vector(log_T);
         let (read_checking_proof, rv_claim, ra_claims, flag_claims) =
             prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, transcript);
+
+        // TODO(moodlezoup): Interleaved raf evaluation
 
         Self {
             read_checking_proof,

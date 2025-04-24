@@ -1,8 +1,6 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
-#[cfg(test)]
-use super::inputs::ConstraintInput;
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use std::fmt::Debug;
 #[cfg(test)]
@@ -12,7 +10,6 @@ use std::hash::Hash;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Variable {
     Input(usize),
-    Auxiliary(usize),
     Constant,
 }
 
@@ -20,11 +17,13 @@ pub enum Variable {
 pub struct Term(pub Variable, pub i64);
 impl Term {
     #[cfg(test)]
-    fn pretty_fmt<I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
+    fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
+        use super::inputs::JoltR1CSInputs;
+
         match self.0 {
-            Variable::Input(var_index) | Variable::Auxiliary(var_index) => match self.1.abs() {
-                1 => write!(f, "{:?}", I::from_index(var_index)),
-                _ => write!(f, "{}⋅{:?}", self.1, I::from_index(var_index)),
+            Variable::Input(var_index) => match self.1.abs() {
+                1 => write!(f, "{:?}", JoltR1CSInputs::from_index(var_index)),
+                _ => write!(f, "{}⋅{:?}", self.1, JoltR1CSInputs::from_index(var_index)),
             },
             Variable::Constant => write!(f, "{}", self.1),
         }
@@ -81,19 +80,19 @@ impl LC {
     pub fn num_vars(&self) -> usize {
         self.0
             .iter()
-            .filter(|term| matches!(term.0, Variable::Auxiliary(_) | Variable::Input(_)))
+            .filter(|term| matches!(term.0, Variable::Input(_)))
             .count()
     }
 
     pub fn evaluate_row<F: JoltField>(
         &self,
-        flattened_polynomials: &[&MultilinearPolynomial<F>],
+        flattened_polynomials: &[MultilinearPolynomial<F>],
         row: usize,
     ) -> i128 {
         self.terms()
             .iter()
             .map(|term| match term.0 {
-                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                Variable::Input(var_index) => {
                     term.1 as i128 * flattened_polynomials[var_index].get_coeff_i128(row)
                 }
                 Variable::Constant => term.1 as i128,
@@ -102,7 +101,7 @@ impl LC {
     }
 
     #[cfg(test)]
-    pub fn pretty_fmt<I: ConstraintInput>(&self, f: &mut String) -> std::fmt::Result {
+    pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         if self.0.is_empty() {
             write!(f, "0")
         } else {
@@ -120,7 +119,7 @@ impl LC {
                         write!(f, " + ")?;
                     }
                 }
-                term.pretty_fmt::<I>(f)?;
+                term.pretty_fmt(f)?;
             }
             if self.0.len() > 1 {
                 write!(f, ")")?;

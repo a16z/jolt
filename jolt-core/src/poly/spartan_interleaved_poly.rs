@@ -6,8 +6,6 @@ use super::{
 };
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
-#[cfg(test)]
-use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
@@ -44,7 +42,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     pub fn new(
         uniform_constraints: &[Constraint],
         cross_step_constraints: &[OffsetEqConstraint],
-        flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
+        flattened_polynomials: &[MultilinearPolynomial<F>], // N variables of (S steps)
         padded_num_constraints: usize,
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
@@ -92,7 +90,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                     .evaluate_row(flattened_polynomials, step_index) {
                                         let mut constraint_string = String::new();
                                         let _ = constraint
-                                            .pretty_fmt::<JoltR1CSInputs, F>(
+                                            .pretty_fmt::<F>(
                                                 &mut constraint_string,
                                                 flattened_polynomials,
                                                 step_index,

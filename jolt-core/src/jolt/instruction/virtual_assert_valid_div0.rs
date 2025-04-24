@@ -22,13 +22,12 @@ impl InstructionFlags for VirtualAssertValidDiv0 {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssertValidDiv0> {
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         (self.register_state.rs1, self.register_state.rs2)
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (divisor, quotient) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+        let (divisor, quotient) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         if divisor == 0 {
             match WORD_SIZE {
                 32 => (quotient == u32::MAX as u64).into(),

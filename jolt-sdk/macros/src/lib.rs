@@ -4,7 +4,7 @@ extern crate proc_macro;
 
 use core::panic;
 
-use common::{attributes::parse_attributes, memory::MemoryLayout};
+use common::{attributes::parse_attributes, jolt_device::MemoryLayout};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -107,7 +107,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
             ) -> impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send
             {
                 #imports
@@ -146,7 +146,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
-                preprocessing: jolt::JoltVerifierPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
+                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
             ) -> impl Fn(#(#input_types ,)* #output_type, jolt::JoltHyperKZGProof) -> bool + Sync + Send
             {
                 #imports
@@ -256,7 +256,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(program: &jolt::host::Program)
-                -> jolt::JoltProverPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
+                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
             {
                 #imports
 
@@ -264,7 +264,7 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(#max_input_size, #max_output_size);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltProverPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript> =
+                let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
                     RV32IJoltVM::prover_preprocess(
                         bytecode,
                         memory_layout,
@@ -291,7 +291,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(program: &jolt::host::Program)
-                -> jolt::JoltVerifierPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>
+                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
             {
                 #imports
 
@@ -299,7 +299,7 @@ impl MacroBuilder {
                 let memory_layout = MemoryLayout::new(#max_input_size, #max_output_size);
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltVerifierPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript> =
+                let preprocessing: JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript> =
                     RV32IJoltVM::verifier_preprocess(
                         bytecode,
                         memory_layout,
@@ -341,7 +341,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<4, jolt::F, jolt::PCS, jolt::ProofTranscript>,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
@@ -504,13 +504,8 @@ impl MacroBuilder {
                 JoltCommitments,
                 ProofTranscript,
                 RV32IJoltVM,
-                RV32I,
                 RV32IJoltProof,
-                BytecodeRow,
-                MemoryOp,
                 MemoryLayout,
-                MEMORY_OPS_PER_INSTRUCTION,
-                instruction::add::ADDInstruction,
                 tracer,
             };
         }

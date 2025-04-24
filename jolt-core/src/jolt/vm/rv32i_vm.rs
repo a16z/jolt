@@ -4,13 +4,8 @@ use crate::r1cs::constraints::JoltRV32IMConstraints;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use enum_dispatch::enum_dispatch;
-use rand::{prelude::StdRng, RngCore};
-use serde::{Deserialize, Serialize};
-use strum::{EnumCount, IntoEnumIterator};
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::{Jolt, JoltCommitments, JoltProof};
+use super::{Jolt, JoltProof};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
 const WORD_SIZE: usize = 32;
@@ -28,8 +23,7 @@ where
     type Constraints = JoltRV32IMConstraints;
 }
 
-pub type RV32IJoltProof<F, PCS, ProofTranscript> =
-    JoltProof<WORD_SIZE, JoltR1CSInputs, F, PCS, ProofTranscript>;
+pub type RV32IJoltProof<F, PCS, ProofTranscript> = JoltProof<WORD_SIZE, F, PCS, ProofTranscript>;
 
 use crate::utils::transcript::{KeccakTranscript, Transcript};
 use eyre::Result;
@@ -77,7 +71,7 @@ pub type PCS = HyperKZG<Bn254, ProofTranscript>;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltHyperKZGProof {
     pub proof: RV32IJoltProof<Fr, PCS, ProofTranscript>,
-    pub commitments: JoltCommitments<PCS, ProofTranscript>,
+    // pub commitments: JoltCommitments<PCS, ProofTranscript>,
 }
 
 impl Serializable for JoltHyperKZGProof {}

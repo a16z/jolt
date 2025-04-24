@@ -15,7 +15,6 @@ use instruction_lookups::LookupsProof;
 use ram::RAMTwistProof;
 use registers::RegistersTwistProof;
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -25,18 +24,12 @@ use strum::EnumCount;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
-use crate::lasso::memory_checking::{
-    Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
-};
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
+use crate::r1cs::inputs::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-
-use super::lookup_table::LookupTables;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<F, PCS, ProofTranscript>
@@ -120,45 +113,20 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<const WORD_SIZE: usize, I, F, PCS, ProofTranscript>
+pub struct JoltProof<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
-    I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
     pub bytecode: BytecodeShoutProof<F, ProofTranscript>,
-    // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     // pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
-    _marker: PhantomData<I>,
 }
-
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
-    // pub(crate) bytecode: BytecodeStuff<T>,
-    // pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
-    // pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
-    pub(crate) r1cs: R1CSStuff<T>,
-}
-
-/// Note –– F: JoltField bound is not enforced.
-///
-/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
-/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-/// `alloy_sol_types`.
-pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
-/// Note –– PCS: CommitmentScheme bound is not enforced.
-///
-/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
-/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-/// `alloy_sol_types`.
-pub type JoltCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
-    JoltStuff<PCS::Commitment>;
 
 // impl<F: JoltField> JoltPolynomials<F> {
 //     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
@@ -195,7 +163,6 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    // type InstructionSet: JoltInstructionSet;
     type Constraints: R1CSConstraints<F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
@@ -213,6 +180,7 @@ where
 
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
 
+        // TODO(moodlezoup): Update for Twist+Shout
         let max_poly_len: usize = [
             (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
             max_trace_length.next_power_of_two(),
@@ -227,8 +195,6 @@ where
             generators,
             memory_layout,
             bytecode: bytecode_preprocessing,
-            // read_write_memory: read_write_memory_preprocessing,
-            // instruction_lookups: instruction_lookups_preprocessing,
             // read_write_memory: read_write_memory_preprocessing,
         }
     }
@@ -266,13 +232,7 @@ where
         mut trace: Vec<RV32IMCycle>,
         mut preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript>,
     ) -> (
-        JoltProof<
-            WORD_SIZE,
-            <Self::Constraints as R1CSConstraints<F>>::Inputs,
-            F,
-            PCS,
-            ProofTranscript,
-        >,
+        JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // JoltCommitments<PCS, ProofTranscript>,
         JoltDevice,
         Option<ProverDebugInfo<F, ProofTranscript>>,
@@ -286,7 +246,8 @@ where
         // TODO(moodlezoup): Truncate generators
 
         // TODO(JP): Drop padding on number of steps
-        trace.resize(trace_length.next_power_of_two(), RV32IMCycle::NoOp);
+        let padded_trace_length = trace_length.next_power_of_two();
+        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(
@@ -310,8 +271,22 @@ where
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
             ProverOpeningAccumulator::new();
 
-        let bytecode_proof =
-            BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
+        let memory_start = program_io.memory_layout.input_start;
+        let constraint_builder =
+            Self::Constraints::construct_constraints(padded_trace_length, memory_start);
+        let spartan_key = UniformSpartanProof::<F, ProofTranscript>::setup(
+            &constraint_builder,
+            padded_trace_length,
+        );
+
+        let r1cs_proof = UniformSpartanProof::prove::<PCS>(
+            &preprocessing,
+            &constraint_builder,
+            &spartan_key,
+            &trace,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         let instruction_proof = LookupsProof::prove(
             &preprocessing.shared.generators,
@@ -332,6 +307,9 @@ where
         let registers_proof =
             RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
 
+        let bytecode_proof =
+            BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
+
         // Batch-prove all openings
         // let opening_proof =
         //     opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
@@ -344,7 +322,6 @@ where
             registers: registers_proof,
             // r1cs: spartan_proof,
             // opening_proof,
-            _marker: PhantomData,
         };
 
         #[cfg(test)]
@@ -360,13 +337,7 @@ where
     #[tracing::instrument(skip_all)]
     fn verify(
         mut preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
-        proof: JoltProof<
-            WORD_SIZE,
-            <Self::Constraints as R1CSConstraints<F>>::Inputs,
-            F,
-            PCS,
-            ProofTranscript,
-        >,
+        proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
         // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
@@ -388,16 +359,14 @@ where
             proof.trace_length,
         );
 
-        // // Regenerate the uniform Spartan key
-        // let padded_trace_length = proof.trace_length.next_power_of_two();
-        // let memory_start = preprocessing.memory_layout.input_start;
-        // let r1cs_builder =
-        //     Self::Constraints::construct_constraints(padded_trace_length, memory_start);
-        // let spartan_key = spartan::UniformSpartanProof::<C, _, F, ProofTranscript>::setup(
-        //     &r1cs_builder,
-        //     padded_trace_length,
-        // );
-        // transcript.append_scalar(&spartan_key.vk_digest);
+        // Regenerate the uniform Spartan key
+        let padded_trace_length = proof.trace_length.next_power_of_two();
+        let memory_start = preprocessing.memory_layout.input_start;
+        let r1cs_builder =
+            Self::Constraints::construct_constraints(padded_trace_length, memory_start);
+        let spartan_key =
+            UniformSpartanProof::<F, ProofTranscript>::setup(&r1cs_builder, padded_trace_length);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         // commitments
         //     .read_write_values()

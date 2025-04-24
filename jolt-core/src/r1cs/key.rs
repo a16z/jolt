@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
@@ -9,14 +7,13 @@ use crate::{
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
 
-use super::{builder::CombinedUniformBuilder, inputs::ConstraintInput};
+use super::builder::CombinedUniformBuilder;
 use sha3::Digest;
 
 use crate::utils::math::Math;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<I: ConstraintInput, F: JoltField> {
-    _inputs: PhantomData<I>,
+pub struct UniformSpartanKey<F: JoltField> {
     pub uniform_r1cs: UniformR1CS<F>,
 
     pub offset_eq_r1cs: CrossStepR1CS<F>,
@@ -135,8 +132,8 @@ impl<F: JoltField> SparseEqualityItem<F> {
     }
 }
 
-impl<F: JoltField, I: ConstraintInput> UniformSpartanKey<I, F> {
-    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<F, I>) -> Self {
+impl<F: JoltField> UniformSpartanKey<F> {
+    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<F>) -> Self {
         let uniform_r1cs = constraint_builder.materialize_uniform();
         let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 
@@ -146,7 +143,6 @@ impl<F: JoltField, I: ConstraintInput> UniformSpartanKey<I, F> {
         let vk_digest = Self::digest(&uniform_r1cs, &offset_eq_r1cs, num_steps);
 
         Self {
-            _inputs: PhantomData,
             uniform_r1cs,
             offset_eq_r1cs,
             num_cons_total: total_rows,
@@ -203,7 +199,7 @@ impl<F: JoltField, I: ConstraintInput> UniformSpartanKey<I, F> {
         // 2. Incorporate just the constant values from cross-step constraints here
         let compute_repeated =
             |constraints: &SparseConstraints<F>, cross_step_constants: Option<Vec<F>>| -> Vec<F> {
-                // evals structure: [inputs, aux ... 1, cross_inputs, cross_aux ...] where ... indicates padding to next power of 2
+                // evals structure: [inputs, ... 1, cross_inputs, ...] where ... indicates padding to next power of 2
                 let mut evals =
                     unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two() * 4); // *4 instead of *2 to accommodate cross-step constraints
                 for (row, col, val) in constraints.vars.iter() {

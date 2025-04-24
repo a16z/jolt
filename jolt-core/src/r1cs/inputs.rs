@@ -5,8 +5,8 @@
 )]
 
 use crate::impl_r1cs_input_lc_conversions;
-use crate::jolt::vm::{JoltCommitments, JoltStuff};
-use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
+use crate::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
@@ -17,164 +17,24 @@ use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tracer::instruction::RV32IMCycle;
 
-/// Auxiliary variables defined in Jolt's R1CS constraints.
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct AuxVariableStuff<T: CanonicalSerialize + CanonicalDeserialize> {
-    pub left_lookup_operand: T,
-    pub right_lookup_operand: T,
-    pub product: T,
-    // pub relevant_y_chunks: Vec<T>,
-    pub write_lookup_output_to_rd: T,
-    pub write_pc_to_rd: T,
-    pub next_pc_jump: T,
-    pub should_branch: T,
-    pub next_pc: T,
-}
-
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, ()>
-    for AuxVariableStuff<T>
-{
-}
-
-impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
-    for AuxVariableStuff<T>
-{
-    fn read_write_values(&self) -> Vec<&T> {
-        let mut values = vec![
-            &self.left_lookup_operand,
-            &self.right_lookup_operand,
-            &self.product,
-        ];
-        // values.extend(self.relevant_y_chunks.iter());
-        values.extend([
-            &self.write_lookup_output_to_rd,
-            &self.write_pc_to_rd,
-            &self.next_pc_jump,
-            &self.should_branch,
-            &self.next_pc,
-        ]);
-        values
-    }
-
-    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        let mut values = vec![
-            &mut self.left_lookup_operand,
-            &mut self.right_lookup_operand,
-            &mut self.product,
-        ];
-        // values.extend(self.relevant_y_chunks.iter_mut());
-        values.extend([
-            &mut self.write_lookup_output_to_rd,
-            &mut self.write_pc_to_rd,
-            &mut self.next_pc_jump,
-            &mut self.should_branch,
-            &mut self.next_pc,
-        ]);
-        values
-    }
-}
-
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
-    // pub chunks_x: Vec<T>,
-    // pub chunks_y: Vec<T>,
-    // pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
-    pub aux: AuxVariableStuff<T>,
-}
-
-impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, ()> for R1CSStuff<T> {}
-
-impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
-    fn read_write_values(&self) -> Vec<&T> {
-        todo!()
-        // self.circuit_flags
-        //     .iter()
-        //     .chain(self.aux.read_write_values())
-        //     .collect()
-    }
-
-    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        todo!()
-        // self.circuit_flags
-        //     .iter_mut()
-        //     .chain(self.aux.read_write_values_mut())
-        //     .collect()
-    }
-}
-
-/// Witness polynomials specific to Jolt's R1CS constraints (i.e. not used
-/// for any offline memory-checking instances).
-///
-/// Note –– F: JoltField bound is not enforced.
-/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
-/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-/// `alloy_sol_types`.
-pub type R1CSPolynomials<F: JoltField> = R1CSStuff<MultilinearPolynomial<F>>;
-/// Openings specific to Jolt's R1CS constraints (i.e. not used
-/// for any offline memory-checking instances).
-///
-/// Note –– F: JoltField bound is not enforced.
-/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
-/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-/// `alloy_sol_types`.
-pub type R1CSOpenings<F: JoltField> = R1CSStuff<F>;
-/// Commitments specific to Jolt's R1CS constraints (i.e. not used
-/// for any offline memory-checking instances).
-///
-/// Note –– PCS: CommitmentScheme bound is not enforced.
-/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
-/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
-/// `alloy_sol_types`.
-pub type R1CSCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
-    R1CSStuff<PCS::Commitment>;
-
-impl<F: JoltField> R1CSPolynomials<F> {
-    #[tracing::instrument(skip_all, name = "R1CSPolynomials::new")]
-    pub fn new<const WORD_SIZE: usize, I: ConstraintInput>(trace: &[RV32IMCycle]) -> Self {
-        // let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
-
-        // // TODO(moodlezoup): Can be parallelized
-        // for (step_index, step) in trace.iter().enumerate() {
-        //     for j in 0..NUM_CIRCUIT_FLAGS {
-        //         if step.circuit_flags[j] {
-        //             circuit_flags[j][step_index] = 1;
-        //         }
-        //     }
-        // }
-
-        Self {
-            // circuit_flags: circuit_flags
-            //     .into_iter()
-            //     .map(MultilinearPolynomial::from)
-            //     .collect::<Vec<_>>()
-            //     .try_into()
-            //     .unwrap(),
-            // Actual aux variable polynomials will be computed afterwards
-            aux: AuxVariableStuff::initialize(&()),
-        }
-    }
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript> {
-    pub key: UniformSpartanKey<I, F>,
-    pub proof: UniformSpartanProof<I, F, ProofTranscript>,
+pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
+    pub key: UniformSpartanKey<F>,
+    pub proof: UniformSpartanProof<F, ProofTranscript>,
     pub _marker: PhantomData<ProofTranscript>,
 }
 
-impl<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
-    R1CSProof<I, F, ProofTranscript>
-{
+impl<F: JoltField, ProofTranscript: Transcript> R1CSProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
     pub fn verify<PCS>(
         &self,
-        commitments: &JoltCommitments<PCS, ProofTranscript>,
+        // commitments: &JoltCommitments<PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
@@ -182,187 +42,329 @@ impl<I: ConstraintInput, F: JoltField, ProofTranscript: Transcript>
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
-        self.proof
-            .verify(&self.key, commitments, opening_accumulator, transcript)
+        todo!()
+        // self.proof
+        //     .verify(&self.key, commitments, opening_accumulator, transcript)
     }
-}
-
-/// Jolt's R1CS constraint inputs are typically represented as an enum.
-/// This trait serves two main purposes:
-/// - Defines a canonical ordering over inputs (and thus indices for each input).
-///   This is needed for sumcheck.
-/// - Defines a mapping between inputs and Jolt's polynomial/commitment/opening types
-///   (i.e. `JoltStuff<T>`).
-pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'static {
-    /// Returns a flat vector of all unique constraint inputs.
-    /// This also serves as a canonical ordering over the inputs.
-    fn flatten() -> Vec<Self>;
-
-    /// The total number of unique constraint inputs
-    fn num_inputs() -> usize {
-        Self::flatten().len()
-    }
-
-    /// Converts an index to the corresponding constraint input.
-    fn from_index(index: usize) -> Self {
-        Self::flatten()[index]
-    }
-
-    /// Converts a constraint input to its index in the canonical
-    /// ordering over inputs given by `ConstraintInput::flatten`.
-    fn to_index(&self) -> usize {
-        match Self::flatten().iter().position(|x| x == self) {
-            Some(index) => index,
-            None => panic!("Invalid variant {:?}", self),
-        }
-    }
-
-    /// Gets an immutable reference to a Jolt polynomial/commitment/opening
-    /// corresponding to the given constraint input.
-    fn get_ref<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
-        &self,
-        jolt_stuff: &'a JoltStuff<T>,
-    ) -> &'a T;
-
-    /// Gets a mutable reference to a Jolt polynomial/commitment/opening
-    /// corresponding to the given constraint input.
-    fn get_ref_mut<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
-        &self,
-        jolt_stuff: &'a mut JoltStuff<T>,
-    ) -> &'a mut T;
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, EnumIter)]
-pub enum JoltR1CSInputs {
-    // Bytecode_A, // Virtual address
-    // // Bytecode_V
-    // Bytecode_ELFAddress,
-    // Bytecode_Bitflags,
-    // Bytecode_RS1,
-    // Bytecode_RS2,
-    // Bytecode_RD,
-    // Bytecode_Imm,
-
-    // RAM_Address,
-    // RS1_Read,
-    // RS2_Read,
-    // RD_Read,
-    // RAM_Read,
-    // RD_Write,
-    // RAM_Write,
-
-    // ChunksQuery(usize),
-    // LookupOutput,
-    // ChunksX(usize),
-    // ChunksY(usize),
-    // OpFlags(CircuitFlags),
-    // InstructionFlags(RV32I),
-    Aux(AuxVariable),
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, EnumIter)]
-pub enum AuxVariable {
+pub enum JoltR1CSInputs {
     #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
-    LeftLookupOperand,
-    RightLookupOperand,
-    Product,
-    // RelevantYChunk(usize),
+    VirutalInstructionAddress, // Virtual (bytecode raf)
+    RealInstructionAddress, // Virtual (bytecode rv)
+    Rd,                     // Virtual (bytecode rv)
+    Imm,                    // Virtual (bytecode rv)
+    RamAddress,             // Virtual (RAM raf)
+    Rs1Value,               // Virtual (registers rv)
+    Rs2Value,               // Virtual (registers rv)
+    RdWriteValue,
+    RamReadValue, // Virtual (RAM rv)
+    RamWriteValue,
+    LeftInstructionInput,  // to_lookup_query -> to_instruction_operands
+    RightInstructionInput, // to_lookup_query -> to_instruction_operands
+    LeftLookupOperand,     // Virtual (instruction raf)
+    RightLookupOperand,    // Virtual (instruction raf)
+    Product,               // LeftInstructionOperand * RightInstructionOperand
     WriteLookupOutputToRD,
     WritePCtoRD,
     NextPCJump,
     ShouldBranch,
     NextPC,
+    LookupOutput, // Virtual (instruction rv)
+    OpFlags(CircuitFlags),
+}
+
+/// This const serves to define a canonical ordering over inputs (and thus indices
+/// for each input). This is needed for sumcheck.
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 35] = [
+    JoltR1CSInputs::VirutalInstructionAddress,
+    JoltR1CSInputs::RealInstructionAddress,
+    JoltR1CSInputs::Rd,
+    JoltR1CSInputs::Imm,
+    JoltR1CSInputs::RamAddress,
+    JoltR1CSInputs::Rs1Value,
+    JoltR1CSInputs::Rs2Value,
+    JoltR1CSInputs::RdWriteValue,
+    JoltR1CSInputs::RamReadValue,
+    JoltR1CSInputs::RamWriteValue,
+    JoltR1CSInputs::LeftInstructionInput,
+    JoltR1CSInputs::RightInstructionInput,
+    JoltR1CSInputs::LeftLookupOperand,
+    JoltR1CSInputs::RightLookupOperand,
+    JoltR1CSInputs::Product,
+    JoltR1CSInputs::WriteLookupOutputToRD,
+    JoltR1CSInputs::WritePCtoRD,
+    JoltR1CSInputs::NextPCJump,
+    JoltR1CSInputs::ShouldBranch,
+    JoltR1CSInputs::NextPC,
+    JoltR1CSInputs::LookupOutput,
+    JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
+    JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
+    JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
+    JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
+    JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
+    JoltR1CSInputs::OpFlags(CircuitFlags::SingleOperandLookup),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Load),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Store),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
+    JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Virtual),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
+    JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+];
+
+impl JoltR1CSInputs {
+    /// The total number of unique constraint inputs
+    pub fn num_inputs() -> usize {
+        ALL_R1CS_INPUTS.len()
+    }
+
+    /// Converts an index to the corresponding constraint input.
+    pub fn from_index(index: usize) -> Self {
+        ALL_R1CS_INPUTS[index]
+    }
+
+    /// Converts a constraint input to its index in the canonical
+    /// ordering over inputs given by `ALL_R1CS_INPUTS`.
+    pub fn to_index(&self) -> usize {
+        match ALL_R1CS_INPUTS.iter().position(|x| x == self) {
+            Some(index) => index,
+            None => panic!("Invalid variant {:?}", self),
+        }
+    }
+
+    pub fn generate_witness<F, PCS, ProofTranscript>(
+        &self,
+        trace: &[RV32IMCycle],
+        preprocessing: &JoltProverPreprocessing<F, PCS, ProofTranscript>,
+    ) -> MultilinearPolynomial<F>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
+        match self {
+            JoltR1CSInputs::VirutalInstructionAddress => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let instr = cycle.instruction().normalize();
+                        *preprocessing
+                            .shared
+                            .bytecode
+                            .virtual_address_map
+                            .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
+                            .unwrap() as u64
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RealInstructionAddress => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instruction().normalize().address as u64)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::Rd => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.rd_write().0 as u8)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::Imm => {
+                let coeffs: Vec<i64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instruction().normalize().operands.imm)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RamAddress => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.ram_access().address() as u64)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::Rs1Value => {
+                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs1_read().1).collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::Rs2Value => {
+                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rs2_read().1).collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RdWriteValue => {
+                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.rd_write().2).collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RamReadValue => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| match cycle.ram_access() {
+                        tracer::instruction::RAMAccess::Read(read) => read.value,
+                        tracer::instruction::RAMAccess::Write(write) => write.pre_value,
+                        tracer::instruction::RAMAccess::NoOp => 0,
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RamWriteValue => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| match cycle.ram_access() {
+                        tracer::instruction::RAMAccess::Read(read) => read.value,
+                        tracer::instruction::RAMAccess::Write(write) => write.post_value,
+                        tracer::instruction::RAMAccess::NoOp => 0,
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::LeftInstructionInput => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RightInstructionInput => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::LeftLookupOperand => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).0)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::RightLookupOperand => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| LookupQuery::<32>::to_lookup_operands(cycle).1)
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::Product => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let (x, y) = LookupQuery::<32>::to_instruction_inputs(cycle);
+                        x * y
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::WriteLookupOutputToRD => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let flag = cycle.instruction().circuit_flags()
+                            [CircuitFlags::WriteLookupOutputToRD as usize];
+                        (cycle.rd_write().0 as u8) * (flag as u8)
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::WritePCtoRD => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
+                        (cycle.rd_write().0 as u8) * (flag as u8)
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::NextPCJump => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let instr = cycle.instruction();
+                        let is_jump = instr.circuit_flags()[CircuitFlags::Jump as usize];
+                        let do_not_update_pc =
+                            instr.circuit_flags()[CircuitFlags::DoNotUpdatePC as usize];
+                        if is_jump {
+                            LookupQuery::<32>::to_lookup_output(cycle) + 4
+                        } else if do_not_update_pc {
+                            instr.normalize().address as u64
+                        } else {
+                            instr.normalize().address as u64 + 4
+                        }
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::LookupOutput => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| LookupQuery::<32>::to_lookup_output(cycle))
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::NextPC => {
+                let coeffs: Vec<u64> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let is_branch =
+                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                        let should_branch =
+                            is_branch && LookupQuery::<32>::to_lookup_output(cycle) != 0;
+                        let instr = cycle.instruction().normalize();
+                        if should_branch {
+                            instr.address as u64 + instr.operands.imm as u64
+                        } else {
+                            // JoltR1CSInputs::NextPCJump
+                            let is_jump =
+                                cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
+                            let do_not_update_pc = cycle.instruction().circuit_flags()
+                                [CircuitFlags::DoNotUpdatePC as usize];
+                            if is_jump {
+                                LookupQuery::<32>::to_lookup_output(cycle) + 4
+                            } else if do_not_update_pc {
+                                instr.address as u64
+                            } else {
+                                instr.address as u64 + 4
+                            }
+                        }
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::ShouldBranch => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let is_branch =
+                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                        (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
+                    })
+                    .collect();
+                coeffs.into()
+            }
+            JoltR1CSInputs::OpFlags(flag) => {
+                // TODO(moodlezoup): Boolean polynomial
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| cycle.instruction().circuit_flags()[*flag as usize] as u8)
+                    .collect();
+                coeffs.into()
+            }
+        }
+    }
 }
 
 impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
-impl ConstraintInput for JoltR1CSInputs {
-    fn flatten() -> Vec<Self> {
-        JoltR1CSInputs::iter()
-            .flat_map(|variant| match variant {
-                // Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
-                // Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
-                Self::Aux(_) => AuxVariable::iter()
-                    .flat_map(|aux| match aux {
-                        // AuxVariable::RelevantYChunk(_) => (0..C)
-                        //     .map(|i| Self::Aux(AuxVariable::RelevantYChunk(i)))
-                        //     .collect(),
-                        _ => vec![Self::Aux(aux)],
-                    })
-                    .collect(),
-                _ => vec![variant],
-            })
-            .collect()
-    }
-
-    fn get_ref<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
-        &self,
-        jolt: &'a JoltStuff<T>,
-    ) -> &'a T {
-        let aux_polynomials = &jolt.r1cs.aux;
-        match self {
-            // JoltR1CSInputs::Bytecode_A => &jolt.bytecode.a_read_write,
-            // JoltR1CSInputs::Bytecode_ELFAddress => &jolt.bytecode.v_read_write[0],
-            // JoltR1CSInputs::Bytecode_Bitflags => &jolt.bytecode.v_read_write[1],
-            // JoltR1CSInputs::Bytecode_RD => &jolt.bytecode.v_read_write[2],
-            // JoltR1CSInputs::Bytecode_RS1 => &jolt.bytecode.v_read_write[3],
-            // JoltR1CSInputs::Bytecode_RS2 => &jolt.bytecode.v_read_write[4],
-            // JoltR1CSInputs::Bytecode_Imm => &jolt.bytecode.v_read_write[5],
-            // JoltR1CSInputs::RAM_Address => &jolt.read_write_memory.a_ram,
-            // JoltR1CSInputs::RS1_Read => &jolt.read_write_memory.v_read_rs1,
-            // JoltR1CSInputs::RS2_Read => &jolt.read_write_memory.v_read_rs2,
-            // JoltR1CSInputs::RD_Read => &jolt.read_write_memory.v_read_rd,
-            // JoltR1CSInputs::RAM_Read => &jolt.read_write_memory.v_read_ram,
-            // JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
-            // JoltR1CSInputs::RAM_Write => &jolt.read_write_memory.v_write_ram,
-            // JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
-            // JoltR1CSInputs::InstructionFlags(i) => {
-            //     &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
-            // }
-            Self::Aux(aux) => match aux {
-                AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,
-                AuxVariable::RightLookupOperand => &aux_polynomials.right_lookup_operand,
-                AuxVariable::Product => &aux_polynomials.product,
-                // AuxVariable::RelevantYChunk(i) => &aux_polynomials.relevant_y_chunks[*i],
-                AuxVariable::WriteLookupOutputToRD => &aux_polynomials.write_lookup_output_to_rd,
-                AuxVariable::WritePCtoRD => &aux_polynomials.write_pc_to_rd,
-                AuxVariable::NextPCJump => &aux_polynomials.next_pc_jump,
-                AuxVariable::ShouldBranch => &aux_polynomials.should_branch,
-                AuxVariable::NextPC => &aux_polynomials.next_pc,
-            },
-        }
-    }
-
-    fn get_ref_mut<'a, T: CanonicalSerialize + CanonicalDeserialize + Sync>(
-        &self,
-        jolt: &'a mut JoltStuff<T>,
-    ) -> &'a mut T {
-        let aux_polynomials = &mut jolt.r1cs.aux;
-        match self {
-            Self::Aux(aux) => match aux {
-                AuxVariable::LeftLookupOperand => &mut aux_polynomials.left_lookup_operand,
-                AuxVariable::RightLookupOperand => &mut aux_polynomials.right_lookup_operand,
-                AuxVariable::Product => &mut aux_polynomials.product,
-                // AuxVariable::RelevantYChunk(i) => &mut aux_polynomials.relevant_y_chunks[*i],
-                AuxVariable::WriteLookupOutputToRD => {
-                    &mut aux_polynomials.write_lookup_output_to_rd
-                }
-                AuxVariable::WritePCtoRD => &mut aux_polynomials.write_pc_to_rd,
-                AuxVariable::NextPCJump => &mut aux_polynomials.next_pc_jump,
-                AuxVariable::ShouldBranch => &mut aux_polynomials.should_branch,
-                AuxVariable::NextPC => &mut aux_polynomials.next_pc,
-            },
-            _ => panic!("get_ref_mut should only be invoked when computing aux polynomials"),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::Fr;
-
-    use crate::jolt::vm::JoltPolynomials;
-
     use super::*;
 
     #[test]
@@ -370,33 +372,11 @@ mod tests {
         for i in 0..JoltR1CSInputs::num_inputs() {
             assert_eq!(i, JoltR1CSInputs::from_index(i).to_index());
         }
-        for var in JoltR1CSInputs::flatten() {
+        for var in ALL_R1CS_INPUTS {
             assert_eq!(
                 var,
                 JoltR1CSInputs::from_index(JoltR1CSInputs::to_index(&var))
             );
         }
-    }
-
-    #[test]
-    fn get_ref() {
-        let mut jolt_polys: JoltPolynomials<Fr> = JoltPolynomials::default();
-        jolt_polys.r1cs = R1CSPolynomials::initialize(&());
-
-        for aux in AuxVariable::iter().flat_map(|aux| match aux {
-            // AuxVariable::RelevantYChunk(_) => (0..C)
-            //     .map(|i| JoltR1CSInputs::Aux(AuxVariable::RelevantYChunk(i)))
-            //     .collect(),
-            _ => vec![JoltR1CSInputs::Aux(aux)],
-        }) {
-            let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
-            let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const MultilinearPolynomial<Fr>;
-            assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
-        }
-    }
-
-    #[test]
-    fn r1cs_stuff_ordering() {
-        R1CSOpenings::<Fr>::test_ordering_consistency(&());
     }
 }

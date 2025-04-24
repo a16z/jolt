@@ -28,7 +28,7 @@ impl InstructionFlags for VirtualAssertValidUnsignedRemainder {
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
     for RISCVCycle<VirtualAssertValidUnsignedRemainder>
 {
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
@@ -44,9 +44,8 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
         }
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
-        let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+        let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         (divisor == 0 || remainder < divisor).into()
     }
 }

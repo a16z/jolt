@@ -22,14 +22,13 @@ impl InstructionFlags for VirtualSRA {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRA> {
-    fn to_lookup_query(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, u64) {
         (self.register_state.rs1, self.register_state.rs2)
     }
 
-    #[cfg(test)]
     fn to_lookup_output(&self) -> u64 {
         use crate::subprotocols::sparse_dense_shout::LookupBits;
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_query(self);
+        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         let mut x = LookupBits::new(x as u64, WORD_SIZE);
         let mut y = LookupBits::new(y as u64, WORD_SIZE);
 
