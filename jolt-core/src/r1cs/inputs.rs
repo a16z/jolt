@@ -6,7 +6,7 @@
 
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::lookup_table::JoltInstructionSet;
-use crate::jolt::vm::{JoltCommitments, JoltStuff, JoltTraceStep};
+use crate::jolt::vm::{JoltCommitments, JoltStuff};
 use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -23,6 +23,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use tracer::instruction::RV32IMCycle;
 
 /// Auxiliary variables defined in Jolt's R1CS constraints.
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -85,7 +86,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 pub struct R1CSStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     // pub chunks_x: Vec<T>,
     // pub chunks_y: Vec<T>,
-    pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
+    // pub circuit_flags: [T; NUM_CIRCUIT_FLAGS],
     pub aux: AuxVariableStuff<T>,
 }
 
@@ -93,17 +94,19 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default> Initializable<T, ()
 
 impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T> for R1CSStuff<T> {
     fn read_write_values(&self) -> Vec<&T> {
-        self.circuit_flags
-            .iter()
-            .chain(self.aux.read_write_values())
-            .collect()
+        todo!()
+        // self.circuit_flags
+        //     .iter()
+        //     .chain(self.aux.read_write_values())
+        //     .collect()
     }
 
     fn read_write_values_mut(&mut self) -> Vec<&mut T> {
-        self.circuit_flags
-            .iter_mut()
-            .chain(self.aux.read_write_values_mut())
-            .collect()
+        todo!()
+        // self.circuit_flags
+        //     .iter_mut()
+        //     .chain(self.aux.read_write_values_mut())
+        //     .collect()
     }
 }
 
@@ -136,26 +139,26 @@ pub type R1CSCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript
 impl<F: JoltField> R1CSPolynomials<F> {
     #[tracing::instrument(skip_all, name = "R1CSPolynomials::new")]
     pub fn new<const WORD_SIZE: usize, InstructionSet: JoltInstructionSet, I: ConstraintInput>(
-        trace: &[JoltTraceStep<WORD_SIZE>],
+        trace: &[RV32IMCycle],
     ) -> Self {
-        let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
+        // let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
 
-        // TODO(moodlezoup): Can be parallelized
-        for (step_index, step) in trace.iter().enumerate() {
-            for j in 0..NUM_CIRCUIT_FLAGS {
-                if step.circuit_flags[j] {
-                    circuit_flags[j][step_index] = 1;
-                }
-            }
-        }
+        // // TODO(moodlezoup): Can be parallelized
+        // for (step_index, step) in trace.iter().enumerate() {
+        //     for j in 0..NUM_CIRCUIT_FLAGS {
+        //         if step.circuit_flags[j] {
+        //             circuit_flags[j][step_index] = 1;
+        //         }
+        //     }
+        // }
 
         Self {
-            circuit_flags: circuit_flags
-                .into_iter()
-                .map(MultilinearPolynomial::from)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
+            // circuit_flags: circuit_flags
+            //     .into_iter()
+            //     .map(MultilinearPolynomial::from)
+            //     .collect::<Vec<_>>()
+            //     .try_into()
+            //     .unwrap(),
             // Actual aux variable polynomials will be computed afterwards
             aux: AuxVariableStuff::initialize(&()),
         }
@@ -257,7 +260,7 @@ pub enum JoltR1CSInputs {
     // LookupOutput,
     // ChunksX(usize),
     // ChunksY(usize),
-    OpFlags(CircuitFlags),
+    // OpFlags(CircuitFlags),
     // InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
@@ -281,7 +284,7 @@ impl ConstraintInput for JoltR1CSInputs {
     fn flatten() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
-                Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
+                // Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
                 // Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
@@ -316,7 +319,7 @@ impl ConstraintInput for JoltR1CSInputs {
             // JoltR1CSInputs::RAM_Read => &jolt.read_write_memory.v_read_ram,
             // JoltR1CSInputs::RD_Write => &jolt.read_write_memory.v_write_rd,
             // JoltR1CSInputs::RAM_Write => &jolt.read_write_memory.v_write_ram,
-            JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
+            // JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
             // JoltR1CSInputs::InstructionFlags(i) => {
             //     &jolt.instruction_lookups.instruction_flags[RV32I::enum_index(i)]
             // }

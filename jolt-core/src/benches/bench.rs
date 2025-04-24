@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::host;
 use crate::jolt::lookup_table::LookupTables;
 use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
-use crate::jolt::vm::{Jolt, JoltProverPreprocessing, JoltTraceStep};
+use crate::jolt::vm::{Jolt, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::zeromorph::Zeromorph;
