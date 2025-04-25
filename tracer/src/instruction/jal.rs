@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{format_j::FormatJ, InstructionFormat},
+    format::{format_j::FormatJ, normalize_imm, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -44,7 +44,7 @@ impl RISCVInstruction for JAL {
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd] = cpu.sign_extend(cpu.pc as i64);
-        cpu.pc = (self.address as i64 + self.operands.imm) as u64;
+        cpu.pc = (self.address as i64 + normalize_imm(self.operands.imm)) as u64;
     }
 }
 

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
+    format::{format_i::FormatI, normalize_imm, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -44,7 +44,7 @@ impl RISCVInstruction for SLTIU {
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd] = match cpu.unsigned_data(cpu.x[self.operands.rs1])
-            < cpu.unsigned_data(self.operands.imm)
+            < cpu.unsigned_data(normalize_imm(self.operands.imm))
         {
             true => 1,
             false => 0,

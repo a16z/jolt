@@ -16,9 +16,9 @@ impl InstructionFlags for VirtualAssertHalfwordAlignment {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Assert as usize] = true;
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
-        flags[CircuitFlags::SingleOperandLookup as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
@@ -28,30 +28,26 @@ impl InstructionFlags for VirtualAssertHalfwordAlignment {
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssertHalfwordAlignment> {
     fn to_lookup_operands(&self) -> (u64, u64) {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, x + y)
+        let (address, offset) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        (0, (address as i64 + offset) as u64)
     }
 
     fn to_lookup_index(&self) -> u64 {
-        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
-        y
+        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm as u8 as u64,
+                self.instruction.operands.imm,
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm as u32 as u64,
+                self.instruction.operands.imm,
             ),
-            64 => (
-                self.register_state.rs1,
-                self.instruction.operands.imm as u64,
-            ),
+            64 => (self.register_state.rs1, self.instruction.operands.imm),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

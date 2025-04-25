@@ -1,5 +1,3 @@
-use common::constants::REGISTER_COUNT;
-
 use crate::{field::JoltField, jolt::instruction::CircuitFlags};
 
 use super::{
@@ -8,15 +6,11 @@ use super::{
 };
 
 pub const PC_START_ADDRESS: i64 = 0x80000000;
-const PC_NOOP_SHIFT: i64 = 4;
 
 pub trait R1CSConstraints<F: JoltField> {
-    fn construct_constraints(
-        padded_trace_length: usize,
-        memory_start: u64,
-    ) -> CombinedUniformBuilder<F> {
+    fn construct_constraints(padded_trace_length: usize) -> CombinedUniformBuilder<F> {
         let mut uniform_builder = R1CSBuilder::new();
-        Self::uniform_constraints(&mut uniform_builder, memory_start);
+        Self::uniform_constraints(&mut uniform_builder);
         let cross_step_constraints = Self::cross_step_constraints();
 
         CombinedUniformBuilder::construct(
@@ -28,7 +22,7 @@ pub trait R1CSConstraints<F: JoltField> {
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of
     /// the execution trace.
-    fn uniform_constraints(builder: &mut R1CSBuilder, memory_start: u64);
+    fn uniform_constraints(builder: &mut R1CSBuilder);
     /// Construct's Jolt's cross-step constraints.
     /// Cross-step constraints are constraints whose inputs involve witness
     /// values from multiple steps of the execution trace.
@@ -40,28 +34,52 @@ pub trait R1CSConstraints<F: JoltField> {
 
 pub struct JoltRV32IMConstraints;
 impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
-    fn uniform_constraints(cs: &mut R1CSBuilder, memory_start: u64) {
-        cs.constrain_if_else(
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
-            JoltR1CSInputs::RealInstructionAddress - PC_NOOP_SHIFT,
-            JoltR1CSInputs::Rs1Value,
+    fn uniform_constraints(cs: &mut R1CSBuilder) {
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
             JoltR1CSInputs::LeftInstructionInput,
+            JoltR1CSInputs::Rs1Value,
         );
 
-        cs.constrain_if_else(
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
-            JoltR1CSInputs::Imm,
-            JoltR1CSInputs::Rs2Value,
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
+            JoltR1CSInputs::LeftInstructionInput,
+            JoltR1CSInputs::RealInstructionAddress,
+        );
+
+        cs.constrain_eq_conditional(
+            1 - JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value)
+                - JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
+            JoltR1CSInputs::LeftInstructionInput,
+            0,
+        );
+
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
             JoltR1CSInputs::RightInstructionInput,
+            JoltR1CSInputs::Rs2Value,
+        );
+
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
+            JoltR1CSInputs::RightInstructionInput,
+            JoltR1CSInputs::Imm,
+        );
+
+        cs.constrain_eq_conditional(
+            1 - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value)
+                - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
+            JoltR1CSInputs::RightInstructionInput,
+            0,
         );
 
         let is_load_or_store = JoltR1CSInputs::OpFlags(CircuitFlags::Load)
             + JoltR1CSInputs::OpFlags(CircuitFlags::Store);
-        let memory_start: i64 = memory_start.try_into().unwrap();
-        cs.constrain_eq_conditional(
+        cs.constrain_if_else(
             is_load_or_store,
             JoltR1CSInputs::Rs1Value + JoltR1CSInputs::Imm,
-            4 * JoltR1CSInputs::RamAddress + memory_start - 4 * REGISTER_COUNT as i64,
+            0,
+            JoltR1CSInputs::RamAddress,
         );
 
         cs.constrain_eq_conditional(
@@ -83,7 +101,9 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
 
         cs.constrain_if_else(
-            JoltR1CSInputs::OpFlags(CircuitFlags::SingleOperandLookup),
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
+                + JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
+                + JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
             0,
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::LeftLookupOperand,
@@ -116,6 +136,16 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         );
 
         cs.constrain_eq_conditional(
+            1 - JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
+                - JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
+                - JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands)
+                // Arbitrary untrusted advice goes in right lookup operand
+                - JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
+            JoltR1CSInputs::RightLookupOperand,
+            JoltR1CSInputs::RightInstructionInput,
+        );
+
+        cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
             JoltR1CSInputs::LookupOutput,
             1,
@@ -143,16 +173,14 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
 
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
-            JoltR1CSInputs::RealInstructionAddress,
             JoltR1CSInputs::RdWriteValue,
+            JoltR1CSInputs::RealInstructionAddress + 4,
         );
 
-        cs.constrain_if_else(
+        cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
-            JoltR1CSInputs::LookupOutput + 4,
-            JoltR1CSInputs::RealInstructionAddress + 4
-                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
-            JoltR1CSInputs::NextPCJump,
+            JoltR1CSInputs::NextPC,
+            JoltR1CSInputs::LookupOutput,
         );
 
         cs.constrain_prod(
@@ -161,11 +189,18 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::ShouldBranch,
         );
 
-        cs.constrain_if_else(
+        cs.constrain_eq_conditional(
             JoltR1CSInputs::ShouldBranch,
-            JoltR1CSInputs::RealInstructionAddress + JoltR1CSInputs::Imm,
-            JoltR1CSInputs::NextPCJump,
             JoltR1CSInputs::NextPC,
+            JoltR1CSInputs::RealInstructionAddress + JoltR1CSInputs::Imm,
+        );
+
+        // instruction is neither a branch nor a jump
+        cs.constrain_eq_conditional(
+            1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
+            JoltR1CSInputs::NextPC,
+            JoltR1CSInputs::RealInstructionAddress + 4
+                - 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
         );
     }
 
@@ -187,8 +222,8 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         // any virtual sequences.
         let virtual_sequence_constraint = OffsetEqConstraint::new(
             (JoltR1CSInputs::OpFlags(CircuitFlags::Virtual), false),
-            (JoltR1CSInputs::VirutalInstructionAddress, true),
-            (JoltR1CSInputs::VirutalInstructionAddress + 1, false),
+            (JoltR1CSInputs::VirtualInstructionAddress, true),
+            (JoltR1CSInputs::VirtualInstructionAddress + 1, false),
         );
 
         vec![pc_constraint, virtual_sequence_constraint]

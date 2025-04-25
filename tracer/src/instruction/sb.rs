@@ -6,6 +6,7 @@ use crate::emulator::cpu::Cpu;
 use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
+use super::format::format_load::FormatLoad;
 use super::format::{format_i::FormatI, format_r::FormatR, format_u::FormatU};
 use super::lui::LUI;
 use super::lw::LW;
@@ -93,7 +94,7 @@ impl VirtualInstructionSequence for SB {
             operands: FormatI {
                 rd: v_address,
                 rs1: self.operands.rs1,
-                imm: self.operands.imm,
+                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(13),
         };
@@ -104,7 +105,7 @@ impl VirtualInstructionSequence for SB {
             operands: FormatI {
                 rd: v_word_address,
                 rs1: v_address,
-                imm: -4,
+                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(12),
         };
@@ -112,7 +113,7 @@ impl VirtualInstructionSequence for SB {
 
         let lw = LW {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_word,
                 rs1: v_word_address,
                 imm: 0,

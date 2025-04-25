@@ -251,11 +251,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
 
     pub fn verify(
         &self,
-        bytecode: &[RV32IMInstruction],
+        preprocessing: &BytecodePreprocessing,
         r_cycle: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let K = bytecode.len();
+        let K = preprocessing.bytecode.len();
         let T = r_cycle.len().pow2();
         let z: F = transcript.challenge_scalar();
 
@@ -267,7 +267,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
         // Used to combine the various fields in each instruction into a single
         // field element.
         let gamma: F = transcript.challenge_scalar();
-        let val: Vec<F> = bytecode_to_val(bytecode, gamma);
+        let val: Vec<F> = bytecode_to_val(&preprocessing.bytecode, gamma);
         let val = MultilinearPolynomial::from(val);
 
         assert_eq!(

@@ -13,6 +13,7 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualMovsign {
 impl InstructionFlags for VirtualMovsign {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
@@ -23,10 +24,10 @@ impl InstructionFlags for VirtualMovsign {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualMovsign> {
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         (
             self.register_state.rs1,
-            self.instruction.operands.imm as u64, // Unused
+            self.instruction.operands.imm as i64, // Unused
         )
     }
 

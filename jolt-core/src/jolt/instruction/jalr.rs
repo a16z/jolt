@@ -13,10 +13,10 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for JALR {
 impl InstructionFlags for JALR {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::Jump as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
-        flags[CircuitFlags::SingleOperandLookup as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
@@ -27,28 +27,27 @@ impl InstructionFlags for JALR {
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JALR> {
     fn to_lookup_operands(&self) -> (u64, u64) {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (0, x + y)
+        (0, (x as i64 + y) as u64)
     }
 
     fn to_lookup_index(&self) -> u64 {
-        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
-        y
+        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         match WORD_SIZE {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm as u8 as u64,
+                self.instruction.operands.imm as u8 as u64 as i64,
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm as u32 as u64,
+                self.instruction.operands.imm as u32 as u64 as i64,
             ),
             64 => (
                 self.register_state.rs1,
-                self.instruction.operands.imm as u64,
+                self.instruction.operands.imm as i64,
             ),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
@@ -58,9 +57,9 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<JALR> {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
         match WORD_SIZE {
             #[cfg(test)]
-            8 => (x as u8).wrapping_add(y as u8) as u64,
-            32 => (x as u32).wrapping_add(y as u32) as u64,
-            64 => x.wrapping_add(y),
+            8 => (x as i8).overflowing_add(y as i8).0 as u8 as u64,
+            32 => (x as i32).overflowing_add(y as i32).0 as u32 as u64,
+            64 => (x as i64).overflowing_add(y).0 as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

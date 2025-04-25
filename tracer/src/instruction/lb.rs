@@ -5,6 +5,7 @@ use crate::emulator::cpu::Cpu;
 
 use super::addi::ADDI;
 use super::andi::ANDI;
+use super::format::format_i::FormatI;
 use super::format::format_r::FormatR;
 use super::lw::LW;
 use super::sll::SLL;
@@ -14,14 +15,14 @@ use super::xori::XORI;
 use super::{RAMRead, RV32IMInstruction, VirtualInstructionSequence};
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
+    format::{format_load::FormatLoad, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct LB {
     pub address: u64,
-    pub operands: FormatI,
+    pub operands: FormatLoad,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -34,7 +35,7 @@ impl RISCVInstruction for LB {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00000003;
 
-    type Format = FormatI;
+    type Format = FormatLoad;
     type RAMAccess = RAMRead;
 
     fn operands(&self) -> &Self::Format {
@@ -48,7 +49,7 @@ impl RISCVInstruction for LB {
 
         Self {
             address,
-            operands: FormatI::parse(word),
+            operands: FormatLoad::parse(word),
             virtual_sequence_remaining: None,
         }
     }
@@ -91,7 +92,7 @@ impl VirtualInstructionSequence for LB {
             operands: FormatI {
                 rd: v_address,
                 rs1: self.operands.rs1,
-                imm: self.operands.imm,
+                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(9),
         };
@@ -102,7 +103,7 @@ impl VirtualInstructionSequence for LB {
             operands: FormatI {
                 rd: v_word_address,
                 rs1: v_address,
-                imm: -4,
+                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(8),
         };
@@ -110,7 +111,7 @@ impl VirtualInstructionSequence for LB {
 
         let lw = LW {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_word,
                 rs1: v_word_address,
                 imm: 0,

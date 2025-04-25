@@ -110,6 +110,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         #[cfg(test)]
         {
+            for poly in polys.iter() {
+                assert_eq!(num_rounds, poly.get_num_vars());
+            }
             let total_evals = 1 << num_rounds;
             let mut sum = F::zero();
             for i in 0..total_evals {

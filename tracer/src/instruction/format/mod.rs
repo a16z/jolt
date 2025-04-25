@@ -6,6 +6,7 @@ use std::fmt::Debug;
 pub mod format_b;
 pub mod format_i;
 pub mod format_j;
+pub mod format_load;
 pub mod format_r;
 pub mod format_s;
 pub mod format_u;
@@ -50,4 +51,8 @@ pub fn normalize_register_value(value: i64, xlen: &Xlen) -> u64 {
         Xlen::Bit32 => value as u32 as u64,
         Xlen::Bit64 => value as u64,
     }
+}
+
+pub fn normalize_imm(imm: u64) -> i64 {
+    imm as i32 as i64
 }

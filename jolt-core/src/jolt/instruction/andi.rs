@@ -13,6 +13,7 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for ANDI {
 impl InstructionFlags for ANDI {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
@@ -23,10 +24,10 @@ impl InstructionFlags for ANDI {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<ANDI> {
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         (
             self.register_state.rs1,
-            self.instruction.operands.imm as u64,
+            self.instruction.operands.imm as i64,
         )
     }
 
@@ -36,7 +37,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<ANDI> {
             #[cfg(test)]
             8 => (x as u8 & y as u8) as u64,
             32 => (x as u32 & y as u32) as u64,
-            64 => x & y,
+            64 => x & y as u64,
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

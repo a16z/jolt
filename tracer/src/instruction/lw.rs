@@ -5,14 +5,14 @@ use crate::emulator::cpu::Cpu;
 use super::RAMRead;
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
+    format::{format_load::FormatLoad, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct LW {
     pub address: u64,
-    pub operands: FormatI,
+    pub operands: FormatLoad,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -25,7 +25,7 @@ impl RISCVInstruction for LW {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00002003;
 
-    type Format = FormatI;
+    type Format = FormatLoad;
     type RAMAccess = RAMRead;
 
     fn operands(&self) -> &Self::Format {
@@ -39,7 +39,7 @@ impl RISCVInstruction for LW {
 
         Self {
             address,
-            operands: FormatI::parse(word),
+            operands: FormatLoad::parse(word),
             virtual_sequence_remaining: None,
         }
     }

@@ -1,5 +1,5 @@
 use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use strum_macros::EnumCount as EnumCountMacro;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 use crate::utils::interleave_bits;
@@ -13,13 +13,14 @@ pub trait InstructionLookup<const WORD_SIZE: usize> {
 pub trait LookupQuery<const WORD_SIZE: usize> {
     /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
     /// one of the tuple values will be 0.
-    fn to_instruction_inputs(&self) -> (u64, u64);
+    fn to_instruction_inputs(&self) -> (u64, i64);
 
     /// Returns a tuple of the instruction's lookup operands. By default, these are the
     /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
     /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
     fn to_lookup_operands(&self) -> (u64, u64) {
-        self.to_instruction_inputs()
+        let (x, y) = self.to_instruction_inputs();
+        (x, y as u64)
     }
 
     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
@@ -36,21 +37,22 @@ pub trait LookupQuery<const WORD_SIZE: usize> {
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
 /// Note that the flags below deviate somewhat from those described in Appendix A.1
 /// of the Jolt paper.
-#[derive(Clone, Copy, Debug, Default, PartialEq, EnumCountMacro, EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, EnumCountMacro)]
 pub enum CircuitFlags {
-    /// 1 if the first instruction operand is the program counter; 0 otherwise (first lookup operand is RS1 value).
-    #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
+    /// 1 if the first instruction operand is the program counter; 0 otherwise.
     LeftOperandIsPC,
-    /// 1 if the second instruction operand is `imm`; 0 otherwise (second lookup operand is RS2 value).
+    /// 1 if the second instruction operand is `imm`; 0 otherwise.
     RightOperandIsImm,
+    /// 1 if the first instruction operand is RS1 value; 0 otherwise.
+    LeftOperandIsRs1Value,
+    /// 1 if the first instruction operand is RS2 value; 0 otherwise.
+    RightOperandIsRs2Value,
     /// 1 if the first lookup operand is the sum of the two instruction operands.
     AddOperands,
     /// 1 if the first lookup operand is the difference between the two instruction operands.
     SubtractOperands,
     /// 1 if the first lookup operand is the product of the two instruction operands.
     MultiplyOperands,
-    /// 1 if the second lookup operand is 0. (Otherwise, the second lookup operand is equal to the second instruction operand)
-    SingleOperandLookup, // TODO(moodlezoup): `InterleaveOperands` is probably more intuitive
     /// 1 if the instruction is a load (i.e. `LW`)
     Load,
     /// 1 if the instruction is a store (i.e. `SW`)
@@ -67,16 +69,14 @@ pub enum CircuitFlags {
     Assert,
     /// Used in virtual sequences; the program counter should be the same for the full sequence.
     DoNotUpdatePC,
+    /// Is (virtual) advice instruction
+    Advice,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 pub trait InstructionFlags {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
-
-    fn bitflags(&self) -> u64 {
-        todo!()
-    }
 }
 
 impl InstructionLookup<32> for RV32IMInstruction {
@@ -238,7 +238,7 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         match self {
             RV32IMCycle::NoOp => (0, 0),
             RV32IMCycle::ADD(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
@@ -300,6 +300,68 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::VirtualSRL(cycle) => {
                 LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
             }
+            _ => panic!("Unexpected instruction {:?}", self),
+        }
+    }
+
+    fn to_lookup_operands(&self) -> (u64, u64) {
+        match self {
+            RV32IMCycle::NoOp => (0, 0),
+            RV32IMCycle::ADD(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::ADDI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::AND(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::ANDI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::AUIPC(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::BEQ(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::BGE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::BGEU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::BLT(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::BLTU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::BNE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::FENCE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::JAL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::JALR(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::LUI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::LW(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::MUL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::MULHU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::OR(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::ORI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::SLT(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::SLTI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::SLTIU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::SLTU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::SUB(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::SW(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::XOR(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::XORI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::Advice(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::AssertEQ(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::AssertHalfwordAlignment(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+            }
+            RV32IMCycle::AssertLTE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::AssertValidDiv0(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+            }
+            RV32IMCycle::AssertValidSignedRemainder(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+            }
+            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+            }
+            RV32IMCycle::Move(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::Movsign(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::Pow2(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::Pow2I(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::ShiftRightBitmask(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+            }
+            RV32IMCycle::ShiftRightBitmaskI(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
+            }
+            RV32IMCycle::VirtualSRA(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::VirtualSRL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }

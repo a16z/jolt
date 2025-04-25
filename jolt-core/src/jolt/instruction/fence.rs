@@ -17,7 +17,7 @@ impl InstructionFlags for FENCE {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<FENCE> {
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         (0, 0)
     }
 

@@ -10,7 +10,6 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::poly::split_eq_poly::SplitEqPolynomial;
-use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
@@ -113,7 +112,7 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
     {
-        let flattened_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
+        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
             .map(|var| var.generate_witness(trace, preprocessing))
             .collect();
@@ -122,12 +121,10 @@ where
 
         /* Sumcheck 1: Outer sumcheck */
 
-        let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar())
-            .collect::<Vec<F>>();
+        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
         let mut eq_tau = SplitEqPolynomial::new(&tau);
 
-        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
+        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&input_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic(
                 num_rounds_x,
@@ -153,7 +150,7 @@ where
                                 + A_shift(..) * z_shift(..)
             and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
             - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-            - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
+            - z_shift(y_var || rx_step) = \sum_t z(y_var || t) * eq_plus_one(rx_step, t)
         */
 
         let num_steps = key.num_steps;
@@ -161,9 +158,8 @@ where
         let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-        let claim_inner_joint = claim_Az
-            + inner_sumcheck_RLC * claim_Bz
-            + inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
+        let claim_inner_joint =
+            claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
@@ -189,7 +185,7 @@ where
         let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
         let mut bind_shift_z = vec![F::zero(); num_vars_uniform * 2];
 
-        flattened_polys
+        input_polys
             .par_iter()
             .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
             .for_each(|(poly, (eval, eval_shifted))| {
@@ -247,7 +243,7 @@ where
         (0..num_steps_unpadded) // unpadded number of steps is sufficient
             .into_par_iter()
             .map(|t| {
-                flattened_polys
+                input_polys
                     .iter()
                     .enumerate()
                     .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
@@ -288,30 +284,30 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
-        let flattened_polys_ref: Vec<_> = flattened_polys.iter().collect();
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, rx_step);
 
-        opening_accumulator.append(
-            &flattened_polys_ref,
-            DensePolynomial::new(chis),
-            rx_step.to_vec(),
-            &claimed_witness_evals,
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &flattened_polys_ref,
+        //     DensePolynomial::new(chis),
+        //     rx_step.to_vec(),
+        //     &claimed_witness_evals,
+        //     transcript,
+        // );
 
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, &shift_sumcheck_r);
 
-        opening_accumulator.append(
-            &flattened_polys_ref,
-            DensePolynomial::new(chis2),
-            shift_sumcheck_r.to_vec(),
-            &shift_sumcheck_witness_evals,
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &flattened_polys_ref,
+        //     DensePolynomial::new(chis2),
+        //     shift_sumcheck_r.to_vec(),
+        //     &shift_sumcheck_witness_evals,
+        //     transcript,
+        // );
 
         // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
@@ -347,9 +343,7 @@ where
 
         /* Sumcheck 1: Outer sumcheck
          */
-        let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar())
-            .collect::<Vec<F>>();
+        let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
 
         let (claim_outer_final, outer_sumcheck_r) = self
             .outer_sumcheck_proof
@@ -384,7 +378,7 @@ where
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + inner_sumcheck_RLC * self.outer_sumcheck_claims.1
-            + inner_sumcheck_RLC * inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
+            + inner_sumcheck_RLC.square() * self.outer_sumcheck_claims.2;
 
         let num_rounds_inner_sumcheck = (2 * key.num_vars_uniform_padded()).log_2() + 1; // +1 for shift evals
         let (claim_inner_final, inner_sumcheck_r) = self

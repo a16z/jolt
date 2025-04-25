@@ -12,7 +12,7 @@ use super::{
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatJ {
     pub rd: usize,
-    pub imm: i64,
+    pub imm: u64,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
@@ -47,7 +47,7 @@ impl InstructionFormat for FormatJ {
 			((word & 0x00100000) >> 9) | // imm[11] = [20]
 			((word & 0x7fe00000) >> 20)
                 // imm[10:1] = [30:21]
-            ) as i32 as i64,
+            ) as i32 as u32 as u64,
         }
     }
 
@@ -62,7 +62,7 @@ impl InstructionFormat for FormatJ {
     fn random(rng: &mut StdRng) -> Self {
         Self {
             rd: (rng.next_u64() % REGISTER_COUNT) as usize,
-            imm: rng.next_u64() as i64,
+            imm: rng.next_u64(),
         }
     }
 
@@ -71,7 +71,7 @@ impl InstructionFormat for FormatJ {
             rs1: 0,
             rs2: 0,
             rd: self.rd,
-            imm: self.imm,
+            imm: self.imm as i64,
         }
     }
 }

@@ -6,6 +6,7 @@ use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
 use super::format::format_i::FormatI;
+use super::format::format_load::FormatLoad;
 use super::format::format_r::FormatR;
 use super::format::format_u::FormatU;
 use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
@@ -109,7 +110,7 @@ impl VirtualInstructionSequence for SH {
             operands: FormatI {
                 rd: v_address,
                 rs1: self.operands.rs1,
-                imm: self.operands.imm,
+                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(13),
         };
@@ -120,7 +121,7 @@ impl VirtualInstructionSequence for SH {
             operands: FormatI {
                 rd: v_word_address,
                 rs1: v_address,
-                imm: -4,
+                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(12),
         };
@@ -128,7 +129,7 @@ impl VirtualInstructionSequence for SH {
 
         let lw = LW {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_word,
                 rs1: v_word_address,
                 imm: 0,

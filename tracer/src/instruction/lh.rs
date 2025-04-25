@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::andi::ANDI;
+use super::format::format_load::FormatLoad;
 use super::format::format_r::FormatR;
 use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use super::lw::LW;
@@ -23,7 +24,7 @@ use super::{
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct LH {
     pub address: u64,
-    pub operands: FormatI,
+    pub operands: FormatLoad,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -36,7 +37,7 @@ impl RISCVInstruction for LH {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x00001003;
 
-    type Format = FormatI;
+    type Format = FormatLoad;
     type RAMAccess = RAMRead;
 
     fn operands(&self) -> &Self::Format {
@@ -50,7 +51,7 @@ impl RISCVInstruction for LH {
 
         Self {
             address,
-            operands: FormatI::parse(word),
+            operands: FormatLoad::parse(word),
             virtual_sequence_remaining: None,
         }
     }
@@ -103,7 +104,7 @@ impl VirtualInstructionSequence for LH {
             operands: FormatI {
                 rd: v_address,
                 rs1: self.operands.rs1,
-                imm: self.operands.imm,
+                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(9),
         };
@@ -114,7 +115,7 @@ impl VirtualInstructionSequence for LH {
             operands: FormatI {
                 rd: v_word_address,
                 rs1: v_address,
-                imm: -4,
+                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
             virtual_sequence_remaining: Some(8),
         };
@@ -122,7 +123,7 @@ impl VirtualInstructionSequence for LH {
 
         let lw = LW {
             address: self.address,
-            operands: FormatI {
+            operands: FormatLoad {
                 rd: v_word,
                 rs1: v_word_address,
                 imm: 0,

@@ -8,7 +8,6 @@ use crate::{
     r1cs::key::{SparseConstraints, UniformR1CS},
 };
 use crate::{poly::multilinear_polynomial::MultilinearPolynomial, r1cs::inputs::JoltR1CSInputs};
-use rayon::prelude::*;
 use std::marker::PhantomData;
 
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.

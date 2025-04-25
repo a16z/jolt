@@ -13,7 +13,7 @@ use super::{
 pub struct FormatI {
     pub rd: usize,
     pub rs1: usize,
-    pub imm: i64,
+    pub imm: u64,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
@@ -53,7 +53,7 @@ impl InstructionFormat for FormatI {
                     _ => 0,
                 } | ((word >> 20) & 0x000007ff)
                 // imm[10:0] = [30:20]
-            ) as i32 as i64,
+            ) as i32 as u32 as u64,
         }
     }
 
@@ -68,7 +68,7 @@ impl InstructionFormat for FormatI {
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            imm: rng.next_u64() as i64,
+            imm: rng.next_u64(),
             rd: (rng.next_u64() % REGISTER_COUNT) as usize,
             rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
         }
@@ -78,7 +78,7 @@ impl InstructionFormat for FormatI {
             rs1: self.rs1,
             rs2: 0,
             rd: self.rd,
-            imm: self.imm,
+            imm: self.imm as i64,
         }
     }
 }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{format_u::FormatU, InstructionFormat},
+    format::{format_u::FormatU, normalize_imm, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -43,7 +43,8 @@ impl RISCVInstruction for AUIPC {
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = cpu.sign_extend(self.address as i64 + self.operands.imm);
+        cpu.x[self.operands.rd] =
+            cpu.sign_extend(self.address as i64 + normalize_imm(self.operands.imm));
     }
 }
 

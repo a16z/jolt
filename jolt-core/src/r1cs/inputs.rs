@@ -13,14 +13,13 @@ use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
-use super::spartan::{SpartanError, UniformSpartanProof};
+use super::spartan::UniformSpartanProof;
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use strum_macros::EnumIter;
 use tracer::instruction::RV32IMCycle;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -30,35 +29,15 @@ pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
     pub _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> R1CSProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
-    pub fn verify<PCS>(
-        &self,
-        // commitments: &JoltCommitments<PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError>
-    where
-        PCS: CommitmentScheme<ProofTranscript, Field = F>,
-        ProofTranscript: Transcript,
-    {
-        todo!()
-        // self.proof
-        //     .verify(&self.key, commitments, opening_accumulator, transcript)
-    }
-}
-
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JoltR1CSInputs {
-    #[default] // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
-    VirutalInstructionAddress, // Virtual (bytecode raf)
-    RealInstructionAddress, // Virtual (bytecode rv)
-    Rd,                     // Virtual (bytecode rv)
-    Imm,                    // Virtual (bytecode rv)
-    RamAddress,             // Virtual (RAM raf)
-    Rs1Value,               // Virtual (registers rv)
-    Rs2Value,               // Virtual (registers rv)
+    VirtualInstructionAddress, // Virtual (bytecode raf)
+    RealInstructionAddress,    // Virtual (bytecode rv)
+    Rd,                        // Virtual (bytecode rv)
+    Imm,                       // Virtual (bytecode rv)
+    RamAddress,                // Virtual (RAM raf)
+    Rs1Value,                  // Virtual (registers rv)
+    Rs2Value,                  // Virtual (registers rv)
     RdWriteValue,
     RamReadValue, // Virtual (RAM rv)
     RamWriteValue,
@@ -69,7 +48,6 @@ pub enum JoltR1CSInputs {
     Product,               // LeftInstructionOperand * RightInstructionOperand
     WriteLookupOutputToRD,
     WritePCtoRD,
-    NextPCJump,
     ShouldBranch,
     NextPC,
     LookupOutput, // Virtual (instruction rv)
@@ -78,8 +56,8 @@ pub enum JoltR1CSInputs {
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 35] = [
-    JoltR1CSInputs::VirutalInstructionAddress,
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
+    JoltR1CSInputs::VirtualInstructionAddress,
     JoltR1CSInputs::RealInstructionAddress,
     JoltR1CSInputs::Rd,
     JoltR1CSInputs::Imm,
@@ -96,16 +74,16 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 35] = [
     JoltR1CSInputs::Product,
     JoltR1CSInputs::WriteLookupOutputToRD,
     JoltR1CSInputs::WritePCtoRD,
-    JoltR1CSInputs::NextPCJump,
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::NextPC,
     JoltR1CSInputs::LookupOutput,
+    JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
+    JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
     JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
-    JoltR1CSInputs::OpFlags(CircuitFlags::SingleOperandLookup),
     JoltR1CSInputs::OpFlags(CircuitFlags::Load),
     JoltR1CSInputs::OpFlags(CircuitFlags::Store),
     JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
@@ -114,6 +92,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 35] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Virtual),
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
+    JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
 ];
 
 impl JoltR1CSInputs {
@@ -147,7 +126,7 @@ impl JoltR1CSInputs {
         ProofTranscript: Transcript,
     {
         match self {
-            JoltR1CSInputs::VirutalInstructionAddress => {
+            JoltR1CSInputs::VirtualInstructionAddress => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
@@ -232,7 +211,7 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::RightInstructionInput => {
-                let coeffs: Vec<u64> = trace
+                let coeffs: Vec<i64> = trace
                     .par_iter()
                     .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
                     .collect();
@@ -255,10 +234,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::Product => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| {
-                        let (x, y) = LookupQuery::<32>::to_instruction_inputs(cycle);
-                        x * y
-                    })
+                    .map(|cycle| cycle.rs1_read().1 * cycle.rs2_read().1)
                     .collect();
                 coeffs.into()
             }
@@ -283,25 +259,6 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::NextPCJump => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let instr = cycle.instruction();
-                        let is_jump = instr.circuit_flags()[CircuitFlags::Jump as usize];
-                        let do_not_update_pc =
-                            instr.circuit_flags()[CircuitFlags::DoNotUpdatePC as usize];
-                        if is_jump {
-                            LookupQuery::<32>::to_lookup_output(cycle) + 4
-                        } else if do_not_update_pc {
-                            instr.normalize().address as u64
-                        } else {
-                            instr.normalize().address as u64 + 4
-                        }
-                    })
-                    .collect();
-                coeffs.into()
-            }
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
@@ -319,7 +276,7 @@ impl JoltR1CSInputs {
                             is_branch && LookupQuery::<32>::to_lookup_output(cycle) != 0;
                         let instr = cycle.instruction().normalize();
                         if should_branch {
-                            instr.address as u64 + instr.operands.imm as u64
+                            (instr.address as i64 + instr.operands.imm) as u64
                         } else {
                             // JoltR1CSInputs::NextPCJump
                             let is_jump =
@@ -327,7 +284,7 @@ impl JoltR1CSInputs {
                             let do_not_update_pc = cycle.instruction().circuit_flags()
                                 [CircuitFlags::DoNotUpdatePC as usize];
                             if is_jump {
-                                LookupQuery::<32>::to_lookup_output(cycle) + 4
+                                LookupQuery::<32>::to_lookup_output(cycle)
                             } else if do_not_update_pc {
                                 instr.address as u64
                             } else {

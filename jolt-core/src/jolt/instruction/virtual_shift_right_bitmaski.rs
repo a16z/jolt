@@ -13,7 +13,7 @@ impl InstructionFlags for VirtualShiftRightBitmaskI {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::SingleOperandLookup as usize] = true;
+        flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
@@ -23,17 +23,16 @@ impl InstructionFlags for VirtualShiftRightBitmaskI {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualShiftRightBitmaskI> {
-    fn to_instruction_inputs(&self) -> (u64, u64) {
-        (0, self.instruction.operands.imm as u64)
+    fn to_instruction_inputs(&self) -> (u64, i64) {
+        (0, self.instruction.operands.imm as i64)
     }
 
     fn to_lookup_index(&self) -> u64 {
-        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
-        y
+        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (_, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let y = LookupQuery::<WORD_SIZE>::to_lookup_index(self);
         match WORD_SIZE {
             #[cfg(test)]
             8 => {

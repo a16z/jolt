@@ -14,6 +14,7 @@ impl InstructionFlags for SLTIU {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::Virtual as usize] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdatePC as usize] =
@@ -23,10 +24,10 @@ impl InstructionFlags for SLTIU {
 }
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SLTIU> {
-    fn to_instruction_inputs(&self) -> (u64, u64) {
+    fn to_instruction_inputs(&self) -> (u64, i64) {
         (
             self.register_state.rs1,
-            self.instruction.operands.imm as u64,
+            self.instruction.operands.imm as i64,
         )
     }
 
@@ -36,7 +37,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SLTIU> {
             #[cfg(test)]
             8 => ((x as u8) < y as u8).into(),
             32 => ((x as u32) < y as u32).into(),
-            64 => (x < y).into(),
+            64 => (x < y as u64).into(),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }

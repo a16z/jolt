@@ -26,7 +26,6 @@ use tracer::JoltDevice;
 
 use crate::msm::icicle;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::r1cs::inputs::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
@@ -124,7 +123,7 @@ where
     pub instruction_lookups: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
     pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
-    // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
+    pub r1cs: UniformSpartanProof<F, ProofTranscript>,
     // pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
 }
 
@@ -250,14 +249,15 @@ where
         trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
+            ProverOpeningAccumulator::new();
+
         Self::fiat_shamir_preamble(
             &mut transcript,
             &program_io,
             &program_io.memory_layout,
             trace_length,
         );
-
-        // transcript.append_scalar(&spartan_key.vk_digest);
 
         // jolt_commitments
         //     .read_write_values()
@@ -268,16 +268,12 @@ where
         //     .iter()
         //     .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
-            ProverOpeningAccumulator::new();
-
-        let memory_start = program_io.memory_layout.input_start;
-        let constraint_builder =
-            Self::Constraints::construct_constraints(padded_trace_length, memory_start);
+        let constraint_builder = Self::Constraints::construct_constraints(padded_trace_length);
         let spartan_key = UniformSpartanProof::<F, ProofTranscript>::setup(
             &constraint_builder,
             padded_trace_length,
         );
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = UniformSpartanProof::prove::<PCS>(
             &preprocessing,
@@ -286,7 +282,9 @@ where
             &trace,
             &mut opening_accumulator,
             &mut transcript,
-        );
+        )
+        .ok()
+        .unwrap();
 
         let instruction_proof = LookupsProof::prove(
             &preprocessing.shared.generators,
@@ -320,7 +318,7 @@ where
             instruction_lookups: instruction_proof,
             ram: ram_proof,
             registers: registers_proof,
-            // r1cs: spartan_proof,
+            r1cs: r1cs_proof,
             // opening_proof,
         };
 
@@ -352,6 +350,7 @@ where
             opening_accumulator
                 .compare_to(debug_info.opening_accumulator, &preprocessing.generators);
         }
+
         Self::fiat_shamir_preamble(
             &mut transcript,
             &program_io,
@@ -361,9 +360,7 @@ where
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
-        let memory_start = preprocessing.memory_layout.input_start;
-        let r1cs_builder =
-            Self::Constraints::construct_constraints(padded_trace_length, memory_start);
+        let r1cs_builder = Self::Constraints::construct_constraints(padded_trace_length);
         let spartan_key =
             UniformSpartanProof::<F, ProofTranscript>::setup(&r1cs_builder, padded_trace_length);
         transcript.append_scalar(&spartan_key.vk_digest);
@@ -377,23 +374,18 @@ where
         //     .iter()
         //     .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        Self::verify_instruction_lookups(
-            &preprocessing.generators,
-            proof.instruction_lookups,
-            // &commitments,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
-        // Self::verify_memory(
-        //     &mut preprocessing.read_write_memory,
-        //     &preprocessing.generators,
-        //     &preprocessing.memory_layout,
-        //     proof.read_write_memory,
-        //     &commitments,
-        //     proof.program_io,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
+        proof
+            .r1cs
+            .verify(&spartan_key, &mut opening_accumulator, &mut transcript)
+            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+        proof
+            .instruction_lookups
+            .verify(&mut opening_accumulator, &mut transcript)?;
+        proof.ram.verify(todo!(), todo!(), &mut transcript)?;
+        proof.registers.verify(todo!(), todo!(), &mut transcript)?;
+        proof
+            .bytecode
+            .verify(&preprocessing.bytecode, todo!(), &mut transcript)?;
 
         // Batch-verify all openings
         // opening_accumulator.reduce_and_verify(
@@ -404,49 +396,6 @@ where
 
         Ok(())
     }
-
-    #[tracing::instrument(skip_all)]
-    fn verify_instruction_lookups<'a>(
-        generators: &PCS::Setup,
-        proof: LookupsProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        // commitments: &'a JoltCommitments<PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        proof.verify(opening_accumulator, transcript)
-    }
-
-    // #[allow(clippy::too_many_arguments)]
-    // #[tracing::instrument(skip_all)]
-    // fn verify_memory<'a>(
-    //     preprocessing: &mut ReadWriteMemoryPreprocessing,
-    //     generators: &PCS::Setup,
-    //     memory_layout: &MemoryLayout,
-    //     proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
-    //     commitment: &'a JoltCommitments<PCS, ProofTranscript>,
-    //     program_io: JoltDevice,
-    //     opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-    //     transcript: &mut ProofTranscript,
-    // ) -> Result<(), ProofVerifyError> {
-    //     assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
-    //     assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
-    //     // pair the memory layout with the program io from the proof
-    //     preprocessing.program_io = Some(JoltDevice {
-    //         inputs: program_io.inputs,
-    //         outputs: program_io.outputs,
-    //         panic: program_io.panic,
-    //         memory_layout: memory_layout.clone(),
-    //     });
-
-    //     ReadWriteMemoryProof::verify(
-    //         proof,
-    //         generators,
-    //         preprocessing,
-    //         commitment,
-    //         opening_accumulator,
-    //         transcript,
-    //     )
-    // }
 
     fn fiat_shamir_preamble(
         transcript: &mut ProofTranscript,

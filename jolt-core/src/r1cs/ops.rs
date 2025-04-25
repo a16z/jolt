@@ -354,12 +354,24 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), self)
             }
         }
+
         impl std::ops::Add<$ConcreteInput> for i64 {
             type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
                 let term1 =
                     $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), 1);
+                let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, self);
+                $crate::r1cs::ops::LC::new(vec![term1, term2])
+            }
+        }
+
+        impl std::ops::Sub<$ConcreteInput> for i64 {
+            type Output = $crate::r1cs::ops::LC;
+
+            fn sub(self, rhs: $ConcreteInput) -> Self::Output {
+                let term1 =
+                    $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs.to_index()), -1);
                 let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, self);
                 $crate::r1cs::ops::LC::new(vec![term1, term2])
             }

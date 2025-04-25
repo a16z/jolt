@@ -4,10 +4,6 @@ extern crate fnv;
 
 use std::convert::TryInto;
 
-use crate::instruction::format::{
-    format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_r::FormatR, format_s::FormatS,
-    format_u::FormatU, InstructionFormat,
-};
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
 
 use super::mmu::{AddressingMode, Mmu};
@@ -1395,110 +1391,6 @@ impl Cpu {
     pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
         self.mmu.get_mut_uart().get_mut_terminal()
     }
-}
-
-fn dump_format_b(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String {
-    let f = FormatB::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rs1));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs1]);
-    }
-    s += &format!(",{}", get_register_name(f.rs2));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs2]);
-    }
-    s += &format!(",{:x}", address as i64 + f.imm);
-    s
-}
-
-fn dump_format_i(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatI::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    s += &format!(",{}", get_register_name(f.rs1));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs1]);
-    }
-    s += &format!(",{:x}", f.imm);
-    s
-}
-
-fn dump_format_i_mem(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatI::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    s += &format!(",{:x}({}", f.imm, get_register_name(f.rs1));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs1]);
-    }
-    s += &format!(")");
-    s
-}
-
-fn dump_format_j(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String {
-    let f = FormatJ::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    s += &format!(",{:x}", address as i64 + f.imm);
-    s
-}
-
-fn dump_format_r(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatR::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    s += &format!(",{}", get_register_name(f.rs1));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs1]);
-    }
-    s += &format!(",{}", get_register_name(f.rs2));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs2]);
-    }
-    s
-}
-
-fn dump_format_s(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatS::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rs2));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs2]);
-    }
-    s += &format!(",{:x}({}", f.imm, get_register_name(f.rs1));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rs1]);
-    }
-    s += &format!(")");
-    s
-}
-
-fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    let f = FormatU::parse(word);
-    let mut s = String::new();
-    s += &format!("{}", get_register_name(f.rd));
-    if evaluate {
-        s += &format!(":{:x}", cpu.x[f.rd]);
-    }
-    s += &format!(",{:x}", f.imm);
-    s
-}
-
-fn dump_empty(_cpu: &mut Cpu, _word: u32, _address: u64, _evaluate: bool) -> String {
-    String::new()
 }
 
 fn get_register_name(num: usize) -> &'static str {

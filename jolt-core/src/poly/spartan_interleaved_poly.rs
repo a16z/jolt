@@ -80,27 +80,28 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                 coeffs.push((global_index + 1, bz_coeff).into());
                             }
                         }
+                        #[cfg(test)]
+                        {
+                            let cz_coeff = az_coeff * bz_coeff;
+                            if cz_coeff != constraint
+                                .c
+                                .evaluate_row(flattened_polynomials, step_index) {
+                                    let mut constraint_string = String::new();
+                                    let _ = constraint
+                                        .pretty_fmt::<F>(
+                                            &mut constraint_string,
+                                            flattened_polynomials,
+                                            step_index,
+                                        );
+                                    println!("{constraint_string}");
+                                    panic!(
+                                        "Uniform constraint {constraint_index} violated at step {step_index}",
+                                    );
+                                }
+                        }
                         // Cz = Az ⊙ Cz
                         if !az_coeff.is_zero() && !bz_coeff.is_zero() {
                             let cz_coeff = az_coeff * bz_coeff;
-                            #[cfg(test)]
-                            {
-                                if cz_coeff != constraint
-                                    .c
-                                    .evaluate_row(flattened_polynomials, step_index) {
-                                        let mut constraint_string = String::new();
-                                        let _ = constraint
-                                            .pretty_fmt::<F>(
-                                                &mut constraint_string,
-                                                flattened_polynomials,
-                                                step_index,
-                                            );
-                                        println!("{constraint_string}");
-                                        panic!(
-                                            "Uniform constraint {constraint_index} violated at step {step_index}",
-                                        );
-                                    }
-                            }
                             coeffs.push((global_index + 2, cz_coeff).into());
                         }
                     }
@@ -145,7 +146,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                                     step_index,
                                     next_step_index,
                                 );
-                                assert_eq!(bz_coeff, 0, "Cross-step constraint {constraint_index} violated at step {step_index}");
+                                assert_eq!(bz_coeff, 0, "Cross-step constraint {constraint_index} violated at step {step_index}: {eq_a_eval} ≠ {eq_b_eval}");
                             }
                         } else {
                             // Bz
@@ -773,6 +774,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     }
 
     pub fn final_sumcheck_evals(&self) -> [F; 3] {
+        debug_assert_eq!(self.dense_len, 1);
         let mut final_az_eval = F::zero();
         let mut final_bz_eval = F::zero();
         let mut final_cz_eval = F::zero();
