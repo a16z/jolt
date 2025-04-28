@@ -23,10 +23,7 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all --check
+        run: cargo fmt --all --check
 
   clippy:
     runs-on: ubuntu-latest
@@ -36,10 +33,7 @@ jobs:
         with:
           components: clippy
       - name: cargo clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all
+        run: cargo clippy --all
 
   machete:
     runs-on: ubuntu-latest
@@ -90,7 +84,7 @@ jobs:
           version: nightly
 
       - name: Build the rust integration testing scripts
-        working-directory: ./jolt-evm-verifier          
+        working-directory: ./jolt-evm-verifier
         run: cargo build --manifest-path script/Cargo.toml --release
 
       - name: Check build and denny warnings
