@@ -18,6 +18,7 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
+use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -150,7 +151,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         transcript: &mut ProofTranscript,
     ) -> (ReadWriteCheckingProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
         const DEGREE: usize = 3;
-        let K = REGISTER_COUNT as usize;
+        const K: usize = REGISTER_COUNT as usize;
         let T = r_prime.len().pow2();
         debug_assert_eq!(trace.len(), T);
 
@@ -232,10 +233,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let span = tracing::span!(tracing::Level::INFO, "compute deltas");
         let _guard = span.enter();
 
-        let deltas: Vec<Vec<i64>> = trace[..T - chunk_size]
+        let deltas: Vec<[i64; K]> = trace[..T - chunk_size]
             .par_chunks_exact(chunk_size)
             .map(|trace_chunk| {
-                let mut delta = vec![0i64; K];
+                let mut delta = [0i64; K];
                 for cycle in trace_chunk.iter() {
                     let (k, pre_value, post_value) = cycle.rd_write();
                     let increment = post_value as i64 - pre_value as i64;
@@ -254,15 +255,17 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let _guard = span.enter();
 
         // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
-        let mut checkpoints: Vec<Vec<i64>> = Vec::with_capacity(num_chunks);
-        checkpoints.push(vec![0; K]);
+        let mut checkpoints: Vec<[i64; K]> = Vec::with_capacity(num_chunks);
+        checkpoints.push([0; K]);
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
-            let next_checkpoint: Vec<i64> = checkpoints[chunk_index]
+            let next_checkpoint: [i64; K] = checkpoints[chunk_index]
                 .par_iter()
                 .zip(delta.into_par_iter())
                 .map(|(val_k, delta_k)| val_k + delta_k)
-                .collect();
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
             debug_assert_eq!(next_checkpoint[0], 0); // Zero register
             checkpoints.push(next_checkpoint);
         }
@@ -397,38 +400,38 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             /// Contains
             ///     Val(k, j', 0, ..., 0)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-            val_j_0: Vec<F>,
+            val_j_0: [F; K],
             /// `val_j_r[0]` contains
             ///     Val(k, j'', 0, r_i, ..., r_1)
             /// `val_j_r[1]` contains
             ///     Val(k, j'', 1, r_i, ..., r_1)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-            val_j_r: [Vec<F>; 2],
+            val_j_r: [[F; K]; 2],
             /// `ra[0]` contains
             ///     ra(k, j'', 0, r_i, ..., r_1)
             /// `ra[1]` contains
             ///     ra(k, j'', 1, r_i, ..., r_1)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-            rs1_ra: [Vec<F>; 2],
-            rs2_ra: [Vec<F>; 2],
+            rs1_ra: [[F; K]; 2],
+            rs2_ra: [[F; K]; 2],
             /// `wa[0]` contains
             ///     wa(k, j'', 0, r_i, ..., r_1)
             /// `wa[1]` contains
             ///     wa(k, j'', 1, r_i, ..., r_1)
             /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
             /// where j'' are the higher (log(T) - i - 1) bits of j'
-            rd_wa: [Vec<F>; 2],
-            dirty_indices: Vec<usize>,
+            rd_wa: [[F; K]; 2],
+            dirty_indices: FixedBitSet,
         }
         let mut data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
             .map(|_| DataBuffers {
-                val_j_0: Vec::with_capacity(K),
-                val_j_r: [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)],
-                rs1_ra: [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)],
-                rs2_ra: [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)],
-                rd_wa: [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)],
-                dirty_indices: Vec::with_capacity(K),
+                val_j_0: [F::zero(); K],
+                val_j_r: [[F::zero(); K], [F::zero(); K]],
+                rs1_ra: [[F::zero(); K], [F::zero(); K]],
+                rs2_ra: [[F::zero(); K], [F::zero(); K]],
+                rd_wa: [[F::zero(); K], [F::zero(); K]],
+                dirty_indices: FixedBitSet::with_capacity(K),
             })
             .collect();
 
@@ -479,7 +482,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                         dirty_indices,
                     } = buffers;
 
-                    *val_j_0 = checkpoint.to_vec();
+                    val_j_0.as_mut_slice().copy_from_slice(checkpoint);
 
                     // Iterate over I_chunk, two rows at a time.
                     I_chunk
@@ -491,29 +494,20 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 let j_bound = j % (1 << round);
 
                                 let k = trace[j].rs1_read().0;
-                                if rs1_ra[0][k].is_zero()
-                                    && rs2_ra[0][k].is_zero()
-                                    && rd_wa[0][k].is_zero()
-                                {
-                                    dirty_indices.push(k);
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
                                 }
                                 rs1_ra[0][k] += A[j_bound];
 
                                 let k = trace[j].rs2_read().0;
-                                if rs1_ra[0][k].is_zero()
-                                    && rs2_ra[0][k].is_zero()
-                                    && rd_wa[0][k].is_zero()
-                                {
-                                    dirty_indices.push(k);
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
                                 }
                                 rs2_ra[0][k] += A[j_bound];
 
                                 let k = trace[j].rd_write().0;
-                                if rs1_ra[0][k].is_zero()
-                                    && rs2_ra[0][k].is_zero()
-                                    && rd_wa[0][k].is_zero()
-                                {
-                                    dirty_indices.push(k);
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
                                 }
                                 rd_wa[0][k] += A[j_bound];
                             }
@@ -522,43 +516,25 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 let j_bound = j % (1 << round);
 
                                 let k = trace[j].rs1_read().0;
-                                if rs1_ra[0][k].is_zero()
-                                    && rs2_ra[0][k].is_zero()
-                                    && rd_wa[0][k].is_zero()
-                                    && rs1_ra[1][k].is_zero()
-                                    && rs2_ra[1][k].is_zero()
-                                    && rd_wa[1][k].is_zero()
-                                {
-                                    dirty_indices.push(k);
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
                                 }
                                 rs1_ra[1][k] += A[j_bound];
 
                                 let k = trace[j].rs2_read().0;
-                                if rs1_ra[0][k].is_zero()
-                                    && rs2_ra[0][k].is_zero()
-                                    && rd_wa[0][k].is_zero()
-                                    && rs1_ra[1][k].is_zero()
-                                    && rs2_ra[1][k].is_zero()
-                                    && rd_wa[1][k].is_zero()
-                                {
-                                    dirty_indices.push(k);
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
                                 }
                                 rs2_ra[1][k] += A[j_bound];
 
                                 let k = trace[j].rd_write().0;
-                                if rs1_ra[0][k].is_zero()
-                                    && rs2_ra[0][k].is_zero()
-                                    && rd_wa[0][k].is_zero()
-                                    && rs1_ra[1][k].is_zero()
-                                    && rs2_ra[1][k].is_zero()
-                                    && rd_wa[1][k].is_zero()
-                                {
-                                    dirty_indices.push(k);
+                                unsafe {
+                                    dirty_indices.insert_unchecked(k);
                                 }
                                 rd_wa[1][k] += A[j_bound];
                             }
 
-                            for &k in dirty_indices.iter() {
+                            for k in dirty_indices.ones() {
                                 val_j_r[0][k] = val_j_0[k];
                             }
                             let mut inc_iter = inc_chunk.iter().peekable();
@@ -573,7 +549,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     break;
                                 }
                             }
-                            for &k in dirty_indices.iter() {
+                            for k in dirty_indices.ones() {
                                 val_j_r[1][k] = val_j_0[k];
                             }
 
@@ -594,55 +570,57 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 rd_wv.sumcheck_evals(j_prime / 2, DEGREE, BindingOrder::LowToHigh);
 
                             let mut inner_sum_evals = [F::zero(); 3];
-                            for k in dirty_indices.drain(..) {
+                            for k in dirty_indices.ones() {
                                 let mut m_val: Option<F> = None;
                                 let mut val_eval_2: Option<F> = None;
                                 let mut val_eval_3: Option<F> = None;
 
+                                // rs1 read-checking sumcheck
                                 if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    // rs1 read-checking sumcheck
-                                    let m_ra = rs1_ra[1][k] - rs1_ra[0][k];
-                                    let ra_eval_2 = rs1_ra[1][k] + m_ra;
+                                    // Preemptively multiply by `z` to save a mult
+                                    let ra_eval_0 = z * rs1_ra[0][k];
+                                    let ra_eval_1 = z * rs1_ra[1][k];
+                                    let m_ra = ra_eval_1 - ra_eval_0;
+                                    let ra_eval_2 = ra_eval_1 + m_ra;
                                     let ra_eval_3 = ra_eval_2 + m_ra;
 
                                     m_val = Some(val_j_r[1][k] - val_j_r[0][k]);
                                     val_eval_2 = Some(val_j_r[1][k] + m_val.unwrap());
                                     val_eval_3 = Some(val_eval_2.unwrap() + m_val.unwrap());
 
-                                    inner_sum_evals[0] +=
-                                        z * rs1_ra[0][k].mul_0_optimized(val_j_r[0][k]);
-                                    inner_sum_evals[1] += z * ra_eval_2 * val_eval_2.unwrap();
-                                    inner_sum_evals[2] += z * ra_eval_3 * val_eval_3.unwrap();
+                                    inner_sum_evals[0] += ra_eval_0.mul_0_optimized(val_j_r[0][k]);
+                                    inner_sum_evals[1] += ra_eval_2 * val_eval_2.unwrap();
+                                    inner_sum_evals[2] += ra_eval_3 * val_eval_3.unwrap();
 
                                     rs1_ra[0][k] = F::zero();
                                     rs1_ra[1][k] = F::zero();
                                 }
 
+                                // rs2 read-checking sumcheck
                                 if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    // rs2 read-checking sumcheck
-                                    let m_ra = rs2_ra[1][k] - rs2_ra[0][k];
-                                    let ra_eval_2 = rs2_ra[1][k] + m_ra;
+                                    // Preemptively multiply by `z_squared` to save a mult
+                                    let ra_eval_0 = z_squared * rs2_ra[0][k];
+                                    let ra_eval_1 = z_squared * rs2_ra[1][k];
+                                    let m_ra = ra_eval_1 - ra_eval_0;
+                                    let ra_eval_2 = ra_eval_1 + m_ra;
                                     let ra_eval_3 = ra_eval_2 + m_ra;
+
                                     m_val = m_val.or(Some(val_j_r[1][k] - val_j_r[0][k]));
                                     val_eval_2 =
                                         val_eval_2.or(Some(val_j_r[1][k] + m_val.unwrap()));
                                     val_eval_3 =
                                         val_eval_3.or(Some(val_eval_2.unwrap() + m_val.unwrap()));
 
-                                    inner_sum_evals[0] +=
-                                        z_squared * rs2_ra[0][k].mul_0_optimized(val_j_r[0][k]);
-                                    inner_sum_evals[1] +=
-                                        z_squared * ra_eval_2 * val_eval_2.unwrap();
-                                    inner_sum_evals[2] +=
-                                        z_squared * ra_eval_3 * val_eval_3.unwrap();
+                                    inner_sum_evals[0] += ra_eval_0.mul_0_optimized(val_j_r[0][k]);
+                                    inner_sum_evals[1] += ra_eval_2 * val_eval_2.unwrap();
+                                    inner_sum_evals[2] += ra_eval_3 * val_eval_3.unwrap();
 
                                     rs2_ra[0][k] = F::zero();
                                     rs2_ra[1][k] = F::zero();
                                 }
 
+                                // Write-checking sumcheck
                                 if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    // Write-checking sumcheck
-
                                     // Save a mult by multiplying by `eq_r_eval` sooner rather than later
                                     let eq_r_eval = eq_r.get_coeff(k);
                                     let wa_eval_0 = if rd_wa[0][k].is_zero() {
@@ -671,6 +649,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                 val_j_r[0][k] = F::zero();
                                 val_j_r[1][k] = F::zero();
                             }
+                            dirty_indices.clear();
 
                             evals[0] += eq_r_prime_evals[0] * inner_sum_evals[0];
                             evals[1] += eq_r_prime_evals[1] * inner_sum_evals[1];
@@ -716,7 +695,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             I.par_iter_mut().for_each(|I_chunk| {
                 // Note: A given row in an I_chunk may not be ordered by k after binding
                 let mut next_bound_index = 0;
-                let mut bound_indices: Vec<Option<usize>> = vec![None; K];
+                let mut bound_indices: [Option<usize>; K] = [None; K];
 
                 for i in 0..I_chunk.len() {
                     let (j_prime, k, inc_lt, inc) = I_chunk[i];
