@@ -392,9 +392,11 @@ where
             &program_io,
             &mut transcript,
         )?;
-        proof
-            .bytecode
-            .verify(&preprocessing.bytecode, todo!(), &mut transcript)?;
+        proof.bytecode.verify(
+            &preprocessing.bytecode,
+            padded_trace_length,
+            &mut transcript,
+        )?;
 
         // Batch-verify all openings
         // opening_accumulator.reduce_and_verify(
