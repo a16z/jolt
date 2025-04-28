@@ -52,6 +52,37 @@ impl ZkLeanR1CSConstraints {
             f.write(format!("{tab}{field} : ZKExpr f\n").as_bytes())?;
         }
         f.write(b"\n")?;
+
+        // for every input make it Witnessable following the pattern
+        // ```
+        // instance: Witnessable f (JoltR1CSInputs f) where
+        //   witness := do
+        //     let bytecode_a <- Witnessable.witness;
+        //     let bytecode_elf_address <- Witnessable.witness;
+        //     let bytecode_bitflags <- Witnessable.witness;
+        //     ...
+        //     pure {
+        //       Bytecode_A := bytecode_a,
+        //       Bytecode_ELFAddress := bytecode_elf_address,
+        //       Bytecode_Bitflags := bytecode_bitflags,
+        //       ...
+        //     }
+        // ```
+        f.write(b"instance: Witnessable f (JoltR1CSInputs f) where\n")?;
+        f.write(b"  witness := do\n")?;
+        for input in &self.inputs {
+            let field = input_to_field_name(input);
+            f.write(format!("{tab}let {field} <- Witnessable.witness\n").as_bytes())?;
+        }
+        f.write(b"\n")?;
+        f.write(format!("{tab}pure {{\n").as_bytes())?;
+        for input in &self.inputs {
+            let field = input_to_field_name(input);
+            f.write(format!("{tab}{tab}{field} := {field}\n").as_bytes())?;
+        }
+        f.write(b"    }\n")?;
+        f.write(b"\n")?;
+
         f.write(b"def uniform_jolt_constraints [JoltField f] (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n")?;
         for Constraint { a, b, c } in &self.uniform_constraints {
             f.write(format!("{tab}constrainR1CS\n").as_bytes())?;

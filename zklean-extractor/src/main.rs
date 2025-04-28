@@ -70,6 +70,7 @@ fn main() -> std::io::Result<()> {
 
     let r1cs = ZkLeanR1CSConstraints::extract(DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE);
     r1cs.zklean_pretty_print(&mut f)?;
+    f.write(b"\n")?;
 
     let cases = ZkLeanLookupCases::extract();
     cases.zklean_pretty_print(&mut f)?;
