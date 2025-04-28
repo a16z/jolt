@@ -75,7 +75,6 @@ pub enum OperationType {
     Unknown = 52,
 }
 
-#[cfg(feature = "host")]
 impl OperationType {
     /// Convert from string to operation type
     ///
