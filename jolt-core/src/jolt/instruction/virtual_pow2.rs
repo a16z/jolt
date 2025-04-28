@@ -26,7 +26,6 @@ impl InstructionFlags for VirtualPow2 {
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2> {
     fn to_instruction_inputs(&self) -> (u64, i64) {
-        assert_eq!(self.instruction.operands.imm, 0);
         (self.register_state.rs1, 0)
     }
 
