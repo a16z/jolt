@@ -12,7 +12,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
-use ram::RAMTwistProof;
+use ram::{RAMPreprocessing, RAMTwistProof};
 use registers::RegistersTwistProof;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -39,7 +39,7 @@ where
 {
     pub generators: PCS::Setup,
     pub bytecode: BytecodePreprocessing,
-    // pub read_write_memory: ReadWriteMemoryPreprocessing,
+    pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
 }
 
@@ -178,6 +178,7 @@ where
         // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
+        let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
         // TODO(moodlezoup): Update for Twist+Shout
         let max_poly_len: usize = [
@@ -194,7 +195,7 @@ where
             generators,
             memory_layout,
             bytecode: bytecode_preprocessing,
-            // read_write_memory: read_write_memory_preprocessing,
+            ram: ram_preprocessing,
         }
     }
 
@@ -297,7 +298,7 @@ where
             RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
 
         let ram_proof = RAMTwistProof::prove(
-            // &preprocessing.generators,
+            &preprocessing.shared.ram,
             &trace,
             &program_io,
             1 << 16, // TODO(moodlezoup)
@@ -384,9 +385,13 @@ where
         proof
             .registers
             .verify(padded_trace_length, &mut transcript)?;
-        proof
-            .ram
-            .verify(padded_trace_length, 1 << 16, &mut transcript)?;
+        proof.ram.verify(
+            1 << 16,
+            padded_trace_length,
+            &preprocessing.ram,
+            &program_io,
+            &mut transcript,
+        )?;
         proof
             .bytecode
             .verify(&preprocessing.bytecode, todo!(), &mut transcript)?;

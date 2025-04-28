@@ -17,12 +17,55 @@ use crate::{
     },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
+use common::{constants::BYTES_PER_INSTRUCTION, jolt_device::MemoryLayout};
 use rayon::prelude::*;
 use tracer::{
     instruction::{RAMAccess, RV32IMCycle},
     JoltDevice,
 };
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct RAMPreprocessing {
+    min_bytecode_address: u64,
+    bytecode_words: Vec<u32>,
+}
+
+impl RAMPreprocessing {
+    pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
+        let min_bytecode_address = memory_init
+            .iter()
+            .map(|(address, _)| *address)
+            .min()
+            .unwrap_or(0);
+
+        let max_bytecode_address = memory_init
+            .iter()
+            .map(|(address, _)| *address)
+            .max()
+            .unwrap_or(0)
+            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32IM, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+
+        let num_words = max_bytecode_address.next_multiple_of(4) / 4 - min_bytecode_address / 4 + 1;
+        let mut bytecode_words = vec![0u32; num_words as usize];
+        // Convert bytes into words and populate `bytecode_words`
+        for chunk in
+            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 4 == address_b / 4)
+        {
+            let mut word = [0u8; 4];
+            for (address, byte) in chunk {
+                word[(address % 4) as usize] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            let remapped_index = (chunk[0].0 / 4 - min_bytecode_address / 4) as usize;
+            bytecode_words[remapped_index] = word;
+        }
+
+        Self {
+            min_bytecode_address,
+            bytecode_words,
+        }
+    }
+}
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMTwistProof<F: JoltField, ProofTranscript: Transcript> {
@@ -67,7 +110,7 @@ pub struct ValEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
 impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "RAMTwistProof::prove")]
     pub fn prove(
-        // generators: &PCS::Setup,
+        preprocessing: &RAMPreprocessing,
         trace: &[RV32IMCycle],
         program_io: &JoltDevice,
         K: usize,
@@ -79,14 +122,50 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         let r: Vec<F> = transcript.challenge_vector(K.log_2());
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
-        let (read_write_checking_proof, r_address, r_cycle) =
-            ReadWriteCheckingProof::prove(trace, &program_io.memory_layout, r, r_prime, transcript);
+        let mut initial_memory_state = vec![0; K];
+        // Copy bytecode
+        let mut index = remap_address(
+            preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        ) as usize;
+        for word in preprocessing.bytecode_words.iter() {
+            initial_memory_state[index] = *word as i64;
+            index += 1;
+        }
+        // Copy input bytes
+        index = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        ) as usize;
+        // Convert input bytes into words and populate `v_init`
+        for chunk in program_io.inputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            initial_memory_state[index] = word as i64;
+            index += 1;
+        }
+
+        let (read_write_checking_proof, r_address, r_cycle) = ReadWriteCheckingProof::prove(
+            trace,
+            &initial_memory_state,
+            &program_io.memory_layout,
+            r,
+            r_prime,
+            transcript,
+        );
+
+        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
+        let init_eval = init.evaluate(&r_address);
 
         let (val_evaluation_proof, _r_cycle_prime) = prove_val_evaluation(
             trace,
             &program_io.memory_layout,
             r_address,
             r_cycle,
+            init_eval,
             read_write_checking_proof.val_claim,
             transcript,
         );
@@ -103,18 +182,49 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
         &self,
         K: usize,
         T: usize,
+        preprocessing: &RAMPreprocessing,
+        program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let log_T = T.log_2();
         let r: Vec<F> = transcript.challenge_vector(K.log_2());
         let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
-        let r_cycle = self
+        let (r_address, r_cycle) = self
             .read_write_checking_proof
             .verify(r, r_prime, transcript);
 
+        let mut initial_memory_state = vec![0; K];
+        // Copy bytecode
+        let mut index = remap_address(
+            preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        ) as usize;
+        for word in preprocessing.bytecode_words.iter() {
+            initial_memory_state[index] = *word as i64;
+            index += 1;
+        }
+        // Copy input bytes
+        index = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        ) as usize;
+        // Convert input bytes into words and populate `v_init`
+        for chunk in program_io.inputs.chunks(4) {
+            let mut word = [0u8; 4];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u32::from_le_bytes(word);
+            initial_memory_state[index] = word as i64;
+            index += 1;
+        }
+
+        let init: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_memory_state);
+        let init_eval = init.evaluate(&r_address);
+
         let (sumcheck_claim, r_cycle_prime) = self.val_evaluation_proof.sumcheck_proof.verify(
-            self.read_write_checking_proof.val_claim,
+            self.read_write_checking_proof.val_claim - init_eval,
             log_T,
             2,
             transcript,
@@ -144,6 +254,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
     #[tracing::instrument(skip_all, name = "ReadWriteCheckingProof::prove")]
     pub fn prove(
         trace: &[RV32IMCycle],
+        initial_memory_state: &[i64],
         memory_layout: &MemoryLayout,
         r: Vec<F>,
         r_prime: Vec<F>,
@@ -190,10 +301,44 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let span = tracing::span!(tracing::Level::INFO, "compute checkpoints");
         let _guard = span.enter();
 
+        #[cfg(test)]
+        let mut val_test: MultilinearPolynomial<F> = {
+            // Compute Val in cycle-major order, since we will be binding
+            // from low-to-high starting with the cycle variables
+            let mut val: Vec<u64> = vec![0; K * T];
+            val.par_chunks_mut(T).enumerate().for_each(|(k, val_k)| {
+                let mut current_val = initial_memory_state[k] as u64;
+                for j in 0..T {
+                    val_k[j] = current_val;
+                    if let RAMAccess::Write(write) = trace[j].ram_access() {
+                        if remap_address(write.address, memory_layout) == k as u64 {
+                            current_val = write.post_value;
+                        }
+                    }
+                }
+            });
+            MultilinearPolynomial::from(val)
+        };
+        #[cfg(test)]
+        let mut ra_test = {
+            // Compute ra in cycle-major order, since we will be binding
+            // from low-to-high starting with the cycle variables
+            let mut ra: Vec<F> = unsafe_allocate_zero_vec(K * T);
+            ra.par_chunks_mut(T).enumerate().for_each(|(k, ra_k)| {
+                for j in 0..T {
+                    if remap_address(trace[j].ram_access().address() as u64, memory_layout)
+                        == k as u64
+                    {
+                        ra_k[j] = F::one();
+                    }
+                }
+            });
+            MultilinearPolynomial::from(ra)
+        };
+
         // Value in register k before the jth cycle, for j \in {0, chunk_size, 2 * chunk_size, ...}
         let mut checkpoints: Vec<Vec<i64>> = Vec::with_capacity(num_chunks);
-        // TODO(moodlezoup): Initial memory state may not be all zeros
-        checkpoints.push(vec![0; K]);
+        checkpoints.push(initial_memory_state.to_vec());
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
             let next_checkpoint = checkpoints[chunk_index]
@@ -219,6 +364,21 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         drop(_guard);
         drop(span);
+
+        #[cfg(test)]
+        {
+            // Check that checkpoints are correct
+            for (chunk_index, checkpoint) in val_checkpoints.chunks(K).enumerate() {
+                let j = chunk_index * chunk_size;
+                for (k, V_k) in checkpoint.iter().enumerate() {
+                    assert_eq!(
+                        *V_k,
+                        val_test.get_bound_coeff(k * T + j),
+                        "k = {k}, j = {j}"
+                    );
+                }
+            }
+        }
 
         // A table that, in round i of sumcheck, stores all evaluations
         //     EQ(x, r_i, ..., r_1)
@@ -372,6 +532,28 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
 
         // First log(T / num_chunks) rounds of sumcheck
         for round in 0..chunk_size.log_2() {
+            #[cfg(test)]
+            {
+                let mut expected_claim = F::zero();
+                for j in 0..(T >> round) {
+                    let mut inner_sum = F::zero();
+                    for k in 0..K {
+                        let kj = k * (T >> round) + j;
+                        // read-checking sumcheck
+                        inner_sum += ra_test.get_bound_coeff(kj) * val_test.get_bound_coeff(kj);
+                        // write-checking sumcheck
+                        inner_sum += z_eq_r.get_bound_coeff(k)
+                            * ra_test.get_bound_coeff(kj)
+                            * (wv.get_bound_coeff(j) - val_test.get_bound_coeff(kj))
+                    }
+                    expected_claim += eq_r_prime.get_bound_coeff(j) * inner_sum;
+                }
+                assert_eq!(
+                    expected_claim, previous_claim,
+                    "Sumcheck sanity check failed in round {round}"
+                );
+            }
+
             let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
             let _inner_guard = inner_span.enter();
 
@@ -569,6 +751,23 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                 || eq_r_prime.bind_parallel(r_j, BindingOrder::LowToHigh),
             );
 
+            #[cfg(test)]
+            {
+                val_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+                ra_test.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+                // Check that row indices of I are non-decreasing
+                let mut current_row = 0;
+                for I_chunk in I.iter() {
+                    for (row, _, _, _) in I_chunk {
+                        if *row != current_row {
+                            assert_eq!(*row, current_row + 1);
+                            current_row = *row;
+                        }
+                    }
+                }
+            }
+
             let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
             let _inner_guard = inner_span.enter();
 
@@ -655,8 +854,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     ra.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
                                 let val_evals =
                                     val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
-
-                                // Save a mult by multiplying by `z_eq_r_eval` sooner rather than later
                                 let z_eq_r_eval = z_eq_r.get_coeff(k);
 
                                 [
@@ -794,7 +991,12 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         (proof, r_address, r_cycle)
     }
 
-    pub fn verify(&self, r: Vec<F>, r_prime: Vec<F>, transcript: &mut ProofTranscript) -> Vec<F> {
+    pub fn verify(
+        &self,
+        r: Vec<F>,
+        r_prime: Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (Vec<F>, Vec<F>) {
         let K = r.len().pow2();
         let T = r_prime.len().pow2();
         let z: F = transcript.challenge_scalar();
@@ -831,7 +1033,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
             "Read/write-checking sumcheck failed"
         );
 
-        r_cycle
+        (r_address, r_cycle)
     }
 }
 
@@ -844,6 +1046,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     memory_layout: &MemoryLayout,
     r_address: Vec<F>,
     r_cycle: Vec<F>,
+    init_eval: F,
     claimed_evaluation: F,
     transcript: &mut ProofTranscript,
 ) -> (ValEvaluationProof<F, ProofTranscript>, Vec<F>) {
@@ -896,7 +1099,7 @@ pub fn prove_val_evaluation<F: JoltField, ProofTranscript: Transcript>(
     drop(span);
 
     let num_rounds = T.log_2();
-    let mut previous_claim = claimed_evaluation;
+    let mut previous_claim = claimed_evaluation - init_eval;
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(num_rounds);
 
     const DEGREE: usize = 2;
@@ -973,7 +1176,7 @@ fn remap_address(address: u64, memory_layout: &MemoryLayout) -> u64 {
         return 0; // TODO(moodlezoup): Better handling for no-ops
     }
     if address >= memory_layout.input_start {
-        (address - memory_layout.input_start) / 4
+        (address - memory_layout.input_start) / 4 + 1
     } else {
         panic!("Unexpected address {}", address)
     }
