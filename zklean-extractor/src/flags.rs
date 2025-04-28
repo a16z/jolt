@@ -1,5 +1,5 @@
-use jolt_core::{r1cs::inputs::JoltR1CSInputs};
 use crate::instruction::NamedInstruction;
+use jolt_core::r1cs::inputs::JoltR1CSInputs;
 
 use crate::r1cs::input_to_field_name;
 
@@ -19,10 +19,16 @@ impl ZkLeanInstructionFlags<32> {
         }
     }
 
-    pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
+    pub fn zklean_pretty_print(
+        &self,
+        input_var: String,
+        f: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
         let r1cs_input = input_to_field_name(&self.r1cs_input);
-        let composed_lookup_table = self.instruction.name();
-        let _ = f.write(format!("({r1cs_input}, {composed_lookup_table})").as_bytes())?;
+        let instruction_name = self.instruction.name();
+        let composed_lookup_table = format!("{instruction_name}_32");
+        let _ =
+            f.write(format!("({input_var}.{r1cs_input}, {composed_lookup_table})").as_bytes())?;
         Ok(())
     }
 }
@@ -44,17 +50,25 @@ impl ZkLeanLookupCases<32> {
     }
 
     pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
-        f.write(b"def lookup_step [JoltField f] (inputs: JoltR1CSInputs f): ZKBuilder f PUnit :=\n")?;
-        f.write(b"  mux_lookup\n")?;
+        let input_var = "inputs";
+
+        f.write(
+            format!("def lookup_step [JoltField f] ({input_var}: JoltR1CSInputs f): ZKBuilder f PUnit := do\n").as_bytes(),
+        )?;
+        f.write(b"  let res <- mux_lookup\n")?;
         // TODO(hamlinb) Extract these too?
         f.write(b"    (#v[inputs.ChunksQuery_0, inputs.ChunksQuery_1, inputs.ChunksQuery_2, inputs.ChunksQuery_3])\n")?;
         f.write(b"    (#[\n")?;
-        for iflags in &self.instruction_flags {
+        for (i, iflags) in self.instruction_flags.iter().enumerate() {
             f.write(b"      ")?;
-            iflags.zklean_pretty_print(f)?;
+            iflags.zklean_pretty_print(input_var.to_string(), f)?;
+            if i + 1 != self.instruction_flags.len() {
+                f.write(b",")?;
+            }
             f.write(b"\n")?;
         }
         f.write(b"    ])\n")?;
+        f.write(b"  constrainEq res inputs.LookupOutput\n")?;
         Ok(())
     }
 }
