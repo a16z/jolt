@@ -212,8 +212,8 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let (output, proof) = prove_fib(50);
     let is_valid = verify_fib(50, output, proof);
 
-    println!("output: {}", output);
-    println!("valid: {}", is_valid);
+    println!("output: {output}");
+    println!("valid: {is_valid}");
 }
 "#;
 
