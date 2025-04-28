@@ -35,18 +35,24 @@ pub trait R1CSConstraints<F: JoltField> {
 pub struct JoltRV32IMConstraints;
 impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
     fn uniform_constraints(cs: &mut R1CSBuilder) {
+        // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::Rs1Value,
         );
 
+        // if LeftOperandIsPC { assert!(LeftInstructionInput == RealInstructionAddress) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
             JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::RealInstructionAddress,
         );
 
+        // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
+        //     assert!(LeftInstructionInput == 0)
+        // }
+        // Note that LeftOperandIsRs1Value and LeftOperandIsPC are mutually exclusive flags
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value)
                 - JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
@@ -54,18 +60,24 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             0,
         );
 
+        // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
             JoltR1CSInputs::RightInstructionInput,
             JoltR1CSInputs::Rs2Value,
         );
 
+        // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
             JoltR1CSInputs::RightInstructionInput,
             JoltR1CSInputs::Imm,
         );
 
+        // if !(RightOperandIsRs2Value || RightOperandIsImm)  {
+        //     assert!(RightInstructionInput == 0)
+        // }
+        // Note that RightOperandIsRs2Value and RightOperandIsImm are mutually exclusive flags
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value)
                 - JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
@@ -73,6 +85,11 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             0,
         );
 
+        // if Load || Store {
+        //     assert!(RamAddress == Rs1Value + Imm)
+        // } else {
+        //     assert!(RamAddress == 0)
+        // }
         let is_load_or_store = JoltR1CSInputs::OpFlags(CircuitFlags::Load)
             + JoltR1CSInputs::OpFlags(CircuitFlags::Store);
         cs.constrain_if_else(
@@ -82,24 +99,39 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RamAddress,
         );
 
+        // if Load {
+        //     assert!(RamReadValue == RamWriteValue)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Load),
             JoltR1CSInputs::RamReadValue,
             JoltR1CSInputs::RamWriteValue,
         );
 
+        // if Load {
+        //     assert!(RamReadValue == RdWriteValue)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Load),
             JoltR1CSInputs::RamReadValue,
             JoltR1CSInputs::RdWriteValue,
         );
 
+        // if Store {
+        //     assert!(Rs2Value == RamWriteValue)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Store),
             JoltR1CSInputs::Rs2Value,
             JoltR1CSInputs::RamWriteValue,
         );
 
+        // if AddOperands || SubtractOperands || MultiplyOperands {
+        //     // Lookup query is just RightLookupOperand
+        //     assert!(LeftLookupOperand == 0)
+        // } else {
+        //     assert!(LeftLookupOperand == LeftInstructionInput)
+        // }
         cs.constrain_if_else(
             JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
                 + JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
@@ -109,12 +141,18 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::LeftLookupOperand,
         );
 
+        // If AddOperands {
+        //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
             JoltR1CSInputs::RightLookupOperand,
             JoltR1CSInputs::LeftInstructionInput + JoltR1CSInputs::RightInstructionInput,
         );
 
+        // If SubtractOperands {
+        //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
             JoltR1CSInputs::RightLookupOperand,
@@ -123,18 +161,23 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
                 + (0xffffffffi64 + 1),
         );
 
+        // if MultiplyOperands {
+        //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
+        // }
         cs.constrain_prod(
             JoltR1CSInputs::Rs1Value,
             JoltR1CSInputs::Rs2Value,
             JoltR1CSInputs::Product,
         );
-
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
             JoltR1CSInputs::RightLookupOperand,
             JoltR1CSInputs::Product,
         );
 
+        // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
+        //     assert!(RightLookupOperand == RightInstructionInput)
+        // }
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands)
                 - JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands)
@@ -145,57 +188,74 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
             JoltR1CSInputs::RightInstructionInput,
         );
 
+        // if Assert {
+        //     assert!(LookupOutput == 1)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
             JoltR1CSInputs::LookupOutput,
             1,
         );
 
-        // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
+        // if Rd != 0 && WriteLookupOutputToRD {
+        //     assert!(RdWriteValue == LookupOutput)
+        // }
         cs.constrain_prod(
             JoltR1CSInputs::Rd,
             JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
             JoltR1CSInputs::WriteLookupOutputToRD,
         );
-
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WriteLookupOutputToRD,
             JoltR1CSInputs::RdWriteValue,
             JoltR1CSInputs::LookupOutput,
         );
 
-        // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
+        // if Rd != 0 && Jump {
+        //     assert!(RdWriteValue == RealInstructionAddress + 4)
+        // }
         cs.constrain_prod(
             JoltR1CSInputs::Rd,
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::WritePCtoRD,
         );
-
         cs.constrain_eq_conditional(
             JoltR1CSInputs::WritePCtoRD,
             JoltR1CSInputs::RdWriteValue,
             JoltR1CSInputs::RealInstructionAddress + 4,
         );
 
+        // if Jump {
+        //     assert!(NextPC == LookupOutput)
+        // }
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextPC,
             JoltR1CSInputs::LookupOutput,
         );
 
+        // if Branch && LookupOutput {
+        //     assert!(NextPC == RealInstructionAddress + Imm)
+        // }
         cs.constrain_prod(
             JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
             JoltR1CSInputs::LookupOutput,
             JoltR1CSInputs::ShouldBranch,
         );
-
         cs.constrain_eq_conditional(
             JoltR1CSInputs::ShouldBranch,
             JoltR1CSInputs::NextPC,
             JoltR1CSInputs::RealInstructionAddress + JoltR1CSInputs::Imm,
         );
 
-        // instruction is neither a branch nor a jump
+        // if !(ShouldBranch || Jump) {
+        //     if DoNotUpdatePC {
+        //         assert!(NextPC == RealInstructionAddress)
+        //     } else {
+        //         assert!(NextPC == RealInstructionAddress + 4)
+        //     }
+        // }
+        // Note that Branch and Jump instructions are mutually exclusive
         cs.constrain_eq_conditional(
             1 - JoltR1CSInputs::ShouldBranch - JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
             JoltR1CSInputs::NextPC,
@@ -205,7 +265,7 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
     }
 
     fn cross_step_constraints() -> Vec<OffsetEqConstraint> {
-        // If the next instruction's ELF address is not zero (i.e. it's
+        // If the next instruction's address is not zero (i.e. it's
         // not padding), then check the PC update.
         let pc_constraint = OffsetEqConstraint::new(
             (JoltR1CSInputs::RealInstructionAddress, true),
