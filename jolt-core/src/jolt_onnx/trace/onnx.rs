@@ -171,8 +171,17 @@ pub struct ComputationalGraph {
 }
 
 impl ComputationalGraph {
+    /// Creates a new instance of [`ComputationalGraph`]
+    pub fn new(nodes: Vec<GraphNode>, input_count: usize, output_count: usize) -> Self {
+        ComputationalGraph {
+            nodes,
+            input_count,
+            output_count,
+        }
+    }
+
     /// Creates a new empty computational graph
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         ComputationalGraph {
             nodes: Vec::new(),
             input_count: 0,
@@ -215,18 +224,12 @@ pub struct ONNXParser;
 impl ONNXParser {
     /// Load an ONNX model from a file
     pub fn load_model<P: AsRef<Path>>(path: P) -> Result<ComputationalGraph, ONNXError> {
-        // Create an empty computational graph
-        let mut graph = ComputationalGraph::new();
-
         // Load the ONNX model using tract
         let model = tract_onnx::onnx()
             .model_for_path(path)
             .map_err(|e| ONNXError::InvalidModel(format!("Failed to load model: {}", e)))?;
 
-        // Count inputs and outputs
-        graph.input_count = model.inputs.len();
-        graph.output_count = model.outputs.len();
-
+        let mut nodes = Vec::new();
         // Process each node in the model
         for (id, node) in model.nodes.iter().enumerate() {
             // Get the operation name
@@ -243,10 +246,14 @@ impl ONNXParser {
             };
 
             // Add the node to the graph
-            graph.nodes.push(graph_node);
+            nodes.push(graph_node);
         }
 
-        Ok(graph)
+        Ok(ComputationalGraph::new(
+            nodes,
+            model.inputs.len(),
+            model.outputs.len(),
+        ))
     }
 }
 
