@@ -277,7 +277,7 @@ impl Cpu {
     /// # Arguments
     /// * `reg` Register number. Must be 0-31
     pub fn read_register(&self, reg: u8) -> i64 {
-        debug_assert!(reg <= 31, "reg must be 0-31. {}", reg);
+        debug_assert!(reg <= 31, "reg must be 0-31. {reg}");
         match reg {
             0 => 0, // 0th register is hardwired zero
             _ => self.x[reg as usize],
@@ -346,10 +346,7 @@ impl Cpu {
                 result
             }
             Err(()) => {
-                panic!(
-                    "Unknown instruction PC:{:x} WORD:{:x}",
-                    instruction_address, original_word
-                );
+                panic!("Unknown instruction PC:{instruction_address:x} WORD:{original_word:x}");
             }
         }
     }
@@ -1442,7 +1439,7 @@ impl Cpu {
         };
 
         let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
-        s += &format!("{:08x} ", original_word);
+        s += &format!("{original_word:08x} ");
         s += &format!("{} ", inst.name);
         s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
         s
@@ -1752,7 +1749,7 @@ fn parse_format_u(word: u32) -> FormatU {
 }
 
 fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
-    println!("f format: {:x}", word);
+    println!("f format: {word:x}");
     let f = parse_format_u(word);
     let mut s = String::new();
     s += &format!("{}", get_register_name(f.rd));
@@ -1801,7 +1798,7 @@ fn get_register_name(num: usize) -> &'static str {
         29 => "t4",
         30 => "t5",
         31 => "t6",
-        _ => panic!("Unknown register num {}", num),
+        _ => panic!("Unknown register num {num}"),
     }
 }
 

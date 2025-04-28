@@ -18,5 +18,5 @@ pub fn main() {
     let is_valid = verify_sha3_chain(input, iters, output, proof);
 
     println!("output: {}", hex::encode(output));
-    println!("valid: {}", is_valid);
+    println!("valid: {is_valid}");
 }

@@ -36,13 +36,13 @@ pub fn report_memory_usage() {
 
     let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
     for label in memory_usage_map.keys() {
-        eprintln!("  Unclosed memory tracing span: \"{}\"", label);
+        eprintln!("  Unclosed memory tracing span: \"{label}\"");
     }
 
     let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
     for (label, delta) in memory_delta_map.iter() {
         if *delta >= 1.0 {
-            println!("  \"{}\": {:.2} GB", label, delta);
+            println!("  \"{label}\": {delta:.2} GB");
         } else {
             println!("  \"{}\": {:.2} MB", label, delta * 1000.0);
         }
@@ -56,7 +56,7 @@ pub fn print_current_memory_usage(label: &str) {
     if let Some(usage) = memory_stats() {
         let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
         if memory_usage_gb >= 1.0 {
-            println!("\"{}\" current memory usage: {} GB", label, memory_usage_gb);
+            println!("\"{label}\" current memory usage: {memory_usage_gb} GB");
         } else {
             println!(
                 "\"{}\" current memory usage: {} MB",
@@ -65,6 +65,6 @@ pub fn print_current_memory_usage(label: &str) {
             );
         }
     } else {
-        println!("Failed to get current memory usage (\"{}\")", label);
+        println!("Failed to get current memory usage (\"{label}\")");
     }
 }

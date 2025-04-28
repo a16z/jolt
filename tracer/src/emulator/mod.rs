@@ -107,10 +107,10 @@ impl Emulator {
             if endcode != 0 {
                 match endcode {
                     1 => self.put_bytes_to_terminal(
-                        format!("Test Passed with {:X}\n", endcode).as_bytes(),
+                        format!("Test Passed with {endcode:X}\n").as_bytes(),
                     ),
                     _ => self.put_bytes_to_terminal(
-                        format!("Test Failed with {:X}\n", endcode).as_bytes(),
+                        format!("Test Failed with {endcode:X}\n").as_bytes(),
                     ),
                 };
                 break;
