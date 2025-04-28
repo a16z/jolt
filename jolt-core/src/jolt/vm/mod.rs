@@ -293,6 +293,9 @@ where
             &mut transcript,
         );
 
+        let registers_proof =
+            RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
+
         let ram_proof = RAMTwistProof::prove(
             // &preprocessing.generators,
             &trace,
@@ -301,9 +304,6 @@ where
             &mut opening_accumulator,
             &mut transcript,
         );
-
-        let registers_proof =
-            RegistersTwistProof::prove(&trace, &mut opening_accumulator, &mut transcript);
 
         let bytecode_proof =
             BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
@@ -381,8 +381,12 @@ where
         proof
             .instruction_lookups
             .verify(&mut opening_accumulator, &mut transcript)?;
-        proof.ram.verify(todo!(), todo!(), &mut transcript)?;
-        proof.registers.verify(todo!(), todo!(), &mut transcript)?;
+        proof
+            .registers
+            .verify(padded_trace_length, &mut transcript)?;
+        proof
+            .ram
+            .verify(padded_trace_length, 1 << 16, &mut transcript)?;
         proof
             .bytecode
             .verify(&preprocessing.bytecode, todo!(), &mut transcript)?;

@@ -45,7 +45,9 @@ impl RISCVInstruction for JALR {
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         let tmp = cpu.sign_extend(cpu.pc as i64);
         cpu.pc = (cpu.x[self.operands.rs1] as u64).wrapping_add(self.operands.imm as u64);
-        cpu.x[self.operands.rd] = tmp;
+        if self.operands.rd != 0 {
+            cpu.x[self.operands.rd] = tmp;
+        }
     }
 }
 

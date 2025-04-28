@@ -101,11 +101,13 @@ impl<F: JoltField, ProofTranscript: Transcript> RAMTwistProof<F, ProofTranscript
 
     pub fn verify(
         &self,
-        r: Vec<F>,
-        r_prime: Vec<F>,
+        K: usize,
+        T: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let log_T = r_prime.len();
+        let log_T = T.log_2();
+        let r: Vec<F> = transcript.challenge_vector(K.log_2());
+        let r_prime: Vec<F> = transcript.challenge_vector(log_T);
 
         let r_cycle = self
             .read_write_checking_proof
