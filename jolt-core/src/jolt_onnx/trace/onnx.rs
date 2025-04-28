@@ -82,7 +82,7 @@ impl OperationType {
     /// This method maps operation names from ONNX model nodes to their corresponding
     /// OperationType enum values. It handles various naming conventions and aliases
     /// used in ONNX models.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "Source" => OperationType::Input,
             "Const" => OperationType::Const,
@@ -181,6 +181,7 @@ impl ComputationalGraph {
         }
     }
 
+    #[cfg(test)]
     /// Print the computational graph
     pub fn print(&self) {
         println!("Computational Graph:");
@@ -233,7 +234,7 @@ impl ONNXParser {
             let op_name = node.op.name();
 
             // Map the operation name to OperationType using the from_str method
-            let op_type = OperationType::from_str(op_name.as_ref());
+            let op_type = OperationType::parse(op_name.as_ref());
 
             // Create the graph node
             let graph_node = GraphNode {
