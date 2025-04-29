@@ -26,12 +26,12 @@ pub fn main() {
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_add(5, 10, output, proof);
 
-    println!("add output: {}", output);
-    println!("add valid: {}", is_valid);
+    println!("add output: {output}");
+    println!("add valid: {is_valid}");
 
     let (output, proof) = prove_mul(5, 10);
     let is_valid = verify_mul(5, 10, output, proof);
 
-    println!("mul output: {}", output);
-    println!("mul valid: {}", is_valid);
+    println!("mul output: {output}");
+    println!("mul valid: {is_valid}");
 }

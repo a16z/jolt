@@ -31,8 +31,7 @@ where
 {
     assert!(
         percentage_ones <= 100,
-        "Threshold must be between 0 and 100, but got {}",
-        percentage_ones
+        "Threshold must be between 0 and 100, but got {percentage_ones}"
     );
 
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
@@ -79,7 +78,7 @@ fn benchmark_commit<PCS, F, ProofTranscript>(
         .into_iter()
         .map(MultilinearPolynomial::from)
         .collect::<Vec<_>>();
-    c.bench_function(&format!("{} Commit: {}% Ones", name, threshold), |b| {
+    c.bench_function(&format!("{name} Commit: {threshold}% Ones"), |b| {
         b.iter(|| {
             PCS::batch_commit(&leaves, &setup);
         });

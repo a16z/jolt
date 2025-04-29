@@ -56,7 +56,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                     (quotient as u64, remainder as u64)
                 }
             }
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
         };
 
         let q = ADVICEInstruction::<WORD_SIZE>(quotient).lookup_entry();

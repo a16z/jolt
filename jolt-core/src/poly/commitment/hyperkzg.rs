@@ -527,9 +527,7 @@ where
 
         assert!(
             size % CHUNK_SIZE == 0,
-            "CHUNK_SIZE ({}) must evenly divide the size ({})",
-            CHUNK_SIZE,
-            size,
+            "CHUNK_SIZE ({CHUNK_SIZE}) must evenly divide the size ({size})",
         );
 
         let current_chunk = Vec::with_capacity(CHUNK_SIZE);
