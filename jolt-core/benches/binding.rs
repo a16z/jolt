@@ -43,7 +43,7 @@ fn random_sparse_coeffs<F: JoltField>(
 
 fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     c.bench_function(
-        &format!("DensePolynomial::bind {} variables", num_vars),
+        &format!("DensePolynomial::bind {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -68,10 +68,7 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
 
 fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch_size: usize) {
     c.bench_function(
-        &format!(
-            "DensePolynomial::bind {} x {} variables",
-            batch_size, num_vars
-        ),
+        &format!("DensePolynomial::bind {batch_size} x {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -129,7 +126,7 @@ fn benchmark_compact<F: JoltField>(
 
 fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     c.bench_function(
-        &format!("DenseInterleavedPolynomial::bind {} variables", num_vars),
+        &format!("DenseInterleavedPolynomial::bind {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {

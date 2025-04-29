@@ -35,7 +35,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             match WORD_SIZE {
                 32 => u32::MAX as u64,
                 64 => u64::MAX,
-                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+                _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
             }
         } else {
             x / y
@@ -251,7 +251,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             match WORD_SIZE {
                 32 => u32::MAX as u64,
                 64 => u64::MAX,
-                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+                _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
             }
         } else {
             x / y
