@@ -104,10 +104,7 @@ fn benchmark_compact<F: JoltField>(
     binding_order: BindingOrder,
 ) {
     c.bench_function(
-        &format!(
-            "CompactPolynomial::bind {} variables {:?} binding order",
-            num_vars, binding_order
-        ),
+        &format!("CompactPolynomial::bind {num_vars} variables {binding_order:?} binding order"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -120,10 +117,10 @@ fn benchmark_compact<F: JoltField>(
                     (poly, r)
                 },
                 |(mut poly, r)| {
-                    for i in 0..num_vars {
-                        poly.bind_parallel(r[i], binding_order);
+                    r.into_iter().for_each(|r_i| {
+                        poly.bind_parallel(r_i, binding_order);
                         criterion::black_box(());
-                    }
+                    });
                 },
             );
         },
