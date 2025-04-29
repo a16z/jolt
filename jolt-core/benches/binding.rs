@@ -2,14 +2,22 @@ use ark_bn254::Fr;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
+use jolt_core::poly::compact_polynomial::CompactPolynomial;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
 use jolt_core::subprotocols::sumcheck::Bindable;
 use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {
     std::iter::repeat_with(|| F::random(rng))
+        .take(1 << num_vars)
+        .collect()
+}
+
+fn random_compact_coeffs(rng: &mut impl Rng, num_vars: usize) -> Vec<u8> {
+    std::iter::repeat_with(|| rng.gen())
         .take(1 << num_vars)
         .collect()
 }
@@ -81,6 +89,35 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
                             .par_iter_mut()
                             .for_each(|poly| poly.bound_poly_var_bot(&r[i]))
                     }
+                },
+            );
+        },
+    );
+}
+
+fn benchmark_compact<F: JoltField>(
+    c: &mut Criterion,
+    num_vars: usize,
+    binding_order: BindingOrder,
+) {
+    c.bench_function(
+        &format!("CompactPolynomial::bind {num_vars} variables {binding_order:?} binding order"),
+        |b| {
+            b.iter_with_setup(
+                || {
+                    let mut rng = test_rng();
+                    let coeffs = random_compact_coeffs(&mut rng, num_vars);
+                    let poly = CompactPolynomial::from_coeffs(coeffs);
+                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                        .take(num_vars)
+                        .collect();
+                    (poly, r)
+                },
+                |(mut poly, r)| {
+                    r.into_iter().for_each(|r_i| {
+                        poly.bind_parallel(r_i, binding_order);
+                        criterion::black_box(());
+                    });
                 },
             );
         },
@@ -170,6 +207,12 @@ fn main() {
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 8);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 16);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 32);
+
+    // Lookup table initialization is needed for compact benchmarks
+    Fr::initialize_lookup_tables(Fr::compute_lookup_tables());
+    benchmark_compact::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
+    benchmark_compact::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);
+    benchmark_compact::<Fr>(&mut criterion, 26, BindingOrder::LowToHigh);
 
     criterion.final_summary();
 }

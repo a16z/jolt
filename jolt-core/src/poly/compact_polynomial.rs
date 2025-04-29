@@ -79,6 +79,7 @@ pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     len: usize,
     pub coeffs: Vec<T>,
     pub bound_coeffs: Vec<F>,
+    binding_scratch_space: Option<Vec<F>>,
 }
 
 impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
@@ -94,6 +95,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
             len: coeffs.len(),
             coeffs,
             bound_coeffs: vec![],
+            binding_scratch_space: None,
         }
     }
 
@@ -190,10 +192,14 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
         if self.is_bound() {
             match order {
                 BindingOrder::LowToHigh => {
-                    // TODO(moodlezoup): Use `binding_scratch_space` trick
-                    let mut new_coeffs = unsafe_allocate_zero_vec(n);
-                    new_coeffs
+                    if self.binding_scratch_space.is_none() {
+                        self.binding_scratch_space = Some(unsafe_allocate_zero_vec(n));
+                    }
+                    let binding_scratch_space = self.binding_scratch_space.as_mut().unwrap();
+
+                    binding_scratch_space
                         .par_iter_mut()
+                        .take(n)
                         .enumerate()
                         .for_each(|(i, new_coeff)| {
                             if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
@@ -203,7 +209,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                                     + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
                             }
                         });
-                    self.bound_coeffs = new_coeffs;
+                    std::mem::swap(&mut self.bound_coeffs, binding_scratch_space);
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
