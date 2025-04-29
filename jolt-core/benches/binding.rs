@@ -104,7 +104,10 @@ fn benchmark_compact<F: JoltField>(
     binding_order: BindingOrder,
 ) {
     c.bench_function(
-        &format!("CompactPolynomial::bind {} variables {:?} binding order", num_vars, binding_order),
+        &format!(
+            "CompactPolynomial::bind {} variables {:?} binding order",
+            num_vars, binding_order
+        ),
         |b| {
             b.iter_with_setup(
                 || {
