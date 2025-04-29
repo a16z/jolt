@@ -641,7 +641,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                             let mut inner_sum_evals = [F::zero(); 3];
                             for k in dirty_indices.drain(..) {
                                 if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
-                                    // Read-checking sumcheck
                                     let m_ra = ra[1][k] - ra[0][k];
                                     let ra_eval_2 = ra[1][k] + m_ra;
                                     let ra_eval_3 = ra_eval_2 + m_ra;
@@ -650,19 +649,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
                                     let val_eval_2 = val_j_r[1][k] + m_val;
                                     let val_eval_3 = val_eval_2 + m_val;
 
-                                    inner_sum_evals[0] += ra[0][k].mul_0_optimized(val_j_r[0][k]);
-                                    inner_sum_evals[1] += ra_eval_2 * val_eval_2;
-                                    inner_sum_evals[2] += ra_eval_3 * val_eval_3;
-
-                                    // Write-checking sumcheck
                                     let z_eq_r_eval = z_eq_r.get_coeff(k);
-                                    inner_sum_evals[0] += ra[0][k]
-                                        .mul_0_optimized(z_eq_r_eval)
-                                        .mul_0_optimized(wv_evals[0] - val_j_r[0][k]);
-                                    inner_sum_evals[1] +=
-                                        z_eq_r_eval * ra_eval_2 * (wv_evals[1] - val_eval_2);
-                                    inner_sum_evals[2] +=
-                                        z_eq_r_eval * ra_eval_3 * (wv_evals[2] - val_eval_3);
+                                    inner_sum_evals[0] += ra[0][k].mul_0_optimized(
+                                        val_j_r[0][k] + z_eq_r_eval * (wv_evals[0] - val_j_r[0][k]),
+                                    );
+                                    inner_sum_evals[1] += ra_eval_2
+                                        * (val_eval_2 + z_eq_r_eval * (wv_evals[1] - val_eval_2));
+                                    inner_sum_evals[2] += ra_eval_3
+                                        * (val_eval_3 + z_eq_r_eval * (wv_evals[2] - val_eval_3));
 
                                     ra[0][k] = F::zero();
                                     ra[1][k] = F::zero();
