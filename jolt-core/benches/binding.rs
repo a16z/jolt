@@ -4,6 +4,7 @@ use criterion::Criterion;
 use jolt_core::field::JoltField;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
 use jolt_core::subprotocols::sumcheck::Bindable;
 use rayon::prelude::*;
@@ -115,6 +116,38 @@ fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize)
     );
 }
 
+fn benchmark_dense_parallel<F: JoltField>(
+    c: &mut Criterion,
+    num_vars: usize,
+    binding_order: BindingOrder,
+) {
+    c.bench_function(
+        &format!(
+            "DensePolynomial::bind_parallel {} variables {:?}",
+            num_vars, binding_order
+        ),
+        |b| {
+            b.iter_with_setup(
+                || {
+                    let mut rng = test_rng();
+                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let poly = DensePolynomial::new(coeffs);
+                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                        .take(num_vars)
+                        .collect();
+                    (poly, r)
+                },
+                |(mut poly, r)| {
+                    for i in 0..num_vars {
+                        poly.bind_parallel(r[i], binding_order);
+                        criterion::black_box(());
+                    }
+                },
+            );
+        },
+    );
+}
+
 fn benchmark_sparse_interleaved<F: JoltField>(
     c: &mut Criterion,
     batch_size: usize,
@@ -165,14 +198,22 @@ fn main() {
     benchmark_dense::<Fr>(&mut criterion, 24);
 
     benchmark_dense_interleaved::<Fr>(&mut criterion, 22);
-    // benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 23);
     benchmark_dense_interleaved::<Fr>(&mut criterion, 24);
-    // benchmark_dense_interleaved::<Fr>(&mut criterion, 25);
+    benchmark_dense_interleaved::<Fr>(&mut criterion, 25);
 
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 4);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 8);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 16);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 32);
+
+    benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::LowToHigh);
+
+    benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::HighToLow);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::HighToLow);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::HighToLow);
 
     criterion.final_summary();
 }
