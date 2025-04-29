@@ -96,7 +96,7 @@ fn remap_address(a: u64, memory_layout: &MemoryLayout) -> u64 {
         // need to be remapped
         a
     } else {
-        panic!("Unexpected address {}", a)
+        panic!("Unexpected address {a}")
     }
 }
 
@@ -352,7 +352,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                     t_final[a] = timestamp;
                 }
                 MemoryOp::Write(a, v) => {
-                    panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+                    panic!("Unexpected rs1 MemoryOp::Write({a}, {v})");
                 }
             };
 
@@ -373,13 +373,13 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                     t_final[a] = timestamp;
                 }
                 MemoryOp::Write(a, v) => {
-                    panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v)
+                    panic!("Unexpected rs2 MemoryOp::Write({a}, {v})")
                 }
             };
 
             match step.memory_ops[RD] {
                 MemoryOp::Read(a) => {
-                    panic!("Unexpected rd MemoryOp::Read({})", a)
+                    panic!("Unexpected rd MemoryOp::Read({a})")
                 }
                 MemoryOp::Write(a, v_new) => {
                     assert!(a < REGISTER_COUNT);

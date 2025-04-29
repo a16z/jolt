@@ -151,7 +151,7 @@ fn benchmark_msm_batch<PCS, F, ProofTranscript>(
     #[cfg(feature = "icicle")]
     let id = format!("{} [mode:Icicle]", name);
     #[cfg(not(feature = "icicle"))]
-    let id = format!("{} [mode:JOLT CPU]", name);
+    let id = format!("{name} [mode:JOLT CPU]");
     c.bench_function(&id, |b| {
         b.iter(|| {
             #[cfg(feature = "icicle")]

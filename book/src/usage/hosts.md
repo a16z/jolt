@@ -14,13 +14,13 @@ pub fn main() {
     let (output, proof) = prove_sha2(input);
     let is_valid = verify_sha2(proof);
 
-    println!("sha2 output: {}", output);
-    println!("sha2 valid: {}", is_valid);
+    println!("sha2 output: {output}");
+    println!("sha2 valid: {is_valid}");
 
     let (output, proof) = prove_sha3(input);
     let is_valid = verify_sha3(proof);
 
-    println!("sha3 output: {}", output);
-    println!("sha3 valid: {}", is_valid);
+    println!("sha3 output: {output}");
+    println!("sha3 valid: {is_valid}");
 }
 ```

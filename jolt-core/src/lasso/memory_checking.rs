@@ -182,8 +182,7 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
         {
             assert!(
                 std::ptr::eq(ptr, ptr_mut),
-                "Read-write pointer mismatch at index {}",
-                i
+                "Read-write pointer mismatch at index {i}"
             );
         }
 
@@ -201,8 +200,7 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
         {
             assert!(
                 std::ptr::eq(ptr, ptr_mut),
-                "Init-final pointer mismatch at index {}",
-                i
+                "Init-final pointer mismatch at index {i}"
             );
         }
     }

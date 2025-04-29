@@ -277,7 +277,7 @@ fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSeri
     let file_size_bytes = file.metadata().unwrap().len();
     let file_size_kb = file_size_bytes as f64 / 1024.0;
     let file_size_mb = file_size_kb / 1024.0;
-    println!("{:<30} : {:.3} MB", name, file_size_mb);
+    println!("{name:<30} : {file_size_mb:.3} MB");
 }
 
 fn prove_example<T: Serialize, PCS, F, ProofTranscript>(
