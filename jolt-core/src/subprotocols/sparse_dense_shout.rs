@@ -19,7 +19,7 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec, unsafe_zero_slice},
         transcript::{AppendToTranscript, Transcript},
         uninterleave_bits,
     },
@@ -315,7 +315,7 @@ pub fn prove_sparse_dense_shout<
     drop(_guard);
     drop(span);
 
-    let (eq_r_prime, mut u_evals) = rayon::join(
+    let (eq_r_prime_evals, mut u_evals) = rayon::join(
         || EqPolynomial::evals(&r_cycle),
         || EqPolynomial::evals_with_r2(&r_cycle),
     );
@@ -357,6 +357,36 @@ pub fn prove_sparse_dense_shout<
         })
         .collect();
 
+    let span = tracing::span!(tracing::Level::INFO, "Compute lookup_indices_by_table");
+    let _guard = span.enter();
+
+    let lookup_indices_by_table: Vec<_> = lookup_tables
+        .par_iter()
+        .map(|table| {
+            let table_lookups: Vec<_> = trace
+                .iter()
+                .zip(lookup_indices.iter())
+                .enumerate()
+                .filter_map(|(j, (cycle, k))| match cycle.lookup_table() {
+                    Some(lookup) => {
+                        if LookupTables::<WORD_SIZE>::enum_index(&lookup)
+                            == LookupTables::enum_index(table)
+                        {
+                            Some((j, k))
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                })
+                .collect();
+            table_lookups
+        })
+        .collect();
+
+    drop(_guard);
+    drop(span);
+
     for phase in 0..4 {
         let span = tracing::span!(tracing::Level::INFO, "sparse-dense phase");
         let _guard = span.enter();
@@ -383,24 +413,8 @@ pub fn prove_sparse_dense_shout<
         lookup_tables
             .par_iter()
             .zip(suffix_polys.par_iter_mut())
-            .for_each(|(table, polys)| {
-                let table_lookups: Vec<_> = trace
-                    .iter()
-                    .zip(lookup_indices.iter())
-                    .zip(u_evals.iter())
-                    .filter_map(|((cycle, k), u)| match cycle.lookup_table() {
-                        Some(lookup) => {
-                            if LookupTables::<WORD_SIZE>::enum_index(&lookup)
-                                == LookupTables::enum_index(table)
-                            {
-                                Some((k, u))
-                            } else {
-                                None
-                            }
-                        }
-                        None => None,
-                    })
-                    .collect();
+            .zip(lookup_indices_by_table.par_iter())
+            .for_each(|((table, polys), lookup_indices)| {
                 table
                     .suffixes()
                     .par_iter()
@@ -410,13 +424,14 @@ pub fn prove_sparse_dense_shout<
                             // Reset polynomial
                             poly.len = m;
                             poly.num_vars = poly.len.log_2();
-                            poly.Z.par_iter_mut().for_each(|eval| *eval = F::zero());
+                            unsafe_zero_slice(&mut poly.Z);
                         }
 
-                        for (k, u) in table_lookups.iter() {
+                        for (j, k) in lookup_indices.iter() {
                             let (prefix_bits, suffix_bits) = k.split(suffix_len);
                             let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                             if t != 0 {
+                                let u = u_evals[*j];
                                 poly.Z[prefix_bits % m] += u.mul_u64_unchecked(t as u64);
                             }
                         }
@@ -491,9 +506,9 @@ pub fn prove_sparse_dense_shout<
         ra.push(MultilinearPolynomial::from(ra_i));
     }
 
-    drop_in_background_thread((lookup_indices, suffix_polys));
+    drop_in_background_thread(suffix_polys);
 
-    let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
+    let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime_evals.clone());
 
     let span = tracing::span!(
         tracing::Level::INFO,
@@ -609,20 +624,12 @@ pub fn prove_sparse_dense_shout<
 
     // Evaluate each flag polynomial on `r_cycle_prime` by computing its
     // dot product with EQ(r_cycle_prime, j)
-    let flag_claims: Vec<_> = (0..LookupTables::<WORD_SIZE>::COUNT)
+    let flag_claims: Vec<_> = lookup_indices_by_table
         .into_par_iter()
-        .map(|table_index| {
-            trace
-                .iter()
-                .enumerate()
-                .filter_map(|(j, step)| {
-                    if let Some(table) = step.lookup_table() {
-                        if LookupTables::<WORD_SIZE>::enum_index(&table) == table_index {
-                            return Some(eq_r_cycle_prime[j]);
-                        }
-                    }
-                    None
-                })
+        .map(|table_lookups| {
+            table_lookups
+                .into_iter()
+                .map(|(j, _)| eq_r_cycle_prime[j])
                 .sum::<F>()
         })
         .collect();
