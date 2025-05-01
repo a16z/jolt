@@ -263,7 +263,7 @@ pub trait ConstraintInput: Clone + Copy + Debug + PartialEq + Sync + Send + 'sta
     fn to_index<const C: usize>(&self) -> usize {
         match Self::flatten::<C>().iter().position(|x| x == self) {
             Some(index) => index,
-            None => panic!("Invalid variant {:?}", self),
+            None => panic!("Invalid variant {self:?}"),
         }
     }
 
@@ -451,7 +451,7 @@ mod tests {
         }) {
             let ref_ptr = aux.get_ref(&jolt_polys) as *const MultilinearPolynomial<Fr>;
             let ref_mut_ptr = aux.get_ref_mut(&mut jolt_polys) as *const MultilinearPolynomial<Fr>;
-            assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {:?}", aux);
+            assert_eq!(ref_ptr, ref_mut_ptr, "Pointer mismatch for {aux:?}");
         }
     }
 

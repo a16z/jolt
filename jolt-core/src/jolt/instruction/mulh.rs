@@ -196,7 +196,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 let result = ((x as i64 as i128) * (y as i64 as i128)) >> 64;
                 result as u64
             }
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
         }
     }
 }

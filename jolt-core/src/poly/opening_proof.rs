@@ -508,8 +508,7 @@ where
                 let prover_commitment = PCS::commit(poly, self.pcs_setup.as_ref().unwrap());
                 assert_eq!(
                     prover_commitment, **commitment,
-                    "commitment mismatch at index {}",
-                    i
+                    "commitment mismatch at index {i}"
                 );
             }
             let batched_poly = MultilinearPolynomial::linear_combination(

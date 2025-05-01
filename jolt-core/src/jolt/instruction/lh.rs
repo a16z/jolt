@@ -33,7 +33,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for LHInstruction<WORD_S
         let offset_unsigned = match WORD_SIZE {
             32 => (offset & u32::MAX as i64) as u64,
             64 => offset as u64,
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
         };
 
         let is_aligned = AssertHalfwordAlignmentInstruction::<WORD_SIZE>(rs1_val, offset_unsigned)

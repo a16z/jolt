@@ -17,5 +17,5 @@ pub fn main() {
     let is_valid = verify_sha2(input, output, proof);
 
     println!("output: {}", hex::encode(output));
-    println!("valid: {}", is_valid);
+    println!("valid: {is_valid}");
 }

@@ -292,7 +292,7 @@ impl VirtioBlockDisk {
                 if (value & 0x1) == 1 {
                     self.interrupt_status &= !0x1;
                 } else {
-                    panic!("Unknown ack {:X}", value);
+                    panic!("Unknown ack {value:X}");
                 }
             }
             0x10001070 => {
@@ -327,18 +327,15 @@ impl VirtioBlockDisk {
     ) {
         debug_assert!(
             (mem_address % 8) == 0,
-            "Memory address should be eight-byte aligned. {:X}",
-            mem_address
+            "Memory address should be eight-byte aligned. {mem_address:X}"
         );
         debug_assert!(
             (disk_address % 8) == 0,
-            "Disk address should be eight-byte aligned. {:X}",
-            disk_address
+            "Disk address should be eight-byte aligned. {disk_address:X}"
         );
         debug_assert!(
             (length % 8) == 0,
-            "Length should be eight-byte aligned. {:X}",
-            length
+            "Length should be eight-byte aligned. {length:X}"
         );
         for i in 0..(length / 8) {
             let disk_index = ((disk_address + i * 8) >> 3) as usize;
@@ -362,18 +359,15 @@ impl VirtioBlockDisk {
     ) {
         debug_assert!(
             (mem_address % 8) == 0,
-            "Memory address should be eight-byte aligned. {:X}",
-            mem_address
+            "Memory address should be eight-byte aligned. {mem_address:X}"
         );
         debug_assert!(
             (disk_address % 8) == 0,
-            "Disk address should be eight-byte aligned. {:X}",
-            disk_address
+            "Disk address should be eight-byte aligned. {disk_address:X}"
         );
         debug_assert!(
             (length % 8) == 0,
-            "Length should be eight-byte aligned. {:X}",
-            length
+            "Length should be eight-byte aligned. {length:X}"
         );
         for i in 0..(length / 8) {
             let disk_index = ((disk_address + i * 8) >> 3) as usize;

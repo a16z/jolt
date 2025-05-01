@@ -2,14 +2,22 @@ use ark_bn254::Fr;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
+use jolt_core::poly::compact_polynomial::CompactPolynomial;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::poly::sparse_interleaved_poly::{SparseCoefficient, SparseInterleavedPolynomial};
 use jolt_core::subprotocols::sumcheck::Bindable;
 use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {
     std::iter::repeat_with(|| F::random(rng))
+        .take(1 << num_vars)
+        .collect()
+}
+
+fn random_compact_coeffs(rng: &mut impl Rng, num_vars: usize) -> Vec<u8> {
+    std::iter::repeat_with(|| rng.gen())
         .take(1 << num_vars)
         .collect()
 }
@@ -35,7 +43,7 @@ fn random_sparse_coeffs<F: JoltField>(
 
 fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     c.bench_function(
-        &format!("DensePolynomial::bind {} variables", num_vars),
+        &format!("DensePolynomial::bind {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -60,10 +68,7 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
 
 fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch_size: usize) {
     c.bench_function(
-        &format!(
-            "DensePolynomial::bind {} x {} variables",
-            batch_size, num_vars
-        ),
+        &format!("DensePolynomial::bind {batch_size} x {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -90,9 +95,38 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
     );
 }
 
+fn benchmark_compact<F: JoltField>(
+    c: &mut Criterion,
+    num_vars: usize,
+    binding_order: BindingOrder,
+) {
+    c.bench_function(
+        &format!("CompactPolynomial::bind {num_vars} variables {binding_order:?} binding order"),
+        |b| {
+            b.iter_with_setup(
+                || {
+                    let mut rng = test_rng();
+                    let coeffs = random_compact_coeffs(&mut rng, num_vars);
+                    let poly = CompactPolynomial::from_coeffs(coeffs);
+                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                        .take(num_vars)
+                        .collect();
+                    (poly, r)
+                },
+                |(mut poly, r)| {
+                    r.into_iter().for_each(|r_i| {
+                        poly.bind_parallel(r_i, binding_order);
+                        criterion::black_box(());
+                    });
+                },
+            );
+        },
+    );
+}
+
 fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     c.bench_function(
-        &format!("DenseInterleavedPolynomial::bind {} variables", num_vars),
+        &format!("DenseInterleavedPolynomial::bind {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -107,6 +141,38 @@ fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize)
                 |(mut poly, r)| {
                     for i in 0..num_vars {
                         poly.bind(r[i]);
+                        criterion::black_box(());
+                    }
+                },
+            );
+        },
+    );
+}
+
+fn benchmark_dense_parallel<F: JoltField>(
+    c: &mut Criterion,
+    num_vars: usize,
+    binding_order: BindingOrder,
+) {
+    c.bench_function(
+        &format!(
+            "DensePolynomial::bind_parallel {} variables {:?}",
+            num_vars, binding_order
+        ),
+        |b| {
+            b.iter_with_setup(
+                || {
+                    let mut rng = test_rng();
+                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let poly = DensePolynomial::new(coeffs);
+                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                        .take(num_vars)
+                        .collect();
+                    (poly, r)
+                },
+                |(mut poly, r)| {
+                    for i in 0..num_vars {
+                        poly.bind_parallel(r[i], binding_order);
                         criterion::black_box(());
                     }
                 },
@@ -173,6 +239,19 @@ fn main() {
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 8);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 16);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 32);
+
+    benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::LowToHigh);
+
+    benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::HighToLow);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::HighToLow);
+    benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::HighToLow);
+    // Lookup table initialization is needed for compact benchmarks
+    Fr::initialize_lookup_tables(Fr::compute_lookup_tables());
+    benchmark_compact::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
+    benchmark_compact::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);
+    benchmark_compact::<Fr>(&mut criterion, 26, BindingOrder::LowToHigh);
 
     criterion.final_summary();
 }

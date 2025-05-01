@@ -1360,8 +1360,7 @@ mod tests {
         {
             for config in &configs {
                 println!(
-                    "Running test with num_vars = {}, density = {}, batch_size = {}, config = {:?}",
-                    num_vars, density, batch_size, config
+                    "Running test with num_vars = {num_vars}, density = {density}, batch_size = {batch_size}, config = {config:?}"
                 );
                 run_sparse_prove_verify_test(num_vars, density, batch_size, *config);
             }

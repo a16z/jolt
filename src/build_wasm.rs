@@ -46,7 +46,7 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
     let target_dir = Path::new("target/wasm32-unknown-unknown/release");
     fs::create_dir_all(target_dir)?;
 
-    let output_path = target_dir.join(format!("preprocessed_{}.bin", func_name));
+    let output_path = target_dir.join(format!("preprocessed_{func_name}.bin"));
     let mut file = File::create(output_path)?;
     file.write_all(&buf)?;
     Ok(())
@@ -55,9 +55,9 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
 fn extract_provable_functions() -> Vec<FunctionAttributes> {
     let guest_path = Path::new("guest/src/lib.rs");
     let content = fs::read_to_string(guest_path)
-        .unwrap_or_else(|_| panic!("Unable to read file: {:?}", guest_path));
+        .unwrap_or_else(|_| panic!("Unable to read file: {guest_path:?}"));
     let syntax: syn::File = syn::parse_file(&content)
-        .unwrap_or_else(|_| panic!("Unable to parse file: {:?}", guest_path));
+        .unwrap_or_else(|_| panic!("Unable to parse file: {guest_path:?}"));
 
     syntax
         .items
@@ -131,7 +131,7 @@ fn is_std() -> Option<bool> {
 fn create_index_html(func_names: Vec<String>) -> Result<()> {
     let func_names_with_verify_prefix: Vec<String> = func_names
         .iter()
-        .map(|name| format!("verify_{}", name))
+        .map(|name| format!("verify_{name}"))
         .collect();
 
     let mut html_content = String::from(HTML_HEAD);
@@ -140,11 +140,10 @@ fn create_index_html(func_names: Vec<String>) -> Result<()> {
         html_content.push_str(&format!(
             r#"
     <div style="margin-bottom: 10px;">
-        <input type="file" id="proofFile_{0}" />
-        <button id="verifyButton_{0}">Verify Proof for {0}-Function</button>
+        <input type="file" id="proofFile_{func_name}" />
+        <button id="verifyButton_{func_name}">Verify Proof for {func_name}-Function</button>
     </div>
-"#,
-            func_name
+"#
         ));
     }
 
@@ -163,8 +162,8 @@ fn create_index_html(func_names: Vec<String>) -> Result<()> {
     for func_name in &func_names {
         html_content.push_str(&format!(
             r#"
-            document.getElementById('verifyButton_{0}').addEventListener('click', async () => {{
-                const fileInput = document.getElementById('proofFile_{0}');
+            document.getElementById('verifyButton_{func_name}').addEventListener('click', async () => {{
+                const fileInput = document.getElementById('proofFile_{func_name}');
                 if (fileInput.files.length === 0) {{
                     alert("Please select a proof file first.");
                     return;
@@ -178,18 +177,17 @@ fn create_index_html(func_names: Vec<String>) -> Result<()> {
                     const proofData = new Uint8Array(proofArrayBuffer);
 
                     // Fetch preprocessing data and prepare wasm binary to json conversion
-                    const response = await fetch('target/wasm32-unknown-unknown/release/preprocessed_{0}.bin')
+                    const response = await fetch('target/wasm32-unknown-unknown/release/preprocessed_{func_name}.bin')
                     const wasmBinary = await response.arrayBuffer();
                     const wasmData = new Uint8Array(wasmBinary);
 
-                    const result = verify_{0}(wasmData, proofData);
+                    const result = verify_{func_name}(wasmData, proofData);
                     alert(result ? "Proof is valid!" : "Proof is invalid.");
                 }};
 
                 reader.readAsArrayBuffer(file);
             }});
-"#,
-            func_name
+"#
         ));
     }
 
@@ -218,7 +216,7 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
 
     {
         // first we need to edit the Cargo.toml file in the root directory
-        let cargo_toml_path = format!("{}/Cargo.toml", name);
+        let cargo_toml_path = format!("{name}/Cargo.toml");
         let content = fs::read_to_string(&cargo_toml_path)?;
         let mut doc = content.parse::<DocumentMut>()?;
         if !doc.contains_key("lib") {
@@ -242,7 +240,7 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
 
     // then we need to edit the Cargo.toml file in the guest directory
     {
-        let cargo_toml_path = format!("{}/guest/Cargo.toml", name);
+        let cargo_toml_path = format!("{name}/guest/Cargo.toml");
         let content = fs::read_to_string(&cargo_toml_path)?;
         let mut doc = content.parse::<DocumentMut>()?;
 

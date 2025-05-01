@@ -98,7 +98,7 @@ impl ElfAnalyzer {
         let e_width = match e_class {
             1 => 32,
             2 => 64,
-            _ => panic!("Unknown e_class:{:X}", e_class),
+            _ => panic!("Unknown e_class:{e_class:X}"),
         };
 
         let e_endian = self.read_byte(5);

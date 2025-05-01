@@ -65,7 +65,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
             match WORD_SIZE {
                 32 => (quotient == u32::MAX as u64).into(),
                 64 => (quotient == u64::MAX).into(),
-                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+                _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
             }
         } else {
             1

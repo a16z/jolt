@@ -70,7 +70,7 @@ where
     #[cfg(not(feature = "icicle"))]
     let gpu_bases = None;
 
-    println!("Using max num bits: {}", max_num_bits);
+    println!("Using max num bits: {max_num_bits}");
     (bases, gpu_bases, poly)
 }
 
@@ -85,7 +85,7 @@ where
     #[cfg(feature = "icicle")]
     let id = format!("{} [mode:Icicle]", name);
     #[cfg(not(feature = "icicle"))]
-    let id = format!("{} [mode:JOLT CPU]", name);
+    let id = format!("{name} [mode:JOLT CPU]");
     c.bench_function(&id, |b| {
         b.iter(|| {
             let msm =
