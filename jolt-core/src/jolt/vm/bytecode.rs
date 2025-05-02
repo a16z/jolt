@@ -471,6 +471,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let mut D = MultilinearPolynomial::from(D);
     let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());
 
+    // TODO(moodlezoup): Implement optimization from Section 6.2.2 "An optimization leveraging small memory size"
     // Last log(T) rounds of sumcheck
     for _round in 0..T.log_2() {
         #[cfg(test)]
@@ -499,9 +500,9 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
                 let H_evals = H.sumcheck_evals(i, DEGREE, BindingOrder::LowToHigh);
 
                 [
-                    D_evals[0] * (H_evals[0] * H_evals[0] - H_evals[0]),
-                    D_evals[1] * (H_evals[1] * H_evals[1] - H_evals[1]),
-                    D_evals[2] * (H_evals[2] * H_evals[2] - H_evals[2]),
+                    D_evals[0] * (H_evals[0].square() - H_evals[0]),
+                    D_evals[1] * (H_evals[1].square() - H_evals[1]),
+                    D_evals[2] * (H_evals[2].square() - H_evals[2]),
                 ]
             })
             .reduce(

@@ -293,7 +293,13 @@ pub fn prove_sparse_dense_shout<
     trace: &[RV32IMCycle],
     r_cycle: Vec<F>,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, F, [F; 4], Vec<F>) {
+) -> (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    F,
+    [F; 4],
+    Vec<F>,
+    Vec<F>,
+) {
     let log_K: usize = 2 * WORD_SIZE;
     let log_m = log_K / 4;
     let m = log_m.pow2();
@@ -547,6 +553,8 @@ pub fn prove_sparse_dense_shout<
     let span = tracing::span!(tracing::Level::INFO, "last log(T) sumcheck rounds");
     let _guard = span.enter();
 
+    // TODO(moodlezoup): Implement optimization from Section 6.2.2 "An optimization leveraging small memory size"
+
     for _round in 0..log_T {
         let span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _guard = span.enter();
@@ -650,6 +658,7 @@ pub fn prove_sparse_dense_shout<
         rv_claim,
         ra_claims,
         flag_claims,
+        eq_r_prime_evals,
     )
 }
 
@@ -775,7 +784,7 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(LOG_T);
 
-        let (proof, rv_claim, ra_claims, flag_claims) =
+        let (proof, rv_claim, ra_claims, flag_claims, _) =
             prove_sparse_dense_shout::<WORD_SIZE, _, _>(&trace, r_cycle, &mut prover_transcript);
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
