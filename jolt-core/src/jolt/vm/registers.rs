@@ -352,14 +352,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ReadWriteCheckingProof<F, ProofT
         let rd_wv: Vec<u64> = trace.par_iter().map(|cycle| cycle.rd_write().2).collect();
         let mut rd_wv = MultilinearPolynomial::from(rd_wv);
 
+        // rv(r')
+        let (rv_evals, eq_r_prime) =
+            MultilinearPolynomial::batch_evaluate(&[&rs1_rv, &rs2_rv], &r_prime);
+        let (rs1_rv_eval, rs2_rv_eval) = (rv_evals[0], rv_evals[1]);
         // eq(r, k)
         let mut eq_r = MultilinearPolynomial::from(EqPolynomial::evals(&r));
         // eq(r', j)
-        let mut eq_r_prime = MultilinearPolynomial::from(EqPolynomial::evals(&r_prime));
-
-        // rv(r')
-        let rs1_rv_eval = rs1_rv.evaluate(&r_prime);
-        let rs2_rv_eval = rs2_rv.evaluate(&r_prime);
+        let mut eq_r_prime = MultilinearPolynomial::from(eq_r_prime);
 
         let span = tracing::span!(tracing::Level::INFO, "compute Inc(r, r')");
         let _guard = span.enter();
