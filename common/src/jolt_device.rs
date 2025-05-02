@@ -73,10 +73,13 @@ impl JoltDevice {
 
         let internal_address = self.convert_write_address(address);
         if self.outputs.len() <= internal_address {
-            self.outputs.resize(internal_address + 1, 0);
+            if value != 0 {
+                self.outputs.resize(internal_address + 1, 0);
+                self.outputs[internal_address] = value;
+            }
+        } else {
+            self.outputs[internal_address] = value;
         }
-
-        self.outputs[internal_address] = value;
     }
 
     pub fn size(&self) -> usize {
