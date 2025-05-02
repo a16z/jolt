@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
 use crate::field::JoltField;
@@ -17,6 +17,7 @@ pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial
     pub len: usize,
     pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
+    binding_scratch_space: Option<Vec<F>>,
 }
 
 impl<F: JoltField> DensePolynomial<F> {
@@ -31,6 +32,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars: Z.len().log_2(),
             len: Z.len(),
             Z,
+            binding_scratch_space: None,
         }
     }
 
@@ -45,6 +47,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars: poly_evals.len().log_2(),
             len: poly_evals.len(),
             Z: poly_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -150,6 +153,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars,
             len,
             Z: new_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -190,6 +194,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars,
             len,
             Z: new_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -207,20 +212,29 @@ impl<F: JoltField> DensePolynomial<F> {
 
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
         let n = self.len() / 2;
-        let mut new_z = unsafe_allocate_zero_vec(n);
-        new_z.par_iter_mut().enumerate().for_each(|(i, z)| {
-            let m = self.Z[2 * i + 1] - self.Z[2 * i];
-            *z = if m.is_zero() {
-                self.Z[2 * i]
-            } else if m.is_one() {
-                self.Z[2 * i] + r
-            } else {
-                self.Z[2 * i] + *r * m
-            }
-        });
 
-        let old_Z = std::mem::replace(&mut self.Z, new_z);
-        drop_in_background_thread(old_Z);
+        if self.binding_scratch_space.is_none() {
+            self.binding_scratch_space = Some(unsafe_allocate_zero_vec(n));
+        }
+
+        let scratch_space = self.binding_scratch_space.as_mut().unwrap();
+
+        scratch_space
+            .par_iter_mut()
+            .take(n)
+            .enumerate()
+            .for_each(|(i, z)| {
+                let m = self.Z[2 * i + 1] - self.Z[2 * i];
+                *z = if m.is_zero() {
+                    self.Z[2 * i]
+                } else if m.is_one() {
+                    self.Z[2 * i] + r
+                } else {
+                    self.Z[2 * i] + *r * m
+                }
+            });
+
+        std::mem::swap(&mut self.Z, scratch_space);
 
         self.num_vars -= 1;
         self.len = n;

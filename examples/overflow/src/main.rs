@@ -45,14 +45,14 @@ pub fn main() {
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_allocate_stack_with_increased_size(output, proof);
 
-    println!("output: {}", output);
-    println!("valid: {}", is_valid);
+    println!("output: {output}");
+    println!("valid: {is_valid}");
 }
 
 fn handle_result(res: Result<(), Box<dyn Any + Send>>) {
     if let Err(e) = &res {
         if let Some(msg) = e.downcast_ref::<String>() {
-            println!("--> Panic occurred with message: {}\n", msg);
+            println!("--> Panic occurred with message: {msg}\n");
         }
     }
 }

@@ -156,7 +156,7 @@ impl Program {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {:?}", elf));
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         let (mut instructions, raw_bytes) = tracer::decode(&elf_contents);

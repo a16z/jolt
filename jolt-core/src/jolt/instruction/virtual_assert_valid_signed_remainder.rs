@@ -68,7 +68,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
                         .into()
                 }
             }
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
         }
     }
 }

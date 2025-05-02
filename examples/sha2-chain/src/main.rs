@@ -21,5 +21,5 @@ pub fn main() {
     assert_eq!(output, native_output, "output mismatch");
     println!("output: {}", hex::encode(output));
     println!("native_output: {}", hex::encode(native_output));
-    println!("valid: {}", is_valid);
+    println!("valid: {is_valid}");
 }

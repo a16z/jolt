@@ -19,5 +19,5 @@ pub fn main() {
         "outputs: {} {} {} {}",
         output.0, output.1, output.2, output.3
     );
-    println!("valid: {}", is_valid);
+    println!("valid: {is_valid}");
 }

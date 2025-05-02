@@ -34,7 +34,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssert
             match WORD_SIZE {
                 32 => (quotient as u64 == u32::MAX as u64).into(),
                 64 => (quotient as u64 == u64::MAX).into(),
-                _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+                _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
             }
         } else {
             1

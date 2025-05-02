@@ -239,7 +239,7 @@ where
     ) {
         icicle::icicle_init();
         let trace_length = trace.len();
-        println!("Trace length: {}", trace_length);
+        println!("Trace length: {trace_length}");
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 

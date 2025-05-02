@@ -23,10 +23,7 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all --check
+        run: cargo fmt --all --check
 
   clippy:
     runs-on: ubuntu-latest
@@ -36,10 +33,7 @@ jobs:
         with:
           components: clippy
       - name: cargo clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all
+        run: cargo clippy --all
 
   machete:
     runs-on: ubuntu-latest
@@ -90,7 +84,7 @@ jobs:
           version: nightly
 
       - name: Build the rust integration testing scripts
-        working-directory: ./jolt-evm-verifier          
+        working-directory: ./jolt-evm-verifier
         run: cargo build --manifest-path script/Cargo.toml --release
 
       - name: Check build and denny warnings
@@ -112,3 +106,19 @@ jobs:
       - uses: crate-ci/typos@v1.30.0
         with:
           files: .
+
+  test-sdk:
+    name: jolt binary check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build the `jolt` binary
+        run: cargo build --release --bin jolt
+
+      - name: Use the `jolt` binary to generate code
+        run: ./target/release/jolt new sample_project
+
+      - name: Make sure the generated code runs
+        working-directory: ./sample_project
+        run: cargo run --release

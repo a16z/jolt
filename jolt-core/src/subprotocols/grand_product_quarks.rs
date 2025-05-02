@@ -267,7 +267,7 @@ where
                         transcript,
                         v_len,
                     )
-                    .unwrap_or_else(|e| panic!("quark verify error: {:?}", e))
+                    .unwrap_or_else(|e| panic!("quark verify error: {e:?}"))
             }
             None => {
                 // Otherwise we must check the actual claims and the preset random will be empty.

@@ -111,7 +111,7 @@ impl JoltR1CSInputs {
     pub fn to_index(&self) -> usize {
         match ALL_R1CS_INPUTS.iter().position(|x| x == self) {
             Some(index) => index,
-            None => panic!("Invalid variant {:?}", self),
+            None => panic!("Invalid variant {self:?}"),
         }
     }
 

@@ -20,6 +20,6 @@ pub fn main() {
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_fib(50, output, proof);
 
-    println!("output: {}", output);
-    println!("valid: {}", is_valid);
+    println!("output: {output}");
+    println!("valid: {is_valid}");
 }

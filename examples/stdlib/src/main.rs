@@ -11,10 +11,10 @@ pub fn main() {
     let verify = guest::build_verifier_int_to_string(verifier_preprocessing);
 
     let (output, proof) = prove(81);
-    println!("int to string output: {:?}", output);
+    println!("int to string output: {output:?}");
 
     let is_valid = verify(81, output, proof);
-    println!("int to string valid: {}", is_valid);
+    println!("int to string valid: {is_valid}");
 
     let program = guest::compile_string_concat(target_dir);
 
@@ -27,8 +27,8 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof) = prove(20);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    println!("string concat output: {:?}", output);
+    println!("string concat output: {output:?}");
 
     let is_valid = verify(20, output, proof);
-    println!("string concat valid: {}", is_valid);
+    println!("string concat valid: {is_valid}");
 }
