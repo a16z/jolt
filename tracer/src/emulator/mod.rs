@@ -240,14 +240,6 @@ impl Emulator {
         }
     }
 
-    /// Sets up filesystem. Use this method if program (e.g. Linux) uses
-    /// filesystem. This method is expected to be called up to only once.
-    ///
-    /// # Arguments
-    /// * `content` File system content binary
-    pub fn setup_filesystem(&mut self, content: Vec<u8>) {
-        self.cpu.get_mut_mmu().init_disk(content);
-    }
 
     /// Sets up device tree. The emulator has default device tree configuration.
     /// If you want to override it, use this method. This method is expected to

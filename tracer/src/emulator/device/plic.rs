@@ -45,20 +45,10 @@ impl Plic {
     /// * `virtio_ip`
     /// * `uart_ip`
     /// * `mip`
-    pub fn tick(&mut self, virtio_ip: bool, mip: &mut u64) {
+    pub fn tick(&mut self, mip: &mut u64) {
         self.clock = self.clock.wrapping_add(1);
 
         // Handling interrupts as "Edge-triggered" interrupt so far
-
-        // Our VirtIO disk implements an interrupt as "Level-triggered" and
-        // virtio_ip is always true while interrupt pending bit is asserted.
-        // Then our Plic caches virtio_ip and detects the rise edge.
-        if self.virtio_ip_cache != virtio_ip {
-            if virtio_ip {
-                self.set_ip(VIRTIO_IRQ);
-            }
-            self.virtio_ip_cache = virtio_ip;
-        }
 
         if self.needs_update_irq {
             self.update_irq(mip);
