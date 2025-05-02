@@ -249,7 +249,7 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &9u32)
+    prove_example::<u32, PCS, F, ProofTranscript>("fibonacci-guest", &400000u32)
 }
 
 fn sha2<F, PCS, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>

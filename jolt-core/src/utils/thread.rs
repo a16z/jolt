@@ -22,12 +22,15 @@ pub fn allocate_vec_in_background<T: Clone + Send + 'static>(
 pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
     // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
 
-    // Check for safety of 0 allocation
-    unsafe {
-        let value = &F::zero();
-        let ptr = value as *const F as *const u8;
-        let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
-        assert!(bytes.iter().all(|&byte| byte == 0));
+    #[cfg(test)]
+    {
+        // Check for safety of 0 allocation
+        unsafe {
+            let value = &F::zero();
+            let ptr = value as *const F as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+            assert!(bytes.iter().all(|&byte| byte == 0));
+        }
     }
 
     // Bulk allocate zeros, unsafely
@@ -43,6 +46,42 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
         result = Vec::from_raw_parts(ptr, size, size);
     }
     result
+}
+
+#[tracing::instrument(skip_all)]
+pub fn unsafe_zero_slice<F: JoltField + Sized>(slice: &mut [F]) {
+    #[cfg(test)]
+    {
+        // Check for safety of 0 allocation
+        unsafe {
+            let value = &F::zero();
+            let ptr = value as *const F as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+            assert!(bytes.iter().all(|&byte| byte == 0));
+        }
+    }
+
+    // Zero out existing slice memory
+    unsafe {
+        std::ptr::write_bytes(slice.as_mut_ptr(), 0, slice.len());
+    }
+}
+
+#[tracing::instrument(skip_all)]
+pub fn unsafe_allocate_zero_array<F: JoltField + Sized, const N: usize>() -> [F; N] {
+    #[cfg(test)]
+    {
+        // Check for safety of 0 allocation
+        unsafe {
+            let value = &F::zero();
+            let ptr = value as *const F as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+            assert!(bytes.iter().all(|&byte| byte == 0));
+        }
+    }
+
+    // Bulk allocate zeros into array
+    unsafe { std::mem::zeroed() }
 }
 
 #[tracing::instrument(skip_all)]
