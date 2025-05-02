@@ -162,7 +162,7 @@ impl MacroBuilder {
                     #(#set_program_args;)*
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
 
-                    RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments, io_device, None).is_ok()
+                    RV32IJoltVM::verify(preprocessing, proof.proof, /*proof.commitments,*/ io_device, None).is_ok()
                 };
 
                 verify_closure
@@ -255,7 +255,7 @@ impl MacroBuilder {
             Ident::new(&format!("preprocess_prover_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_prover_fn_name(program: &jolt::host::Program)
+            pub fn #preprocess_prover_fn_name(program: &mut jolt::host::Program)
                 -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
             {
                 #imports
@@ -290,7 +290,7 @@ impl MacroBuilder {
             Ident::new(&format!("preprocess_verifier_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(program: &jolt::host::Program)
+            pub fn #preprocess_verifier_fn_name(program: &mut jolt::host::Program)
                 -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS, jolt::ProofTranscript>
             {
                 #imports
@@ -351,7 +351,7 @@ impl MacroBuilder {
 
                 let (io_device, trace) = program.trace(&input_bytes);
 
-                let (jolt_proof, jolt_commitments, output_io_device, _) = RV32IJoltVM::prove(
+                let (jolt_proof, /*jolt_commitments,*/ output_io_device, _) = RV32IJoltVM::prove(
                     io_device,
                     trace,
                     preprocessing,
@@ -361,7 +361,7 @@ impl MacroBuilder {
 
                 let proof = jolt::JoltHyperKZGProof {
                     proof: jolt_proof,
-                    commitments: jolt_commitments,
+                    // commitments: jolt_commitments,
                 };
 
                 (ret_val, proof)
@@ -501,7 +501,6 @@ impl MacroBuilder {
                 JoltProverPreprocessing,
                 JoltVerifierPreprocessing,
                 Jolt,
-                JoltCommitments,
                 ProofTranscript,
                 RV32IJoltVM,
                 RV32IJoltProof,
@@ -648,7 +647,7 @@ impl MacroBuilder {
                     1 << 24,
                 );
 
-                let result = RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments);
+                let result = RV32IJoltVM::verify(preprocessing, proof.proof /*, proof.commitments */);
                 result.is_ok()
             }
         }
