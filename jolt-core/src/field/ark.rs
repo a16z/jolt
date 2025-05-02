@@ -209,10 +209,7 @@ mod tests {
         let mut rng = test_rng();
         for _ in 0..256 {
             let x = rng.next_u64();
-            assert_eq!(
-                <Fr as JoltField>::from_u64(x),
-                Fr::one().mul_u64(x)
-            );
+            assert_eq!(<Fr as JoltField>::from_u64(x), Fr::one().mul_u64(x));
         }
 
         for _ in 0..256 {
