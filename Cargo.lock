@@ -1930,6 +1930,7 @@ dependencies = [
  "syn 1.0.109",
  "sysinfo",
  "toml_edit",
+ "tracer",
 ]
 
 [[package]]

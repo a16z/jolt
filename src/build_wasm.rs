@@ -1,4 +1,5 @@
 use common::attributes::{parse_attributes, Attributes};
+use tracer::instruction::RV32IMInstruction;
 
 use std::{
     fs::{self, File},
@@ -7,7 +8,7 @@ use std::{
 };
 
 use eyre::Result;
-use jolt_core::host::{ELFInstruction, Program};
+use jolt_core::host::Program;
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use syn::{Attribute, ItemFn, Meta, PathSegment};
@@ -15,7 +16,7 @@ use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
 
 #[derive(Serialize, Deserialize)]
 struct DecodedData {
-    bytecode: Vec<ELFInstruction>,
+    bytecode: Vec<RV32IMInstruction>,
     memory_init: Vec<(u64, u8)>,
 }
 
