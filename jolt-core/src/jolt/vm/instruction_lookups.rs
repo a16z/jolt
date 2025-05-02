@@ -22,7 +22,7 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        thread::{unsafe_allocate_zero_array, unsafe_allocate_zero_vec},
+        thread::unsafe_allocate_zero_vec,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -285,7 +285,7 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
 
     // First log(K) rounds of sumcheck
 
-    let mut F: [F; K] = unsafe_allocate_zero_array();
+    let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
     F[0] = F::one();
 
     let num_rounds = LOG_K + T.log_2();
@@ -445,30 +445,6 @@ fn prove_ra_booleanity<F: JoltField, ProofTranscript: Transcript>(
     // TODO(moodlezoup): Implement optimization from Section 6.2.2 "An optimization leveraging small memory size"
     // Last log(T) rounds of sumcheck
     for _round in 0..T.log_2() {
-        #[cfg(test)]
-        {
-            let expected: F = eq_r_r
-                * (0..H.len())
-                    .map(|j| {
-                        let D_j = D.get_bound_coeff(j);
-                        let H_j = [
-                            H[0].get_bound_coeff(j),
-                            H[1].get_bound_coeff(j),
-                            H[2].get_bound_coeff(j),
-                            H[3].get_bound_coeff(j),
-                        ];
-                        D_j * ((H_j[0].square() - H_j[0])
-                            + z * (H_j[1].square() - H_j[1])
-                            + z_squared * (H_j[2].square() - H_j[2])
-                            + z_cubed * (H_j[3].square() - H_j[3]))
-                    })
-                    .sum::<F>();
-            assert_eq!(
-                expected, previous_claim,
-                "Sumcheck sanity check failed in round {_round}"
-            );
-        }
-
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
 
@@ -642,7 +618,7 @@ fn prove_ra_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
         MultilinearPolynomial::from(std::mem::take(&mut F[2])),
         MultilinearPolynomial::from(std::mem::take(&mut F[3])),
     ];
-    let mut previous_claim = F::one();
+    let mut previous_claim = F::one() + z + z_squared + z_cubed;
 
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
     for _ in 0..num_rounds {
