@@ -14,7 +14,6 @@ use self::fnv::FnvHashMap;
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
 use super::device::clint::Clint;
 use super::device::plic::Plic;
-use super::device::uart::Uart;
 use super::device::virtio_block_disk::VirtioBlockDisk;
 use super::memory::Memory;
 use super::terminal::Terminal;
@@ -35,7 +34,6 @@ pub struct Mmu {
     disk: VirtioBlockDisk,
     plic: Plic,
     clint: Clint,
-    uart: Uart,
 
     pub jolt_device: JoltDevice,
 
@@ -108,7 +106,6 @@ impl Mmu {
             disk: VirtioBlockDisk::new(),
             plic: Plic::new(),
             clint: Clint::new(),
-            uart: Uart::new(terminal),
             jolt_device: JoltDevice::new(0, 0),
             mstatus: 0,
             page_cache_enabled: false,
@@ -174,10 +171,8 @@ impl Mmu {
     pub fn tick(&mut self, mip: &mut u64) {
         self.clint.tick(mip);
         self.disk.tick(&mut self.memory);
-        self.uart.tick();
         self.plic.tick(
             self.disk.is_interrupting(),
-            self.uart.is_interrupting(),
             mip,
         );
         self.clock = self.clock.wrapping_add(1);
@@ -528,7 +523,7 @@ impl Mmu {
                 0x00001020..=0x00001fff => self.dtb[effective_address as usize - 0x1020],
                 0x02000000..=0x0200ffff => self.clint.load(effective_address),
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),
-                0x10000000..=0x100000ff => self.uart.load(effective_address),
+                0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => self.disk.load(effective_address),
                 _ => self.jolt_device.load(effective_address),
             },
@@ -761,7 +756,7 @@ impl Mmu {
             false => match effective_address {
                 0x02000000..=0x0200ffff => self.clint.store(effective_address, value),
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
-                0x10000000..=0x100000ff => self.uart.store(effective_address, value),
+                0x10000000..=0x100000ff => panic!("store_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
                 _ => {
                     self.assert_effective_address(effective_address);
@@ -1123,11 +1118,6 @@ impl Mmu {
     /// Returns mutable reference to `Clint`.
     pub fn get_mut_clint(&mut self) -> &mut Clint {
         &mut self.clint
-    }
-
-    /// Returns mutable reference to `Uart`.
-    pub fn get_mut_uart(&mut self) -> &mut Uart {
-        &mut self.uart
     }
 }
 

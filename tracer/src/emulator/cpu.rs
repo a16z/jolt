@@ -1386,11 +1386,6 @@ impl Cpu {
     pub fn get_mut_mmu(&mut self) -> &mut Mmu {
         &mut self.mmu
     }
-
-    /// Returns mutable `Terminal`
-    pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
-        self.mmu.get_mut_uart().get_mut_terminal()
-    }
 }
 
 fn get_register_name(num: usize) -> &'static str {

@@ -45,7 +45,7 @@ impl Plic {
     /// * `virtio_ip`
     /// * `uart_ip`
     /// * `mip`
-    pub fn tick(&mut self, virtio_ip: bool, uart_ip: bool, mip: &mut u64) {
+    pub fn tick(&mut self, virtio_ip: bool, mip: &mut u64) {
         self.clock = self.clock.wrapping_add(1);
 
         // Handling interrupts as "Edge-triggered" interrupt so far
@@ -58,12 +58,6 @@ impl Plic {
                 self.set_ip(VIRTIO_IRQ);
             }
             self.virtio_ip_cache = virtio_ip;
-        }
-
-        // Our Uart implements an interrupt as "Edge-triggered" and
-        // uart_ip is true only at the cycle when an interrupt happens
-        if uart_ip {
-            self.set_ip(UART_IRQ);
         }
 
         if self.needs_update_irq {
