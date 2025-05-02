@@ -192,7 +192,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline(always)]
-    fn mul_u64_unchecked(&self, n: u64) -> Self {
+    fn mul_u64(&self, n: u64) -> Self {
         ark_ff::Fp::mul_u64(*self, n)
     }
 }
@@ -211,7 +211,7 @@ mod tests {
             let x = rng.next_u64();
             assert_eq!(
                 <Fr as JoltField>::from_u64(x),
-                Fr::montgomery_r2().unwrap().mul_u64_unchecked(x)
+                Fr::one().mul_u64(x)
             );
         }
 
@@ -220,7 +220,7 @@ mod tests {
             let y = Fr::random(&mut rng);
             assert_eq!(
                 y * <Fr as JoltField>::from_u64(x),
-                (y * Fr::montgomery_r2().unwrap()).mul_u64_unchecked(x)
+                (y * Fr::one()).mul_u64(x)
             );
         }
     }

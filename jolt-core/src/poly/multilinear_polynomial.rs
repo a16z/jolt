@@ -629,7 +629,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             _ => {
-                let chis = EqPolynomial::evals_with_r2(r);
+                let chis = EqPolynomial::evals(r);
                 self.dot_product(None, Some(&chis))
             }
         }
@@ -645,7 +645,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         {
             // If any of the polynomials contain non-Montgomery form coefficients,
             // we need to compute the R^2-adjusted EQ table.
-            let eq_r2 = EqPolynomial::evals_with_r2(r);
+            let eq_r2 = EqPolynomial::evals(r);
             let evals: Vec<F> = polys
                 .into_par_iter()
                 .map(|&poly| match poly {

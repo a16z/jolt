@@ -242,7 +242,7 @@ where
 
         let ry_var = inner_sumcheck_r[1..].to_vec();
         let eq_ry_var = EqPolynomial::evals(&ry_var);
-        let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
+        let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
 

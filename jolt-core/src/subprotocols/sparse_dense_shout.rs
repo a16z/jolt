@@ -311,7 +311,7 @@ pub fn prove_sparse_dense_shout<
 
     let (eq_r_prime, mut u_evals) = rayon::join(
         || EqPolynomial::evals(&r_cycle),
-        || EqPolynomial::evals_with_r2(&r_cycle),
+        || EqPolynomial::evals(&r_cycle),
     );
 
     let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
@@ -323,7 +323,7 @@ pub fn prove_sparse_dense_shout<
         .par_iter()
         .zip(lookup_indices.par_iter())
         .zip(u_evals.par_iter())
-        .map(|((instruction, k), u)| u.mul_u64_unchecked(instruction.materialize_entry(k.into())))
+        .map(|((instruction, k), u)| u.mul_u64(instruction.materialize_entry(k.into())))
         .sum();
     drop(_guard);
     drop(span);
@@ -400,7 +400,7 @@ pub fn prove_sparse_dense_shout<
                             let (prefix_bits, suffix_bits) = k.split(suffix_len);
                             let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                             if t != 0 {
-                                poly.Z[prefix_bits % m] += u.mul_u64_unchecked(t as u64);
+                                poly.Z[prefix_bits % m] += u.mul_u64(t as u64);
                             }
                         }
                     });

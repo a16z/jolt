@@ -9,10 +9,7 @@ use num_integer::Integer;
 use rayon::prelude::*;
 
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
-    /// Performs a field multiplication. Uses `JoltField::mul_u64_unchecked` under the hood.
-    /// WARNING: Does not convert the small scalar into Montgomery form before performing
-    /// the multiplication, so the other operand should probably have an additional R^2
-    /// factor (see `JoltField::montgomery_r2`).
+    /// Performs a field multiplication. Uses `JoltField::mul_u64` under the hood.
     fn field_mul<F: JoltField>(&self, n: F) -> F;
     /// Converts a small scalar into a (potentially Montgomery form) `JoltField` type
     fn to_field<F: JoltField>(self) -> F;
@@ -21,7 +18,7 @@ pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDes
 impl SmallScalar for u8 {
     #[inline]
     fn field_mul<F: JoltField>(&self, n: F) -> F {
-        n.mul_u64_unchecked(*self as u64)
+        n.mul_u64(*self as u64)
     }
     #[inline]
     fn to_field<F: JoltField>(self) -> F {
@@ -31,7 +28,7 @@ impl SmallScalar for u8 {
 impl SmallScalar for u16 {
     #[inline]
     fn field_mul<F: JoltField>(&self, n: F) -> F {
-        n.mul_u64_unchecked(*self as u64)
+        n.mul_u64(*self as u64)
     }
     #[inline]
     fn to_field<F: JoltField>(self) -> F {
@@ -41,7 +38,7 @@ impl SmallScalar for u16 {
 impl SmallScalar for u32 {
     #[inline]
     fn field_mul<F: JoltField>(&self, n: F) -> F {
-        n.mul_u64_unchecked(*self as u64)
+        n.mul_u64(*self as u64)
     }
     #[inline]
     fn to_field<F: JoltField>(self) -> F {
@@ -51,7 +48,7 @@ impl SmallScalar for u32 {
 impl SmallScalar for u64 {
     #[inline]
     fn field_mul<F: JoltField>(&self, n: F) -> F {
-        n.mul_u64_unchecked(*self)
+        n.mul_u64(*self)
     }
     #[inline]
     fn to_field<F: JoltField>(self) -> F {
@@ -62,9 +59,9 @@ impl SmallScalar for i64 {
     #[inline]
     fn field_mul<F: JoltField>(&self, n: F) -> F {
         if self.is_negative() {
-            -n.mul_u64_unchecked(-self as u64)
+            -n.mul_u64(-self as u64)
         } else {
-            n.mul_u64_unchecked(*self as u64)
+            n.mul_u64(*self as u64)
         }
     }
     #[inline]
