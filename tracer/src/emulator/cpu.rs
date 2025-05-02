@@ -706,7 +706,7 @@ impl Cpu {
             CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
             CSR_SIE_ADDRESS => self.csr[CSR_MIE_ADDRESS as usize] & 0x222,
             CSR_SIP_ADDRESS => self.csr[CSR_MIP_ADDRESS as usize] & 0x222,
-            CSR_TIME_ADDRESS => self.mmu.get_clint().read_mtime(),
+            CSR_TIME_ADDRESS => panic!("CLINT is unsupported."),
             _ => self.csr[address as usize],
         }
     }
@@ -744,7 +744,7 @@ impl Cpu {
                     .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
             }
             CSR_TIME_ADDRESS => {
-                self.mmu.get_mut_clint().write_mtime(value);
+                panic!("CLINT is unsupported.")
             }
             _ => {
                 self.csr[address as usize] = value;
