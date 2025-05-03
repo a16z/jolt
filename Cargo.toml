@@ -11,6 +11,7 @@ authors = [
     "Sam Ragsdale <sragsdale@a16z.com>",
     "Noah Citron <ncitron@a16z.com>",
     "Arasu Arun <arasu.arun5@gmail.com>",
+    "Quang Dao <dvquang85@gmail.com>",
 ]
 edition = "2021"
 description = "The lookup singularity. Based on Spartan; built on Arkworks."

@@ -269,9 +269,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// of field elements.
     pub fn dot_product(&self, other: &[F]) -> F {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                compute_dotproduct(&poly.Z, other)
-            }
+            MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, other),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
                 .par_iter()
