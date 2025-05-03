@@ -288,7 +288,7 @@ impl Cpu {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
-        self.mmu.tick(&mut self.csr[CSR_MIP_ADDRESS as usize]);
+        self.mmu.tick();
         self.handle_interrupt(self.pc);
         self.clock = self.clock.wrapping_add(1);
 

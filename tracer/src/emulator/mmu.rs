@@ -12,7 +12,6 @@ use common::jolt_device::JoltDevice;
 use self::fnv::FnvHashMap;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
-use super::device::plic::Plic;
 use super::memory::Memory;
 use super::terminal::Terminal;
 
@@ -29,7 +28,6 @@ pub struct Mmu {
     privilege_mode: PrivilegeMode,
     memory: MemoryWrapper,
     dtb: Vec<u8>,
-    plic: Plic,
 
     pub jolt_device: JoltDevice,
 
@@ -99,7 +97,6 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
             dtb,
-            plic: Plic::new(),
             jolt_device: JoltDevice::new(0, 0),
             mstatus: 0,
             page_cache_enabled: false,
@@ -154,10 +151,7 @@ impl Mmu {
     }
 
     /// Runs one cycle of MMU and peripheral devices.
-    pub fn tick(&mut self, mip: &mut u64) {
-        self.plic.tick(
-            mip,
-        );
+    pub fn tick(&mut self) {
         self.clock = self.clock.wrapping_add(1);
     }
 
@@ -505,7 +499,7 @@ impl Mmu {
                 // And DTB size is arbitrary.
                 0x00001020..=0x00001fff => self.dtb[effective_address as usize - 0x1020],
                 0x02000000..=0x0200ffff => panic!("load_raw:clint is unsupported."),
-                0x0C000000..=0x0fffffff => self.plic.load(effective_address),
+                0x0C000000..=0x0fffffff => panic!("load_raw:plic is unsupported."),
                 0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => panic!("load_raw:disk is unsupported."),
                 _ => self.jolt_device.load(effective_address),
@@ -738,7 +732,7 @@ impl Mmu {
             true => self.memory.write_byte(effective_address, value),
             false => match effective_address {
                 0x02000000..=0x0200ffff => panic!("store_raw:clint is unsupported."),
-                0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
+                0x0c000000..=0x0fffffff => panic!("store_raw:plic is unsupported."),
                 0x10000000..=0x100000ff => panic!("store_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => panic!("store_raw:disk is unsupported."),
                 _ => {
