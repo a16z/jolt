@@ -525,14 +525,7 @@ where
         tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
-
-        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
-        // into Montgomery form while multiplying them by gamma or gamma_squared
-        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
-            (*gamma * r2, gamma_squared * r2)
-        } else {
-            (*gamma, gamma_squared)
-        };
+        let gamma = *gamma;
 
         let num_ops = polynomials.a_ram.len();
         let memory_size = polynomials.v_final.len();

@@ -121,14 +121,6 @@ where
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
 
-        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
-        // into Montgomery form while multiplying them by gamma or gamma_squared
-        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
-            (*gamma * r2, gamma_squared * r2)
-        } else {
-            (*gamma, gamma_squared)
-        };
-
         let num_lookups = polynomials.dim[0].len();
 
         let read_write_leaves: Vec<_> = (0..Self::num_memories())
@@ -146,7 +138,7 @@ where
                         let a = dim[i];
                         let v = E_poly[i];
                         let t = read_cts[i];
-                        t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
+                        t.field_mul(gamma_squared) + v.field_mul(*gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
                 let t_adjustment = 1u64.field_mul(gamma_squared);
@@ -168,7 +160,7 @@ where
                 let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
                         // 0 * gamma^2 +
-                        preprocessing.materialized_subtables[subtable_index][i].field_mul(gamma)
+                        preprocessing.materialized_subtables[subtable_index][i].field_mul(*gamma)
                             + F::from_u64(i as u64)
                             - *tau
                     })

@@ -187,12 +187,8 @@ impl JoltField for ark_bn254::Fr {
         self.into_bigint().num_bits()
     }
 
-    fn montgomery_r2() -> Option<Self> {
-        Some(ark_ff::Fp::new_unchecked(Self::R2))
-    }
-
     #[inline(always)]
-    fn mul_u64_unchecked(&self, n: u64) -> Self {
+    fn mul_u64(&self, n: u64) -> Self {
         ark_ff::Fp::mul_u64(*self, n)
     }
 }
@@ -209,19 +205,13 @@ mod tests {
         let mut rng = test_rng();
         for _ in 0..256 {
             let x = rng.next_u64();
-            assert_eq!(
-                <Fr as JoltField>::from_u64(x),
-                Fr::montgomery_r2().unwrap().mul_u64_unchecked(x)
-            );
+            assert_eq!(<Fr as JoltField>::from_u64(x), Fr::one().mul_u64(x));
         }
 
         for _ in 0..256 {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
-            assert_eq!(
-                y * <Fr as JoltField>::from_u64(x),
-                (y * Fr::montgomery_r2().unwrap()).mul_u64_unchecked(x)
-            );
+            assert_eq!(y * <Fr as JoltField>::from_u64(x), y.mul_u64(x));
         }
     }
 }

@@ -33,26 +33,6 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    /// When evaluating a multilinear polynomial on a point `r`, we first compute the EQ evaluation table
-    /// for `r`, then dot-product those values with the coefficients of the polynomial.
-    ///
-    /// However, if the polynomial in question is a `CompactPolynomial`, its coefficients are represented
-    /// by primitive integers while the dot product needs to be computed using Montgomery multiplication.
-    ///
-    /// To avoid converting every polynomial coefficient to Montgomery form, we can instead introduce an
-    /// additional R^2 factor to every element in the EQ evaluation table and performing the dot product
-    /// using `JoltField::mul_u64_unchecked`.
-    ///
-    /// We can efficiently compute the EQ table with this additional R^2 factor by initializing the root of
-    /// the dynamic programming tree to R^2 instead of 1.
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_with_r2")]
-    pub fn evals_with_r2(r: &[F]) -> Vec<F> {
-        match r.len() {
-            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, F::montgomery_r2()),
-            _ => Self::evals_parallel(r, F::montgomery_r2()),
-        }
-    }
-
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.

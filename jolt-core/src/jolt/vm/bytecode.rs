@@ -509,7 +509,7 @@ where
         let bytecode_size = preprocessing.v_init_final[0].len();
 
         let mut gamma_terms = [F::zero(); 7];
-        let mut gamma_term = F::montgomery_r2().unwrap_or(F::one());
+        let mut gamma_term = F::one();
         for i in 0..7 {
             gamma_term *= *gamma;
             gamma_terms[i] = gamma_term;
