@@ -966,14 +966,15 @@ where
     /// via the sumcheck protocol.
     /// Note: These E(x) terms differ from term to term depending on the memories used in the instruction.
     ///
-    /// Returns: (SumcheckProof, Random evaluation point, claimed evaluations of polynomials)
+    /// Returns: ([`SumcheckInstanceProof`], Random evaluation point, claimed evaluations of flag, memory and output polynomials respectively)
     ///
     /// Params:
-    /// - `claim`: Claimed sumcheck evaluation.
+    /// - `preprocessing`: Indices of memory actually accessed during lookups.
     /// - `num_rounds`: Number of rounds to run sumcheck. Corresponds to the number of free bits or free variables in the polynomials.
+    /// - `eq_poly`: The eq polynomial that is 1 if r = x, 0 otherwise.
     /// - `memory_polys`: Each of the `E` polynomials or "dereferenced memory" polynomials.
     /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
-    /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
+    /// - `lookup_outputs_poly`: The lookup output for each iinstruction of the trace.
     /// - `transcript`: Fiat-shamir transcript.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
