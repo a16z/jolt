@@ -211,10 +211,7 @@ mod tests {
         for _ in 0..256 {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
-            assert_eq!(
-                y * <Fr as JoltField>::from_u64(x),
-                y.mul_u64(x)
-            );
+            assert_eq!(y * <Fr as JoltField>::from_u64(x), y.mul_u64(x));
         }
     }
 }
