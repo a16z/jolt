@@ -187,10 +187,6 @@ impl JoltField for ark_bn254::Fr {
         self.into_bigint().num_bits()
     }
 
-    fn montgomery_r2() -> Option<Self> {
-        Some(ark_ff::Fp::new_unchecked(Self::R2))
-    }
-
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
         ark_ff::Fp::mul_u64(*self, n)

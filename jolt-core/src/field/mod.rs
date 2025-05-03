@@ -73,12 +73,6 @@ pub trait JoltField:
         unimplemented!("num_bits is not implemented");
     }
 
-    /// The R^2 value used in Montgomery arithmetic for some prime fields.
-    /// Returns `None` if the field doesn't use Montgomery arithmetic.
-    fn montgomery_r2() -> Option<Self> {
-        None
-    }
-
     /// Does a field multiplication with a `u64`.
     /// The result will be in Montgomery form (if BN254)
     #[inline(always)]

@@ -149,7 +149,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U8Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -158,7 +158,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U16Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -167,7 +167,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U32Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -176,7 +176,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -185,7 +185,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::I64Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
