@@ -14,7 +14,7 @@ use rayon::{prelude::*, slice::Chunks};
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
 use super::{
-    split_eq_poly::{SplitEqPolynomial, NewSplitEqPolynomial},
+    split_eq_poly::{NewSplitEqPolynomial, SplitEqPolynomial},
     unipoly::{CompressedUniPoly, UniPoly},
 };
 
@@ -354,7 +354,11 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 // New implementation with Gruen's optimization
 impl<F: JoltField> DenseInterleavedPolynomial<F> {
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic_new")]
-    pub fn compute_cubic_new(&self, eq_poly: &NewSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+    pub fn compute_cubic_new(
+        &self,
+        eq_poly: &NewSplitEqPolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle.
 
@@ -525,7 +529,7 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly::split_eq_poly::{SplitEqPolynomial, NewSplitEqPolynomial};
+    use crate::poly::split_eq_poly::{NewSplitEqPolynomial, SplitEqPolynomial};
     use crate::subprotocols::sumcheck::BatchedCubicSumcheck;
     use crate::utils::transcript::KeccakTranscript;
     use ark_bn254::Fr;
