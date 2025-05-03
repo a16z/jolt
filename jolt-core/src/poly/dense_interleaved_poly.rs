@@ -476,7 +476,7 @@ impl<F: JoltField> DenseInterleavedPolynomial<F> {
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for i in 0..num_rounds {
-            println!("Starting sumcheck round {}", i);
+            println!("Starting sumcheck round {i}");
             // #[cfg(test)]
             // self.sumcheck_sanity_check(eq_poly, previous_claim);
 
