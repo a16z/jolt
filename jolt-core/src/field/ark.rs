@@ -213,7 +213,7 @@ mod tests {
             let y = Fr::random(&mut rng);
             assert_eq!(
                 y * <Fr as JoltField>::from_u64(x),
-                (y * Fr::one()).mul_u64(x)
+                y.mul_u64(x)
             );
         }
     }
