@@ -321,10 +321,8 @@ pub fn prove_sparse_dense_shout<
     drop(_guard);
     drop(span);
 
-    let (eq_r_prime_evals, mut u_evals) = rayon::join(
-        || EqPolynomial::evals(&r_cycle),
-        || EqPolynomial::evals_with_r2(&r_cycle),
-    );
+    let eq_r_prime_evals = EqPolynomial::evals(&r_cycle);
+    let mut u_evals = eq_r_prime_evals.clone();
 
     let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
     let mut v = ExpandingTable::new(m);
@@ -338,7 +336,7 @@ pub fn prove_sparse_dense_shout<
         .map(|((cycle, k), u)| {
             let table: Option<LookupTables<WORD_SIZE>> = cycle.lookup_table();
             match table {
-                Some(table) => u.mul_u64_unchecked(table.materialize_entry(k.into())),
+                Some(table) => u.mul_u64(table.materialize_entry(k.into())),
                 None => F::zero(),
             }
         })
@@ -438,7 +436,7 @@ pub fn prove_sparse_dense_shout<
                             let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                             if t != 0 {
                                 let u = u_evals[*j];
-                                poly.Z[prefix_bits % m] += u.mul_u64_unchecked(t as u64);
+                                poly.Z[prefix_bits % m] += u.mul_u64(t as u64);
                             }
                         }
                     });

@@ -69,7 +69,7 @@ impl BytecodePreprocessing {
 
 #[tracing::instrument(skip_all)]
 fn bytecode_to_val<F: JoltField>(bytecode: &[RV32IMInstruction], gamma: F) -> Vec<F> {
-    let mut gamma_powers = vec![F::montgomery_r2().unwrap_or(F::one())];
+    let mut gamma_powers = vec![F::one()];
     for _ in 0..5 {
         gamma_powers.push(gamma * gamma_powers.last().unwrap());
     }
