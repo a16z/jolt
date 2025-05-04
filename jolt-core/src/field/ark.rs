@@ -191,6 +191,11 @@ impl JoltField for ark_bn254::Fr {
     fn mul_u64(&self, n: u64) -> Self {
         ark_ff::Fp::mul_u64(*self, n)
     }
+
+    #[inline(always)]
+    fn mul_i128(&self, n: i128) -> Self {
+        ark_ff::Fp::mul_i128(*self, n)
+    }
 }
 
 #[cfg(test)]
