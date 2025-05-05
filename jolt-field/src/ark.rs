@@ -1,7 +1,7 @@
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
-use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::utils::unsafe_allocate_zero_vec;
 
 use super::{FieldOps, JoltField};
 

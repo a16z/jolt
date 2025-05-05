@@ -18,7 +18,9 @@ pub mod benches;
 #[cfg(feature = "host")]
 pub mod host;
 
-pub mod field;
+pub mod field {
+    pub use jolt_field::*;
+}
 pub mod jolt;
 pub mod lasso;
 pub mod msm;

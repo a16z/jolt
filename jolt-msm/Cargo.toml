@@ -1,0 +1,42 @@
+[package]
+name = "jolt-msm"
+version = "0.1.0"
+edition = "2021"
+
+
+[features]
+icicle = [
+    "dep:icicle-runtime",
+    "dep:icicle-core",
+    "dep:icicle-bn254",
+]
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-poly = { path = "../jolt-poly" }
+ark-ec = { version = "0.4.2", default-features = false }
+rayon = { version = "^1.8.0" }
+num-integer = "0.1.45"
+ark-ff = { version = "0.4.2", default-features = false }
+ark-std = { version = "0.4.0" }
+itertools = "0.10.0"
+ark-bn254 = "0.4.0"
+tracing = "0.1.37"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sys-info = "0.9.1"
+
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    "cuda_backend",
+], rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    "cuda_backend",
+], rev = "2441eba", optional = true }

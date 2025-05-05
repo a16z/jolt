@@ -1,3 +1,5 @@
+#![feature(associated_type_defaults)]
+
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -131,3 +133,4 @@ where
 
 pub mod ark;
 pub mod binius;
+pub mod utils;

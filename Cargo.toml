@@ -26,6 +26,7 @@ members = [
     "common",
     "jolt-sdk",
     "jolt-sdk/macros",
+    "jolt-field",
     "examples/collatz",
     "examples/collatz/guest",
     "examples/fibonacci",
@@ -50,6 +51,9 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "jolt-commitment",
+    "jolt-fiat-shamir",
+    "jolt-poly", "jolt-hyperkzg", "jolt-msm",
 ]
 
 [features]
@@ -80,6 +84,9 @@ common = { path = "./common" }
 [profile.test]
 opt-level = 3
 lto = "off"
+
+[profile.dev.build-override]
+opt-level = 3
 
 [profile.release]
 debug = 1

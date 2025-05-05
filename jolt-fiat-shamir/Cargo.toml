@@ -1,0 +1,13 @@
+[package]
+name = "jolt-fiat-shamir"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+ark-ec = { version = "0.4.2", default-features = false }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+
+sha3 = "0.10.8"

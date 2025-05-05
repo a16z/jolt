@@ -1,4 +1,4 @@
-use crate::utils::{compute_dotproduct, math::Math};
+use crate::utils::{compute_dotproduct, Math};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -10,10 +10,7 @@ use super::{
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
 };
-use crate::{
-    field::{JoltField, OptimizedMul},
-    utils::thread::unsafe_allocate_zero_vec,
-};
+use jolt_field::{utils::unsafe_allocate_zero_vec, JoltField, OptimizedMul};
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -340,40 +337,29 @@ impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {
     }
 }
 
-// impl<F: JoltField> From<Vec<u8>> for MultilinearPolynomial<F> {
-//     fn from(coeffs: Vec<u8>) -> Self {
-//         let poly = CompactPolynomial::from_coeffs(coeffs);
-//         Self::U8Scalars(poly)
-//     }
-// }
+impl<F: JoltField> MultilinearPolynomial<F> {
+    pub fn from_u8(coeffs: Vec<u8>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::U8Scalars(poly)
+    }
+    pub fn from_u16(coeffs: Vec<u16>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::U16Scalars(poly)
+    }
+    pub fn from_u32(coeffs: Vec<u32>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::U32Scalars(poly)
+    }
+    pub fn from_u64(coeffs: Vec<u64>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::U64Scalars(poly)
+    }
 
-// impl<F: JoltField> From<Vec<u16>> for MultilinearPolynomial<F> {
-//     fn from(coeffs: Vec<u16>) -> Self {
-//         let poly = CompactPolynomial::from_coeffs(coeffs);
-//         Self::U16Scalars(poly)
-//     }
-// }
-
-// impl<F: JoltField> From<Vec<u32>> for MultilinearPolynomial<F> {
-//     fn from(coeffs: Vec<u32>) -> Self {
-//         let poly = CompactPolynomial::from_coeffs(coeffs);
-//         Self::U32Scalars(poly)
-//     }
-// }
-
-// impl<F: JoltField> From<Vec<u64>> for MultilinearPolynomial<F> {
-//     fn from(coeffs: Vec<u64>) -> Self {
-//         let poly = CompactPolynomial::from_coeffs(coeffs);
-//         Self::U64Scalars(poly)
-//     }
-// }
-
-// impl<F: JoltField> From<Vec<i64>> for MultilinearPolynomial<F> {
-//     fn from(coeffs: Vec<i64>) -> Self {
-//         let poly = CompactPolynomial::from_coeffs(coeffs);
-//         Self::I64Scalars(poly)
-//     }
-// }
+    pub fn from_i64(coeffs: Vec<i64>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::I64Scalars(poly)
+    }
+}
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = (); // TODO(moodlezoup)
@@ -645,8 +631,8 @@ mod tests {
     fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
         let mut rng = ChaCha20Rng::seed_from_u64(len as u64);
         match max_num_bits {
-            0 => MultilinearPolynomial::from(vec![0u8; len]),
-            1..=8 => MultilinearPolynomial::from(
+            0 => MultilinearPolynomial::from_u8(vec![0u8; len]),
+            1..=8 => MultilinearPolynomial::from_u8(
                 (0..len)
                     .map(|_| {
                         let mask = if max_num_bits == 8 {
@@ -658,7 +644,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>(),
             ),
-            9..=16 => MultilinearPolynomial::from(
+            9..=16 => MultilinearPolynomial::from_u16(
                 (0..len)
                     .map(|_| {
                         let mask = if max_num_bits == 16 {
@@ -670,7 +656,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>(),
             ),
-            17..=32 => MultilinearPolynomial::from(
+            17..=32 => MultilinearPolynomial::from_u32(
                 (0..len)
                     .map(|_| {
                         let mask = if max_num_bits == 32 {
@@ -682,7 +668,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>(),
             ),
-            33..=64 => MultilinearPolynomial::from(
+            33..=64 => MultilinearPolynomial::from_u64(
                 (0..len)
                     .map(|_| {
                         let mask = if max_num_bits == 64 {

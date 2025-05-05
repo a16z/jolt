@@ -468,38 +468,47 @@ dependencies = [
 
 [[package]]
 name = "binius_field"
-version = "0.1.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#33eab8c9204d73229469c7e70cd4d084f7253136"
+version = "0.2.0"
+source = "git+https://gitlab.com/IrreducibleOSS/binius.git#7a8d1021006e0fd8608b2941df636b8198fbb604"
 dependencies = [
+ "binius_maybe_rayon",
  "binius_utils",
  "bytemuck",
- "bytes",
  "cfg-if",
  "derive_more",
- "p3-util",
  "rand 0.8.5",
- "rayon",
  "seq-macro",
  "subtle",
- "thiserror",
+ "thiserror 2.0.12",
  "tracing",
+ "trait-set",
  "transpose",
 ]
 
 [[package]]
-name = "binius_utils"
-version = "0.1.0"
-source = "git+https://gitlab.com/UlvetannaOSS/binius#33eab8c9204d73229469c7e70cd4d084f7253136"
+name = "binius_maybe_rayon"
+version = "0.2.0"
+source = "git+https://gitlab.com/IrreducibleOSS/binius.git#7a8d1021006e0fd8608b2941df636b8198fbb604"
 dependencies = [
+ "cfg-if",
+ "either",
+ "itertools 0.14.0",
+]
+
+[[package]]
+name = "binius_utils"
+version = "0.2.0"
+source = "git+https://gitlab.com/IrreducibleOSS/binius.git#7a8d1021006e0fd8608b2941df636b8198fbb604"
+dependencies = [
+ "auto_impl",
+ "binius_maybe_rayon",
  "bytemuck",
  "bytes",
  "cfg-if",
- "itertools 0.13.0",
- "rayon",
- "thiserror",
+ "generic-array",
+ "itertools 0.14.0",
+ "thiserror 2.0.12",
  "thread_local",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -567,9 +576,9 @@ dependencies = [
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.8.0"
+version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcfcc3cd946cb52f0bbfdbbcfa2f4e24f75ebb6c0e1002f7c25904fada18b9ec"
+checksum = "7ecc273b49b3205b83d648f0690daa588925572cc5063745bfe547fe7ec8e1a1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1829,9 +1838,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -1857,6 +1866,17 @@ dependencies = [
  "syn 1.0.109",
  "sysinfo",
  "toml_edit",
+]
+
+[[package]]
+name = "jolt-commitment"
+version = "0.1.0"
+dependencies = [
+ "ark-serialize 0.4.2",
+ "jolt-fiat-shamir",
+ "jolt-field",
+ "jolt-poly",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1887,6 +1907,7 @@ dependencies = [
  "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
+ "jolt-field",
  "memory-stats",
  "num-integer",
  "once_cell",
@@ -1903,7 +1924,7 @@ dependencies = [
  "strum_macros",
  "sys-info",
  "target-lexicon",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracer",
  "tracing",
@@ -1911,6 +1932,76 @@ dependencies = [
  "tracing-flame",
  "tracing-subscriber",
  "tracing-texray",
+]
+
+[[package]]
+name = "jolt-fiat-shamir"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-serialize 0.4.2",
+ "jolt-field",
+ "sha3",
+]
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.4.2",
+ "ark-serialize 0.4.2",
+ "ark-std 0.4.0",
+ "binius_field",
+ "bytemuck",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+
+[[package]]
+name = "jolt-msm"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.4.2",
+ "ark-std 0.4.0",
+ "icicle-bn254",
+ "icicle-core",
+ "icicle-runtime",
+ "itertools 0.10.5",
+ "jolt-field",
+ "jolt-poly",
+ "num-integer",
+ "rayon",
+ "sys-info",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-poly"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.4.2",
+ "ark-serialize 0.4.2",
+ "ark-std 0.4.0",
+ "itertools 0.10.5",
+ "jolt-fiat-shamir",
+ "jolt-field",
+ "num-integer",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "strum",
+ "strum_macros",
+ "tracing",
 ]
 
 [[package]]
@@ -2048,15 +2139,6 @@ name = "log"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
-
-[[package]]
-name = "matchers"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
-dependencies = [
- "regex-automata 0.1.10",
-]
 
 [[package]]
 name = "memchr"
@@ -2339,14 +2421,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
-name = "p3-util"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3?rev=72936761#72936761d42846bd455235de09d58055eaa78c34"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "parity-scale-codec"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2415,7 +2489,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879952a81a83930934cbf1786752d6dedc3b1f29e8f8fb2ad1d0a36f377cf442"
 dependencies = [
  "memchr",
- "thiserror",
+ "thiserror 1.0.69",
  "ucd-trie",
 ]
 
@@ -2579,7 +2653,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_xorshift",
- "regex-syntax 0.8.5",
+ "regex-syntax",
  "rusty-fork",
  "tempfile",
  "unarray",
@@ -2733,7 +2807,7 @@ checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
 dependencies = [
  "getrandom 0.2.15",
  "libredox",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2744,17 +2818,8 @@ checksum = "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
-]
-
-[[package]]
-name = "regex-automata"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c230d73fb8d8c1b9c0b3135c5142a8acee3a0558fb8db5cf1cb65f8d7862132"
-dependencies = [
- "regex-syntax 0.6.29",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -2765,14 +2830,8 @@ checksum = "809e8dc61f6de73b46c85f4c96486310fe304c434cfa43669d7b40f711150908"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.5",
+ "regex-syntax",
 ]
-
-[[package]]
-name = "regex-syntax"
-version = "0.6.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "regex-syntax"
@@ -3121,9 +3180,9 @@ dependencies = [
 
 [[package]]
 name = "seq-macro"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3f0bf26fd526d2a95683cd0f87bf103b8539e2ca1ef48ce002d67aad59aa0b4"
+checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
 
 [[package]]
 name = "serde"
@@ -3539,7 +3598,16 @@ version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
+dependencies = [
+ "thiserror-impl 2.0.12",
 ]
 
 [[package]]
@@ -3547,6 +3615,17 @@ name = "thiserror-impl"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.89",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3745,14 +3824,10 @@ version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad0f048c97dbd9faa9b7df56362b8ebcaa52adb06b498c050d2f4e32f90a7a8b"
 dependencies = [
- "matchers",
  "nu-ansi-term",
- "once_cell",
- "regex",
  "sharded-slab",
  "smallvec",
  "thread_local",
- "tracing",
  "tracing-core",
  "tracing-log",
 ]
@@ -3768,6 +3843,17 @@ dependencies = [
  "term_size",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "trait-set"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b79e2e9c9ab44c6d7c20d5976961b47e8f49ac199154daa514b77cd1ab536625"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

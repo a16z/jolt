@@ -1,0 +1,13 @@
+[package]
+name = "jolt-commitment"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-fiat-shamir = { path = "../jolt-fiat-shamir" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-field = { path = "../jolt-field" }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+thiserror = "1.0.58"

@@ -1,0 +1,18 @@
+[package]
+name = "jolt-field"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+ark-std = { version = "0.4.0" }
+ark-ff = { version = "0.4.2", default-features = false }
+rayon = { version = "^1.8.0" }
+rand_core = { version = "0.6.4", default-features = false }
+bytemuck = "1.19.0"
+binius-field = { git = "https://gitlab.com/IrreducibleOSS/binius.git", package = "binius_field" }
+ark-bn254 = "0.4.0"
+rand_chacha = { version = "0.3.0", default-features = false }
+tracing = "0.1.37"
