@@ -8,7 +8,6 @@ use self::fnv::FnvHashMap;
 
 pub mod cpu;
 pub mod default_terminal;
-pub mod device;
 pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
