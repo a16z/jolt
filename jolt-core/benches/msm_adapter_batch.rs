@@ -62,8 +62,8 @@ where
 fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
     let mut rng = ChaCha20Rng::seed_from_u64(len as u64);
     match max_num_bits {
-        0 => MultilinearPolynomial::from(vec![0u8; len]),
-        1..=8 => MultilinearPolynomial::from(
+        0 => MultilinearPolynomial::from_u8(vec![0u8; len]),
+        1..=8 => MultilinearPolynomial::from_u8(
             (0..len)
                 .map(|_| {
                     let mask = if max_num_bits == 8 {
@@ -75,7 +75,7 @@ fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
                 })
                 .collect::<Vec<_>>(),
         ),
-        9..=16 => MultilinearPolynomial::from(
+        9..=16 => MultilinearPolynomial::from_u16(
             (0..len)
                 .map(|_| {
                     let mask = if max_num_bits == 16 {
@@ -87,7 +87,7 @@ fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
                 })
                 .collect::<Vec<_>>(),
         ),
-        17..=32 => MultilinearPolynomial::from(
+        17..=32 => MultilinearPolynomial::from_u32(
             (0..len)
                 .map(|_| {
                     let mask = if max_num_bits == 32 {
@@ -99,7 +99,7 @@ fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
                 })
                 .collect::<Vec<_>>(),
         ),
-        33..=64 => MultilinearPolynomial::from(
+        33..=64 => MultilinearPolynomial::from_u64(
             (0..len)
                 .map(|_| {
                     let mask = if max_num_bits == 64 {

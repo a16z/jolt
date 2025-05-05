@@ -219,7 +219,7 @@ where
             .par_iter_mut()
             .map(|cts| {
                 let cts = std::mem::take(&mut cts[0]);
-                MultilinearPolynomial::from(cts)
+                MultilinearPolynomial::from_u32(cts)
             })
             .collect::<Vec<_>>()
             .try_into()
@@ -228,7 +228,7 @@ where
             .par_iter_mut()
             .map(|cts| {
                 let cts = std::mem::take(&mut cts[1]);
-                MultilinearPolynomial::from(cts)
+                MultilinearPolynomial::from_u32(cts)
             })
             .collect::<Vec<_>>()
             .try_into()
@@ -237,7 +237,7 @@ where
             .par_iter_mut()
             .map(|cts| {
                 let cts = std::mem::take(&mut cts[2]);
-                MultilinearPolynomial::from(cts)
+                MultilinearPolynomial::from_u32(cts)
             })
             .collect::<Vec<_>>()
             .try_into()
@@ -246,7 +246,7 @@ where
             .par_iter_mut()
             .map(|cts| {
                 let cts = std::mem::take(&mut cts[3]);
-                MultilinearPolynomial::from(cts)
+                MultilinearPolynomial::from_u32(cts)
             })
             .collect::<Vec<_>>()
             .try_into()

@@ -243,7 +243,7 @@ fn map_to_polys<F: JoltField, const N: usize>(
     vals: [Vec<u32>; N],
 ) -> [MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
-        .map(MultilinearPolynomial::from)
+        .map(MultilinearPolynomial::from_u32)
         .collect::<Vec<MultilinearPolynomial<F>>>()
         .try_into()
         .unwrap()
@@ -925,9 +925,9 @@ where
 
         let mut sumcheck_polys = vec![
             eq,
-            MultilinearPolynomial::from(io_witness_range),
+            MultilinearPolynomial::from_u8(io_witness_range),
             polynomials.v_final.clone(),
-            MultilinearPolynomial::from(v_io),
+            MultilinearPolynomial::from_u32(v_io),
         ];
 
         // eq * io_witness_range * (v_final - v_io)

@@ -173,10 +173,10 @@ impl<F: JoltField> AuxComputation<F> {
             });
 
         if contains_negative_values.into_inner() {
-            MultilinearPolynomial::from(aux_poly)
+            MultilinearPolynomial::from_i64(aux_poly)
         } else {
             let aux_poly: Vec<_> = aux_poly.into_iter().map(|x| x as u64).collect();
-            MultilinearPolynomial::from(aux_poly)
+            MultilinearPolynomial::from_u64(aux_poly)
         }
     }
 }

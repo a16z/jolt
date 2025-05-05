@@ -4,14 +4,17 @@ use crate::field::JoltField;
 use ark_std::test_rng;
 use rayon::prelude::*;
 
-pub mod errors;
+// pub mod errors;
+pub use jolt_commitment::error as errors;
 pub mod gaussian_elimination;
 pub mod instruction_utils;
 pub mod math;
 pub mod profiling;
 pub mod sol_types;
 pub mod thread;
-pub mod transcript;
+// pub mod transcript;
+
+pub use jolt_fiat_shamir as transcript;
 
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///

@@ -618,17 +618,19 @@ where
 
         let E_polys: Vec<MultilinearPolynomial<F>> = E_i_evals
             .into_iter()
-            .map(MultilinearPolynomial::from)
+            .map(MultilinearPolynomial::from_u32)
             .collect();
-        let dim: Vec<MultilinearPolynomial<F>> =
-            dim.into_iter().map(MultilinearPolynomial::from).collect();
+        let dim: Vec<MultilinearPolynomial<F>> = dim
+            .into_iter()
+            .map(MultilinearPolynomial::from_u16)
+            .collect();
         let read_cts: Vec<MultilinearPolynomial<F>> = read_cts
             .into_iter()
-            .map(MultilinearPolynomial::from)
+            .map(MultilinearPolynomial::from_u32)
             .collect();
         let final_cts: Vec<MultilinearPolynomial<F>> = final_cts
             .into_iter()
-            .map(MultilinearPolynomial::from)
+            .map(MultilinearPolynomial::from_u32)
             .collect();
 
         SurgePolynomials {

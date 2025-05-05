@@ -842,7 +842,7 @@ mod tests {
         let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
             .map(|_| rng.next_u32() as usize % TABLE_SIZE)
             .collect();
-        let raf = MultilinearPolynomial::from(
+        let raf = MultilinearPolynomial::from_u32(
             read_addresses.iter().map(|a| *a as u32).collect::<Vec<_>>(),
         );
 

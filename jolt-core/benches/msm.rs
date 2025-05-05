@@ -29,26 +29,26 @@ where
 {
     let mut rng = ChaCha20Rng::seed_from_u64(SRS_SIZE as u64);
     let poly = match max_num_bits {
-        0 => MultilinearPolynomial::from(vec![0u8; SRS_SIZE]),
-        1..=8 => MultilinearPolynomial::from(
+        0 => MultilinearPolynomial::from_u8(vec![0u8; SRS_SIZE]),
+        1..=8 => MultilinearPolynomial::from_u8(
             (0..SRS_SIZE)
                 .into_iter()
                 .map(|_| (rng.next_u32() & ((1 << max_num_bits) - 1)) as u8)
                 .collect::<Vec<_>>(),
         ),
-        9..=16 => MultilinearPolynomial::from(
+        9..=16 => MultilinearPolynomial::from_u16(
             (0..SRS_SIZE)
                 .into_iter()
                 .map(|_| (rng.next_u32() & ((1 << max_num_bits) - 1)) as u16)
                 .collect::<Vec<_>>(),
         ),
-        17..=32 => MultilinearPolynomial::from(
+        17..=32 => MultilinearPolynomial::from_u32(
             (0..SRS_SIZE)
                 .into_iter()
                 .map(|_| (rng.next_u64() & ((1 << max_num_bits) - 1)) as u32)
                 .collect::<Vec<_>>(),
         ),
-        33..=64 => MultilinearPolynomial::from(
+        33..=64 => MultilinearPolynomial::from_u64(
             (0..SRS_SIZE)
                 .into_iter()
                 .map(|_| rng.next_u64() & ((1 << max_num_bits) - 1))

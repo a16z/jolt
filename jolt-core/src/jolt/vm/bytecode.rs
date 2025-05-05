@@ -283,12 +283,12 @@ impl<F: JoltField> BytecodePreprocessing<F> {
         }
 
         let v_init_final = [
-            MultilinearPolynomial::from(address),
-            MultilinearPolynomial::from(bitflags),
-            MultilinearPolynomial::from(rd),
-            MultilinearPolynomial::from(rs1),
-            MultilinearPolynomial::from(rs2),
-            MultilinearPolynomial::from(imm),
+            MultilinearPolynomial::from_u64(address),
+            MultilinearPolynomial::from_u64(bitflags),
+            MultilinearPolynomial::from_u8(rd),
+            MultilinearPolynomial::from_u8(rs1),
+            MultilinearPolynomial::from_u8(rs2),
+            MultilinearPolynomial::from_i64(imm),
         ];
 
         Self {
@@ -356,15 +356,15 @@ where
         }
 
         let v_read_write = [
-            MultilinearPolynomial::from(address),
-            MultilinearPolynomial::from(bitflags),
-            MultilinearPolynomial::from(rd),
-            MultilinearPolynomial::from(rs1),
-            MultilinearPolynomial::from(rs2),
-            MultilinearPolynomial::from(imm),
+            MultilinearPolynomial::from_u64(address),
+            MultilinearPolynomial::from_u64(bitflags),
+            MultilinearPolynomial::from_u8(rd),
+            MultilinearPolynomial::from_u8(rs1),
+            MultilinearPolynomial::from_u8(rs2),
+            MultilinearPolynomial::from_i64(imm),
         ];
-        let t_read: MultilinearPolynomial<F> = MultilinearPolynomial::from(read_cts);
-        let t_final = MultilinearPolynomial::from(final_cts);
+        let t_read: MultilinearPolynomial<F> = MultilinearPolynomial::from_u32(read_cts);
+        let t_final = MultilinearPolynomial::from_u32(final_cts);
 
         #[cfg(test)]
         let mut init_tuples: HashSet<(u64, [F; 6], u64)> = HashSet::new();
@@ -441,7 +441,7 @@ where
             assert_eq!(set_difference.len(), 0);
         }
 
-        let a_read_write = MultilinearPolynomial::from(a_read_write);
+        let a_read_write = MultilinearPolynomial::from_u32(a_read_write);
 
         BytecodeStuff {
             a_read_write,

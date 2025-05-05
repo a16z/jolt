@@ -903,9 +903,9 @@ where
                 }
 
                 (
-                    MultilinearPolynomial::from(read_cts_i),
-                    MultilinearPolynomial::from(final_cts_i),
-                    MultilinearPolynomial::from(subtable_lookups),
+                    MultilinearPolynomial::from_u32(read_cts_i),
+                    MultilinearPolynomial::from_u32(final_cts_i),
+                    MultilinearPolynomial::from_u32(subtable_lookups),
                 )
             })
             .collect();
@@ -928,7 +928,7 @@ where
 
         let dim: Vec<MultilinearPolynomial<F>> = subtable_lookup_indices
             .into_par_iter()
-            .map(MultilinearPolynomial::from)
+            .map(MultilinearPolynomial::from_u16)
             .collect();
 
         let mut instruction_flag_bitvectors: Vec<Vec<u8>> =
@@ -941,12 +941,12 @@ where
 
         let instruction_flag_polys: Vec<MultilinearPolynomial<F>> = instruction_flag_bitvectors
             .into_par_iter()
-            .map(MultilinearPolynomial::from)
+            .map(MultilinearPolynomial::from_u8)
             .collect();
 
         let mut lookup_outputs = Self::compute_lookup_outputs(ops);
         lookup_outputs.resize(m, 0);
-        let lookup_outputs = MultilinearPolynomial::from(lookup_outputs);
+        let lookup_outputs = MultilinearPolynomial::from_u32(lookup_outputs);
 
         InstructionLookupPolynomials {
             dim,

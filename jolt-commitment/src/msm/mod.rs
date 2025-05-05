@@ -10,7 +10,7 @@ use num_integer::Integer;
 use rayon::prelude::*;
 use std::borrow::Borrow;
 
-pub(crate) mod icicle;
+pub mod icicle;
 pub use icicle::*;
 use jolt_field::JoltField;
 use jolt_poly::multilinear_polynomial::MultilinearPolynomial;

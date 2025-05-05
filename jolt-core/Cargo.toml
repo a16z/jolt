@@ -38,6 +38,10 @@ icicle = [
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-fiat-shamir = { path = "../jolt-fiat-shamir" }
+jolt-commitment = { path = "../jolt-commitment" }
+jolt-hyperkzg = { path = "../jolt-hyperkzg" }
 ark-bn254 = "0.4.0"
 ark-ec = { version = "0.4.2", default-features = false }
 ark-ff = { version = "0.4.2", default-features = false }

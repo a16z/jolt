@@ -267,7 +267,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 }
             }
         });
-        MultilinearPolynomial::from(val)
+        MultilinearPolynomial::from_u32(val)
     };
     #[cfg(test)]
     let mut ra_test = {
@@ -398,8 +398,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     drop(_guard);
     drop(span);
 
-    let rv = MultilinearPolynomial::from(read_values);
-    let mut wv = MultilinearPolynomial::from(write_values);
+    let rv = MultilinearPolynomial::from_u32(read_values);
+    let mut wv = MultilinearPolynomial::from_u32(write_values);
 
     // z * eq(r, k)
     let mut z_eq_r = MultilinearPolynomial::from(EqPolynomial::evals_parallel(r, Some(z)));
@@ -1210,7 +1210,7 @@ mod tests {
             // Write the new value to the write register
             registers[write_address] = write_value;
         }
-        let val = MultilinearPolynomial::from(val);
+        let val = MultilinearPolynomial::from_u32(val);
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_address: Vec<Fr> = prover_transcript.challenge_vector(K.log_2());
