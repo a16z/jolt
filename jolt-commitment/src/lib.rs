@@ -1,8 +1,11 @@
+#![allow(type_alias_bounds)]
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
 pub mod error;
+pub mod msm;
 
 use crate::error::ProofVerifyError;
 use jolt_fiat_shamir::{AppendToTranscript, Transcript};

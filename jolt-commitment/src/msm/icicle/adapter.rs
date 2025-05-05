@@ -1,4 +1,5 @@
-use crate::{GpuBaseType, VariableBaseMSM};
+use crate::field::JoltField;
+use crate::msm::{GpuBaseType, VariableBaseMSM};
 use ark_bn254::G1Projective;
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::{BigInteger, Field, PrimeField};
@@ -14,7 +15,6 @@ use icicle_runtime::{
     memory::{DeviceVec, HostSlice},
     stream::IcicleStream,
 };
-use jolt_field::JoltField;
 use rayon::prelude::*;
 use std::os::raw::c_void;
 

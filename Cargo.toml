@@ -53,7 +53,8 @@ members = [
     "examples/memory-ops/guest",
     "jolt-commitment",
     "jolt-fiat-shamir",
-    "jolt-poly", "jolt-hyperkzg", "jolt-msm",
+    "jolt-poly",
+    "jolt-hyperkzg",
 ]
 
 [features]

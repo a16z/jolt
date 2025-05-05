@@ -3,4 +3,26 @@ name = "jolt-hyperkzg"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+icicle = [
+    "jolt-commitment/icicle",
+]
+
 [dependencies]
+jolt-fiat-shamir = { path = "../jolt-fiat-shamir" }
+jolt-commitment = { path = "../jolt-commitment" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-field = { path = "../jolt-field" }
+rayon = { version = "^1.8.0" }
+rand_core = { version = "0.6.4", default-features = false }
+tracing = "0.1.37"
+rand_chacha = { version = "0.3.0", default-features = false }
+ark-ec = { version = "0.4.2", default-features = false }
+ark-ff = { version = "0.4.2", default-features = false }
+ark-std = { version = "0.4.0" }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+
+[dev-dependencies]
+ark-bn254 = "0.4.0"

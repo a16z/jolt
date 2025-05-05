@@ -4,16 +4,16 @@ use ark_std::cmp::Ordering;
 use ark_std::vec::Vec;
 #[cfg(feature = "icicle")]
 use icicle_core::curve::Affine;
+use jolt_poly::unipoly::UniPoly;
+use jolt_poly::utils::Math;
 use num_integer::Integer;
 use rayon::prelude::*;
 use std::borrow::Borrow;
 
 pub(crate) mod icicle;
-use crate::utils::errors::ProofVerifyError;
 pub use icicle::*;
 use jolt_field::JoltField;
 use jolt_poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_poly::utils::Math;
 
 impl<F: JoltField, G: CurveGroup<ScalarField = F> + Icicle> VariableBaseMSM for G {}
 
@@ -22,8 +22,8 @@ pub type GpuBaseType<G: Icicle> = Affine<G::C>;
 #[cfg(not(feature = "icicle"))]
 pub type GpuBaseType<G: ScalarMul> = G::MulBase;
 
+use crate::error::ProofVerifyError;
 use itertools::Either;
-use jolt_poly::unipoly::UniPoly;
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.

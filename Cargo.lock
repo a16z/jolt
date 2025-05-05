@@ -1872,11 +1872,23 @@ dependencies = [
 name = "jolt-commitment"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.4.2",
  "ark-serialize 0.4.2",
+ "ark-std 0.4.0",
+ "icicle-bn254",
+ "icicle-core",
+ "icicle-runtime",
+ "itertools 0.10.5",
  "jolt-fiat-shamir",
  "jolt-field",
  "jolt-poly",
+ "num-integer",
+ "rayon",
+ "sys-info",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -1963,24 +1975,19 @@ dependencies = [
 [[package]]
 name = "jolt-hyperkzg"
 version = "0.1.0"
-
-[[package]]
-name = "jolt-msm"
-version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.4.2",
+ "ark-serialize 0.4.2",
  "ark-std 0.4.0",
- "icicle-bn254",
- "icicle-core",
- "icicle-runtime",
- "itertools 0.10.5",
+ "jolt-commitment",
+ "jolt-fiat-shamir",
  "jolt-field",
  "jolt-poly",
- "num-integer",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rayon",
- "sys-info",
  "tracing",
 ]
 
