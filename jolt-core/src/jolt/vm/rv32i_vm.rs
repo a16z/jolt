@@ -84,7 +84,7 @@ macro_rules! subtable_enum {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
             #[enum_dispatch(LassoSubtable<F>)]
-            #[derive(EnumCountMacro, EnumIter)]
+            #[derive(Debug, EnumCountMacro, EnumIter)]
             pub enum $enum_name<F: JoltField> { $([<$alias>]($struct)),+ }
         }
         impl<F: JoltField> From<SubtableId> for $enum_name<F> {

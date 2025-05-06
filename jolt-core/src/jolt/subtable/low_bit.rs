@@ -2,7 +2,7 @@ use super::LassoSubtable;
 use crate::field::JoltField;
 use std::marker::PhantomData;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LowBitSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }

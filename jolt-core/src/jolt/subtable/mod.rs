@@ -22,7 +22,7 @@ pub trait LassoSubtable<F: JoltField>: 'static + Sync {
 
 pub type SubtableId = TypeId;
 pub trait JoltSubtableSet<F: JoltField>:
-    LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize> + Send + Sync
+    LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize> + std::fmt::Debug + Send + Sync
 {
     fn enum_index(subtable: Box<dyn LassoSubtable<F>>) -> usize {
         Self::from(subtable.subtable_id()).into()
