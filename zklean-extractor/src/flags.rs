@@ -40,8 +40,7 @@ impl ZkLeanLookupCases<32, 4, 16> {
     /// Iterate over the instruction set and extract each R1CS input variable.
     pub fn extract() -> Self {
         Self {
-            instruction_flags: NamedInstruction::<32, 4, 16>::variants()
-                .into_iter()
+            instruction_flags: NamedInstruction::<32, 4, 16>::iter()
                 .map(ZkLeanInstructionFlags::from_instruction)
                 .collect(),
         }

@@ -8,7 +8,7 @@ use quote::{format_ident, quote};
 /// identifier (for the resulting enum type), followed by a comma, and then a comma-separated
 /// sequence of types, each of which will become a variant, named after the type, and containing an
 /// item of that type.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct EnumParser {
     id: Ident,
     entries: Punctuated<VariantParser, Token![,]>,
@@ -25,7 +25,7 @@ impl Parse for EnumParser {
 
 /// Parser for a variant within a proc-macro enum declaration. Contains a type, possibly with a
 /// module path and a collection of const generics in angle brackets.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct VariantParser {
     path: Punctuated<Ident, Token![::]>,
     id: Ident,

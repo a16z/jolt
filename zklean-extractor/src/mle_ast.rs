@@ -29,11 +29,47 @@ pub enum MleAstNode {
     Div(usize, usize),
 }
 
+/**********************************************************************
+ * NOTE: We probably never need to serialize MleAst, so these are stubs
+ */
+
+impl CanonicalSerialize for MleAstNode {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), SerializationError> {
+        unimplemented!("Not needed for constructing ASTs")
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        unimplemented!("Not needed for constructing ASTs")
+    }
+}
+
+impl CanonicalDeserialize for MleAstNode {
+    fn deserialize_with_mode<R: std::io::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
+        unimplemented!("Not needed for constructing ASTs")
+    }
+}
+
+impl Valid for MleAstNode {
+    fn check(&self) -> Result<(), SerializationError> {
+        unimplemented!("Not needed for constructing ASTs")
+    }
+}
+
+/**********************************************************************/
+
 /// An AST intended for representing an MLE computation (although it will actually work for any
 /// multivariate polynomial). The nodes are stored in a statically sized array, which allows the
 /// data structure to be [`Copy`] and [`Sized`]. The size of the array (i.e., the max number of
 /// nodes that may be stored) is given by the const-generic `NUM_NODES` type argument.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MleAst<const NUM_NODES: usize> {
     /// Collection of nodes; the indices in each [`MleAstNode`] are indices into this array
     nodes: [Option<MleAstNode>; NUM_NODES],
@@ -312,36 +348,6 @@ impl<const NUM_NODES: usize> std::fmt::Display for MleAst<NUM_NODES> {
 impl<const NUM_NODES: usize> Default for MleAst<NUM_NODES> {
     fn default() -> Self {
         Self::zero()
-    }
-}
-
-impl<const NUM_NODES: usize> CanonicalSerialize for MleAst<NUM_NODES> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        unimplemented!("ark serializer unimplemented for MleAst<NUM_NODES>")
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        unimplemented!("ark serializer unimplemented for MleAst<NUM_NODES>")
-    }
-}
-
-impl<const NUM_NODES: usize> Valid for MleAst<NUM_NODES> {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl<const NUM_NODES: usize> CanonicalDeserialize for MleAst<NUM_NODES> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        unimplemented!("ark deserializer unimplemented for MleAst<NUM_NODES>")
     }
 }
 

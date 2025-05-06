@@ -1,49 +1,82 @@
-use jolt_core::jolt::instruction;
+use jolt_core::jolt::{instruction::{self, JoltInstruction}, subtable::LassoSubtable, vm::rv32i_vm::RV32I};
+use strum::IntoEnumIterator as _;
 use zklean_extractor::declare_instructions_enum;
 
-use crate::{modules::{AsModule, Module}, util::{indent, ZkLeanReprField}, MleAst};
+use crate::{modules::{AsModule, Module}, subtable::NamedSubtable, util::{indent, ZkLeanReprField}, MleAst};
 
-declare_instructions_enum! {
-    NamedInstruction,
-    instruction::add::ADDInstruction,
-    instruction::and::ANDInstruction,
-    instruction::beq::BEQInstruction,
-    instruction::bge::BGEInstruction,
-    instruction::bgeu::BGEUInstruction,
-    instruction::bne::BNEInstruction,
-    instruction::mul::MULInstruction,
-    instruction::mulhu::MULHUInstruction,
-    instruction::mulu::MULUInstruction,
-    instruction::or::ORInstruction,
-    instruction::sll::SLLInstruction,
-    instruction::slt::SLTInstruction,
-    instruction::sltu::SLTUInstruction,
-    instruction::sra::SRAInstruction,
-    instruction::srl::SRLInstruction,
-    instruction::sub::SUBInstruction,
-    instruction::xor::XORInstruction,
-    instruction::virtual_advice::ADVICEInstruction,
-    // The const-generic corresponds to the allignment. This instruction is only instantiated for
-    // alignments of 2 and 4 in the ISA.
-    instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction<2>,
-    instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction<4>,
-    instruction::virtual_assert_lte::ASSERTLTEInstruction,
-    instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction,
-    instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
-    instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
-    instruction::virtual_move::MOVEInstruction,
-    instruction::virtual_movsign::MOVSIGNInstruction,
-}
+//declare_instructions_enum! {
+//    NamedInstruction,
+//    instruction::add::ADDInstruction,
+//    instruction::and::ANDInstruction,
+//    instruction::beq::BEQInstruction,
+//    instruction::bge::BGEInstruction,
+//    instruction::bgeu::BGEUInstruction,
+//    instruction::bne::BNEInstruction,
+//    instruction::mul::MULInstruction,
+//    instruction::mulhu::MULHUInstruction,
+//    instruction::mulu::MULUInstruction,
+//    instruction::or::ORInstruction,
+//    instruction::sll::SLLInstruction,
+//    instruction::slt::SLTInstruction,
+//    instruction::sltu::SLTUInstruction,
+//    instruction::sra::SRAInstruction,
+//    instruction::srl::SRLInstruction,
+//    instruction::sub::SUBInstruction,
+//    instruction::xor::XORInstruction,
+//    instruction::virtual_advice::ADVICEInstruction,
+//    // The const-generic corresponds to the allignment. This instruction is only instantiated for
+//    // alignments of 2 and 4 in the ISA.
+//    instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction<2>,
+//    instruction::virtual_assert_aligned_memory_access::AssertAlignedMemoryAccessInstruction<4>,
+//    instruction::virtual_assert_lte::ASSERTLTEInstruction,
+//    instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction,
+//    instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+//    instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
+//    instruction::virtual_move::MOVEInstruction,
+//    instruction::virtual_movsign::MOVSIGNInstruction,
+//}
 
-/// Helper function to print a list of subtables as a Lean Vector.
-fn zklean_write_subtables(subtables: &Vec<(String, usize)>, log_m: usize) -> String {
-    std::iter::once("#[ ".to_string())
-        .chain(subtables.iter().map(|(s, i)| format!("({s}_{log_m}, {i})")).intersperse(", ".to_string()))
-        .chain(std::iter::once(" ].toVector".to_string()))
-        .fold(String::new(), |acc, s| format!("{acc}{s}"))
+/// Wrapper around a JoltInstruction
+// TODO: Make this generic over the instruction set
+pub struct NamedInstruction<const WORD_SIZE: usize, const C: usize, const LOG_M: usize>(RV32I);
+
+impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> From<RV32I> for NamedInstruction<WORD_SIZE, C, LOG_M> {
+    fn from(value: RV32I) -> Self {
+        Self(value)
+    }
 }
 
 impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> NamedInstruction<WORD_SIZE, C, LOG_M> {
+    pub fn name(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn combine_lookups<F: ZkLeanReprField>(&self, reg_name: char) -> F {
+        // We need one wire for each subtable evaluation
+        let reg_size = self.subtables::<F>().count();
+        let reg = F::register(reg_name, reg_size);
+        self.0.combine_lookups(&reg, C, 1 << LOG_M)
+    }
+
+    fn subtables<F: ZkLeanReprField>(&self) -> impl Iterator<Item = (String, usize)> {
+        self.0
+            .subtables(C, 1 << LOG_M)
+            .into_iter()
+            .flat_map(|(subtable, ixs)|
+                ixs.iter()
+                    .map(|ix| (NamedSubtable::<F, LOG_M>::from(&subtable).name(), ix))
+                    .collect::<Vec<_>>()
+            )
+    }
+
+    pub fn iter() -> impl Iterator<Item = Self> {
+        RV32I::iter().map(Self::from)
+    }
+
+    pub fn to_instruction_set(&self) -> RV32I {
+        self.0
+    }
+
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
     pub fn zklean_pretty_print<F: ZkLeanReprField>(
         &self,
@@ -52,7 +85,13 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> NamedInstructio
     ) -> std::io::Result<()> {
         let name = self.name();
         let mle = self.combine_lookups::<F>('x').as_computation();
-        let subtables = zklean_write_subtables(&self.subtables::<F>(), LOG_M);
+        let subtables = std::iter::once("#[ ".to_string())
+            .chain(self.subtables::<F>().map(|(s, i)|
+                format!("({s}_{LOG_M}, {i})"))
+                    .intersperse(", ".to_string())
+            )
+            .chain(std::iter::once(" ].toVector".to_string()))
+            .fold(String::new(), |acc, s| format!("{acc}{s}"));
 
         f.write_fmt(format_args!(
                 "{}def {name}_{WORD_SIZE} [Field f] : ComposedLookupTable f {LOG_M} {C}\n",
@@ -75,7 +114,7 @@ pub struct ZkLeanInstructions<const WORD_SIZE: usize, const C: usize, const LOG_
 impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructions<WORD_SIZE, C, LOG_M> {
     pub fn extract() -> Self {
         Self {
-            instructions: NamedInstruction::<WORD_SIZE, C, LOG_M>::variants(),
+            instructions: NamedInstruction::<WORD_SIZE, C, LOG_M>::iter().collect(),
         }
     }
 
