@@ -3,7 +3,9 @@ use crate::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
+use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
@@ -40,26 +42,33 @@ where
         let g1 = P::G1::rand(&mut rng);
         let g2 = P::G2::rand(&mut rng);
 
+        let scalar_bits = P::ScalarField::MODULUS_BIT_SIZE as usize;
+
+        let g1_window_size = FixedBase::get_mul_window_size(num_g1_powers);
+        let g2_window_size = FixedBase::get_mul_window_size(num_g2_powers);
+        let g1_table = FixedBase::get_window_table(scalar_bits, g1_window_size, g1);
+        let g2_table = FixedBase::get_window_table(scalar_bits, g2_window_size, g2);
+
         let (g1_powers_projective, g2_powers_projective) = rayon::join(
             || {
-                let mut current_power = P::ScalarField::one();
-                (0..=num_g1_powers)
-                    .map(|_| {
-                        let result = g1 * current_power;
-                        current_power *= beta;
-                        result
+                let beta_powers: Vec<P::ScalarField> = (0..=num_g1_powers)
+                    .scan(beta, |acc, _| {
+                        let val = *acc;
+                        *acc *= beta;
+                        Some(val)
                     })
-                    .collect::<Vec<_>>()
+                    .collect();
+                FixedBase::msm(scalar_bits, g1_window_size, &g1_table, &beta_powers)
             },
             || {
-                let mut current_power = P::ScalarField::one();
-                (0..=num_g2_powers)
-                    .map(|_| {
-                        let result = g2 * current_power;
-                        current_power *= beta;
-                        result
+                let beta_powers: Vec<P::ScalarField> = (0..=num_g2_powers)
+                    .scan(beta, |acc, _| {
+                        let val = *acc;
+                        *acc *= beta;
+                        Some(val)
                     })
-                    .collect::<Vec<_>>()
+                    .collect();
+                FixedBase::msm(scalar_bits, g2_window_size, &g2_table, &beta_powers)
             },
         );
 
