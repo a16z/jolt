@@ -101,10 +101,8 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use binius_field::BinaryField128b;
 
     use crate::{
-        field::binius::BiniusField,
         field::JoltField,
         jolt::subtable::{srl::SrlSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
@@ -114,11 +112,4 @@ mod test {
     subtable_materialize_mle_parity_test!(srl_materialize_mle_parity1, SrlSubtable<Fr, 1, 32>, Fr, 1 << 10);
     subtable_materialize_mle_parity_test!(srl_materialize_mle_parity2, SrlSubtable<Fr, 2, 32>, Fr, 1 << 10);
     subtable_materialize_mle_parity_test!(srl_materialize_mle_parity3, SrlSubtable<Fr, 3, 32>, Fr, 1 << 10);
-
-    subtable_materialize_mle_parity_test!(
-        srl_binius_materialize_mle_parity3,
-        SrlSubtable<BiniusField<BinaryField128b>, 3, 32>,
-        BiniusField<BinaryField128b>,
-        1 << 10
-    );
 }

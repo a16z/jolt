@@ -126,4 +126,3 @@ where
 }
 
 pub mod ark;
-pub mod binius;

@@ -347,13 +347,6 @@ mod tests {
         fib_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>();
     }
 
-    // TODO(sragss): Finish Binius.
-    // #[test]
-    // fn fib_e2e_binius() {
-    //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
-    //     fib_e2e::<Field, MockCommitScheme<Field>>();
-    // }
-
     #[test]
     fn sha3_e2e_zeromorph() {
         let guard = SHA3_FILE_LOCK.lock().unwrap();
