@@ -1,5 +1,14 @@
 use jolt_core::field::JoltField;
 
+const TAB: &str = "  ";
+
+pub fn indent(level: usize) -> String {
+    std::iter::repeat(String::from(TAB))
+        .take(level)
+        .collect::<Vec<_>>()
+        .concat()
+}
+
 /// A [`JoltField`] that can be used to write a ZKLean representation of a computation.
 pub trait ZkLeanReprField: JoltField + Sized {
     fn register(name: char, size: usize) -> Vec<Self>;

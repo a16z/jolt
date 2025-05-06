@@ -6,7 +6,16 @@ This program extracts a representation of the MLEs and constraints for each `Jol
 Running
 =======
 
-You can produce a lean file in the ZkLean source directory by cloning XXX and running the following command from the root of the Jolt repo:
+This tool allows you to produce a package containing a ZkLean representation of the Jolt VM by running the following command from the root of the Jolt repo:
+```sh
+cargo run --release -p zklean-extractor -- -p $PATH_TO_MODULE
+```
+The other files in the module will be read from the template directory in `$PATH_TO_JOLT_REPO/zklean-extractor/package-template` when the tool is built. You can specify a different template directory at run time by running this, instead:
+```sh
+cargo run --release -p zklean-extractor -- -t $PATH_TO_TEMPLATE_DIR -p $PATH_TO_MODULE
+```
+
+Alternatively, you can produce a single source file in the ZkLean repo by running the following command from the root of the Jolt repo:
 ```sh
 cargo run --release -p zklean-extractor -- -f $PATH_TO_ZKLEAN_REPO/src/ZkLean/SubtableMles.lean
 ```

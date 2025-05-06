@@ -13,6 +13,9 @@ edition = "2021"
 [lib]
 proc-macro = true
 
+[build-dependencies]
+build-fs-tree = "0.7.1"
+
 [dependencies]
 ark-std = { version = "0.4.0" }
 ark-bn254 = "0.4.0"
@@ -22,6 +25,7 @@ clap = { version = "4.3.10", features = ["derive"] }
 rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
 strum = "0.26.3"
+build-fs-tree = "0.7.1"
 
 syn = {version = "1.0", features = ["full"]}
 quote = "1.0"

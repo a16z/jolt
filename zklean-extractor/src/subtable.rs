@@ -1,7 +1,7 @@
 use jolt_core::jolt::subtable;
 use zklean_extractor::declare_subtables_enum;
 
-use crate::util::ZkLeanReprField;
+use crate::{modules::{AsModule, Module}, util::{indent, ZkLeanReprField}};
 
 declare_subtables_enum! {
     NamedSubtable,
@@ -25,40 +25,72 @@ declare_subtables_enum! {
     subtable::sll::SllSubtable<1, 32>,
     subtable::sll::SllSubtable<2, 32>,
     subtable::sll::SllSubtable<3, 32>,
-    //subtable::sll::SllSubtable<0, 64>,
-    //subtable::sll::SllSubtable<1, 64>,
-    //subtable::sll::SllSubtable<2, 64>,
-    //subtable::sll::SllSubtable<3, 64>,
-    //subtable::sll::SllSubtable<4, 64>,
-    //subtable::sll::SllSubtable<5, 64>,
-    //subtable::sll::SllSubtable<6, 64>,
-    //subtable::sll::SllSubtable<7, 64>,
     subtable::sra_sign::SraSignSubtable<32>,
-    //subtable::sra_sign::SraSignSubtable<64>,
     subtable::srl::SrlSubtable<0, 32>,
     subtable::srl::SrlSubtable<1, 32>,
     subtable::srl::SrlSubtable<2, 32>,
     subtable::srl::SrlSubtable<3, 32>,
-    //subtable::srl::SrlSubtable<0, 64>,
-    //subtable::srl::SrlSubtable<1, 64>,
-    //subtable::srl::SrlSubtable<2, 64>,
-    //subtable::srl::SrlSubtable<3, 64>,
-    //subtable::srl::SrlSubtable<4, 64>,
-    //subtable::srl::SrlSubtable<5, 64>,
-    //subtable::srl::SrlSubtable<6, 64>,
-    //subtable::srl::SrlSubtable<7, 64>,
     subtable::xor::XorSubtable,
 }
 
-impl<F: ZkLeanReprField> NamedSubtable<F> {
+impl<F: ZkLeanReprField, const LOG_M: usize> NamedSubtable<F, LOG_M> {
     /// Pretty print a subtable as a ZkLean `Subtable`.
-    pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write, reg_size: usize) -> std::io::Result<()> {
+    pub fn zklean_pretty_print(
+        &self,
+        f: &mut impl std::io::Write,
+        mut indent_level: usize,
+    ) -> std::io::Result<()> {
         let name = self.name();
-        let mle = self.evaluate_mle('x', reg_size).as_computation();
+        let mle = self.evaluate_mle('x').as_computation();
 
-        f.write_fmt(format_args!("def {name}_{reg_size} [Field f] : Subtable f {reg_size}"))?;
-        f.write_fmt(format_args!(" := subtableFromMLE (fun x => {mle})\n"))?;
+        f.write_fmt(format_args!(
+                "{}def {name}_{LOG_M} [Field f] : Subtable f {LOG_M} :=\n",
+                indent(indent_level),
+        ))?;
+        indent_level += 1;
+        f.write_fmt(format_args!(
+                "{}subtableFromMLE (fun x => {mle})\n",
+                indent(indent_level),
+        ))?;
 
         Ok(())
+    }
+}
+
+pub struct ZkLeanSubtables<F: ZkLeanReprField, const LOG_M: usize> {
+    subtables: Vec<NamedSubtable<F, LOG_M>>,
+}
+
+impl<F: ZkLeanReprField, const LOG_M: usize> ZkLeanSubtables<F, LOG_M> {
+    pub fn extract() -> Self {
+        Self {
+            subtables: NamedSubtable::<F, LOG_M>::variants(),
+        }
+    }
+
+    pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write, indent_level: usize) -> std::io::Result<()> {
+        for subtable in &self.subtables {
+            subtable.zklean_pretty_print(f, indent_level)?;
+        }
+        Ok(())
+    }
+
+    pub fn zklean_imports(&self) -> Vec<String> {
+        vec![
+            String::from("ZkLean"),
+        ]
+    }
+}
+
+impl<F: ZkLeanReprField, const LOG_M: usize> AsModule for ZkLeanSubtables<F, LOG_M> {
+    fn as_module(&self) -> std::io::Result<Module> {
+        let mut contents: Vec<u8> = vec![];
+        self.zklean_pretty_print(&mut contents, 0)?;
+
+        Ok(Module {
+            name: String::from("Subtables"),
+            imports: self.zklean_imports(),
+            contents,
+        })
     }
 }

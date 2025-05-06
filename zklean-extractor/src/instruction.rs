@@ -1,7 +1,7 @@
 use jolt_core::jolt::instruction;
 use zklean_extractor::declare_instructions_enum;
 
-use crate::util::ZkLeanReprField;
+use crate::{modules::{AsModule, Module}, util::{indent, ZkLeanReprField}, MleAst};
 
 declare_instructions_enum! {
     NamedInstruction,
@@ -43,22 +43,70 @@ fn zklean_write_subtables(subtables: &Vec<(String, usize)>, log_m: usize) -> Str
         .fold(String::new(), |acc, s| format!("{acc}{s}"))
 }
 
-impl<const WORD_SIZE: usize> NamedInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> NamedInstruction<WORD_SIZE, C, LOG_M> {
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
     pub fn zklean_pretty_print<F: ZkLeanReprField>(
         &self,
         f: &mut impl std::io::Write,
-        c: usize,
-        log_m: usize
+        mut indent_level: usize,
     ) -> std::io::Result<()> {
-        let m = 1 << log_m;
         let name = self.name();
-        let mle = self.combine_lookups::<F>('x', c, m).as_computation();
-        let subtables = zklean_write_subtables(&self.subtables::<F>(c, m), log_m);
+        let mle = self.combine_lookups::<F>('x').as_computation();
+        let subtables = zklean_write_subtables(&self.subtables::<F>(), LOG_M);
 
-        f.write_fmt(format_args!("def {name}_{WORD_SIZE} [Field f] : ComposedLookupTable f {log_m} {c}"))?;
-        f.write_fmt(format_args!(" := mkComposedLookupTable {subtables} (fun x => {mle})\n"))?;
+        f.write_fmt(format_args!(
+                "{}def {name}_{WORD_SIZE} [Field f] : ComposedLookupTable f {LOG_M} {C}\n",
+                indent(indent_level),
+        ))?;
+        indent_level += 1;
+        f.write_fmt(format_args!(
+                "{}:= mkComposedLookupTable {subtables} (fun x => {mle})\n",
+                indent(indent_level),
+        ))?;
 
         Ok(())
+    }
+}
+
+pub struct ZkLeanInstructions<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> {
+    instructions: Vec<NamedInstruction<WORD_SIZE, C, LOG_M>>,
+}
+
+impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructions<WORD_SIZE, C, LOG_M> {
+    pub fn extract() -> Self {
+        Self {
+            instructions: NamedInstruction::<WORD_SIZE, C, LOG_M>::variants(),
+        }
+    }
+
+    pub fn zklean_pretty_print(
+        &self,
+        f: &mut impl std::io::Write,
+        indent_level: usize,
+    ) -> std::io::Result<()> {
+        for instruction in &self.instructions {
+            instruction.zklean_pretty_print::<MleAst<2048>>(f, indent_level)?;
+        }
+        Ok(())
+    }
+
+    pub fn zklean_imports(&self) -> Vec<String> {
+        vec![
+            String::from("ZkLean"),
+            String::from("Jolt.Subtables"),
+        ]
+    }
+}
+
+impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> AsModule for ZkLeanInstructions<WORD_SIZE, C, LOG_M> {
+    fn as_module(&self) -> std::io::Result<Module> {
+        let mut contents: Vec<u8> = vec![];
+        self.zklean_pretty_print(&mut contents, 0)?;
+
+        Ok(Module {
+            name: String::from("Instructions"),
+            imports: self.zklean_imports(),
+            contents,
+        })
     }
 }

@@ -74,7 +74,7 @@ pub fn declare_subtables_enum(input: TokenStream) -> TokenStream {
     let mut variants = vec![];
     let mut name_cases = vec![];
     let mut eval_cases = vec![];
-    let mut enum_cases = vec![];
+    let mut iter_cases = vec![];
     let mut conv_conditions = vec![];
     let mut tests = vec![];
 
@@ -95,7 +95,7 @@ pub fn declare_subtables_enum(input: TokenStream) -> TokenStream {
         eval_cases.push(quote! {
             Self::#name(s) => s.evaluate_mle(&vars)
         });
-        enum_cases.push(quote! {
+        iter_cases.push(quote! {
             Self::#name(#path #id::new())
         });
         conv_conditions.push(quote! {
@@ -122,11 +122,11 @@ pub fn declare_subtables_enum(input: TokenStream) -> TokenStream {
     }
 
     quote! {
-        pub enum #enum_id<F: crate::util::ZkLeanReprField> {
+        pub enum #enum_id<F: crate::util::ZkLeanReprField, const REG_SIZE: usize> {
             #(#variants),*
         }
 
-        impl<F: crate::util::ZkLeanReprField> #enum_id<F> {
+        impl<F: crate::util::ZkLeanReprField, const REG_SIZE: usize> #enum_id<F, REG_SIZE> {
             /// Name of this subtable variant, incorporating the type and any const-generics.
             pub fn name(&self) -> &'static str {
                 match self {
@@ -135,19 +135,19 @@ pub fn declare_subtables_enum(input: TokenStream) -> TokenStream {
             }
 
             /// Call the `evaluate_mle` method on the contained subtable.
-            pub fn evaluate_mle(&self, reg_name: char, reg_size: usize) -> F {
+            pub fn evaluate_mle(&self, reg_name: char) -> F {
                 use jolt_core::jolt::subtable::LassoSubtable;
                 use crate::util::ZkLeanReprField;
-                let vars = F::register(reg_name, reg_size);
+                let vars = F::register(reg_name, REG_SIZE);
                 match self {
                     #(#eval_cases),*
                 }
             }
 
             /// Enumerate all variants.
-            pub fn enumerate() -> Vec<Self> {
+            pub fn variants() -> Vec<Self> {
                 vec![
-                    #(#enum_cases),*
+                    #(#iter_cases),*
                 ]
             }
 
@@ -179,7 +179,7 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
     let mut name_cases = vec![];
     let mut combine_cases = vec![];
     let mut subtables_cases = vec![];
-    let mut enum_cases = vec![];
+    let mut iter_cases = vec![];
     let mut to_instruction_set_cases = vec![];
     //let mut tests = vec![];
 
@@ -198,12 +198,12 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
             Self::#name(_) => #name_str
         });
         combine_cases.push(quote! {
-            Self::#name(i) => i.combine_lookups(&vars, c, m)
+            Self::#name(i) => i.combine_lookups(&vars, C, 1 << LOG_M)
         });
         subtables_cases.push(quote! {
-            Self::#name(i) => i.subtables(c, m)
+            Self::#name(i) => i.subtables(C, 1 << LOG_M)
         });
-        enum_cases.push(quote! {
+        iter_cases.push(quote! {
             Self::#name(#path #id::default())
         });
         to_instruction_set_cases.push(quote! {
@@ -227,11 +227,11 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
     }
 
     quote! {
-        pub enum #enum_id<const WORD_SIZE: usize> {
+        pub enum #enum_id<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> {
             #(#variants),*
         }
 
-        impl<const WORD_SIZE: usize> #enum_id<WORD_SIZE> {
+        impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> #enum_id<WORD_SIZE, C, LOG_M> {
             /// Name of this instruction variant, incorporating the type and any const generics.
             pub fn name(&self) -> &'static str {
                 match self {
@@ -240,11 +240,11 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
             }
 
             /// Call the `combine_lookups` method on the underlying instruction.
-            pub fn combine_lookups<F: crate::util::ZkLeanReprField>(&self, reg_name: char, c: usize, m: usize) -> F {
+            pub fn combine_lookups<F: ZkLeanReprField>(&self, reg_name: char) -> F {
                 use jolt_core::jolt::instruction::JoltInstruction;
 
                 // Count total subtable evaluations required
-                let reg_size = self.subtables::<F>(c, m).len();
+                let reg_size = self.subtables::<F>().len();
                 let vars = F::register(reg_name, reg_size);
 
                 match self {
@@ -253,7 +253,7 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
             }
 
             /// Call the `subtables` method on the underlying instruction.
-            pub fn subtables<F: crate::util::ZkLeanReprField>(&self, c: usize, m: usize) -> Vec<(String, usize)> {
+            pub fn subtables<F: ZkLeanReprField>(&self) -> Vec<(String, usize)> {
                 use jolt_core::jolt::{instruction::{JoltInstruction, SubtableIndices}, subtable::LassoSubtable};
                 use crate::subtable::NamedSubtable;
 
@@ -264,7 +264,7 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
                 let mut res = vec![];
                 for (subtable, indices) in subtables {
                     // FIXME: Referencing `NamedSubtable` here directly isn't great.
-                    let subtable = NamedSubtable::<F>::from_subtable_id(subtable.subtable_id());
+                    let subtable = NamedSubtable::<F, LOG_M>::from_subtable_id(subtable.subtable_id());
                     let subtable_name = subtable.name().to_string();
                     for i in indices.iter() {
                         res.push((subtable_name.clone(), i));
@@ -274,14 +274,14 @@ pub fn declare_instructions_enum(input: TokenStream) -> TokenStream {
             }
 
             /// Enumerate all variants.
-            pub fn enumerate() -> Vec<Self> {
+            pub fn variants() -> Vec<Self> {
                 vec![
-                    #(#enum_cases),*
+                    #(#iter_cases),*
                 ]
             }
         }
 
-        impl #enum_id<32> {
+        impl #enum_id<32, 4, 16> {
             pub fn to_instruction_set(&self) -> jolt_core::jolt::vm::rv32i_vm::RV32I {
                 match self {
                     #(#to_instruction_set_cases),*

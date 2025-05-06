@@ -1,19 +1,24 @@
 #![feature(iter_intersperse)]
 
 mod mle_ast;
-use crate::mle_ast::MleAst;
+use std::path::PathBuf;
+
+use crate::mle_ast::*;
 mod util;
-use crate::util::ZkLeanReprField;
+//use crate::util::*;
 mod subtable;
-use crate::subtable::NamedSubtable;
+use crate::subtable::*;
 mod instruction;
-use crate::instruction::NamedInstruction;
+use crate::instruction::*;
 mod r1cs;
 use crate::r1cs::*;
 mod flags;
 use crate::flags::*;
+mod modules;
+use crate::modules::*;
 
 use clap::Parser;
+use build_fs_tree::{MergeableFileSystemTree, Build};
 
 use common::constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE};
 
@@ -21,59 +26,76 @@ use common::constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE};
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// File to write output to instead of stdout
+    /// File to write output to instead of stdout; ignored if -p is specified
     #[arg(short, long)]
     file: Option<String>,
+
+    /// Path to save Jolt ZkLean package to
+    #[arg(short, long)]
+    package_path: Option<PathBuf>,
+
+    /// Directory to use as a package template instead of `./package-template`; ignored if -p is
+    /// not specified
+    #[arg(short, long)]
+    template_dir: Option<PathBuf>,
+
+    /// Don't complain if the directory specified with -p already exists. NB: This will clobber any
+    /// files in the target directory that collide with generated files or files in the template!
+    /// Ignored if -p is not specified.
+    #[arg(short, long, default_value_t = false)]
+    overwrite: bool,
 }
 
-/// Evaluate all the subtable MLEs using a given [`ZkLeanReprField`] and print the results.
-fn print_all_subtables<F: ZkLeanReprField>(
-    f: &mut impl std::io::Write,
-    reg_size: usize,
-) -> std::io::Result<()> {
-    for subtable in NamedSubtable::<F>::enumerate() {
-        subtable.zklean_pretty_print(f, reg_size)?;
+fn write_flat_file(f: &mut impl std::io::Write, modules: Vec<Box<dyn AsModule>>) -> std::io::Result<()> {
+    let mut import_set = std::collections::HashSet::new();
+    let mut contents: Vec<u8> = vec![];
+
+    for module in modules {
+        let mut module = module.as_module()?;
+
+        for import in module.imports {
+            let _ = import_set.insert(import);
+        }
+
+        let mut separator = Vec::from(b"\n\n");
+        contents.append(&mut separator);
+        contents.append(&mut module.contents);
     }
+
+    for i in import_set {
+        f.write_fmt(format_args!("import {i}\n"))?;
+    }
+
+    f.write(&contents)?;
+
     Ok(())
 }
 
-/// Evaluate all the instruction MLEs using a given [`ZkLeanReprField`] and size and print the
-/// results.
-fn print_all_instructions<F: ZkLeanReprField, const WORD_SIZE: usize>(
-    f: &mut impl std::io::Write,
-    c: usize,
-    log_m: usize,
-) -> std::io::Result<()> {
-    for instruction in NamedInstruction::<WORD_SIZE>::enumerate() {
-        instruction.zklean_pretty_print::<F>(f, c, log_m)?;
-    }
-    Ok(())
-}
-
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), FSError> {
     let args = Args::parse();
-    let mut f: Box<dyn std::io::Write> = match args.file {
-        None => Box::new(std::io::stdout()),
-        Some(fname) => Box::new(std::fs::File::create(fname)?),
-    };
 
-    f.write(b"import ZkLean\n")?;
-    f.write(b"\n")?;
-    f.write(b"/-\nSubtable MLEs in AST form\n-/\n")?;
-    //print_all_subtables::<MleAst<2048>>(&mut f.as_mut(), 8)?;
-    print_all_subtables::<MleAst<16000>>(&mut f.as_mut(), 16)?;
-    f.write(b"\n")?;
-    f.write(b"/-\nCombining polynomials in AST form\n-/\n")?;
-    print_all_instructions::<MleAst<2048>, 32>(&mut f.as_mut(), 4, 16)?;
-    //print_all_instructions::<MleAst<4096>, 64>(&mut f.as_mut(), 8, 16)?;
-    f.write(b"\n")?;
+    let modules: Vec<Box<dyn AsModule>> = vec![
+        Box::new(ZkLeanR1CSConstraints::<DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE>::extract()),
+        Box::new(ZkLeanSubtables::<MleAst<16000>, 16>::extract()),
+        Box::new(ZkLeanInstructions::<32, 4, 16>::extract()),
+        Box::new(ZkLeanLookupCases::extract()),
+    ];
 
-    let r1cs = ZkLeanR1CSConstraints::extract(DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE);
-    r1cs.zklean_pretty_print(&mut f)?;
-    f.write(b"\n")?;
-
-    let cases = ZkLeanLookupCases::extract();
-    cases.zklean_pretty_print(&mut f)?;
+    if let Some(package_path) = args.package_path {
+        let tree = make_jolt_zk_lean_package(&args.template_dir, modules)?;
+        if args.overwrite {
+            MergeableFileSystemTree::from(tree).build(&package_path)
+        } else {
+            tree.build(&package_path)
+        }?;
+        println!("Created Lean4 package at {package_path:?}");
+    } else {
+        let mut f: Box<dyn std::io::Write> = match args.file {
+            None => Box::new(std::io::stdout()),
+            Some(fname) => Box::new(std::fs::File::create(fname)?),
+        };
+        write_flat_file(&mut f, modules)?;
+    }
 
     Ok(())
 }

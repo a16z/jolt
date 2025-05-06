@@ -1,0 +1,11 @@
+name = "Extracted Jolt circuits"
+defaultTargets = ["Jolt"]
+
+[[lean_lib]]
+name = "Jolt"
+
+[[require]]
+name = "zkLean"
+git = "https://github.com/GaloisInc/zk-lean.git"
+rev = "3e31287a057cabfff438012c0e4c03eff4100816"
+subDir = "src"
