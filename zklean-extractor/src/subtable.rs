@@ -36,6 +36,7 @@ use crate::{modules::{AsModule, Module}, util::{indent, ZkLeanReprField}};
 
 /// Wrapper around a LassoSubtable
 // TODO: Make generic over LassoSubtableSet
+#[derive(Debug)]
 pub struct NamedSubtable<F: ZkLeanReprField, const LOG_M: usize>(RV32ISubtables<F>);
 
 impl<F: ZkLeanReprField, const LOG_M: usize> From<RV32ISubtables<F>> for NamedSubtable<F, LOG_M> {
@@ -52,7 +53,7 @@ impl<F: ZkLeanReprField, const LOG_M: usize> From<&Box<dyn LassoSubtable<F>>> fo
 
 impl<F: ZkLeanReprField, const LOG_M: usize> NamedSubtable<F, LOG_M> {
     pub fn name(&self) -> String {
-        format!("{:?}", self.0)
+        format!("{}_{LOG_M}", <&'static str>::from(&self.0))
     }
 
     pub fn evaluate_mle(&self, reg_name: char) -> F {
@@ -74,7 +75,7 @@ impl<F: ZkLeanReprField, const LOG_M: usize> NamedSubtable<F, LOG_M> {
         let mle = self.evaluate_mle('x').as_computation();
 
         f.write_fmt(format_args!(
-                "{}def {name}_{LOG_M} [Field f] : Subtable f {LOG_M} :=\n",
+                "{}def {name} [Field f] : Subtable f {LOG_M} :=\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;

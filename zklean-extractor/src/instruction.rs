@@ -38,6 +38,7 @@ use crate::{modules::{AsModule, Module}, subtable::NamedSubtable, util::{indent,
 
 /// Wrapper around a JoltInstruction
 // TODO: Make this generic over the instruction set
+#[derive(Debug)]
 pub struct NamedInstruction<const WORD_SIZE: usize, const C: usize, const LOG_M: usize>(RV32I);
 
 impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> From<RV32I> for NamedInstruction<WORD_SIZE, C, LOG_M> {
@@ -48,7 +49,7 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> From<RV32I> for
 
 impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> NamedInstruction<WORD_SIZE, C, LOG_M> {
     pub fn name(&self) -> String {
-        format!("{:?}", self.0)
+        format!("{}_{WORD_SIZE}_{C}_{LOG_M}", <&'static str>::from(&self.0))
     }
 
     fn combine_lookups<F: ZkLeanReprField>(&self, reg_name: char) -> F {
@@ -58,13 +59,13 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> NamedInstructio
         self.0.combine_lookups(&reg, C, 1 << LOG_M)
     }
 
-    fn subtables<F: ZkLeanReprField>(&self) -> impl Iterator<Item = (String, usize)> {
+    fn subtables<F: ZkLeanReprField>(&self) -> impl Iterator<Item = (NamedSubtable<F, LOG_M>, usize)> {
         self.0
             .subtables(C, 1 << LOG_M)
             .into_iter()
             .flat_map(|(subtable, ixs)|
                 ixs.iter()
-                    .map(|ix| (NamedSubtable::<F, LOG_M>::from(&subtable).name(), ix))
+                    .map(|ix| (NamedSubtable::<F, LOG_M>::from(&subtable), ix))
                     .collect::<Vec<_>>()
             )
     }
@@ -86,15 +87,15 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> NamedInstructio
         let name = self.name();
         let mle = self.combine_lookups::<F>('x').as_computation();
         let subtables = std::iter::once("#[ ".to_string())
-            .chain(self.subtables::<F>().map(|(s, i)|
-                format!("({s}_{LOG_M}, {i})"))
+            .chain(self.subtables::<F>().map(|(subtable, ix)|
+                format!("({}, {ix})", subtable.name()))
                     .intersperse(", ".to_string())
             )
             .chain(std::iter::once(" ].toVector".to_string()))
             .fold(String::new(), |acc, s| format!("{acc}{s}"));
 
         f.write_fmt(format_args!(
-                "{}def {name}_{WORD_SIZE} [Field f] : ComposedLookupTable f {LOG_M} {C}\n",
+                "{}def {name} [Field f] : ComposedLookupTable f {LOG_M} {C}\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;

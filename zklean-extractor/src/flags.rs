@@ -26,8 +26,7 @@ impl ZkLeanInstructionFlags<32, 4, 16> {
     ) -> String {
         let r1cs_input = input_to_field_name(&self.r1cs_input);
         let instruction_name = self.instruction.name();
-        let composed_lookup_table = format!("{instruction_name}_32");
-        format!("({input_var}.{r1cs_input}, {composed_lookup_table})")
+        format!("({input_var}.{r1cs_input}, {instruction_name})")
     }
 }
 
