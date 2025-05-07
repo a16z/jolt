@@ -6,13 +6,6 @@
 
 use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
-use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::Zero;
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
-use rayon::prelude::*;
-
 use crate::{
     field::JoltField,
     msm::Icicle,
@@ -27,6 +20,13 @@ use crate::{
     },
     utils::{transcript::AppendToTranscript, transcript::Transcript},
 };
+use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::Zero;
+use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
+use rayon::prelude::*;
+use sha3::digest::typenum::op;
 
 #[derive(Clone)]
 pub struct HyperBmmtv<P: Pairing, ProofTranscript: Transcript> {
@@ -197,5 +197,50 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"hyperbmmtv"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::poly::commitment::{
+        bmmtv::hyperbmmtv::HyperBmmtv, commitment_scheme::CommitmentScheme,
+    };
+    use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+    use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+    use crate::utils::transcript::KeccakTranscript;
+    use crate::utils::transcript::Transcript;
+    use ark_bn254::Bn254;
+    use ark_ec::pairing::Pairing;
+    use ark_std::UniformRand;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn test_hyper_bmmtv() {
+        type HyperTest = HyperBmmtv<Bn254, KeccakTranscript>;
+        let ell = 4;
+        let n = 1 << ell; // n = 2^ell
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
+        let poly_raw = (0..n)
+            .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
+            .collect::<Vec<_>>();
+        let poly = MultilinearPolynomial::from(poly_raw.clone());
+
+        let setup = HyperTest::setup(poly.len());
+
+        let commit = HyperTest::commit(&poly, &setup);
+
+        let point = (0..ell)
+            .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
+            .collect::<Vec<_>>();
+        let opening = poly.evaluate(&point);
+
+        let mut transcript = KeccakTranscript::new(b"TestEval");
+
+        let proof = HyperTest::prove(&setup, &poly, &point, &mut transcript);
+
+        let mut transcript = KeccakTranscript::new(b"TestEval");
+
+        let verify = HyperTest::verify(&proof, &setup, &mut transcript, &point, &opening, &commit);
+        assert!(verify.is_ok());
     }
 }
