@@ -20,7 +20,6 @@ build-fs-tree = "0.7.1"
 ark-std = { version = "0.5.0" }
 ark-bn254 = "0.5.0"
 ark-serialize = { version = "0.5.0", default-features = false, features = ["derive"] }
-binius-field = { git = "https://gitlab.com/UlvetannaOSS/binius", package = "binius_field" }
 clap = { version = "4.3.10", features = ["derive"] }
 rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
