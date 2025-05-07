@@ -14,7 +14,7 @@ The Jolt [paper](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Aru
 - Blog posts
   - [Accelerating the world computer: Implementing Jolt, a new state-of-the-art zkVM](https://a16zcrypto.com/posts/article/accelerating-the-world-computer-implementing-jolt)
   - [Building Jolt: A fast, easy-to-use zkVM](https://a16zcrypto.com/posts/article/building-jolt/)
-  - [FAQs on Jolt’s initial implementation](https://a16zcrypto.com/posts/article/faqs-on-jolts-initial-implementation)
+  - [FAQs on Jolt's initial implementation](https://a16zcrypto.com/posts/article/faqs-on-jolts-initial-implementation)
   - [A new era in SNARK design: Releasing Jolt](https://a16zcrypto.com/posts/article/a-new-era-in-snark-design-releasing-jolt)
   - [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
   - [Understanding Lasso and Jolt, from theory to code](https://a16zcrypto.com/posts/article/building-on-lasso-and-jolt/)
@@ -116,3 +116,14 @@ We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/)
 ## Disclaimer
 
 *This code is being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the code. It has not been audited and as such there can be no assurance it will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. Nothing in this repo should be construed as investment advice or legal advice for any particular facts or circumstances and is not meant to replace competent counsel. It is strongly advised for you to contact a reputable attorney in your jurisdiction for any questions or concerns with respect thereto. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info.*
+
+## MSM Optimizations
+
+Jolt now incorporates optimizations from the [arkmsm](https://github.com/snarkify/arkmsm) library which provides up to 2x speedup compared to the standard Arkworks implementation. These optimizations include:
+
+1. **Batch Addition in Bucket Accumulation** - Groups points with the same bucket index to reduce additions
+2. **Batch Addition in Bucket Reduction** - Uses an efficient reduction pattern for better performance
+3. **Signed Bucket Indexes** - Reduces the number of buckets by approximately half
+4. **Optimized Window Sizes** - Uses window sizes tailored to the number of scalars
+
+These optimizations are enabled by default. To disable them, build without the `arkmsm` feature flag.
