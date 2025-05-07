@@ -36,6 +36,7 @@ icicle = [
     "dep:icicle-core",
     "dep:icicle-bn254",
 ]
+arkmsm = []
 
 [dependencies]
 ark-bn254 = "0.5.0"
