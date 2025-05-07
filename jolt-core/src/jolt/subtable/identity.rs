@@ -35,10 +35,8 @@ impl<F: JoltField> LassoSubtable<F> for IdentitySubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use binius_field::BinaryField128b;
 
     use crate::{
-        field::binius::BiniusField,
         field::JoltField,
         jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
@@ -48,13 +46,6 @@ mod test {
         iden_materialize_mle_parity,
         IdentitySubtable<Fr>,
         Fr,
-        1 << 16
-    );
-
-    subtable_materialize_mle_parity_test!(
-        iden_binius_materialize_mle_parity,
-        IdentitySubtable<BiniusField<BinaryField128b>>,
-        BiniusField<BinaryField128b>,
         1 << 16
     );
 }
