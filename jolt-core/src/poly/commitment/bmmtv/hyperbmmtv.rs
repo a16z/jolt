@@ -11,7 +11,7 @@ use crate::{
     msm::Icicle,
     poly::{
         commitment::{
-            bmmtv::poly_commit::UnivariatePolynomialCommitment,
+            bmmtv::poly_commit::{OpeningProof, UnivariatePolynomialCommitment},
             commitment_scheme::CommitmentScheme,
             kzg::{KZGProverKey, KZGVerifierKey, SRS},
         },
@@ -26,7 +26,6 @@ use ark_std::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
-use sha3::digest::typenum::op;
 
 #[derive(Clone)]
 pub struct HyperBmmtv<P: Pairing, ProofTranscript: Transcript> {
@@ -36,13 +35,6 @@ pub struct HyperBmmtv<P: Pairing, ProofTranscript: Transcript> {
 #[derive(PartialEq, Eq, Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct HyperBmmtvCommitment<P: Pairing>(PairingOutput<P>, Vec<P::G1>);
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct HyperBmmtvProof<P: Pairing> {
-    pub com: Vec<P::G1Affine>,
-    pub w: Vec<P::G1Affine>,
-    pub v: Vec<Vec<P::ScalarField>>,
-}
-
 impl<P: Pairing> Default for HyperBmmtvCommitment<P> {
     fn default() -> Self {
         todo!()
@@ -50,15 +42,36 @@ impl<P: Pairing> Default for HyperBmmtvCommitment<P> {
 }
 
 impl<P: Pairing> AppendToTranscript for HyperBmmtvCommitment<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, _transcript: &mut ProofTranscript) {
         todo!()
     }
 }
 
 impl<F: JoltField> From<&MultilinearPolynomial<F>> for UniPoly<F> {
-    fn from(_: &MultilinearPolynomial<F>) -> Self {
-        todo!()
+    fn from(poly: &MultilinearPolynomial<F>) -> Self {
+        let field_elements = match poly {
+            MultilinearPolynomial::U8Scalars(poly) => poly.coeffs_as_field_elements(),
+            MultilinearPolynomial::U16Scalars(poly) => poly.coeffs_as_field_elements(),
+            MultilinearPolynomial::U32Scalars(poly) => poly.coeffs_as_field_elements(),
+            MultilinearPolynomial::U64Scalars(poly) => poly.coeffs_as_field_elements(),
+            MultilinearPolynomial::LargeScalars(poly) => poly.evals(),
+            _ => {
+                panic!("Unexpected MultilinearPolynomial variant");
+            }
+        };
+
+        UniPoly::from_coeff(field_elements)
     }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
+pub struct HyperBmmtvProof<P: Pairing> {
+    /// Opening proof for the commited polynomial
+    opening: OpeningProof<P>,
+    /// All the commitments and opening proofs for sub polynomials
+    ///
+    /// Doesn't contain the initial commit
+    sub_polynomials_proof: Vec<(PairingOutput<P>, OpeningProof<P>)>,
 }
 
 impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
@@ -75,7 +88,7 @@ where
 
     type Commitment = HyperBmmtvCommitment<P>;
 
-    type Proof = ();
+    type Proof = HyperBmmtvProof<P>;
 
     type BatchedProof = ();
 
@@ -96,18 +109,7 @@ where
         poly: &MultilinearPolynomial<Self::Field>,
         (p_srs, _): &Self::Setup,
     ) -> Self::Commitment {
-        let field_elements = match poly {
-            MultilinearPolynomial::U8Scalars(poly) => poly.coeffs_as_field_elements(),
-            MultilinearPolynomial::U16Scalars(poly) => poly.coeffs_as_field_elements(),
-            MultilinearPolynomial::U32Scalars(poly) => poly.coeffs_as_field_elements(),
-            MultilinearPolynomial::U64Scalars(poly) => poly.coeffs_as_field_elements(),
-            MultilinearPolynomial::LargeScalars(poly) => poly.evals(),
-            _ => {
-                panic!("Unexpected MultilinearPolynomial variant");
-            }
-        };
-
-        let unipoly = UniPoly::from_coeff(field_elements);
+        let unipoly: UniPoly<Self::Field> = poly.into();
         let commitment =
             UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &unipoly).unwrap();
         HyperBmmtvCommitment(commitment.0, commitment.1)
@@ -138,6 +140,8 @@ where
         // Phase 1  -- create commitments com_1, ..., com_\ell
         // We do not compute final Pi (and its commitment) as it is constant and equals to 'eval'
         // also known to verifier, so can be derived on its side as well
+
+        // Convert from Multilinear to UniPoly
         let mut polys: Vec<UniPoly<P::ScalarField>> = Vec::with_capacity(ell - 1);
         polys.push(poly.into());
         for i in 0..ell - 1 {
@@ -156,6 +160,8 @@ where
         assert_eq!(polys[ell - 1].len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
+
+        // Todo: Batch commit
         let com_list: Vec<_> = (&polys[1..])
             .iter()
             .map(|poly| {
@@ -169,7 +175,8 @@ where
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
         // CANT JUST PARALLELIZE transcript is &mut
         com_list.iter().for_each(|g| {
-            transcript.append_points(&g.1);
+            // Todo: Verify this.
+            // transcript.append_points(&g.1);  kVec<G1> is not needed since it's used only for opening
             transcript.append_serializable(&g.0)
         });
 
@@ -177,15 +184,38 @@ where
         // Phase 3 -- create response
         // open all commits
 
+        // TODO How do I get this from the Commitment?
+        let (_pairing, kzg_comms) =
+            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(&setup.0, &polys[0])
+                .unwrap();
+
+        let opening =
+            UnivariatePolynomialCommitment::open(&setup.0, &polys[0], kzg_comms, &r, transcript)
+                .unwrap();
+
+        // Todo: Batch opening
         let eval_proofs = com_list
             .into_iter()
             .zip(&polys[1..])
             .map(|(comm, polynomial)| {
-                UnivariatePolynomialCommitment::open(&setup.0, &polynomial, comm.1, &r, transcript)
-                    .unwrap()
+                (
+                    comm.0, // pairing
+                    UnivariatePolynomialCommitment::open(
+                        &setup.0,
+                        &polynomial,
+                        comm.1,
+                        &r,
+                        transcript,
+                    )
+                    .unwrap(), // opening
+                )
             })
             .collect::<Vec<_>>();
-        todo!()
+
+        HyperBmmtvProof {
+            opening,
+            sub_polynomials_proof: eval_proofs,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::verify")]

@@ -6,6 +6,7 @@ use ark_ec::{
     CurveGroup,
 };
 use ark_ff::{Field, One, Zero};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use tracing::Level;
 
 use super::{
@@ -44,6 +45,7 @@ where
     }
 }
 
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct OpeningProof<P: Pairing> {
     ip_proof: MippKProof<P>,
     y_eval_comm: P::G1,
