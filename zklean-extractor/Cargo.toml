@@ -10,9 +10,6 @@ homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
-[lib]
-proc-macro = true
-
 [build-dependencies]
 build-fs-tree = "0.7.1"
 
@@ -25,10 +22,6 @@ rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
 strum = "0.26.3"
 build-fs-tree = "0.7.1"
-
-syn = {version = "1.0", features = ["full"]}
-quote = "1.0"
-proc-macro2 = "1.0"
 
 jolt-core = { path = "../jolt-core" }
 common = { path = "../common" }

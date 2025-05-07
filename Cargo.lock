@@ -69,7 +69,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "const-hex",
- "derive_more",
+ "derive_more 0.99.20",
  "hex-literal",
  "itoa",
  "k256",
@@ -563,6 +563,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "binius_field"
+version = "0.2.0"
+source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
+dependencies = [
+ "binius_maybe_rayon",
+ "binius_utils",
+ "bytemuck",
+ "cfg-if",
+ "derive_more 0.99.20",
+ "rand 0.8.5",
+ "seq-macro",
+ "subtle",
+ "thiserror 2.0.12",
+ "tracing",
+ "trait-set",
+ "transpose",
+]
+
+[[package]]
+name = "binius_maybe_rayon"
+version = "0.2.0"
+source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
+dependencies = [
+ "cfg-if",
+ "either",
+ "itertools 0.14.0",
+]
+
+[[package]]
+name = "binius_utils"
+version = "0.2.0"
+source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
+dependencies = [
+ "auto_impl",
+ "binius_maybe_rayon",
+ "bytemuck",
+ "bytes",
+ "cfg-if",
+ "generic-array",
+ "itertools 0.14.0",
+ "thiserror 2.0.12",
+ "thread_local",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -602,6 +647,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "build-fs-tree"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790713a24ee86ed258a0894a564f5ffd729b9d191c4960309926561173da7cf6"
+dependencies = [
+ "derive_more 1.0.0",
+ "pipe-trait",
+ "serde",
+ "serde_yaml",
+ "text-block-macros",
 ]
 
 [[package]]
@@ -1003,6 +1061,27 @@ dependencies = [
  "quote",
  "rustc_version 0.4.1",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "derive_more"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -2547,6 +2626,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "pipe-trait"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1be1ec9e59f0360aefe84efa6f699198b685ab0d5718081e9f72aa2344289e2"
+
+[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3160,6 +3245,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruzstd"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58c4eb8a81997cf040a091d1f7e1938aeab6749d3a0dfa73af43cdc32393483d"
+dependencies = [
+ "byteorder",
+ "derive_more 0.99.20",
+ "twox-hash",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3286,6 +3382,19 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -3631,6 +3740,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "text-block-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f8b59b4da1c1717deaf1de80f0179a9d8b4ac91c986d5fd9f4a8ff177b84049"
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3939,6 +4054,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
@@ -4613,17 +4734,14 @@ name = "zklean-extractor"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
- "ark-serialize 0.4.2",
- "ark-std 0.4.0",
- "binius_field",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "build-fs-tree",
  "clap",
  "common",
  "jolt-core",
- "proc-macro2",
  "proptest",
- "quote",
  "rand_core 0.6.4",
  "regex",
  "strum",
- "syn 1.0.109",
 ]
