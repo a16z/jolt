@@ -79,6 +79,7 @@ where
 
     type BatchedProof = ();
 
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
     fn setup(max_len: usize) -> Self::Setup {
         let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENT_SCHEM");
         SRS::trim(
@@ -90,6 +91,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]
     fn commit(
         poly: &MultilinearPolynomial<Self::Field>,
         (p_srs, _): &Self::Setup,
@@ -111,6 +113,7 @@ where
         HyperBmmtvCommitment(commitment.0, commitment.1)
     }
 
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::batch_commit")]
     fn batch_commit<U>(polys: &[U], gens: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
@@ -121,6 +124,7 @@ where
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::prove")]
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
@@ -184,6 +188,7 @@ where
         todo!()
     }
 
+    #[tracing::instrument(skip_all, name = "HyperBmmtv::verify")]
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
