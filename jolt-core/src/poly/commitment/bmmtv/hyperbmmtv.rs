@@ -18,7 +18,10 @@ use crate::{
         multilinear_polynomial::MultilinearPolynomial,
         unipoly::UniPoly,
     },
-    utils::{transcript::AppendToTranscript, transcript::Transcript},
+    utils::{
+        errors::ProofVerifyError,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -66,12 +69,12 @@ impl<F: JoltField> From<&MultilinearPolynomial<F>> for UniPoly<F> {
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct HyperBmmtvProof<P: Pairing> {
-    /// Opening proof for the commited polynomial
-    opening: OpeningProof<P>,
+    /// Opening proof for the commited polynomial with the evaluation
+    opening: (OpeningProof<P>, P::ScalarField),
     /// All the commitments and opening proofs for sub polynomials
     ///
     /// Doesn't contain the initial commit
-    sub_polynomials_proof: Vec<(PairingOutput<P>, OpeningProof<P>)>,
+    sub_polynomials_proof: Vec<(PairingOutput<P>, OpeningProof<P>, P::ScalarField)>,
 }
 
 impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
@@ -95,13 +98,12 @@ where
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
     fn setup(max_len: usize) -> Self::Setup {
         let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENT_SCHEM");
-        SRS::trim(
-            Arc::new(
-                UnivariatePolynomialCommitment::<P, ProofTranscript>::setup(&mut rng, max_len)
-                    .unwrap(),
-            ),
-            max_len - 1,
-        )
+        let srs =
+            UnivariatePolynomialCommitment::<P, ProofTranscript>::setup(&mut rng, max_len - 1)
+                .unwrap();
+        let powers_len = srs.g1_powers.len();
+
+        SRS::trim(Arc::new(srs), powers_len - 1)
     }
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::commit")]
@@ -128,7 +130,7 @@ where
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::prove")]
     fn prove(
-        setup: &Self::Setup,
+        (p_srs, _): &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
@@ -142,7 +144,7 @@ where
         // also known to verifier, so can be derived on its side as well
 
         // Convert from Multilinear to UniPoly
-        let mut polys: Vec<UniPoly<P::ScalarField>> = Vec::with_capacity(ell - 1);
+        let mut polys: Vec<UniPoly<P::ScalarField>> = Vec::with_capacity(ell);
         polys.push(poly.into());
         for i in 0..ell - 1 {
             let previous_poly: &UniPoly<P::ScalarField> = &polys[i];
@@ -165,8 +167,7 @@ where
         let com_list: Vec<_> = (&polys[1..])
             .iter()
             .map(|poly| {
-                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(&setup.0, &poly)
-                    .unwrap()
+                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &poly).unwrap()
             })
             .collect();
 
@@ -186,11 +187,11 @@ where
 
         // TODO How do I get this from the Commitment?
         let (_pairing, kzg_comms) =
-            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(&setup.0, &polys[0])
-                .unwrap();
+            UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &polys[0]).unwrap();
 
+        let eval = polys[0].evaluate(&r);
         let opening =
-            UnivariatePolynomialCommitment::open(&setup.0, &polys[0], kzg_comms, &r, transcript)
+            UnivariatePolynomialCommitment::open(p_srs, &polys[0], kzg_comms, &r, transcript)
                 .unwrap();
 
         // Todo: Batch opening
@@ -198,22 +199,24 @@ where
             .into_iter()
             .zip(&polys[1..])
             .map(|(comm, polynomial)| {
+                let eval = polynomial.evaluate(&r);
                 (
                     comm.0, // pairing
                     UnivariatePolynomialCommitment::open(
-                        &setup.0,
+                        p_srs,
                         &polynomial,
                         comm.1,
                         &r,
                         transcript,
                     )
                     .unwrap(), // opening
+                    eval,
                 )
             })
             .collect::<Vec<_>>();
 
         HyperBmmtvProof {
-            opening,
+            opening: (opening, eval),
             sub_polynomials_proof: eval_proofs,
         }
     }
@@ -221,13 +224,77 @@ where
     #[tracing::instrument(skip_all, name = "HyperBmmtv::verify")]
     fn verify(
         proof: &Self::Proof,
-        setup: &Self::Setup,
+        (_, v_srs): &Self::Setup,
         transcript: &mut ProofTranscript,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        opening: &Self::Field,         // evaluation \widetilde{Z}(r)
+        _opening: &Self::Field,        // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
-    ) -> Result<(), crate::utils::errors::ProofVerifyError> {
-        todo!()
+    ) -> Result<(), ProofVerifyError> {
+        let ell = opening_point.len();
+
+        // sub polynomials + original reinterpreted
+        if proof.sub_polynomials_proof.len() + 1 != ell {
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        proof.sub_polynomials_proof.iter().for_each(|g| {
+            // Todo: Verify this.
+            // transcript.append_points(&g.1);  kVec<G1> is not needed since it's used only for opening
+            transcript.append_serializable(&g.0)
+        });
+
+        let r: P::ScalarField = transcript.challenge_scalar();
+
+        if r == P::ScalarField::zero() {
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        let n = 1 << ell; // n = 2^ell
+
+        let original_poly = UnivariatePolynomialCommitment::verify(
+            v_srs,
+            n - 1, // degree = len(coeff) - 1
+            commitment.0,
+            r,
+            proof.opening.1,
+            &proof.opening.0,
+            transcript,
+        )
+        .map_err(|_| ProofVerifyError::InternalError)?;
+        if !original_poly {
+            // failed first check for initial poly
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        // Todo: Consistency check between generated polynomials and evaluations/commitment
+
+        let eval_proofs = proof
+            .sub_polynomials_proof
+            .iter()
+            .map(|(comm, proof, eval)| {
+                // Todo: Bmmtv uses turns a Univariate polynomial in a matrix
+                // The number of rows and columns is currently defined by the setup params
+                // hence, we are not getting maximal performance
+                //
+                // let n = n >> (i + 1);
+                UnivariatePolynomialCommitment::verify(
+                    v_srs,
+                    n - 1,
+                    *comm,
+                    r,
+                    *eval,
+                    proof,
+                    transcript,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ProofVerifyError::InternalError)?;
+
+        if eval_proofs.into_iter().all(|verified| verified) {
+            Ok(())
+        } else {
+            Err(ProofVerifyError::InternalError)
+        }
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -267,7 +334,6 @@ mod tests {
         let point = (0..ell)
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
-        let opening = poly.evaluate(&point);
 
         let mut transcript = KeccakTranscript::new(b"TestEval");
 
@@ -275,7 +341,7 @@ mod tests {
 
         let mut transcript = KeccakTranscript::new(b"TestEval");
 
-        let verify = HyperTest::verify(&proof, &setup, &mut transcript, &point, &opening, &commit);
-        assert!(verify.is_ok());
+        let opening = poly.evaluate(&point);
+        HyperTest::verify(&proof, &setup, &mut transcript, &point, &opening, &commit).unwrap();
     }
 }
