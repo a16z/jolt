@@ -1,7 +1,7 @@
 //! # Hyper BMMTV extension
 //!
 //! This is a Reduction of Knowledge (RoK) from Multilinear Polynomial Evaluations (MPE) to
-//! Univariate Polynomial Evaluations (UPE), that allows commiting to multilinear polynomials
+//! Univariate Polynomial Evaluations (UPE), that allows committing to multilinear polynomials
 //! using normal Bmmtv
 
 use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
@@ -69,7 +69,7 @@ impl<F: JoltField> From<&MultilinearPolynomial<F>> for UniPoly<F> {
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct HyperBmmtvProof<P: Pairing> {
-    /// Opening proof for the commited polynomial with the evaluation
+    /// Opening proof for the committed polynomial with the evaluation
     opening: (OpeningProof<P>, P::ScalarField),
     /// All the commitments and opening proofs for sub polynomials
     ///
@@ -97,7 +97,7 @@ where
 
     #[tracing::instrument(skip_all, name = "HyperBmmtv::setup")]
     fn setup(max_len: usize) -> Self::Setup {
-        let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENT_SCHEM");
+        let mut rng = ChaCha20Rng::from_seed(*b"HyperBMMTV_POLY_COMMITMENTSCHEME");
         let srs =
             UnivariatePolynomialCommitment::<P, ProofTranscript>::setup(&mut rng, max_len - 1)
                 .unwrap();
@@ -164,10 +164,10 @@ where
         // We do not need to commit to the first polynomial as it is already committed.
 
         // Todo: Batch commit
-        let com_list: Vec<_> = (&polys[1..])
+        let com_list: Vec<_> = polys[1..]
             .iter()
             .map(|poly| {
-                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &poly).unwrap()
+                UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, poly).unwrap()
             })
             .collect();
 
@@ -202,14 +202,8 @@ where
                 let eval = polynomial.evaluate(&r);
                 (
                     comm.0, // pairing
-                    UnivariatePolynomialCommitment::open(
-                        p_srs,
-                        &polynomial,
-                        comm.1,
-                        &r,
-                        transcript,
-                    )
-                    .unwrap(), // opening
+                    UnivariatePolynomialCommitment::open(p_srs, polynomial, comm.1, &r, transcript)
+                        .unwrap(), // opening
                     eval,
                 )
             })
