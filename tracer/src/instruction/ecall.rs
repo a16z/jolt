@@ -1,5 +1,5 @@
 //! ECALL (SYSTEM 0x0000_0073) — currently only serves for Jolt-cycle tracking.
-//! Although, this will be used for "psuedo-precompiles"
+//! Although, this will be used for "pseudo-precompiles"
 //!
 //! It retires like a normal instruction; there is **no trap** because the
 //! emulator has an early-exit path in `Cpu::handle_trap` that consumes the

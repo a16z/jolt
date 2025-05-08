@@ -3,28 +3,42 @@ pub const JOLT_CYCLE_TRACK_ECALL_NUM: i32 = 0xC7C1E; // "C Y C L E"
 pub const JOLT_CYCLE_MARKER_START: i32 = 1;
 pub const JOLT_CYCLE_MARKER_END: i32 = 2;
 
-/// Create a cycle tracking label
-pub fn start_cycle_tracking(marker_id: &str) {
-    let marker_id = marker_id.as_ptr() as i32;
-    emit_jolt_cycle_marker_ecall(marker_id, JOLT_CYCLE_MARKER_START);
-}
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+mod riscv_specific {
+    use super::{JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM};
 
-/// End a cycle tracking label
-pub fn end_cycle_tracking(marker_id: &str) {
-    let marker_id = marker_id.as_ptr() as i32;
-    emit_jolt_cycle_marker_ecall(marker_id, JOLT_CYCLE_MARKER_END);
-}
-
-// inserts an ECALL directly into the compiled code
-#[inline(always)]
-fn emit_jolt_cycle_marker_ecall(marker_id: i32, event_type: i32) {
-    unsafe {
-        core::arch::asm!(
-            ".word 0x00000073", // ECALL opcode
-            in("x10") JOLT_CYCLE_TRACK_ECALL_NUM, //
-            in("x11") marker_id, // we store ptr address of the label &str to recover it during emulation
-            in("x12") event_type, // either start or end
-            options(nostack)
-        );
+    pub fn start_cycle_tracking(marker_id_str: &str) {
+        let marker_id_ptr = marker_id_str.as_ptr() as usize;
+        emit_jolt_cycle_marker_ecall(marker_id_ptr as i32, JOLT_CYCLE_MARKER_START);
     }
+
+    pub fn end_cycle_tracking(marker_id_str: &str) {
+        let marker_id_ptr = marker_id_str.as_ptr() as usize;
+        emit_jolt_cycle_marker_ecall(marker_id_ptr as i32, JOLT_CYCLE_MARKER_END);
+    }
+
+    // inserts an ECALL directly into the compiled code
+    #[inline(always)]
+    fn emit_jolt_cycle_marker_ecall(marker_id: i32, event_type: i32) {
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        unsafe {
+            core::arch::asm!(
+                ".word 0x00000073", // ECALL opcode
+                in("x10") JOLT_CYCLE_TRACK_ECALL_NUM, //
+                in("x11") marker_id, // we store ptr address of the label &str to recover it during emulation
+                in("x12") event_type, // either start or end
+                options(nostack, nomem, preserves_flags)
+            );
+        }
+    }
+}
+
+pub fn start_cycle_tracking(marker_id: &str) {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    riscv_specific::start_cycle_tracking(marker_id);
+}
+
+pub fn end_cycle_tracking(marker_id: &str) {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    riscv_specific::end_cycle_tracking(marker_id);
 }
