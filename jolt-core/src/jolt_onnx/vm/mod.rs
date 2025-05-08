@@ -3,6 +3,7 @@
 use super::trace::onnx::JoltONNXDevice;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::subtable::JoltSubtableSet;
 use crate::jolt::vm::bytecode::BytecodeStuff;
 use crate::jolt::vm::instruction_lookups::{
     InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
@@ -12,45 +13,13 @@ use crate::jolt::vm::timestamp_range_check::TimestampRangeCheckStuff;
 use crate::jolt::vm::{
     JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep, ProverDebugInfo,
 };
-use crate::jolt::{
-    instruction::{
-        div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
-        mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-        VirtualInstructionSequence,
-    },
-    subtable::JoltSubtableSet,
-    vm::timestamp_range_check::TimestampValidityProof,
-};
-use crate::lasso::memory_checking::{
-    Initializable, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
-};
-use crate::msm::icicle;
+use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
-};
-use crate::r1cs::constraints::R1CSConstraints;
-use crate::r1cs::inputs::{ConstraintInput, R1CSPolynomials, R1CSProof, R1CSStuff};
-use crate::r1cs::spartan::{self, UniformSpartanProof};
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::r1cs::inputs::R1CSStuff;
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
-use crate::{join_conditional, jolt};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS};
-use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
-};
-use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
-use std::{
-    fs::File,
-    io::{Read, Write},
-    path::Path,
-};
-use strum::EnumCount;
 
 pub mod onnx_vm;
 
