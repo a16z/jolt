@@ -1,3 +1,4 @@
+#![allow(clippy::unused_variables)]
 // Constants to signal the emulator
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: i32 = 0xC7C1E; // "C Y C L E"
 pub const JOLT_CYCLE_MARKER_START: i32 = 1;
