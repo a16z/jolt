@@ -260,7 +260,6 @@ impl Cpu {
     /// trap wrapper for cycle tracking tool
     #[inline(always)]
     pub fn raise_trap(&mut self, trap: Trap, faulting_pc: u64) {
-        // `false` = not an interrupt
         let _ = self.handle_trap(trap, faulting_pc, false);
     }
 
@@ -356,7 +355,6 @@ impl Cpu {
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
-        // println!("INTERRUPT?");
         // @TODO: Optimize
         let minterrupt = self.read_csr_raw(CSR_MIP_ADDRESS) & self.read_csr_raw(CSR_MIE_ADDRESS);
 
