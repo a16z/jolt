@@ -1,15 +1,13 @@
-use ark_ff::PrimeField;
-use ark_std::log2;
 use std::marker::PhantomData;
 
-use crate::{jolt::subtable::LassoSubtable, utils::split_bits};
+use crate::{field::JoltField, jolt::subtable::LassoSubtable};
 
 #[derive(Default)]
-pub struct IsPosSubtable<F: PrimeField> {
+pub struct IsPosSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> IsPosSubtable<F> {
+impl<F: JoltField> IsPosSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -17,11 +15,11 @@ impl<F: PrimeField> IsPosSubtable<F> {
     }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for IsPosSubtable<F> {
-    fn materialize(&self, M: usize) -> Vec<F> {
-        let mut entries = vec![F::zero(); M];
+impl<F: JoltField> LassoSubtable<F> for IsPosSubtable<F> {
+    fn materialize(&self, M: usize) -> Vec<u32> {
+        let mut entries = vec![0; M];
         for i in 0..M / 2 {
-            entries[i] = F::one();
+            entries[i] = 1;
         }
         entries
     }
@@ -36,12 +34,12 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::{
-        jolt::subtable::LassoSubtable, jolt_onnx::subtable::is_pos::IsPosSubtable,
-        subtable_materialize_mle_parity_test,
+        field::JoltField, jolt::subtable::LassoSubtable,
+        jolt_onnx::subtable::is_pos::IsPosSubtable, subtable_materialize_mle_parity_test,
     };
 
     subtable_materialize_mle_parity_test!(
-        is_neg_materialize_mle_parity,
+        is_pos_materialize_mle_parity,
         IsPosSubtable<Fr>,
         Fr,
         256
