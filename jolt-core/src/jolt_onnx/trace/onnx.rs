@@ -1,14 +1,15 @@
 extern crate alloc;
+use crate::jolt::instruction::and::ANDInstruction;
+use crate::jolt::instruction::or::ORInstruction;
+use crate::jolt::instruction::xor::XORInstruction;
 use alloc::string::String;
 use alloc::vec::Vec;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::rv_trace::MemoryLayout;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tract_onnx::prelude::*;
-
-use crate::jolt::instruction::and::ANDInstruction;
-use crate::jolt::instruction::or::ORInstruction;
-use crate::jolt::instruction::xor::XORInstruction;
 // use crate::jolt_onnx::vm::onnx_vm::ONNX;
 use crate::utils::errors::ONNXError;
 
@@ -280,6 +281,32 @@ impl ONNXParser {
             model.inputs.len(),
             model.outputs.len(),
         ))
+    }
+}
+
+#[allow(clippy::too_long_first_doc_paragraph)]
+/// Represented as a "peripheral device" in the RISC-V emulator, this captures
+/// all reads from the reserved memory address space for program inputs and all writes
+/// to the reserved memory address space for program outputs.
+/// The inputs and outputs are part of the public inputs to the proof.
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+)]
+pub struct JoltONNXDevice {
+    pub inputs: Vec<u8>,
+    pub outputs: Vec<u8>,
+    pub panic: bool,
+    pub memory_layout: MemoryLayout,
+}
+
+impl JoltONNXDevice {
+    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
+        Self {
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            panic: false,
+            memory_layout: MemoryLayout::new(max_input_size, max_output_size),
+        }
     }
 }
 
