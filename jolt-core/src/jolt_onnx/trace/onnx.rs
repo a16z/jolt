@@ -238,7 +238,7 @@ impl ComputationalGraph {
         }
     }
 
-    // TODO: Implement a proper execution trace (Trace is dependent on inputs, here it is independent)
+    // TODO: Implement a proper execution trace (Trace is dependent on inputs, & here it is independent...)
 
     pub fn trace(&self) -> Vec<JoltTraceStep<ONNX>> {
         let mut trace = Vec::new();
@@ -327,7 +327,7 @@ impl JoltONNXDevice {
     }
 }
 
-/// Trivial [`TryFrom`] trait implementation for [`ONNX`] to make [`JoltInstructionSet`] trait happy
+/// Trivial [`TryFrom`] trait implementation for [`ELFInstruction`] to [`ONNX`] to make [`JoltInstructionSet`] trait happy
 impl TryFrom<&ELFInstruction> for ONNX {
     type Error = &'static str;
 
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn print_model() {
-        let model_path = "../onnx/bitwise_test.onnx";
+        let model_path = "./onnx/add_mul_sub_shift.onnx";
         let graph = ONNXParser::load_model(model_path).unwrap();
         graph.print();
     }

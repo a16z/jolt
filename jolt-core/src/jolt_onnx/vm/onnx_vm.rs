@@ -157,4 +157,18 @@ mod tests {
             "./onnx/bitwise_with_relu.onnx",
         )
     }
+
+    #[test]
+    fn test_add_mul_e2e_hkzg() {
+        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(
+            "./onnx/add_mul.onnx",
+        )
+    }
+
+    #[test]
+    fn test_add_mul_sub_shift_e2e_hkzg() {
+        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(
+            "./onnx/add_mul_sub_shift.onnx",
+        )
+    }
 }
