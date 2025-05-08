@@ -196,7 +196,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ark-ff-asm 0.5.0",
  "ark-ff-macros 0.5.0",
@@ -295,7 +295,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "quote",
  "syn 2.0.101",
@@ -329,7 +329,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -341,7 +341,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -376,7 +376,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
@@ -400,7 +400,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "proc-macro2",
  "quote",
