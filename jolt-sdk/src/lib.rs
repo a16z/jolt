@@ -10,6 +10,9 @@ pub mod host_utils;
 #[cfg(feature = "host")]
 pub use host_utils::*;
 
+pub mod cycle_tracking;
+pub use cycle_tracking::*;
+
 pub mod alloc;
 pub use alloc::*;
 

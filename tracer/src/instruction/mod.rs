@@ -14,6 +14,7 @@ use bltu::BLTU;
 use bne::BNE;
 use div::DIV;
 use divu::DIVU;
+use ecall::ECALL;
 use fence::FENCE;
 use jal::JAL;
 use jalr::JALR;
@@ -86,6 +87,7 @@ pub mod bltu;
 pub mod bne;
 pub mod div;
 pub mod divu;
+pub mod ecall;
 pub mod fence;
 pub mod jal;
 pub mod jalr;
@@ -247,6 +249,7 @@ pub enum RV32IMInstruction {
     BNE(BNE),
     DIV(DIV),
     DIVU(DIVU),
+    ECALL(ECALL),
     FENCE(FENCE),
     JAL(JAL),
     JALR(JALR),
@@ -464,15 +467,27 @@ impl RV32IMInstruction {
                 Ok(FENCE::new(instr, address, true).into())
             }
             0b1110011 => {
+                println!("FUCK");
+                if instr == ECALL::MATCH {
+                    println!("FUCK MATCH");
+                    return Ok(ECALL::new(instr, address, true).into());
+                } else {
+                    return Err("Unsupported SYSTEM instruction");
+                }
                 // SYSTEM instructions: ECALL/EBREAK (I-type)
-                Err("Unsupported SYSTEM instruction")
+                // Err("Unsupported SYSTEM instruction")
             }
             _ => Err("Unknown opcode"),
         }
+
+        
     }
 
     pub fn trace(&self, cpu: &mut Cpu) {
+        println!("hello");
+        // println!("{self:?}");
         match self {
+            // RV32IMInstruction::NoOp => { instr.trace(cpu) },
             RV32IMInstruction::ADD(instr) => instr.trace(cpu),
             RV32IMInstruction::ADDI(instr) => instr.trace(cpu),
             RV32IMInstruction::AND(instr) => instr.trace(cpu),
@@ -486,6 +501,7 @@ impl RV32IMInstruction {
             RV32IMInstruction::BNE(instr) => instr.trace(cpu),
             RV32IMInstruction::DIV(instr) => instr.trace(cpu),
             RV32IMInstruction::DIVU(instr) => instr.trace(cpu),
+            RV32IMInstruction::ECALL(instr) => instr.trace(cpu),
             RV32IMInstruction::FENCE(instr) => instr.trace(cpu),
             RV32IMInstruction::JAL(instr) => instr.trace(cpu),
             RV32IMInstruction::JALR(instr) => instr.trace(cpu),
@@ -603,6 +619,11 @@ impl RV32IMInstruction {
                 virtual_sequence_remaining: instr.virtual_sequence_remaining,
             },
             RV32IMInstruction::DIVU(instr) => NormalizedInstruction {
+                address: instr.address as usize,
+                operands: instr.operands.normalize(),
+                virtual_sequence_remaining: instr.virtual_sequence_remaining,
+            },
+            RV32IMInstruction::ECALL(instr) => NormalizedInstruction {
                 address: instr.address as usize,
                 operands: instr.operands.normalize(),
                 virtual_sequence_remaining: instr.virtual_sequence_remaining,
@@ -892,6 +913,7 @@ pub enum RV32IMCycle {
     BNE(RISCVCycle<BNE>),
     DIV(RISCVCycle<DIV>),
     DIVU(RISCVCycle<DIVU>),
+    ECALL(RISCVCycle<ECALL>),
     FENCE(RISCVCycle<FENCE>),
     JAL(RISCVCycle<JAL>),
     JALR(RISCVCycle<JALR>),
@@ -960,6 +982,7 @@ impl RV32IMCycle {
             RV32IMCycle::BNE(cycle) => cycle.ram_access.into(),
             RV32IMCycle::DIV(cycle) => cycle.ram_access.into(),
             RV32IMCycle::DIVU(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::ECALL(cycle) => cycle.ram_access.into(),
             RV32IMCycle::FENCE(cycle) => cycle.ram_access.into(),
             RV32IMCycle::JAL(cycle) => cycle.ram_access.into(),
             RV32IMCycle::JALR(cycle) => cycle.ram_access.into(),
@@ -1063,6 +1086,10 @@ impl RV32IMCycle {
                 cycle.register_state.rs1_value(),
             ),
             RV32IMCycle::DIVU(cycle) => (
+                cycle.instruction.operands.normalize().rs1,
+                cycle.register_state.rs1_value(),
+            ),
+            RV32IMCycle::ECALL(cycle) => (
                 cycle.instruction.operands.normalize().rs1,
                 cycle.register_state.rs1_value(),
             ),
@@ -1313,6 +1340,10 @@ impl RV32IMCycle {
                 cycle.register_state.rs2_value(),
             ),
             RV32IMCycle::DIVU(cycle) => (
+                cycle.instruction.operands.normalize().rs2,
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::ECALL(cycle) => (
                 cycle.instruction.operands.normalize().rs2,
                 cycle.register_state.rs2_value(),
             ),
@@ -1579,6 +1610,11 @@ impl RV32IMCycle {
                 cycle.register_state.rd_values().0,
                 cycle.register_state.rd_values().1,
             ),
+            RV32IMCycle::ECALL(cycle) => (
+                cycle.instruction.operands.normalize().rd,
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
             RV32IMCycle::FENCE(cycle) => (
                 cycle.instruction.operands.normalize().rd,
                 cycle.register_state.rd_values().0,
@@ -1838,6 +1874,7 @@ impl RV32IMCycle {
             RV32IMCycle::BNE(cycle) => cycle.instruction.into(),
             RV32IMCycle::DIV(cycle) => cycle.instruction.into(),
             RV32IMCycle::DIVU(cycle) => cycle.instruction.into(),
+            RV32IMCycle::ECALL(cycle) => cycle.instruction.into(),
             RV32IMCycle::FENCE(cycle) => cycle.instruction.into(),
             RV32IMCycle::JAL(cycle) => cycle.instruction.into(),
             RV32IMCycle::JALR(cycle) => cycle.instruction.into(),
