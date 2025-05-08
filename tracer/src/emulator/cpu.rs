@@ -467,7 +467,6 @@ impl Cpu {
     }
 
     fn handle_trap(&mut self, trap: Trap, instruction_address: u64, is_interrupt: bool) -> bool {
-
         // non-interrupt case is an ECALL
         if !is_interrupt
             && matches!(
