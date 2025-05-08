@@ -3,6 +3,7 @@
 
 // TODO: Bring back this lint
 // #![warn(missing_docs)]
+#![allow(clippy::type_complexity)]
 
 pub mod instruction;
 pub mod subtable;

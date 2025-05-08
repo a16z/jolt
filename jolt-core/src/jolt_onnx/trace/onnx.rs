@@ -162,7 +162,7 @@ impl OperationType {
 
             // Unknown operation
             _ => {
-                panic!("Unknown operation type: {}", s);
+                panic!("Unknown operation type: {s}");
             }
         }
     }
@@ -271,7 +271,7 @@ impl ONNXParser {
         // Load the ONNX model using tract
         let model = tract_onnx::onnx()
             .model_for_path(path)
-            .map_err(|e| ONNXError::InvalidModel(format!("Failed to load model: {}", e)))?;
+            .map_err(|e| ONNXError::InvalidModel(format!("Failed to load model: {e}")))?;
 
         let mut nodes = Vec::new();
         // Process each node in the model

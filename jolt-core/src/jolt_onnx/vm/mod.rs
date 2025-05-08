@@ -1,4 +1,5 @@
 //! This module provides the main API for the Jolt ONNX zkVM.
+#![allow(clippy::field_reassign_with_default)] // TODO: Remove this when all zkVM portions are fully fleshed out
 
 use super::trace::onnx::JoltONNXDevice;
 use crate::field::JoltField;
@@ -113,6 +114,7 @@ where
 
         // HACK: We still need to implement the other polynomials
         let mut jolt_polynomials = JoltPolynomials::default();
+
         jolt_polynomials.instruction_lookups = instruction_polynomials;
 
         // TODO: Send commitment to jolt polynomials
