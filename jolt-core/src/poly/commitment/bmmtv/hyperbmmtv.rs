@@ -25,7 +25,7 @@ use crate::{
 };
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::Zero;
+use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
@@ -40,13 +40,15 @@ pub struct HyperBmmtvCommitment<P: Pairing>(PairingOutput<P>, Vec<P::G1>);
 
 impl<P: Pairing> Default for HyperBmmtvCommitment<P> {
     fn default() -> Self {
-        todo!()
+        HyperBmmtvCommitment(PairingOutput::default(), vec![])
     }
 }
 
 impl<P: Pairing> AppendToTranscript for HyperBmmtvCommitment<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, _transcript: &mut ProofTranscript) {
-        todo!()
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        transcript.append_serializable(&self.0);
+        // Vec<G1> is only used by the prover
+        // transcript.append_points(&self.1);
     }
 }
 
@@ -69,12 +71,18 @@ impl<F: JoltField> From<&MultilinearPolynomial<F>> for UniPoly<F> {
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct HyperBmmtvProof<P: Pairing> {
-    /// Opening proof for the committed polynomial with the evaluation
-    opening: (OpeningProof<P>, P::ScalarField),
-    /// All the commitments and opening proofs for sub polynomials
-    ///
-    /// Doesn't contain the initial commit
-    sub_polynomials_proof: Vec<(PairingOutput<P>, OpeningProof<P>, P::ScalarField)>,
+    /// Commitments for sub polynomials
+    sub_polynomials_commitments: Vec<PairingOutput<P>>,
+    /// Opening proofs for all polynomials (including original)
+    polynomials_proof: Vec<SubProof<P>>,
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
+pub struct SubProof<P: Pairing> {
+    proof: OpeningProof<P>,
+    y_pos: P::ScalarField,
+    y_neg: P::ScalarField,
+    y: P::ScalarField,
 }
 
 impl<P: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript>
@@ -150,9 +158,12 @@ where
             let previous_poly: &UniPoly<P::ScalarField> = &polys[i];
             let Pi_len = previous_poly.len() / 2;
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
+            let x = point[ell - i - 1];
+
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
-                *Pi_j = point[ell - i - 1] * (previous_poly[2 * j + 1] - previous_poly[2 * j])
-                    + previous_poly[2 * j];
+                let Peven = previous_poly[2 * j + 1];
+                let Podd = previous_poly[2 * j];
+                *Pi_j = x * (Peven - Podd) + Podd;
             });
 
             polys.push(UniPoly::from_coeff(Pi));
@@ -175,43 +186,49 @@ where
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
         // CANT JUST PARALLELIZE transcript is &mut
-        com_list.iter().for_each(|g| {
-            // Todo: Verify this.
-            // transcript.append_points(&g.1);  kVec<G1> is not needed since it's used only for opening
-            transcript.append_serializable(&g.0)
-        });
+        com_list
+            .iter()
+            .for_each(|g| transcript.append_serializable(&g.0));
 
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
+
         // Phase 3 -- create response
         // open all commits
 
-        // TODO How do I get this from the Commitment?
-        let (_pairing, kzg_comms) =
+        // TODO Get this from the Commitment
+        let (_, kzg_comms) =
             UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, &polys[0]).unwrap();
 
-        let eval = polys[0].evaluate(&r);
-        let opening =
-            UnivariatePolynomialCommitment::open(p_srs, &polys[0], kzg_comms, &r, transcript)
-                .unwrap();
+        let (sub_polynomials_commitments, com_list): (Vec<_>, Vec<_>) =
+            com_list.into_iter().unzip();
 
         // Todo: Batch opening
-        let eval_proofs = com_list
-            .into_iter()
-            .zip(&polys[1..])
+        let eval_proofs = std::iter::once(kzg_comms)
+            .chain(com_list)
+            .zip(&polys)
             .map(|(comm, polynomial)| {
-                let eval = polynomial.evaluate(&r);
-                (
-                    comm.0, // pairing
-                    UnivariatePolynomialCommitment::open(p_srs, polynomial, comm.1, &r, transcript)
-                        .unwrap(), // opening
-                    eval,
-                )
+                let y_pos = polynomial.evaluate(&r);
+                let y_neg = polynomial.evaluate(&-r);
+                let y = polynomial.evaluate(&(r * r));
+                SubProof {
+                    proof: UnivariatePolynomialCommitment::open(
+                        p_srs,
+                        &polynomial,
+                        comm,
+                        &r,
+                        transcript,
+                    )
+                    .unwrap(), // opening
+                    y,
+                    y_pos,
+                    y_neg,
+                }
             })
             .collect::<Vec<_>>();
 
         HyperBmmtvProof {
-            opening: (opening, eval),
-            sub_polynomials_proof: eval_proofs,
+            sub_polynomials_commitments,
+            polynomials_proof: eval_proofs,
         }
     }
 
@@ -220,22 +237,25 @@ where
         proof: &Self::Proof,
         (_, v_srs): &Self::Setup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        _opening: &Self::Field,        // evaluation \widetilde{Z}(r)
+        point: &[Self::Field], // point at which the polynomial is evaluated
+        opening: &Self::Field, // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let ell = opening_point.len();
+        let ell = point.len();
 
-        // sub polynomials + original reinterpreted
-        if proof.sub_polynomials_proof.len() + 1 != ell {
+        if proof.polynomials_proof.len() != ell {
             return Err(ProofVerifyError::InternalError);
         }
 
-        proof.sub_polynomials_proof.iter().for_each(|g| {
-            // Todo: Verify this.
-            // transcript.append_points(&g.1);  kVec<G1> is not needed since it's used only for opening
-            transcript.append_serializable(&g.0)
-        });
+        // only the sub polynomials commitments are in the proof
+        if proof.sub_polynomials_commitments.len() != ell - 1 {
+            return Err(ProofVerifyError::InternalError);
+        }
+
+        proof
+            .sub_polynomials_commitments
+            .iter()
+            .for_each(|g| transcript.append_serializable(g));
 
         let r: P::ScalarField = transcript.challenge_scalar();
 
@@ -243,41 +263,56 @@ where
             return Err(ProofVerifyError::InternalError);
         }
 
-        let n = 1 << ell; // n = 2^ell
+        // Consistency check between generated polynomials and evaluations/commitment
+        let mut Y = proof
+            .polynomials_proof
+            .iter()
+            .map(|proof| proof.y)
+            .collect::<Vec<_>>();
+        Y.push(*opening);
 
-        let original_poly = UnivariatePolynomialCommitment::verify(
-            v_srs,
-            n - 1, // degree = len(coeff) - 1
-            commitment.0,
-            r,
-            proof.opening.1,
-            &proof.opening.0,
-            transcript,
-        )
-        .map_err(|_| ProofVerifyError::InternalError)?;
-        if !original_poly {
-            // failed first check for initial poly
-            return Err(ProofVerifyError::InternalError);
+        let two = P::ScalarField::from(2u64);
+        for (i, SubProof { y_pos, y_neg, .. }) in proof.polynomials_proof.iter().enumerate() {
+            let x = point[ell - i - 1];
+            let y_pos = *y_pos;
+            let y_neg = *y_neg;
+            let y_next = Y[i + 1];
+            if two * r * y_next
+                != (r * (P::ScalarField::one() - x) * (y_pos + y_neg)) + (x * (y_pos - y_neg))
+            {
+                return Err(ProofVerifyError::InternalError);
+            }
+            // Note that we don't make any checks about Y[0] here, but our batching
+            // check below requires it
         }
 
-        // Todo: Consistency check between generated polynomials and evaluations/commitment
-
         let eval_proofs = proof
-            .sub_polynomials_proof
+            .polynomials_proof
             .iter()
+            .zip(std::iter::once(&commitment.0).chain(proof.sub_polynomials_commitments.iter()))
             .enumerate()
-            .map(|(i, (comm, proof, eval))| {
-                let n = n >> (i + 1);
-                UnivariatePolynomialCommitment::verify(
-                    v_srs,
-                    n - 1,
-                    *comm,
-                    r,
-                    *eval,
-                    proof,
-                    transcript,
-                )
-            })
+            .map(
+                |(
+                    i,
+                    (
+                        SubProof {
+                            proof, y_pos: eval, .. // y_pos because we want eval for r
+                        },
+                        commitment,
+                    ),
+                )| {
+                    let n = 1 << (ell - i);
+                    UnivariatePolynomialCommitment::verify(
+                        v_srs,
+                        n - 1, // degree = len(coeff) - 1
+                        *commitment,
+                        r,
+                        *eval,
+                        &proof,
+                        transcript,
+                    )
+                },
+            )
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| ProofVerifyError::InternalError)?;
 
@@ -316,6 +351,7 @@ mod tests {
         let poly_raw = (0..n)
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
+
         let poly = MultilinearPolynomial::from(poly_raw.clone());
 
         let setup = HyperTest::setup(poly.len());
