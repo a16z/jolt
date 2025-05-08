@@ -441,7 +441,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     ///
-    /// If `self` is not coalesced, we basically do the same thing but with with the
+    /// If `self` is not coalesced, we basically do the same thing but with the
     /// sparse vectors in `self.coeffs`, some fancy optimizations, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
     fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
