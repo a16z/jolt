@@ -6,3 +6,4 @@
 #[cfg(test)]
 mod tests;
 mod trace;
+pub mod vm;

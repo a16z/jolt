@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use tract_onnx::prelude::*;
 
+use crate::jolt::instruction::and::ANDInstruction;
+use crate::jolt::instruction::or::ORInstruction;
+use crate::jolt::instruction::xor::XORInstruction;
+// use crate::jolt_onnx::vm::onnx_vm::ONNX;
 use crate::utils::errors::ONNXError;
 
 // Define an enum for operation types with explicit numeric values
@@ -71,8 +75,10 @@ pub enum OperationType {
     Neg = 50,
     Sign = 51,
 
-    // Fallback for unknown operations
-    Unknown = 52,
+    // Bitwise operations
+    And = 52,
+    Or = 53,
+    Xor = 54,
 }
 
 impl OperationType {
@@ -139,11 +145,14 @@ impl OperationType {
             "Asinh" => OperationType::Asinh,
             "Neg" => OperationType::Neg,
             "Sign" => OperationType::Sign,
+            // Bitwise operations
+            "And" => OperationType::And,
+            "Or" => OperationType::Or,
+            "Xor" => OperationType::Xor,
 
             // Unknown operation
             _ => {
-                eprintln!("Unknown operation type: {}", s);
-                OperationType::Unknown
+                panic!("Unknown operation type: {}", s);
             }
         }
     }
@@ -216,6 +225,23 @@ impl ComputationalGraph {
             println!("    Type: {:?}", node.op_type);
         }
     }
+
+    // pub fn trace(&self) -> Vec<Option<ONNX>> {
+    //     let mut trace = Vec::new();
+    //     for node in &self.nodes {
+    //         let opcode = match node.op_type {
+    //             OperationType::And => Some(ANDInstruction::default().into()),
+    //             OperationType::Or => Some(ORInstruction::default().into()),
+    //             OperationType::Xor => Some(XORInstruction::default().into()),
+    //             OperationType::Input => None,
+    //             _ => {
+    //                 panic!("Unsupported operation type for tracing: {:?}", node.op_type);
+    //             }
+    //         };
+    //         trace.push(opcode);
+    //     }
+    //     trace
+    // }
 }
 
 /// ONNX Parser
@@ -263,7 +289,7 @@ mod tests {
 
     #[test]
     fn print_model() {
-        let model_path = "onnx/linear.onnx";
+        let model_path = "../onnx/bitwise_test.onnx";
         let graph = ONNXParser::load_model(model_path).unwrap();
         graph.print();
     }
