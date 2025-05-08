@@ -86,8 +86,8 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     pub fn prove(
         program_io: JoltONNXDevice,
-        mut trace: Vec<JoltTraceStep<InstructionSet>>,
-        mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+        trace: Vec<JoltTraceStep<InstructionSet>>,
+        preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
         JoltCommitments<PCS, ProofTranscript>,
@@ -163,7 +163,7 @@ where
     #[tracing::instrument(skip_all)]
     pub fn verify(
         self,
-        mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         commitments: JoltCommitments<PCS, ProofTranscript>,
         _program_io: JoltONNXDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
