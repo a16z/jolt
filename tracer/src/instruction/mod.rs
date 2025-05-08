@@ -348,6 +348,19 @@ impl Valid for RV32IMInstruction {
 }
 
 impl RV32IMInstruction {
+    pub fn is_real(&self) -> bool {
+        // ignore no-op
+        if matches!(self, RV32IMInstruction::NoOp) {
+            return false;
+        }
+
+        match self.normalize().virtual_sequence_remaining {
+            None => true,     // ordinary instruction
+            Some(0) => true,  // “anchor” of a virtual sequence
+            Some(_) => false, // helper within the sequence
+        }
+    }
+
     pub fn decode(instr: u32, address: u64) -> Result<Self, &'static str> {
         let opcode = instr & 0x7f;
         match opcode {
@@ -467,27 +480,19 @@ impl RV32IMInstruction {
                 Ok(FENCE::new(instr, address, true).into())
             }
             0b1110011 => {
-                println!("FUCK");
+                // For now this only (potentially) maps to ECALL.
                 if instr == ECALL::MATCH {
-                    println!("FUCK MATCH");
                     return Ok(ECALL::new(instr, address, true).into());
                 } else {
                     return Err("Unsupported SYSTEM instruction");
                 }
-                // SYSTEM instructions: ECALL/EBREAK (I-type)
-                // Err("Unsupported SYSTEM instruction")
             }
             _ => Err("Unknown opcode"),
         }
-
-        
     }
 
     pub fn trace(&self, cpu: &mut Cpu) {
-        println!("hello");
-        // println!("{self:?}");
         match self {
-            // RV32IMInstruction::NoOp => { instr.trace(cpu) },
             RV32IMInstruction::ADD(instr) => instr.trace(cpu),
             RV32IMInstruction::ADDI(instr) => instr.trace(cpu),
             RV32IMInstruction::AND(instr) => instr.trace(cpu),

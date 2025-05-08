@@ -1,40 +1,32 @@
-//! ECALL (SYSTEM 0x0000_0073) — used only for Jolt-cycle tracking.
+//! ECALL (SYSTEM 0x0000_0073) — currently only serves for Jolt-cycle tracking.
+//! Although, this will be used for "psuedo-precompiles"
 //!
 //! It retires like a normal instruction; there is **no trap** because the
 //! emulator has an early-exit path in `Cpu::handle_trap` that consumes the
 //! marker.  From the ISA-level point of view we therefore treat it as a
-//! “no-op” that touches no architectural state.
+//! “no-op”.
 
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType};
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVCycle, RISCVInstruction, RISCVTrace, RV32IMCycle,
+    format::{format_i::FormatI, InstructionFormat}, RISCVInstruction, RISCVTrace,
 };
 
-// ---------------------------------------------------------------------------
-//  Data type
-// ---------------------------------------------------------------------------
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ECALL {
     pub address: u64,
     pub operands: FormatI,
-    /// Virtual-sequence metadata (unused – always `None` here).
     pub virtual_sequence_remaining: Option<usize>,
 }
 
-// ---------------------------------------------------------------------------
-//  RISCVInstruction impl
-// ---------------------------------------------------------------------------
 impl RISCVInstruction for ECALL {
-    /// Exact bit-pattern match.
-    const MASK:  u32 = 0xffff_ffff;
+    const MASK: u32 = 0xffff_ffff;
     const MATCH: u32 = 0x0000_0073; // ECALL opcode
 
-    type Format    = FormatI;
-    type RAMAccess = ();            // ECALL touches no memory
+    type Format = FormatI;
+    type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {
         &self.operands
@@ -51,10 +43,24 @@ impl RISCVInstruction for ECALL {
         }
     }
 
-    /// **No architectural effect** – the real work is handled earlier by
-    /// `Cpu::handle_trap`.  Leave all registers untouched.
-    fn execute(&self, _: &mut Cpu, _: &mut Self::RAMAccess) {}
+    /// **No architectural effects**
+    /// Signals to emulator to record cycles through early exit of trap
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+
+        let trap_type = match cpu.privilege_mode {
+            PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
+            PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,
+            PrivilegeMode::Machine | PrivilegeMode::Reserved => TrapType::EnvironmentCallFromMMode,
+        };
+
+        cpu.raise_trap(
+            Trap {
+                trap_type,
+                value: 0,
+            },
+            self.address,
+        );
+    }
 }
 
 impl RISCVTrace for ECALL {}
-

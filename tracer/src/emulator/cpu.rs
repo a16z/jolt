@@ -2,8 +2,8 @@
 
 extern crate fnv;
 
-use std::convert::TryInto;
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
 
@@ -62,22 +62,20 @@ const MIP_STIP: u64 = 0x020;
 const MIP_SSIP: u64 = 0x002;
 
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E;
-pub const JOLT_CYCLE_MARKER_START:    u32 = 1;
-pub const JOLT_CYCLE_MARKER_END:      u32 = 2;
-pub const JOLT_CYCLE_MARKER_SNAPSHOT: u32 = 3;   // optional  
-
+pub const JOLT_CYCLE_MARKER_START: u32 = 1;
+pub const JOLT_CYCLE_MARKER_END: u32 = 2;
 #[derive(Clone)]
 struct ActiveMarker {
-    label:            String,
-    start_instrs:     u64,        // executed_instrs  at ‘start’
-    start_trace_len:  usize,      // trace.len()      at ‘start’
+    label: String,
+    start_instrs: u64,      // executed_instrs  at ‘start’
+    start_trace_len: usize, // trace.len()      at ‘start’
 }
 
 /// Emulates a RISC-V CPU core
 pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
-    privilege_mode: PrivilegeMode,
+    pub(crate) privilege_mode: PrivilegeMode,
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
@@ -91,8 +89,8 @@ pub struct Cpu {
     _dump_flag: bool,
     unsigned_data_mask: u64,
     pub trace: Vec<RV32IMCycle>,
-    executed_instrs:  u64,                       // “real” RV32IM cycles
-    active_markers:   HashMap<u32, ActiveMarker>,// ptr → span data
+    executed_instrs: u64, // “real” RV32IM cycles
+    active_markers: HashMap<u32, ActiveMarker>,
 }
 
 #[derive(Clone)]
@@ -252,12 +250,18 @@ impl Cpu {
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
-            executed_instrs:  0,                       // “real” RV32IM cycles
-            active_markers:        HashMap::default(),
+            executed_instrs: 0,
+            active_markers: HashMap::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
         cpu
+    }
+    /// trap wrapper for cycle tracking tool
+    #[inline(always)]
+    pub fn raise_trap(&mut self, trap: Trap, faulting_pc: u64) {
+        // `false` = not an interrupt
+        let _ = self.handle_trap(trap, faulting_pc, false);
     }
 
     /// Updates Program Counter content
@@ -300,7 +304,6 @@ impl Cpu {
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self) {
-        println!("FUCK TICK");
         let instruction_address = self.pc;
         match self.tick_operate() {
             Ok(()) => {}
@@ -318,7 +321,6 @@ impl Cpu {
 
     // @TODO: Rename?
     fn tick_operate(&mut self) -> Result<(), Trap> {
-        println!("TICK OPERATE");
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -343,14 +345,18 @@ impl Cpu {
             .ok()
             .unwrap();
         instr.trace(self);
-        self.executed_instrs = self.executed_instrs.wrapping_add(1); 
+
+        // check if current instruction is real or not for cycle profiling
+        if instr.is_real() {
+            self.executed_instrs = self.executed_instrs.wrapping_add(1);
+        }
         self.x[0] = 0; // hardwired zero
 
         Ok(())
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
-        println!("INTERRUPT?");
+        // println!("INTERRUPT?");
         // @TODO: Optimize
         let minterrupt = self.read_csr_raw(CSR_MIP_ADDRESS) & self.read_csr_raw(CSR_MIE_ADDRESS);
 
@@ -464,6 +470,7 @@ impl Cpu {
 
     fn handle_trap(&mut self, trap: Trap, instruction_address: u64, is_interrupt: bool) -> bool {
 
+        // non-interrupt case is an ECALL
         if !is_interrupt
             && matches!(
                 trap.trap_type,
@@ -472,22 +479,19 @@ impl Cpu {
                     | TrapType::EnvironmentCallFromMMode
             )
         {
-            println!("FUCK TRAP");
             let call_id = self.x[10] as u32; // a0
             if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
                 let marker_ptr = self.x[11] as u32; // a1
                 let event_type = self.x[12] as u32; // a2
 
-                // Read / update the per-marker counters.
+                // Read / update the per-label counters.
                 //
                 // Any fault raised while touching guest memory (e.g. a bad
                 // string pointer) is swallowed here and will manifest as the
-                // usual access-fault on the *next* instruction fetch anyway.
+                // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_cycle_marker(marker_ptr, event_type);
 
-                // **Do NOT take the trap** – PC already points at the next
-                // instruction thanks to `tick_operate()`, so just resume.
-                return false;
+                return false; // we don't take the trap
             }
         }
 
@@ -1444,43 +1448,40 @@ impl Cpu {
     fn handle_jolt_cycle_marker(&mut self, ptr: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
-                let label = self.read_c_string(ptr)?;      // guest NUL-string
-                self.active_markers.insert(ptr, ActiveMarker {
-                    label,
-                    start_instrs:    self.executed_instrs,
-                    start_trace_len: self.trace.len(),
-                });
+                let label = self.read_c_string(ptr)?; // guest NUL-string
+                self.active_markers.insert(
+                    ptr,
+                    ActiveMarker {
+                        label,
+                        start_instrs: self.executed_instrs,
+                        start_trace_len: self.trace.len(),
+                    },
+                );
             }
-    
+
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
-                    let real  = self.executed_instrs - mark.start_instrs;
-                    let virt  = self.trace.len() - mark.start_trace_len;
-                    println!("\"{}\": {} RV32IM cycles, {} virtual cycles",
-                             mark.label, real, virt);
+                    let real = self.executed_instrs - mark.start_instrs;
+                    let virt = self.trace.len() - mark.start_trace_len;
+                    println!(
+                        "\"{}\": {} RV32IM cycles, {} virtual cycles",
+                        mark.label, real, virt
+                    );
                 }
             }
-    
-            JOLT_CYCLE_MARKER_SNAPSHOT => {
-                if let Some(mark) = self.active_markers.get(&ptr) {
-                    let real  = self.executed_instrs - mark.start_instrs;
-                    let virt  = self.trace.len() - mark.start_trace_len;
-                    println!("\"{}\": {} RV32IM cycles, {} virtual cycles (snapshot)",
-                             mark.label, real, virt);
-                }
-            }
-    
-            _ => { /* silently ignore unknown sub-codes */ }
+            _ => { /* ignore other opcodes */ }
         }
         Ok(())
     }
-    
+
     /// Read a NUL-terminated guest string from memory.
     fn read_c_string(&mut self, mut addr: u32) -> Result<String, Trap> {
         let mut bytes = Vec::new();
         loop {
-            let (b, _) = self.mmu.load(addr.into())?;       // use your existing accessor
-            if b == 0 { break }
+            let (b, _) = self.mmu.load(addr.into())?;
+            if b == 0 {
+                break;
+            }
             bytes.push(b);
             addr = addr.wrapping_add(1);
         }

@@ -95,6 +95,7 @@ impl InstructionLookup<32> for RV32IMInstruction {
             RV32IMInstruction::BLT(blt) => blt.lookup_table(),
             RV32IMInstruction::BLTU(bltu) => bltu.lookup_table(),
             RV32IMInstruction::BNE(bne) => bne.lookup_table(),
+            RV32IMInstruction::ECALL(ecall) => ecall.lookup_table(),
             RV32IMInstruction::FENCE(fence) => fence.lookup_table(),
             RV32IMInstruction::JAL(jal) => jal.lookup_table(),
             RV32IMInstruction::JALR(jalr) => jalr.lookup_table(),
@@ -148,6 +149,7 @@ impl InstructionFlags for RV32IMInstruction {
             RV32IMInstruction::BLT(blt) => blt.circuit_flags(),
             RV32IMInstruction::BLTU(bltu) => bltu.circuit_flags(),
             RV32IMInstruction::BNE(bne) => bne.circuit_flags(),
+            RV32IMInstruction::ECALL(ecall) => ecall.circuit_flags(),
             RV32IMInstruction::FENCE(fence) => fence.circuit_flags(),
             RV32IMInstruction::JAL(jal) => jal.circuit_flags(),
             RV32IMInstruction::JALR(jalr) => jalr.circuit_flags(),
@@ -200,6 +202,7 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::BLT(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::BLTU(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::BNE(cycle) => cycle.instruction.lookup_table(),
+            RV32IMCycle::ECALL(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::FENCE(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::JAL(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::JALR(cycle) => cycle.instruction.lookup_table(),
@@ -252,6 +255,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::BLT(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::BLTU(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::BNE(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
+            RV32IMCycle::ECALL(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::FENCE(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::JAL(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::JALR(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
@@ -318,6 +322,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::BLT(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::BLTU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::BNE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::ECALL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::FENCE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::JAL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::JALR(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
@@ -380,6 +385,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::BLT(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::BLTU(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::BNE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+            RV32IMCycle::ECALL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::FENCE(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::JAL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::JALR(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
@@ -440,6 +446,7 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
+pub mod ecall;
 pub mod fence;
 pub mod jal;
 pub mod jalr;

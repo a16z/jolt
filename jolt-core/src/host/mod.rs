@@ -152,7 +152,6 @@ impl Program {
         }
     }
 
-    // markosg04 note
     pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
@@ -186,7 +185,7 @@ impl Program {
                 _ => vec![instr],
             })
             .collect();
-        println!("fuck 3");
+
         (instructions, raw_bytes)
     }
 
