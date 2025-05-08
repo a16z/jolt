@@ -237,7 +237,7 @@ where
         srs: &KZGProverKey<P>,
         polynomial: &UnivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(srs);
+        let bivariate_degrees = Self::bivariate_degrees(polynomial.len() - 1);
         BivariatePolynomialCommitment::<P, ProofTranscript>::commit(
             srs,
             &Self::bivariate_form(bivariate_degrees, polynomial),
@@ -251,7 +251,7 @@ where
         point: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
-        let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(srs);
+        let (x_degree, y_degree) = Self::bivariate_degrees(polynomial.len() - 1);
         let y = *point;
         let x = point.pow(vec![(y_degree + 1) as u64]);
         BivariatePolynomialCommitment::<P, ProofTranscript>::open(

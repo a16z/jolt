@@ -265,12 +265,9 @@ where
         let eval_proofs = proof
             .sub_polynomials_proof
             .iter()
-            .map(|(comm, proof, eval)| {
-                // Todo: Bmmtv uses turns a Univariate polynomial in a matrix
-                // The number of rows and columns is currently defined by the setup params
-                // hence, we are not getting maximal performance
-                //
-                // let n = n >> (i + 1);
+            .enumerate()
+            .map(|(i, (comm, proof, eval))| {
+                let n = n >> (i + 1);
                 UnivariatePolynomialCommitment::verify(
                     v_srs,
                     n - 1,
