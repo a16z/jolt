@@ -8,7 +8,6 @@ use self::fnv::FnvHashMap;
 
 pub mod cpu;
 pub mod default_terminal;
-pub mod device;
 pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
@@ -92,8 +91,7 @@ impl Emulator {
         println!("This elf file seems riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
-            self.put_bytes_to_terminal(disas.as_bytes());
-            self.put_bytes_to_terminal(&[10]); // new line
+            println!("{}", disas);
 
             self.tick();
 
@@ -106,25 +104,11 @@ impl Emulator {
             let endcode = self.cpu.get_mut_mmu().load_word_raw(self.tohost_addr);
             if endcode != 0 {
                 match endcode {
-                    1 => self.put_bytes_to_terminal(
-                        format!("Test Passed with {endcode:X}\n").as_bytes(),
-                    ),
-                    _ => self.put_bytes_to_terminal(
-                        format!("Test Failed with {endcode:X}\n").as_bytes(),
-                    ),
+                    1 => println!("Test Passed with {:X}\n", endcode),
+                    _ => println!("Test Failed with {:X}\n", endcode),
                 };
                 break;
             }
-        }
-    }
-
-    /// Helper method. Sends ascii code bytes to terminal.
-    ///
-    /// # Arguments
-    /// * `bytes`
-    fn put_bytes_to_terminal(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.cpu.get_mut_terminal().put_byte(*byte);
         }
     }
 
@@ -255,14 +239,6 @@ impl Emulator {
         }
     }
 
-    /// Sets up filesystem. Use this method if program (e.g. Linux) uses
-    /// filesystem. This method is expected to be called up to only once.
-    ///
-    /// # Arguments
-    /// * `content` File system content binary
-    pub fn setup_filesystem(&mut self, content: Vec<u8>) {
-        self.cpu.get_mut_mmu().init_disk(content);
-    }
 
     /// Sets up device tree. The emulator has default device tree configuration.
     /// If you want to override it, use this method. This method is expected to
@@ -290,11 +266,6 @@ impl Emulator {
     /// * `enabled`
     pub fn enable_page_cache(&mut self, enabled: bool) {
         self.cpu.get_mut_mmu().enable_page_cache(enabled);
-    }
-
-    /// Returns mutable reference to `Terminal`.
-    pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
-        self.cpu.get_mut_terminal()
     }
 
     /// Returns immutable reference to `Cpu`.

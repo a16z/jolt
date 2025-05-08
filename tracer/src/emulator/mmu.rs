@@ -12,10 +12,6 @@ use common::jolt_device::JoltDevice;
 use self::fnv::FnvHashMap;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
-use super::device::clint::Clint;
-use super::device::plic::Plic;
-use super::device::uart::Uart;
-use super::device::virtio_block_disk::VirtioBlockDisk;
 use super::memory::Memory;
 use super::terminal::Terminal;
 
@@ -32,10 +28,6 @@ pub struct Mmu {
     privilege_mode: PrivilegeMode,
     memory: MemoryWrapper,
     dtb: Vec<u8>,
-    disk: VirtioBlockDisk,
-    plic: Plic,
-    clint: Clint,
-    uart: Uart,
 
     pub jolt_device: JoltDevice,
 
@@ -105,10 +97,6 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
             dtb,
-            disk: VirtioBlockDisk::new(),
-            plic: Plic::new(),
-            clint: Clint::new(),
-            uart: Uart::new(terminal),
             jolt_device: JoltDevice::new(0, 0),
             mstatus: 0,
             page_cache_enabled: false,
@@ -133,14 +121,6 @@ impl Mmu {
     /// * `capacity`
     pub fn init_memory(&mut self, capacity: u64) {
         self.memory.init(capacity);
-    }
-
-    /// Initializes Virtio block disk. This method is expected to be called only once.
-    ///
-    /// # Arguments
-    /// * `data` Filesystem binary content
-    pub fn init_disk(&mut self, data: Vec<u8>) {
-        self.disk.init(data);
     }
 
     /// Overrides default Device tree configuration.
@@ -171,15 +151,7 @@ impl Mmu {
     }
 
     /// Runs one cycle of MMU and peripheral devices.
-    pub fn tick(&mut self, mip: &mut u64) {
-        self.clint.tick(mip);
-        self.disk.tick(&mut self.memory);
-        self.uart.tick();
-        self.plic.tick(
-            self.disk.is_interrupting(),
-            self.uart.is_interrupting(),
-            mip,
-        );
+    pub fn tick(&mut self) {
         self.clock = self.clock.wrapping_add(1);
     }
 
@@ -526,10 +498,10 @@ impl Mmu {
                 // It might be from self.x[0xb] initialization?
                 // And DTB size is arbitrary.
                 0x00001020..=0x00001fff => self.dtb[effective_address as usize - 0x1020],
-                0x02000000..=0x0200ffff => self.clint.load(effective_address),
-                0x0C000000..=0x0fffffff => self.plic.load(effective_address),
-                0x10000000..=0x100000ff => self.uart.load(effective_address),
-                0x10001000..=0x10001FFF => self.disk.load(effective_address),
+                0x02000000..=0x0200ffff => panic!("load_raw:clint is unsupported."),
+                0x0C000000..=0x0fffffff => panic!("load_raw:plic is unsupported."),
+                0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
+                0x10001000..=0x10001FFF => panic!("load_raw:disk is unsupported."),
                 _ => self.jolt_device.load(effective_address),
             },
         }
@@ -759,10 +731,10 @@ impl Mmu {
         match effective_address >= DRAM_BASE {
             true => self.memory.write_byte(effective_address, value),
             false => match effective_address {
-                0x02000000..=0x0200ffff => self.clint.store(effective_address, value),
-                0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
-                0x10000000..=0x100000ff => self.uart.store(effective_address, value),
-                0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
+                0x02000000..=0x0200ffff => panic!("store_raw:clint is unsupported."),
+                0x0c000000..=0x0fffffff => panic!("store_raw:plic is unsupported."),
+                0x10000000..=0x100000ff => panic!("store_raw:UART is unsupported."),
+                0x10001000..=0x10001FFF => panic!("store_raw:disk is unsupported."),
                 _ => {
                     self.assert_effective_address(effective_address);
                     self.jolt_device.store(effective_address, value);
@@ -1115,20 +1087,6 @@ impl Mmu {
         Ok(p_address)
     }
 
-    /// Returns immutable reference to `Clint`.
-    pub fn get_clint(&self) -> &Clint {
-        &self.clint
-    }
-
-    /// Returns mutable reference to `Clint`.
-    pub fn get_mut_clint(&mut self) -> &mut Clint {
-        &mut self.clint
-    }
-
-    /// Returns mutable reference to `Uart`.
-    pub fn get_mut_uart(&mut self) -> &mut Uart {
-        &mut self.uart
-    }
 }
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory
