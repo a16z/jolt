@@ -3,12 +3,11 @@ use crate::jolt::instruction::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::jolt_onnx::subtable::is_pos::IsPosSubtable;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
-use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Default, Debug, Serialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ReLUInstruction(pub u64);
 
 impl JoltInstruction for ReLUInstruction {

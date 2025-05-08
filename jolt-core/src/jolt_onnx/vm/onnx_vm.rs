@@ -12,8 +12,10 @@ use crate::jolt::instruction::{
     JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
-    and::AndSubtable, or::OrSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable, SubtableId,
+    and::AndSubtable, identity::IdentitySubtable, or::OrSubtable, xor::XorSubtable,
+    JoltSubtableSet, LassoSubtable, SubtableId,
 };
+use crate::jolt_onnx::{instruction::relu::ReLUInstruction, subtable::is_pos::IsPosSubtable};
 
 // TODO: Remove these duplicated macros. Original definitions are in jolt-core/src/jolt/vm/rv32i_vm.rs
 
@@ -89,14 +91,17 @@ instruction_set!(
   ONNX,
   AND: ANDInstruction<WORD_SIZE>,
   OR: ORInstruction<WORD_SIZE>,
-  XOR: XORInstruction<WORD_SIZE>
+  XOR: XORInstruction<WORD_SIZE>,
+  ReLU: ReLUInstruction
 );
 
 subtable_enum!(
   ONNXSubtables,
   AND: AndSubtable<F>,
   OR: OrSubtable<F>,
-  XOR: XorSubtable<F>
+  XOR: XorSubtable<F>,
+  IDENTITY: IdentitySubtable<F>,
+  IS_POS: IsPosSubtable<F>
 );
 
 pub type ONNXJoltVM<F, PCS, ProofTranscript> =
@@ -143,5 +148,35 @@ mod tests {
     #[test]
     fn test_bitwise_e2e_hkzg() {
         test_bitwise_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
+    }
+
+    fn test_bitwise_with_relu_e2e<F, PCS, ProofTranscript>()
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+        ProofTranscript: Transcript,
+    {
+        // Setup model and get trace (input for proving)
+        let model_path = "./onnx/bitwise_with_relu.onnx";
+        let graph = ONNXParser::load_model(model_path).unwrap();
+        let trace = graph.trace(); // TODO: make this more opaque to the user
+
+        // Generate preprocessing
+        let pp = ONNXJoltVM::<F, PCS, ProofTranscript>::prover_preprocess(1 << 20);
+
+        // Prove
+        let io = JoltONNXDevice::new(graph.input_count as u64, graph.output_count as u64);
+        let (snark, commitments, verifier_io, _) =
+            ONNXJoltVM::<F, PCS, ProofTranscript>::prove(io, trace, pp.clone());
+
+        // Verify
+        snark
+            .verify(pp.shared, commitments, verifier_io, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_bitwise_with_relu_e2e_hkzg() {
+        test_bitwise_with_relu_e2e::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
     }
 }

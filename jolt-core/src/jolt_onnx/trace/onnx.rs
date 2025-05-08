@@ -1,10 +1,12 @@
 extern crate alloc;
-use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::JoltTraceStep;
 use crate::jolt_onnx::vm::onnx_vm::ONNX;
 use crate::utils::errors::ONNXError;
+use crate::{
+    jolt::instruction::and::ANDInstruction, jolt_onnx::instruction::relu::ReLUInstruction,
+};
 use alloc::string::String;
 use alloc::vec::Vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -81,6 +83,9 @@ pub enum OperationType {
     And = 52,
     Or = 53,
     Xor = 54,
+
+    // Other operation
+    Clip = 55,
 }
 
 impl OperationType {
@@ -151,6 +156,9 @@ impl OperationType {
             "And" => OperationType::And,
             "Or" => OperationType::Or,
             "Xor" => OperationType::Xor,
+
+            // Other operations
+            "Clip" => OperationType::Clip,
 
             // Unknown operation
             _ => {
@@ -230,6 +238,8 @@ impl ComputationalGraph {
         }
     }
 
+    // TODO: Implement a proper execution trace
+
     pub fn trace(&self) -> Vec<JoltTraceStep<ONNX>> {
         let mut trace = Vec::new();
         for node in &self.nodes {
@@ -237,6 +247,8 @@ impl ComputationalGraph {
                 OperationType::And => Some(ANDInstruction::default().into()),
                 OperationType::Or => Some(ORInstruction::default().into()),
                 OperationType::Xor => Some(XORInstruction::default().into()),
+                OperationType::Relu => Some(ReLUInstruction::default().into()),
+                OperationType::Clip => None,
                 OperationType::Input => None,
                 _ => {
                     panic!("Unsupported operation type for tracing: {:?}", node.op_type);
