@@ -1,5 +1,9 @@
 extern crate alloc;
+use crate::jolt::instruction::mul::MULInstruction;
 use crate::jolt::instruction::or::ORInstruction;
+use crate::jolt::instruction::sll::SLLInstruction;
+use crate::jolt::instruction::srl::SRLInstruction;
+use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::JoltTraceStep;
 use crate::jolt_onnx::vm::onnx_vm::ONNX;
@@ -248,6 +252,11 @@ impl ComputationalGraph {
                 OperationType::Or => Some(ORInstruction::default().into()),
                 OperationType::Xor => Some(XORInstruction::default().into()),
                 OperationType::Relu => Some(ReLUInstruction::default().into()),
+                OperationType::Add => Some(ANDInstruction::default().into()),
+                OperationType::Sub => Some(SUBInstruction::default().into()),
+                OperationType::Mul => Some(MULInstruction::default().into()),
+                OperationType::ShiftLeft => Some(SLLInstruction::default().into()),
+                OperationType::ShiftRight => Some(SRLInstruction::default().into()),
                 OperationType::Clip => None,
                 OperationType::Input => None,
                 _ => {

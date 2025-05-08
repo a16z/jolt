@@ -1,21 +1,21 @@
+use super::JoltProof;
 use crate::field::JoltField;
+use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction, sub::SUBInstruction};
+use crate::jolt::instruction::{
+    and::ANDInstruction, or::ORInstruction, sll::SLLInstruction, srl::SRLInstruction,
+    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
+};
+use crate::jolt::subtable::{
+    and::AndSubtable, identity::IdentitySubtable, or::OrSubtable, sll::SllSubtable,
+    srl::SrlSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable, SubtableId,
+};
+use crate::jolt_onnx::{instruction::relu::ReLUInstruction, subtable::is_pos::IsPosSubtable};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-
-use super::JoltProof;
-use crate::jolt::instruction::{
-    and::ANDInstruction, or::ORInstruction, xor::XORInstruction, JoltInstruction,
-    JoltInstructionSet, SubtableIndices,
-};
-use crate::jolt::subtable::{
-    and::AndSubtable, identity::IdentitySubtable, or::OrSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
-};
-use crate::jolt_onnx::{instruction::relu::ReLUInstruction, subtable::is_pos::IsPosSubtable};
 
 // TODO: Remove these duplicated macros. Original definitions are in jolt-core/src/jolt/vm/rv32i_vm.rs
 
@@ -89,6 +89,11 @@ const WORD_SIZE: usize = 32;
 
 instruction_set!(
   ONNX,
+  ADD: ADDInstruction<WORD_SIZE>,
+  SUB: SUBInstruction<WORD_SIZE>,
+  MUL: MULInstruction<WORD_SIZE>,
+  SLL: SLLInstruction<WORD_SIZE>,
+  SRL: SRLInstruction<WORD_SIZE>,
   AND: ANDInstruction<WORD_SIZE>,
   OR: ORInstruction<WORD_SIZE>,
   XOR: XORInstruction<WORD_SIZE>,
@@ -101,7 +106,15 @@ subtable_enum!(
   OR: OrSubtable<F>,
   XOR: XorSubtable<F>,
   IDENTITY: IdentitySubtable<F>,
-  IS_POS: IsPosSubtable<F>
+  IS_POS: IsPosSubtable<F>,
+  SLL0: SllSubtable<F, 0, WORD_SIZE>,
+  SLL1: SllSubtable<F, 1, WORD_SIZE>,
+  SLL2: SllSubtable<F, 2, WORD_SIZE>,
+  SLL3: SllSubtable<F, 3, WORD_SIZE>,
+  SRL0: SrlSubtable<F, 0, WORD_SIZE>,
+  SRL1: SrlSubtable<F, 1, WORD_SIZE>,
+  SRL2: SrlSubtable<F, 2, WORD_SIZE>,
+  SRL3: SrlSubtable<F, 3, WORD_SIZE>
 );
 
 pub type ONNXJoltVM<F, PCS, ProofTranscript> =
