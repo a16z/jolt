@@ -2,16 +2,17 @@ extern crate alloc;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
+use crate::jolt::vm::JoltTraceStep;
+use crate::jolt_onnx::vm::onnx_vm::ONNX;
+use crate::utils::errors::ONNXError;
 use alloc::string::String;
 use alloc::vec::Vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::rv_trace::MemoryLayout;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
+use tracer::ELFInstruction;
 use tract_onnx::prelude::*;
-// use crate::jolt_onnx::vm::onnx_vm::ONNX;
-use crate::utils::errors::ONNXError;
 
 // Define an enum for operation types with explicit numeric values
 // Including all binary and element-wise operations
@@ -202,6 +203,8 @@ impl ComputationalGraph {
     #[cfg(test)]
     /// Print the computational graph
     pub fn print(&self) {
+        use std::collections::HashMap;
+
         println!("Computational Graph:");
         println!("Number of inputs: {}", self.input_count);
         println!("Number of outputs: {}", self.output_count);
@@ -227,22 +230,24 @@ impl ComputationalGraph {
         }
     }
 
-    // pub fn trace(&self) -> Vec<Option<ONNX>> {
-    //     let mut trace = Vec::new();
-    //     for node in &self.nodes {
-    //         let opcode = match node.op_type {
-    //             OperationType::And => Some(ANDInstruction::default().into()),
-    //             OperationType::Or => Some(ORInstruction::default().into()),
-    //             OperationType::Xor => Some(XORInstruction::default().into()),
-    //             OperationType::Input => None,
-    //             _ => {
-    //                 panic!("Unsupported operation type for tracing: {:?}", node.op_type);
-    //             }
-    //         };
-    //         trace.push(opcode);
-    //     }
-    //     trace
-    // }
+    pub fn trace(&self) -> Vec<JoltTraceStep<ONNX>> {
+        let mut trace = Vec::new();
+        for node in &self.nodes {
+            let opcode = match node.op_type {
+                OperationType::And => Some(ANDInstruction::default().into()),
+                OperationType::Or => Some(ORInstruction::default().into()),
+                OperationType::Xor => Some(XORInstruction::default().into()),
+                OperationType::Input => None,
+                _ => {
+                    panic!("Unsupported operation type for tracing: {:?}", node.op_type);
+                }
+            };
+            let mut step = JoltTraceStep::<ONNX>::no_op();
+            step.instruction_lookup = opcode;
+            trace.push(step);
+        }
+        trace
+    }
 }
 
 /// ONNX Parser
@@ -307,6 +312,16 @@ impl JoltONNXDevice {
             panic: false,
             memory_layout: MemoryLayout::new(max_input_size, max_output_size),
         }
+    }
+}
+
+/// Trivial [`TryFrom`] trait implementation for [`ONNX`] to make [`JoltInstructionSet`] trait happy
+impl TryFrom<&ELFInstruction> for ONNX {
+    type Error = &'static str;
+
+    #[rustfmt::skip] // keep matches pretty
+    fn try_from(_: &ELFInstruction) -> Result<Self, Self::Error> {
+        Err("No corresponding ONNX instruction")
     }
 }
 

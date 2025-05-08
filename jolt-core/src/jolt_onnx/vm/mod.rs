@@ -1,11 +1,17 @@
 //! This module provides the main API for the Jolt ONNX zkVM.
 
+use super::trace::onnx::JoltONNXDevice;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::vm::bytecode::BytecodeStuff;
 use crate::jolt::vm::instruction_lookups::{
-    InstructionLookupsPreprocessing, InstructionLookupsProof,
+    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
-use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltTraceStep, ProverDebugInfo};
+use crate::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
+use crate::jolt::vm::timestamp_range_check::TimestampRangeCheckStuff;
+use crate::jolt::vm::{
+    JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep, ProverDebugInfo,
+};
 use crate::jolt::{
     instruction::{
         div::DIVInstruction, divu::DIVUInstruction, mulh::MULHInstruction,
@@ -46,7 +52,7 @@ use std::{
 };
 use strum::EnumCount;
 
-use super::trace::onnx::JoltONNXDevice;
+pub mod onnx_vm;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<
@@ -115,6 +121,7 @@ where
         mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
+        JoltCommitments<PCS, ProofTranscript>,
         JoltONNXDevice,
         Option<ProverDebugInfo<F, ProofTranscript>>,
     ) {
@@ -140,6 +147,18 @@ where
         jolt_polynomials.instruction_lookups = instruction_polynomials;
 
         // TODO: Send commitment to jolt polynomials
+        let jolt_commitments = commit_jolt_polys::<C, F, PCS, ProofTranscript>(
+            &jolt_polynomials,
+            &preprocessing.shared,
+        );
+        jolt_commitments
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        jolt_commitments
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
 
         // TODO: Bytecode proof
 
@@ -160,6 +179,8 @@ where
             instruction_lookups: instruction_proof,
         };
 
+        // TODO: Batch prove openings
+
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {
             transcript,
@@ -167,13 +188,13 @@ where
         });
         #[cfg(not(test))]
         let debug_info = None;
-        (jolt_proof, program_io, debug_info)
+        (jolt_proof, jolt_commitments, program_io, debug_info)
     }
 
     #[tracing::instrument(skip_all)]
     fn verify(
+        self,
         mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        proof: JoltProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
         commitments: JoltCommitments<PCS, ProofTranscript>,
         _program_io: JoltONNXDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
@@ -181,23 +202,28 @@ where
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: VerifierOpeningAccumulator<F, PCS, ProofTranscript> =
             VerifierOpeningAccumulator::new();
-
         #[cfg(test)]
         if let Some(debug_info) = _debug_info {
             transcript.compare_to(debug_info.transcript);
             opening_accumulator
                 .compare_to(debug_info.opening_accumulator, &preprocessing.generators);
         }
-
+        commitments
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        commitments
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             &preprocessing.generators,
-            proof.instruction_lookups,
+            self.instruction_lookups,
             &commitments,
             &mut opening_accumulator,
             &mut transcript,
         )?;
-
         Ok(())
     }
 
@@ -244,60 +270,80 @@ where
 }
 
 // TODO: Remove this when we have a proper implementation
-// pub fn commit_jolt_polys<const C: usize, F, PCS, ProofTranscript>(
-//     jolt_polynomials: &JoltPolynomials<F>,
-//     preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-// ) -> JoltCommitments<PCS, ProofTranscript>
-// where
-//     F: JoltField,
-//     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//     ProofTranscript: Transcript,
-// {
-//     let span = tracing::span!(tracing::Level::INFO, "commit::initialize");
-//     let _guard = span.enter();
-//     let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
-//     drop(_guard);
-//     drop(span);
+pub fn commit_jolt_polys<const C: usize, F, PCS, ProofTranscript>(
+    jolt_polynomials: &JoltPolynomials<F>,
+    preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+) -> JoltCommitments<PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    let span = tracing::span!(tracing::Level::INFO, "commit::initialize");
+    let _guard = span.enter();
+    let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize_onnx(preprocessing);
+    drop(_guard);
+    drop(span);
 
-//     let trace_polys = jolt_polynomials.read_write_values();
-//     let trace_commitments = PCS::batch_commit(&trace_polys, &preprocessing.generators);
+    // let trace_polys = jolt_polynomials.read_write_values();
+    // let trace_commitments = PCS::batch_commit(&trace_polys, &preprocessing.generators);
 
-//     commitments
-//         .read_write_values_mut()
-//         .into_iter()
-//         .zip(trace_commitments.into_iter())
-//         .for_each(|(dest, src)| *dest = src);
+    // commitments
+    //     .read_write_values_mut()
+    //     .into_iter()
+    //     .zip(trace_commitments)
+    //     .for_each(|(dest, src)| *dest = src);
 
-//     let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
-//     let _guard = span.enter();
-//     commitments.bytecode.t_final = PCS::commit(
-//         &jolt_polynomials.bytecode.t_final,
-//         &preprocessing.generators,
-//     );
-//     drop(_guard);
-//     drop(span);
+    // let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
+    // let _guard = span.enter();
+    // commitments.bytecode.t_final = PCS::commit(
+    //     &jolt_polynomials.bytecode.t_final,
+    //     &preprocessing.generators,
+    // );
+    // drop(_guard);
+    // drop(span);
 
-//     let span = tracing::span!(tracing::Level::INFO, "commit::read_write_memory");
-//     let _guard = span.enter();
-//     (
-//         commitments.read_write_memory.v_final,
-//         commitments.read_write_memory.t_final,
-//     ) = join_conditional!(
-//         || PCS::commit(
-//             &jolt_polynomials.read_write_memory.v_final,
-//             &preprocessing.generators
-//         ),
-//         || PCS::commit(
-//             &jolt_polynomials.read_write_memory.t_final,
-//             &preprocessing.generators
-//         )
-//     );
-//     commitments.instruction_lookups.final_cts = PCS::batch_commit(
-//         &jolt_polynomials.instruction_lookups.final_cts,
-//         &preprocessing.generators,
-//     );
-//     drop(_guard);
-//     drop(span);
+    let span = tracing::span!(tracing::Level::INFO, "commit::read_write_memory");
+    let _guard = span.enter();
+    // (
+    //     commitments.read_write_memory.v_final,
+    //     commitments.read_write_memory.t_final,
+    // ) = join_conditional!(
+    //     || PCS::commit(
+    //         &jolt_polynomials.read_write_memory.v_final,
+    //         &preprocessing.generators
+    //     ),
+    //     || PCS::commit(
+    //         &jolt_polynomials.read_write_memory.t_final,
+    //         &preprocessing.generators
+    //     )
+    // );
+    commitments.instruction_lookups.final_cts = PCS::batch_commit(
+        &jolt_polynomials.instruction_lookups.final_cts,
+        &preprocessing.generators,
+    );
+    drop(_guard);
+    drop(span);
 
-//     commitments
-// }
+    commitments
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default + Sync> JoltStuff<T> {
+    fn initialize_onnx<const C: usize, PCS, ProofTranscript>(
+        preprocessing: &JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>,
+    ) -> Self
+    where
+        PCS: CommitmentScheme<ProofTranscript>,
+        ProofTranscript: Transcript,
+    {
+        Self {
+            bytecode: BytecodeStuff::default(),
+            read_write_memory: ReadWriteMemoryStuff::default(),
+            instruction_lookups: InstructionLookupStuff::initialize(
+                &preprocessing.instruction_lookups,
+            ),
+            timestamp_range_check: TimestampRangeCheckStuff::default(),
+            r1cs: R1CSStuff::initialize(&C),
+        }
+    }
+}

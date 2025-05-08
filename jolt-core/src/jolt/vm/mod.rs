@@ -152,7 +152,7 @@ where
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
-    fn no_op() -> Self {
+    pub fn no_op() -> Self {
         JoltTraceStep {
             instruction_lookup: None,
             bytecode_row: BytecodeRow::no_op(0),
