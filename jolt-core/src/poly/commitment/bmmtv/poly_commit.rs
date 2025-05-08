@@ -199,12 +199,6 @@ where
         (sqrt / skew_factor - 1, sqrt * skew_factor - 1)
     }
 
-    fn parse_bivariate_degrees_from_srs(srs: &KZGProverKey<P>) -> (usize, usize) {
-        let x_degree = (srs.g2_powers().len() - 1) / 2;
-        let y_degree = srs.len() - 1;
-        (x_degree, y_degree)
-    }
-
     fn bivariate_form(
         bivariate_degrees: (usize, usize),
         polynomial: &UnivariatePolynomial<P::ScalarField>,
