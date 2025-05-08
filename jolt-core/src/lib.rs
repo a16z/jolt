@@ -17,6 +17,7 @@ pub mod host;
 
 pub mod field;
 pub mod jolt;
+pub mod jolt_onnx;
 pub mod lasso;
 pub mod msm;
 pub mod poly;

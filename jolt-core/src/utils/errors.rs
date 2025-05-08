@@ -19,3 +19,19 @@ pub enum ProofVerifyError {
     #[error("Invalid key length: {0}, expected power of 2")]
     InvalidKeyLength(usize),
 }
+
+#[derive(Error, Debug)]
+pub enum ONNXError {
+    #[error("Invalid ONNX model: {0}")]
+    InvalidModel(String),
+    #[error("Invalid ONNX node: {0}")]
+    InvalidNode(String),
+    #[error("Invalid ONNX input: {0}")]
+    InvalidInput(String),
+    #[error("Invalid ONNX output: {0}")]
+    InvalidOutput(String),
+    #[error("Invalid ONNX attribute: {0}")]
+    InvalidAttribute(String),
+    #[error("Invalid ONNX type: {0}")]
+    InvalidType(String),
+}
