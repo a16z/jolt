@@ -227,7 +227,7 @@ impl ComputationalGraph {
         // Print node count by type
         println!("\nOperation types:");
         for (op_type, count) in op_counts {
-            println!("  {:?}: {} nodes", op_type, count);
+            println!("  {op_type:?}: {count} nodes");
         }
 
         // Print node details
@@ -238,7 +238,7 @@ impl ComputationalGraph {
         }
     }
 
-    // TODO: Implement a proper execution trace
+    // TODO: Implement a proper execution trace (Trace is dependent on inputs, here it is independent)
 
     pub fn trace(&self) -> Vec<JoltTraceStep<ONNX>> {
         let mut trace = Vec::new();
