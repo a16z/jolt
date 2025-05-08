@@ -1,18 +1,4 @@
 use crate::field::JoltField;
-use crate::jolt::instruction::virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction;
-use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
-use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
-use crate::jolt::instruction::virtual_move::MOVEInstruction;
-use crate::jolt::instruction::virtual_pow2::POW2Instruction;
-use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInstruction;
-use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
-use crate::jolt::subtable::low_bit::LowBitSubtable;
-use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
-use crate::poly::commitment::hyperkzg::HyperKZG;
-use crate::r1cs::constraints::JoltRV32IMConstraints;
-use crate::r1cs::inputs::JoltR1CSInputs;
-use ark_bn254::{Bn254, Fr};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -20,25 +6,14 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::{JoltCommitments, JoltProof};
+use super::JoltProof;
 use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
-    mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
-    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
-    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
-    virtual_movsign::MOVSIGNInstruction, xor::XORInstruction, JoltInstruction, JoltInstructionSet,
-    SubtableIndices,
+    and::ANDInstruction, or::ORInstruction, xor::XORInstruction, JoltInstruction,
+    JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
-    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
-    left_is_zero::LeftIsZeroSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
-    ltu::LtuSubtable, or::OrSubtable, right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable,
-    sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
+    and::AndSubtable, or::OrSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable, SubtableId,
 };
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
 // TODO: Remove these duplicated macros. Original definitions are in jolt-core/src/jolt/vm/rv32i_vm.rs
 
