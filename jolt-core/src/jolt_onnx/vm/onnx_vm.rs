@@ -99,7 +99,7 @@ subtable_enum!(
   XOR: XorSubtable<F>
 );
 
-type ONNXJoltVM<F, PCS, ProofTranscript> =
+pub type ONNXJoltVM<F, PCS, ProofTranscript> =
     JoltProof<C_ONNX, M_ONNX, F, PCS, ONNX, ONNXSubtables<F>, ProofTranscript>;
 
 #[cfg(test)]

@@ -154,3 +154,7 @@ icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", featur
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+
+[[example]]
+name = "bitwise"
+path = "examples/zkml/bitwise/main.rs"

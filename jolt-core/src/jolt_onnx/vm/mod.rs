@@ -54,7 +54,7 @@ where
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn verifier_preprocess(
+    pub fn verifier_preprocess(
         max_trace_length: usize,
     ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         let instruction_lookups_preprocessing =
@@ -71,7 +71,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn prover_preprocess(
+    pub fn prover_preprocess(
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
         let small_value_lookup_tables = F::compute_lookup_tables();
@@ -84,7 +84,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
-    fn prove(
+    pub fn prove(
         program_io: JoltONNXDevice,
         mut trace: Vec<JoltTraceStep<InstructionSet>>,
         mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
@@ -161,7 +161,7 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn verify(
+    pub fn verify(
         self,
         mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         commitments: JoltCommitments<PCS, ProofTranscript>,

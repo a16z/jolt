@@ -5,5 +5,5 @@
 
 pub mod instruction;
 pub mod subtable;
-mod trace;
+pub mod trace;
 pub mod vm;
