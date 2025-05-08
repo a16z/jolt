@@ -45,6 +45,7 @@ impl JoltInstruction for ReLUInstruction {
         chunk_operand_usize(self.0, C, log_M)
     }
 
+    // TODO: make sure it works with u32
     fn lookup_entry(&self) -> u64 {
         // check if msb is 1
         if self.0 & (1 << 63) != 0 {
