@@ -1,3 +1,10 @@
+//! Cycle tracking utility for emulated riscv cycles (both virtual and real)
+//! Important for usage: often enough the rust compiler will optimize away
+//! computations / other instructions when trying to profile cycles.
+//! This will result in inaccurate measurements.
+//! The easiest solution is to use the hint Module (https://doc.rust-lang.org/core/hint/index.html),
+//! `black_box()` in particular can be used to prevent the compiler from moving your code.
+
 // Constants to signal the emulator
 pub const JOLT_CYCLE_TRACK_ECALL_NUM: i32 = 0xC7C1E; // "C Y C L E"
 pub const JOLT_CYCLE_MARKER_START: i32 = 1;

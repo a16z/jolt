@@ -347,7 +347,7 @@ impl Cpu {
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
-            self.executed_instrs = self.executed_instrs.wrapping_add(1);
+            self.executed_instrs += 1;
         }
         self.x[0] = 0; // hardwired zero
 
@@ -1446,6 +1446,16 @@ impl Cpu {
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_c_string(ptr)?; // guest NUL-string
+
+                // Check if there's already an active marker with the same label
+                let duplicate = self
+                    .active_markers
+                    .values()
+                    .any(|marker| marker.label == label);
+                if duplicate {
+                    println!("Warning: Marker with label '{}' is already active", &label);
+                }
+
                 self.active_markers.insert(
                     ptr,
                     ActiveMarker {
@@ -1464,9 +1474,16 @@ impl Cpu {
                         "\"{}\": {} RV32IM cycles, {} virtual cycles",
                         mark.label, real, virt
                     );
+                } else {
+                    println!(
+                        "Warning: Attempt to end a marker (ptr: 0x{:x}) that was never started",
+                        ptr
+                    );
                 }
             }
-            _ => { /* ignore other opcodes */ }
+            _ => {
+                panic!("Unexpected event: event must match either start or end marker.")
+            }
         }
         Ok(())
     }
@@ -1480,9 +1497,26 @@ impl Cpu {
                 break;
             }
             bytes.push(b);
-            addr = addr.wrapping_add(1);
+            addr += 1;
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+impl Drop for Cpu {
+    fn drop(&mut self) {
+        if !self.active_markers.is_empty() {
+            println!(
+                "Warning: Found {} unclosed cycle tracking marker(s):",
+                self.active_markers.len()
+            );
+            for (ptr, marker) in &self.active_markers {
+                println!(
+                    "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
+                    marker.label, ptr, marker.start_instrs
+                );
+            }
+        }
     }
 }
 
