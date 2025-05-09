@@ -185,6 +185,7 @@ impl Program {
                 _ => vec![instr],
             })
             .collect();
+
         (instructions, raw_bytes)
     }
 
