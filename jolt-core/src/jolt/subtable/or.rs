@@ -52,20 +52,12 @@ impl<F: JoltField> LassoSubtable<F> for OrSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use binius_field::BinaryField128bPolyval;
 
     use crate::{
-        field::binius::BiniusField,
         field::JoltField,
         jolt::subtable::{or::OrSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
     subtable_materialize_mle_parity_test!(or_ark_materialize_mle_parity, OrSubtable<Fr>, Fr, 256);
-    subtable_materialize_mle_parity_test!(
-        or_binius_materialize_mle_parity,
-        OrSubtable<BiniusField<BinaryField128bPolyval>>,
-        BiniusField<BinaryField128bPolyval>,
-        1 << 16
-    );
 }

@@ -50,10 +50,8 @@ impl<F: JoltField> LassoSubtable<F> for DivByZeroSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use binius_field::BinaryField128b;
 
     use crate::{
-        field::binius::BiniusField,
         field::JoltField,
         jolt::subtable::{div_by_zero::DivByZeroSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
@@ -64,11 +62,5 @@ mod test {
         DivByZeroSubtable<Fr>,
         Fr,
         256
-    );
-    subtable_materialize_mle_parity_test!(
-        div_by_zero_binius_materialize_mle_parity,
-        DivByZeroSubtable<BiniusField<BinaryField128b>>,
-        BiniusField<BinaryField128b>,
-        1 << 16
     );
 }

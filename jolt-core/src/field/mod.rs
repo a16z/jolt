@@ -79,6 +79,10 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+    #[inline(always)]
+    fn mul_i128(&self, n: i128) -> Self {
+        *self * Self::from_i128(n)
+    }
 }
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {
@@ -122,4 +126,3 @@ where
 }
 
 pub mod ark;
-pub mod binius;

@@ -226,7 +226,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -285,7 +285,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ark-ff-asm 0.5.0",
  "ark-ff-macros 0.5.0",
@@ -325,7 +325,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "quote",
  "syn 2.0.101",
@@ -359,7 +359,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -371,7 +371,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
@@ -430,7 +430,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#c4a6537c19254ffab307c674602df22adb1f7d46"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -563,51 +563,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "binius_field"
-version = "0.2.0"
-source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
-dependencies = [
- "binius_maybe_rayon",
- "binius_utils",
- "bytemuck",
- "cfg-if",
- "derive_more",
- "rand 0.8.5",
- "seq-macro",
- "subtle",
- "thiserror 2.0.12",
- "tracing",
- "trait-set",
- "transpose",
-]
-
-[[package]]
-name = "binius_maybe_rayon"
-version = "0.2.0"
-source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
-dependencies = [
- "cfg-if",
- "either",
- "itertools 0.14.0",
-]
-
-[[package]]
-name = "binius_utils"
-version = "0.2.0"
-source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
-dependencies = [
- "auto_impl",
- "binius_maybe_rayon",
- "bytemuck",
- "bytes",
- "cfg-if",
- "generic-array",
- "itertools 0.14.0",
- "thiserror 2.0.12",
- "thread_local",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -666,20 +621,6 @@ name = "bytemuck"
 version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9134a6ef01ce4b366b50689c94f82c14bc72bc5d0386829828a2e2752ef7958c"
-dependencies = [
- "bytemuck_derive",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ecc273b49b3205b83d648f0690daa588925572cc5063745bfe547fe7ec8e1a1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
-]
 
 [[package]]
 name = "byteorder"
@@ -2006,15 +1947,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2051,7 +1983,6 @@ dependencies = [
  "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
  "bincode",
- "binius_field",
  "bytemuck",
  "clap",
  "common",
@@ -3335,12 +3266,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "seq-macro"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
-
-[[package]]
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3569,12 +3494,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
 ]
-
-[[package]]
-name = "strength_reduce"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "strsim"
@@ -3986,27 +3905,6 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "trait-set"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b79e2e9c9ab44c6d7c20d5976961b47e8f49ac199154daa514b77cd1ab536625"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "transpose"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
-dependencies = [
- "num-integer",
- "strength_reduce",
 ]
 
 [[package]]

@@ -27,8 +27,6 @@
         - [Batched Polynomial Openings](./background/batched-openings.md)
         - [Memory Checking](./background/memory-checking.md)
         - [GKR](./background/gkr.md)
-        - [Binius](./background/binius.md)
-            - [Multiplicative Generator](./background/binius/multiplicative-generator.md)
         - [RISC-V](./background/risc-v.md)
     - [Dev](./dev/README.md)
         - [Install](./dev/install.md)

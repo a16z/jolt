@@ -314,9 +314,9 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     let cz_eval_3 = cz_eval_2 + m_cz;
 
                     // TODO(moodlezoup): optimize
-                    inner_sums.0 += E1_evals.0 * F::from_i128(az.0 * bz.0 - cz.0);
-                    inner_sums.1 += E1_evals.1 * F::from_i128(az_eval_2 * bz_eval_2 - cz_eval_2);
-                    inner_sums.2 += E1_evals.2 * F::from_i128(az_eval_3 * bz_eval_3 - cz_eval_3);
+                    inner_sums.0 += E1_evals.0.mul_i128(az.0 * bz.0 - cz.0);
+                    inner_sums.1 += E1_evals.1.mul_i128(az_eval_2 * bz_eval_2 - cz_eval_2);
+                    inner_sums.2 += E1_evals.2.mul_i128(az_eval_3 * bz_eval_3 - cz_eval_3);
                 }
 
                 eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
@@ -401,7 +401,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let (low, high) = (az_coeff.0.unwrap_or(0), az_coeff.1.unwrap_or(0));
                         output_slice[output_index] = (
                             3 * block_index,
-                            F::from_i128(low) + r_i * F::from_i128(high - low),
+                            F::from_i128(low) + r_i.mul_i128(high - low),
                         )
                             .into();
                         output_index += 1;
@@ -410,7 +410,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let (low, high) = (bz_coeff.0.unwrap_or(0), bz_coeff.1.unwrap_or(0));
                         output_slice[output_index] = (
                             3 * block_index + 1,
-                            F::from_i128(low) + r_i * F::from_i128(high - low),
+                            F::from_i128(low) + r_i.mul_i128(high - low),
                         )
                             .into();
                         output_index += 1;
@@ -419,7 +419,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         let (low, high) = (cz_coeff.0.unwrap_or(0), cz_coeff.1.unwrap_or(0));
                         output_slice[output_index] = (
                             3 * block_index + 2,
-                            F::from_i128(low) + r_i * F::from_i128(high - low),
+                            F::from_i128(low) + r_i.mul_i128(high - low),
                         )
                             .into();
                         output_index += 1;

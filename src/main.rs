@@ -14,7 +14,7 @@ use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = version(), about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -36,6 +36,17 @@ enum Command {
     UninstallToolchain,
     /// Handles preprocessing and generates WASM compatible files
     BuildWasm,
+}
+
+fn version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("GIT_SHORT_HASH"),
+        " ",
+        env!("GIT_DATE"),
+        ")"
+    )
 }
 
 fn main() {

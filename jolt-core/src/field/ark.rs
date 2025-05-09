@@ -9,26 +9,24 @@ impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
-static mut SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 4] = [vec![], vec![], vec![], vec![]];
+static mut SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = [vec![], vec![]];
 
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
-    type SmallValueLookupTables = [Vec<Self>; 4];
+    type SmallValueLookupTables = [Vec<Self>; 2];
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
     }
 
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
-        // These four lookup tables correspond to the four 16-bit limbs of a u64
+        // These two lookup tables correspond to the two 16-bit limbs of a u64
         let mut lookup_tables = [
-            unsafe_allocate_zero_vec(1 << 16),
-            unsafe_allocate_zero_vec(1 << 16),
             unsafe_allocate_zero_vec(1 << 16),
             unsafe_allocate_zero_vec(1 << 16),
         ];
 
-        for i in 0..4 {
+        for i in 0..2 {
             let bitshift = 16 * i;
             let unit = <Self as ark_ff::PrimeField>::from_u64(1 << bitshift).unwrap();
             lookup_tables[i] = (0..(1 << 16))
@@ -91,20 +89,14 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u64(n: u64) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
+        // The new `from_u64` is faster than doing 4 lookups & adding them together
+        // but it's slower than doing <=2 lookups & adding them together (if n fits in u16 or u32)
+        if n <= u16::MAX as u64 {
+            <Self as JoltField>::from_u16(n as u16)
+        } else if n <= u32::MAX as u64 {
+            <Self as JoltField>::from_u32(n as u32)
+        } else {
             <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            const BITMASK: u64 = (1 << 16) - 1;
-            unsafe {
-                SMALL_VALUE_LOOKUP_TABLES[0][(n & BITMASK) as usize]
-                    + SMALL_VALUE_LOOKUP_TABLES[1][((n >> 16) & BITMASK) as usize]
-                    + SMALL_VALUE_LOOKUP_TABLES[2][((n >> 32) & BITMASK) as usize]
-                    + SMALL_VALUE_LOOKUP_TABLES[3][((n >> 48) & BITMASK) as usize]
-            }
         }
     }
 
@@ -190,6 +182,11 @@ impl JoltField for ark_bn254::Fr {
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
         ark_ff::Fp::mul_u64(*self, n)
+    }
+
+    #[inline(always)]
+    fn mul_i128(&self, n: i128) -> Self {
+        ark_ff::Fp::mul_i128(*self, n)
     }
 }
 

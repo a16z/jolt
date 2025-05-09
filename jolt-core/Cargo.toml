@@ -47,7 +47,6 @@ ark-serialize = { version = "0.5.0", default-features = false, features = [
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 
 ark-std = { version = "0.5.0" }
-binius-field = { git = "https://gitlab.com/IrreducibleOSS/binius", package = "binius_field" }
 clap = { version = "4.3.10", features = ["derive"] }
 enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
