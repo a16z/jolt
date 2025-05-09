@@ -107,6 +107,10 @@ impl<F: JoltField> UniPoly<F> {
         self.coeffs.len() - 1
     }
 
+    pub fn len(&self) -> usize {
+        self.coeffs.len()
+    }
+
     pub fn as_vec(&self) -> Vec<F> {
         self.coeffs.clone()
     }

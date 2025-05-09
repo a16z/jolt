@@ -108,7 +108,7 @@ pub struct MippK<P, Transcript> {
 }
 
 /// Proof of [`MippK`]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct MippKProof<P>
 where
     P: Pairing,
