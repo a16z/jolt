@@ -39,8 +39,10 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             // Need to handle u64::MAX in a special case because of overflow
             let truncate_mask = if WORD_SIZE - suffix_length >= 64 {
                 u64::MAX
+            } else if WORD_SIZE <= suffix_length {
+                0 // If WORD_SIZE is less than or equal to suffix_length, the mask should be 0
             } else {
-                (1 << (WORD_SIZE - suffix_length)) - 1
+                (1u64 << (WORD_SIZE - suffix_length)) - 1
             };
 
             let row = (x as u64).checked_shl((y % WORD_SIZE) as u32).unwrap_or(0) & truncate_mask;
