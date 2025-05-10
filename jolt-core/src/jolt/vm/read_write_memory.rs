@@ -6,6 +6,7 @@ use crate::lasso::memory_checking::{
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::subprotocols::grand_product::BatchedDenseGrandProduct;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use rayon::prelude::*;
 #[cfg(test)]
@@ -501,12 +502,15 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
+
     type Polynomials = ReadWriteMemoryPolynomials<F>;
     type Openings = ReadWriteMemoryOpenings<F>;
     type Commitments = ReadWriteMemoryCommitments<PCS, ProofTranscript>;
-    type Preprocessing = ReadWriteMemoryPreprocessing;
-
     type ExogenousOpenings = RegisterAddressOpenings<F>;
+
+    type Preprocessing = ReadWriteMemoryPreprocessing;
 
     // (a, v, t)
     type MemoryTuple = (F, F, F);

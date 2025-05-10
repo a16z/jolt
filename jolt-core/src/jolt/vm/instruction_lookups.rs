@@ -3,7 +3,7 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::subprotocols::grand_product::BatchedGrandProduct;
+use crate::subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct};
 use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -167,10 +167,12 @@ where
     ProofTranscript: Transcript,
 {
     type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
 
     type Polynomials = InstructionLookupPolynomials<F>;
     type Openings = InstructionLookupOpenings<F>;
     type Commitments = InstructionLookupCommitments<PCS, ProofTranscript>;
+    type ExogenousOpenings = NoExogenousOpenings;
 
     type Preprocessing = InstructionLookupsPreprocessing<C, F>;
 
