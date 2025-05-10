@@ -1,6 +1,5 @@
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::{prelude::*, PrimeField};
-use ark_std::cmp::Ordering;
 use ark_std::vec::Vec;
 #[cfg(feature = "icicle")]
 use icicle_core::curve::Affine;
@@ -8,8 +7,8 @@ use num_integer::Integer;
 use rayon::prelude::*;
 use std::borrow::Borrow;
 
-pub(crate) mod icicle;
-pub(crate) mod arkmsm;
+pub mod icicle;
+pub mod arkmsm;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -126,6 +125,7 @@ where
             .then(|| {
                 let max_num_bits =
                     max_num_bits.unwrap_or((*scalars.iter().max().unwrap()).num_bits() as usize);
+                
                 match max_num_bits {
                     0 => Self::zero(),
                     1 => scalars
@@ -152,10 +152,10 @@ where
                                 .collect::<Vec<_>>();
                             
                             // Use our arkmsm optimized implementation
-                            return arkmsm_msm::<Self::ScalarField, Self>(bases, &scalars, max_num_bits);
+                            arkmsm_msm::<Self::ScalarField, Self>(bases, &scalars, max_num_bits)
                         } 
                         
-                        if use_icicle {
+                        else if use_icicle {
                             #[cfg(feature = "icicle")]
                             {
                                 let mut backup = vec![];
@@ -163,7 +163,7 @@ where
                                     backup = Self::get_gpu_bases(bases);
                                     &backup
                                 });
-                                return icicle_msm::<Self>(gpu_bases, scalars, max_num_bits);
+                                icicle_msm::<Self>(gpu_bases, scalars, max_num_bits)
                             }
                             #[cfg(not(feature = "icicle"))]
                             {
@@ -173,14 +173,16 @@ where
                             }
                         }
 
-                        let scalars = scalars
-                            .par_iter()
-                            .map(|s| s.into_bigint())
-                            .collect::<Vec<_>>();
-                        if Self::NEGATION_IS_CHEAP {
-                            msm_bigint_wnaf(bases, &scalars, max_num_bits)
-                        } else {
-                            msm_bigint(bases, &scalars, max_num_bits)
+                        else {
+                            let scalars = scalars
+                                .par_iter()
+                                .map(|s| s.into_bigint())
+                                .collect::<Vec<_>>();
+                            if Self::NEGATION_IS_CHEAP {
+                                msm_bigint_wnaf(bases, &scalars, max_num_bits)
+                            } else {
+                                msm_bigint(bases, &scalars, max_num_bits)
+                            }
                         }
                     }
                 }
@@ -587,7 +589,7 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
                 let limbs: &[u64] = s.as_ref();
                 limbs[0] as u16
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
         return msm_small(bases, &scalars_u16, max_bits);
     }
 
@@ -596,7 +598,7 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
 
     // Actually the wnaf means all scalars are guaranteed to use the same bits
     for m in 0..=max_bits {
-        let mut running_sum = V::zero();
+            let mut running_sum = V::zero();
         for (s, g) in scalars.iter().zip(bases.iter()) {
             if s.get_bit(m) {
                 running_sum += g;
@@ -607,7 +609,7 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
 
     // Compute the actual window size based on the bit length
     let window_size = std::cmp::min(c, ln_without_floats(max_bits));
-    
+
     // Use the signed bucket indexes optimization from arkmsm
     let bucket_max = (1 << window_size) / 2;
     let w = window_size as usize;
@@ -615,7 +617,7 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
         .par_iter()
         .map(|s| {
             let mut digits = Vec::with_capacity((max_bits + w - 1) / w);
-            
+
             // Process each window
             for i in 0..((max_bits + w - 1) / w) {
                 let mut digit = 0i64;
@@ -673,7 +675,8 @@ fn msm_bigint_wnaf<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F
 }
 
 /// Optimized implementation of multi-scalar multiplication.
-fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
+#[tracing::instrument(skip_all)]
+pub fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
     bases: &[V::MulBase],
     scalars: &[<F as PrimeField>::BigInt],
     max_num_bits: usize,
@@ -690,7 +693,7 @@ fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
         ln_without_floats(scalars.len()) + 2
     };
 
-    let num_bits = max_num_bits;
+    let _num_bits = max_num_bits;
     let mut max_bits = 0usize;
     for s in scalars {
         max_bits = std::cmp::max(max_bits, s.num_bits() as usize);
@@ -710,7 +713,7 @@ fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
 
     let window_size = c;
     let bucket_max = 1 << window_size;
-    
+
     // Compute the scalar digits for all scalars
     let num_windows = (max_bits + window_size - 1) / window_size;
     let scalar_digits = scalars
@@ -735,16 +738,16 @@ fn msm_bigint<F: JoltField + PrimeField, V: VariableBaseMSM<ScalarField = F>>(
             digits
         })
         .collect::<Vec<_>>();
-    
+
     let mut result = V::zero();
-    
+
     // Process windows from highest to lowest
     for w in (0..num_windows).rev() {
         // Double result 'window_size' times for each window except the highest
         if w != num_windows - 1 {
             for _ in 0..window_size {
                 result = result.double();
-            }
+                }
         }
         
         // Batch accumulation optimization: group points by bucket
