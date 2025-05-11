@@ -67,6 +67,7 @@ use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sra::VirtualSRA;
 use virtual_srl::VirtualSRL;
+use virtual_muli::VirtualMULI;
 
 use crate::emulator::cpu::Cpu;
 use derive_more::From;
@@ -134,6 +135,7 @@ pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
 pub mod virtual_srl;
+pub mod virtual_muli;
 pub mod xor;
 pub mod xori;
 
@@ -294,6 +296,7 @@ pub enum RV32IMInstruction {
     AssertValidUnsignedRemainder(VirtualAssertValidUnsignedRemainder),
     Move(VirtualMove),
     Movsign(VirtualMovsign),
+    MULI(VirtualMULI),
     Pow2(VirtualPow2),
     Pow2I(VirtualPow2I),
     ShiftRightBitmask(VirtualShiftRightBitmask),
@@ -556,6 +559,7 @@ impl RV32IMInstruction {
             RV32IMInstruction::ShiftRightBitmaskI(instr) => instr.trace(cpu),
             RV32IMInstruction::VirtualSRA(instr) => instr.trace(cpu),
             RV32IMInstruction::VirtualSRL(instr) => instr.trace(cpu),
+            RV32IMInstruction::MULI(instr) => instr.trace(cpu),
             _ => panic!("Unexpected instruction {:?}", self),
         };
     }
@@ -873,6 +877,11 @@ impl RV32IMInstruction {
                 operands: instr.operands.normalize(),
                 virtual_sequence_remaining: instr.virtual_sequence_remaining,
             },
+            RV32IMInstruction::MULI(instr) => NormalizedInstruction {
+                address: instr.address as usize,
+                operands: instr.operands.normalize(),
+                virtual_sequence_remaining: instr.virtual_sequence_remaining,
+            },
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -962,6 +971,7 @@ pub enum RV32IMCycle {
     AssertValidUnsignedRemainder(RISCVCycle<VirtualAssertValidUnsignedRemainder>),
     Move(RISCVCycle<VirtualMove>),
     Movsign(RISCVCycle<VirtualMovsign>),
+    MULI(RISCVCycle<VirtualMULI>),
     Pow2(RISCVCycle<VirtualPow2>),
     Pow2I(RISCVCycle<VirtualPow2I>),
     ShiftRightBitmask(RISCVCycle<VirtualShiftRightBitmask>),
@@ -1036,6 +1046,7 @@ impl RV32IMCycle {
             RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.ram_access.into(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.ram_access.into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.ram_access.into(),
+            RV32IMCycle::MULI(cycle) => cycle.ram_access.into(),
         }
     }
 
@@ -1290,6 +1301,10 @@ impl RV32IMCycle {
                 cycle.instruction.operands.normalize().rs1,
                 cycle.register_state.rs1_value(),
             ),
+            RV32IMCycle::MULI(cycle) => (
+                cycle.instruction.operands.normalize().rs1,
+                cycle.register_state.rs1_value(),
+            ),
         }
     }
 
@@ -1541,6 +1556,10 @@ impl RV32IMCycle {
                 cycle.register_state.rs2_value(),
             ),
             RV32IMCycle::VirtualSRL(cycle) => (
+                cycle.instruction.operands.normalize().rs2,
+                cycle.register_state.rs2_value(),
+            ),
+            RV32IMCycle::MULI(cycle) => (
                 cycle.instruction.operands.normalize().rs2,
                 cycle.register_state.rs2_value(),
             ),
@@ -1860,6 +1879,11 @@ impl RV32IMCycle {
                 cycle.register_state.rd_values().0,
                 cycle.register_state.rd_values().1,
             ),
+            RV32IMCycle::MULI(cycle) => (
+                cycle.instruction.operands.normalize().rd,
+                cycle.register_state.rd_values().0,
+                cycle.register_state.rd_values().1,
+            ),
         }
     }
 
@@ -1928,6 +1952,7 @@ impl RV32IMCycle {
             RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.instruction.into(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.instruction.into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.instruction.into(),
+            RV32IMCycle::MULI(cycle) => cycle.instruction.into(),
         }
     }
 }

@@ -1,12 +1,12 @@
-use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::{
+    emulator::cpu::{Cpu, Xlen},
+    instruction::virtual_muli::VirtualMULI,
+};
 
 use super::{
-    format::{format_i::FormatI, format_j::FormatJ, format_r::FormatR, InstructionFormat},
-    mul::MUL,
-    virtual_pow2i::VirtualPow2I,
+    format::{format_i::FormatI, InstructionFormat},
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
@@ -66,29 +66,15 @@ impl RISCVTrace for SLLI {
 
 impl VirtualInstructionSequence for SLLI {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_pow2 = virtual_register_index(6) as usize;
-
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
+        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
 
-        let pow2 = RV32IMInstruction::Pow2I(VirtualPow2I {
+        let mul = RV32IMInstruction::MULI(VirtualMULI {
             address: self.address,
-            operands: FormatJ {
-                rd: v_pow2,
-                imm: self.operands.imm,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        });
-        sequence.push(pow2);
-        virtual_sequence_remaining -= 1;
-
-        let mul = RV32IMInstruction::MUL(MUL {
-            address: self.address,
-            operands: FormatR {
+            operands: FormatI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                rs2: v_pow2,
+                imm: (1 << ((self.operands.imm as u64) % 32)),
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         });

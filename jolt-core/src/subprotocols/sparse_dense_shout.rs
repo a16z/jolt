@@ -762,6 +762,7 @@ mod tests {
             RV32IMCycle::AssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
             RV32IMCycle::Move(cycle) => cycle.random(rng).into(),
             RV32IMCycle::Movsign(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::MULI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::Pow2(cycle) => cycle.random(rng).into(),
             RV32IMCycle::Pow2I(cycle) => cycle.random(rng).into(),
             RV32IMCycle::ShiftRightBitmask(cycle) => cycle.random(rng).into(),
@@ -998,6 +999,11 @@ mod tests {
     #[test]
     fn test_movsign() {
         test_sparse_dense_shout(Some(RV32IMCycle::Movsign(Default::default())));
+    }
+    
+    #[test]
+    fn test_muli() {
+        test_sparse_dense_shout(Some(RV32IMCycle::MULI(Default::default())));
     }
 
     #[test]

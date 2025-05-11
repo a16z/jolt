@@ -95,7 +95,7 @@ impl VirtualInstructionSequence for LHU {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm,
             },
-            virtual_sequence_remaining: Some(10),
+            virtual_sequence_remaining: Some(9),
         };
         sequence.push(assert_alignment.into());
 
@@ -106,7 +106,7 @@ impl VirtualInstructionSequence for LHU {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
-            virtual_sequence_remaining: Some(9),
+            virtual_sequence_remaining: Some(8),
         };
         sequence.push(add.into());
 
@@ -117,7 +117,7 @@ impl VirtualInstructionSequence for LHU {
                 rs1: v_address,
                 imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
-            virtual_sequence_remaining: Some(8),
+            virtual_sequence_remaining: Some(7),
         };
         sequence.push(andi.into());
 
@@ -128,7 +128,7 @@ impl VirtualInstructionSequence for LHU {
                 rs1: v_word_address,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(7),
+            virtual_sequence_remaining: Some(6),
         };
         sequence.push(lw.into());
 
@@ -139,7 +139,7 @@ impl VirtualInstructionSequence for LHU {
                 rs1: v_address,
                 imm: 2,
             },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(5),
         };
         sequence.push(xori.into());
 
@@ -150,7 +150,7 @@ impl VirtualInstructionSequence for LHU {
                 rs1: v_shift,
                 imm: 3,
             },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(4),
         };
         sequence.extend(slli.virtual_sequence().into_iter());
 
