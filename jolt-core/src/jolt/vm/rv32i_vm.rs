@@ -14,6 +14,7 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
+use paste::paste;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
@@ -44,12 +45,14 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 /// are callable on the enum type via enum_dispatch.
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[allow(non_camel_case_types)]
-        #[repr(u8)]
-        #[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumCountMacro, Serialize, Deserialize)]
-        #[enum_dispatch(JoltInstruction)]
-        pub enum $enum_name {
-            $($alias($struct)),+
+        paste! {
+            #[allow(non_camel_case_types)]
+            #[repr(u8)]
+            #[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumCountMacro, Serialize, Deserialize)]
+            #[enum_dispatch(JoltInstruction)]
+            pub enum $enum_name {
+                $([<$alias>]($struct)),+
+            }
         }
         impl JoltInstructionSet for $enum_name {}
         impl $enum_name {
@@ -77,11 +80,13 @@ macro_rules! instruction_set {
 /// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[allow(non_camel_case_types)]
-        #[repr(u8)]
-        #[enum_dispatch(LassoSubtable<F>)]
-        #[derive(EnumCountMacro, EnumIter)]
-        pub enum $enum_name<F: JoltField> { $($alias($struct)),+ }
+        paste! {
+            #[allow(non_camel_case_types)]
+            #[repr(u8)]
+            #[enum_dispatch(LassoSubtable<F>)]
+            #[derive(EnumCountMacro, EnumIter)]
+            pub enum $enum_name<F: JoltField> { $([<$alias>]($struct)),+ }
+        }
         impl<F: JoltField> From<SubtableId> for $enum_name<F> {
           fn from(subtable_id: SubtableId) -> Self {
             $(
