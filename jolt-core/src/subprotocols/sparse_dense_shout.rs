@@ -768,7 +768,9 @@ mod tests {
             RV32IMCycle::ShiftRightBitmask(cycle) => cycle.random(rng).into(),
             RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
             _ => RV32IMCycle::NoOp,
         }
     }
@@ -1030,9 +1032,19 @@ mod tests {
     fn test_virtualsra() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRA(Default::default())));
     }
+    
+    #[test]
+    fn test_virtualsrai() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRAI(Default::default())));
+    }
 
     #[test]
     fn test_virtualsrl() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRL(Default::default())));
+    }
+    
+    #[test]
+    fn test_virtualsrli() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRLI(Default::default())));
     }
 }
