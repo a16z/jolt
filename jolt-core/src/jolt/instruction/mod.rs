@@ -128,7 +128,9 @@ impl InstructionLookup<32> for RV32IMInstruction {
             RV32IMInstruction::ShiftRightBitmask(instr) => instr.lookup_table(),
             RV32IMInstruction::ShiftRightBitmaskI(instr) => instr.lookup_table(),
             RV32IMInstruction::VirtualSRA(instr) => instr.lookup_table(),
+            RV32IMInstruction::VirtualSRAI(instr) => instr.lookup_table(),
             RV32IMInstruction::VirtualSRL(instr) => instr.lookup_table(),
+            RV32IMInstruction::VirtualSRLI(instr) => instr.lookup_table(),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -183,7 +185,9 @@ impl InstructionFlags for RV32IMInstruction {
             RV32IMInstruction::ShiftRightBitmask(instr) => instr.circuit_flags(),
             RV32IMInstruction::ShiftRightBitmaskI(instr) => instr.circuit_flags(),
             RV32IMInstruction::VirtualSRA(instr) => instr.circuit_flags(),
+            RV32IMInstruction::VirtualSRAI(instr) => instr.circuit_flags(),
             RV32IMInstruction::VirtualSRL(instr) => instr.circuit_flags(),
+            RV32IMInstruction::VirtualSRLI(instr) => instr.circuit_flags(),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -237,7 +241,9 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::ShiftRightBitmask(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.instruction.lookup_table(),
+            RV32IMCycle::VirtualSRAI(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.instruction.lookup_table(),
+            RV32IMCycle::VirtualSRLI(cycle) => cycle.instruction.lookup_table(),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -307,7 +313,13 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::VirtualSRA(cycle) => {
                 LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
             }
+            RV32IMCycle::VirtualSRAI(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
+            }
             RV32IMCycle::VirtualSRL(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
+            }
+            RV32IMCycle::VirtualSRLI(cycle) => {
                 LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
             }
             _ => panic!("Unexpected instruction {:?}", self),
@@ -373,7 +385,9 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
                 LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
             }
             RV32IMCycle::VirtualSRA(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::VirtualSRAI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::VirtualSRL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::VirtualSRLI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -437,7 +451,9 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
                 LookupQuery::<WORD_SIZE>::to_lookup_output(cycle)
             }
             RV32IMCycle::VirtualSRA(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+            RV32IMCycle::VirtualSRAI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::VirtualSRL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+            RV32IMCycle::VirtualSRLI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -485,7 +501,9 @@ pub mod virtual_pow2i;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
+pub mod virtual_srai;
 pub mod virtual_srl;
+pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
 

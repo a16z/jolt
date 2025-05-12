@@ -1,15 +1,12 @@
-use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::{
+    emulator::cpu::{Cpu, Xlen},
+    instruction::{format::format_virtual_i::FormatVirtualI, virtual_srli::VirtualSRLI},
+};
 
 use super::{
-    format::{
-        format_i::FormatI, format_j::FormatJ, format_virtual_right_shift::FormatVirtualRightShift,
-        InstructionFormat,
-    },
-    virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI,
-    virtual_srl::VirtualSRL,
+    format::{format_i::FormatI, InstructionFormat},
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
@@ -71,29 +68,20 @@ impl RISCVTrace for SRLI {
 
 impl VirtualInstructionSequence for SRLI {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_bitmask = virtual_register_index(6) as usize;
-
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
+        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
 
-        let bitmask = VirtualShiftRightBitmaskI {
-            address: self.address,
-            operands: FormatJ {
-                rd: v_bitmask,
-                imm: self.operands.imm,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        };
-        sequence.push(bitmask.into());
-        virtual_sequence_remaining -= 1;
+        // TODO: this only works for Xlen = 32
+        let shift = self.operands.imm % 32;
+        let ones = (1u64 << (32 - shift)) - 1;
+        let bitmask = ones << shift;
 
-        let srl = VirtualSRL {
+        let srl = VirtualSRLI {
             address: self.address,
-            operands: FormatVirtualRightShift {
+            operands: FormatVirtualI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                rs2: v_bitmask,
+                imm: bitmask,
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
         };

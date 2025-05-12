@@ -74,7 +74,7 @@ impl VirtualInstructionSequence for SLLI {
             operands: FormatI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
-                // HACK: supposed to be % 32 or % 64 for 64-bit mode
+                // TODO: this only works for Xlen = 32
                 imm: (1 << ((self.operands.imm as u64) % 32)),
             },
             virtual_sequence_remaining: Some(virtual_sequence_remaining),
