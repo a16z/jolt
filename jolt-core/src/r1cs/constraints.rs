@@ -1,5 +1,3 @@
-use std::ops::Add;
-
 use crate::{field::JoltField, jolt::instruction::CircuitFlags};
 
 use super::{
