@@ -234,7 +234,11 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::Product => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| cycle.rs1_read().1 * cycle.rs2_read().1)
+                    .map(|cycle| {
+                        let (left_input, right_input) =
+                            LookupQuery::<32>::to_instruction_inputs(cycle);
+                        left_input * right_input as u64
+                    })
                     .collect();
                 coeffs.into()
             }

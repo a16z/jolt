@@ -122,12 +122,15 @@ impl InstructionLookup<32> for RV32IMInstruction {
             RV32IMInstruction::AssertValidUnsignedRemainder(instr) => instr.lookup_table(),
             RV32IMInstruction::Move(instr) => instr.lookup_table(),
             RV32IMInstruction::Movsign(instr) => instr.lookup_table(),
+            RV32IMInstruction::MULI(instr) => instr.lookup_table(),
             RV32IMInstruction::Pow2(instr) => instr.lookup_table(),
             RV32IMInstruction::Pow2I(instr) => instr.lookup_table(),
             RV32IMInstruction::ShiftRightBitmask(instr) => instr.lookup_table(),
             RV32IMInstruction::ShiftRightBitmaskI(instr) => instr.lookup_table(),
             RV32IMInstruction::VirtualSRA(instr) => instr.lookup_table(),
+            RV32IMInstruction::VirtualSRAI(instr) => instr.lookup_table(),
             RV32IMInstruction::VirtualSRL(instr) => instr.lookup_table(),
+            RV32IMInstruction::VirtualSRLI(instr) => instr.lookup_table(),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -176,12 +179,15 @@ impl InstructionFlags for RV32IMInstruction {
             RV32IMInstruction::AssertValidUnsignedRemainder(instr) => instr.circuit_flags(),
             RV32IMInstruction::Move(instr) => instr.circuit_flags(),
             RV32IMInstruction::Movsign(instr) => instr.circuit_flags(),
+            RV32IMInstruction::MULI(instr) => instr.circuit_flags(),
             RV32IMInstruction::Pow2(instr) => instr.circuit_flags(),
             RV32IMInstruction::Pow2I(instr) => instr.circuit_flags(),
             RV32IMInstruction::ShiftRightBitmask(instr) => instr.circuit_flags(),
             RV32IMInstruction::ShiftRightBitmaskI(instr) => instr.circuit_flags(),
             RV32IMInstruction::VirtualSRA(instr) => instr.circuit_flags(),
+            RV32IMInstruction::VirtualSRAI(instr) => instr.circuit_flags(),
             RV32IMInstruction::VirtualSRL(instr) => instr.circuit_flags(),
+            RV32IMInstruction::VirtualSRLI(instr) => instr.circuit_flags(),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -229,12 +235,15 @@ impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::AssertValidUnsignedRemainder(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::Move(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::Movsign(cycle) => cycle.instruction.lookup_table(),
+            RV32IMCycle::MULI(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::Pow2(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::Pow2I(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::ShiftRightBitmask(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.instruction.lookup_table(),
+            RV32IMCycle::VirtualSRAI(cycle) => cycle.instruction.lookup_table(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.instruction.lookup_table(),
+            RV32IMCycle::VirtualSRLI(cycle) => cycle.instruction.lookup_table(),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -290,6 +299,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             }
             RV32IMCycle::Move(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::Movsign(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
+            RV32IMCycle::MULI(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::Pow2(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::Pow2I(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::ShiftRightBitmask(cycle) => {
@@ -301,7 +311,13 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             RV32IMCycle::VirtualSRA(cycle) => {
                 LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
             }
+            RV32IMCycle::VirtualSRAI(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
+            }
             RV32IMCycle::VirtualSRL(cycle) => {
+                LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
+            }
+            RV32IMCycle::VirtualSRLI(cycle) => {
                 LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
             }
             _ => panic!("Unexpected instruction {:?}", self),
@@ -357,6 +373,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             }
             RV32IMCycle::Move(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::Movsign(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::MULI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::Pow2(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::Pow2I(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::ShiftRightBitmask(cycle) => {
@@ -366,7 +383,9 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
                 LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle)
             }
             RV32IMCycle::VirtualSRA(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::VirtualSRAI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             RV32IMCycle::VirtualSRL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+            RV32IMCycle::VirtualSRLI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -420,6 +439,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             }
             RV32IMCycle::Move(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::Movsign(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+            RV32IMCycle::MULI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::Pow2(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::Pow2I(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::ShiftRightBitmask(cycle) => {
@@ -429,7 +449,9 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
                 LookupQuery::<WORD_SIZE>::to_lookup_output(cycle)
             }
             RV32IMCycle::VirtualSRA(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+            RV32IMCycle::VirtualSRAI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             RV32IMCycle::VirtualSRL(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+            RV32IMCycle::VirtualSRLI(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
             _ => panic!("Unexpected instruction {:?}", self),
         }
     }
@@ -471,12 +493,15 @@ pub mod virtual_assert_valid_signed_remainder;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_move;
 pub mod virtual_movsign;
+pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
+pub mod virtual_srai;
 pub mod virtual_srl;
+pub mod virtual_srli;
 pub mod xor;
 pub mod xori;
 
