@@ -10,7 +10,7 @@ use super::{
 };
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatVirtualI {
+pub struct FormatVirtualRightShiftI {
     pub rd: usize,
     pub rs1: usize,
     pub imm: u64,
@@ -39,7 +39,7 @@ impl InstructionRegisterState for RegisterStateFormatVirtualI {
     }
 }
 
-impl InstructionFormat for FormatVirtualI {
+impl InstructionFormat for FormatVirtualRightShiftI {
     type RegisterState = RegisterStateFormatVirtualI;
 
     fn parse(_: u32) -> Self {
@@ -56,8 +56,11 @@ impl InstructionFormat for FormatVirtualI {
     }
 
     fn random(rng: &mut StdRng) -> Self {
+        let shift = rng.next_u32() % 64;
+        let ones: u64 = (1 << shift) - 1;
+        let imm = ones.wrapping_shl(64 - shift);
         Self {
-            imm: rng.next_u64(),
+            imm,
             rd: (rng.next_u64() % REGISTER_COUNT) as usize,
             rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
         }

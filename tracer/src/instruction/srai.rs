@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     emulator::cpu::{Cpu, Xlen},
-    instruction::{format::format_virtual_i::FormatVirtualI, virtual_srai::VirtualSRAI},
+    instruction::{
+        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, virtual_srai::VirtualSRAI,
+    },
 };
 
 use super::{
@@ -76,7 +78,7 @@ impl VirtualInstructionSequence for SRAI {
 
         let sra = VirtualSRAI {
             address: self.address,
-            operands: FormatVirtualI {
+            operands: FormatVirtualRightShiftI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
                 imm: bitmask,

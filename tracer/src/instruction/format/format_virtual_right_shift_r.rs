@@ -10,7 +10,7 @@ use super::{
 };
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatVirtualRightShift {
+pub struct FormatVirtualRightShiftR {
     pub rd: usize,
     pub rs1: usize,
     pub rs2: usize,
@@ -48,7 +48,7 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
     }
 }
 
-impl InstructionFormat for FormatVirtualRightShift {
+impl InstructionFormat for FormatVirtualRightShiftR {
     type RegisterState = RegisterStateVirtualRightShift;
 
     fn parse(_: u32) -> Self {

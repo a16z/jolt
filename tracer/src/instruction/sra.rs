@@ -5,8 +5,8 @@ use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
     format::{
-        format_i::FormatI, format_r::FormatR, format_virtual_right_shift::FormatVirtualRightShift,
-        InstructionFormat,
+        format_i::FormatI, format_r::FormatR,
+        format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat,
     },
     virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_sra::VirtualSRA,
@@ -89,7 +89,7 @@ impl VirtualInstructionSequence for SRA {
 
         let sra = VirtualSRA {
             address: self.address,
-            operands: FormatVirtualRightShift {
+            operands: FormatVirtualRightShiftR {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
                 rs2: v_bitmask,

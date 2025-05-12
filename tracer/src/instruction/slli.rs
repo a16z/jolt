@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     emulator::cpu::{Cpu, Xlen},
-    instruction::{format::format_virtual_i::FormatVirtualI, virtual_muli::VirtualMULI},
+    instruction::virtual_muli::VirtualMULI,
 };
 
 use super::{
@@ -71,7 +71,7 @@ impl VirtualInstructionSequence for SLLI {
 
         let mul = RV32IMInstruction::MULI(VirtualMULI {
             address: self.address,
-            operands: FormatVirtualI {
+            operands: FormatI {
                 rd: self.operands.rd,
                 rs1: self.operands.rs1,
                 // TODO: this only works for Xlen = 32
