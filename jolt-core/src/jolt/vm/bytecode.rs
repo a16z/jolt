@@ -16,6 +16,7 @@ use crate::lasso::memory_checking::{
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::subprotocols::grand_product::BatchedDenseGrandProduct;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::rv_trace::ELFInstruction;
 
@@ -479,9 +480,14 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
+
     type Polynomials = BytecodePolynomials<F>;
     type Openings = BytecodeOpenings<F>;
     type Commitments = BytecodeCommitments<PCS, ProofTranscript>;
+    type ExogenousOpenings = NoExogenousOpenings;
+
     type Preprocessing = BytecodePreprocessing<F>;
 
     // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]

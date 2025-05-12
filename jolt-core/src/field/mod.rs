@@ -45,7 +45,7 @@ pub trait JoltField:
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
-    type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize = ();
+    type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.

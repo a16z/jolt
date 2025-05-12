@@ -6,6 +6,7 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
+    subprotocols::grand_product::BatchedDenseGrandProduct,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -101,10 +102,18 @@ where
     Instruction: JoltInstruction + Default + Sync,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
+
     type Polynomials = SurgePolynomials<F>;
     type Openings = SurgeOpenings<F>;
     type Commitments = SurgeCommitments<PCS, ProofTranscript>;
+    type ExogenousOpenings = NoExogenousOpenings;
+
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
+
+    /// The data associated with each memory slot. A triple (a, v, t) by default.
+    type MemoryTuple = (F, F, F); // (a, v, t)
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;

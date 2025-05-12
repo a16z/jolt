@@ -269,14 +269,18 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    // Init/final grand products are batched together with read/write grand products
+    type InitFinalGrandProduct = NoopGrandProduct;
+
     type Polynomials = TimestampRangeCheckPolynomials<F>;
     type Openings = TimestampRangeCheckOpenings<F>;
     type Commitments = TimestampRangeCheckCommitments<PCS, ProofTranscript>;
     type ExogenousOpenings = ReadTimestampOpenings<F>;
-    type MemoryTuple = (F, F); // a = v for all range check tuples
 
-    // Init/final grand products are batched together with read/write grand products
-    type InitFinalGrandProduct = NoopGrandProduct;
+    type Preprocessing = NoPreprocessing;
+
+    type MemoryTuple = (F, F); // a = v for all range check tuples
 
     fn prove_memory_checking(
         _: &PCS::Setup,
