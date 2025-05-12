@@ -235,8 +235,9 @@ impl JoltR1CSInputs {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
                     .map(|cycle| {
-                        LookupQuery::<32>::to_instruction_inputs(cycle).0
-                            * LookupQuery::<32>::to_instruction_inputs(cycle).1 as u64
+                        let (left_input, right_input) =
+                            LookupQuery::<32>::to_instruction_inputs(cycle);
+                        left_input * right_input as u64
                     })
                     .collect();
                 coeffs.into()
