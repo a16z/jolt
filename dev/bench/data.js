@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747004363441,
+  "lastUpdate": 1747057834865,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -4090,6 +4090,138 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 7039940,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zouguangxian@gmail.com",
+            "name": "Zou Guangxian",
+            "username": "zouguangxian"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "22306a1181167c835e4d0d9f35340efac257df13",
+          "message": "refactor: remove associated_type_defaults feature flag (#674)\n\nThis commit removes the associated_type_defaults feature flag and makes all associated types explicit in the codebase. The changes include:\n\n- Remove #![feature(associated_type_defaults)] from lib.rs\n- Remove default value (= ()) from JoltField::SmallValueLookupTables\n- Remove default values from MemoryCheckingProver associated types:\n  - ReadWriteGrandProduct\n  - InitFinalGrandProduct\n  - ExogenousOpenings\n  - Preprocessing\n  - MemoryTuple\n- Make all implementations of MemoryCheckingProver explicitly specify their associated types\n- Reorder associated type declarations for better readability\n\nThese changes make the code more explicit and remove the dependency on the unstable associated_type_defaults feature, improving compatibility with stable Rust.",
+          "timestamp": "2025-05-12T09:10:48-04:00",
+          "tree_id": "2290ad7c3ff181fd465837fbbb131268c5619856",
+          "url": "https://github.com/a16z/jolt/commit/22306a1181167c835e4d0d9f35340efac257df13"
+        },
+        "date": 1747057833801,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.7203,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 4601004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.6383,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 4590692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5758,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 4590660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.5607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 4590064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 6967912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 49.4199,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 10037248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 2.2182,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 4591492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.9408,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 4590880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 2.1376,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 7025440,
             "unit": "KB",
             "extra": ""
           }
