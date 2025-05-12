@@ -12,7 +12,7 @@ pub mod format_s;
 pub mod format_u;
 pub mod format_virtual_halfword_alignment;
 pub mod format_virtual_i;
-pub mod format_virtual_r;
+pub mod format_virtual_right_shift;
 
 #[derive(Default)]
 pub struct NormalizedOperands {
