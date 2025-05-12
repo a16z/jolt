@@ -10,20 +10,20 @@ use super::{
 };
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatVirtualRightShift {
+pub struct FormatVirtualR {
     pub rd: usize,
     pub rs1: usize,
     pub rs2: usize,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
-pub struct RegisterStateVirtualRightShift {
+pub struct RegisterStateVirtualR {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
     pub rs2: u64,
 }
 
-impl InstructionRegisterState for RegisterStateVirtualRightShift {
+impl InstructionRegisterState for RegisterStateVirtualR {
     fn random(rng: &mut StdRng) -> Self {
         let shift = rng.next_u32() % 64;
         let ones: u64 = (1 << shift) - 1;
@@ -48,8 +48,8 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
     }
 }
 
-impl InstructionFormat for FormatVirtualRightShift {
-    type RegisterState = RegisterStateVirtualRightShift;
+impl InstructionFormat for FormatVirtualR {
+    type RegisterState = RegisterStateVirtualR;
 
     fn parse(_: u32) -> Self {
         unimplemented!("virtual instruction")

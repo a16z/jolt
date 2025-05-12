@@ -4,14 +4,14 @@ use serde::{Deserialize, Serialize};
 use crate::emulator::cpu::Cpu;
 
 use super::{
-    format::{format_virtual_right_shift::FormatVirtualRightShift, InstructionFormat},
+    format::{format_virtual_r::FormatVirtualR, InstructionFormat},
     RISCVInstruction, RISCVTrace,
 };
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualSRL {
     pub address: u64,
-    pub operands: FormatVirtualRightShift,
+    pub operands: FormatVirtualR,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -24,7 +24,7 @@ impl RISCVInstruction for VirtualSRL {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
-    type Format = FormatVirtualRightShift;
+    type Format = FormatVirtualR;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {
@@ -38,7 +38,7 @@ impl RISCVInstruction for VirtualSRL {
     fn random(rng: &mut StdRng) -> Self {
         Self {
             address: rng.next_u64(),
-            operands: FormatVirtualRightShift::random(rng),
+            operands: FormatVirtualR::random(rng),
             virtual_sequence_remaining: None,
         }
     }
