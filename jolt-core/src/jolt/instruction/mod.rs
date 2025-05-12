@@ -299,9 +299,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
             }
             RV32IMCycle::Move(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::Movsign(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
-            RV32IMCycle::MULI(cycle) => {
-                LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle)
-            }
+            RV32IMCycle::MULI(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::Pow2(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::Pow2I(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
             RV32IMCycle::ShiftRightBitmask(cycle) => {

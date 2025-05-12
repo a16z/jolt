@@ -5,8 +5,7 @@ use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::{
     format::{
-        format_i::FormatI, format_r::FormatR, format_virtual_r::FormatVirtualR,
-        InstructionFormat,
+        format_i::FormatI, format_r::FormatR, format_virtual_r::FormatVirtualR, InstructionFormat,
     },
     virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_sra::VirtualSRA,

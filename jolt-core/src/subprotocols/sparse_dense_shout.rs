@@ -1002,7 +1002,7 @@ mod tests {
     fn test_movsign() {
         test_sparse_dense_shout(Some(RV32IMCycle::Movsign(Default::default())));
     }
-    
+
     #[test]
     fn test_muli() {
         test_sparse_dense_shout(Some(RV32IMCycle::MULI(Default::default())));
@@ -1032,7 +1032,7 @@ mod tests {
     fn test_virtualsra() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRA(Default::default())));
     }
-    
+
     #[test]
     fn test_virtualsrai() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRAI(Default::default())));
@@ -1042,7 +1042,7 @@ mod tests {
     fn test_virtualsrl() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRL(Default::default())));
     }
-    
+
     #[test]
     fn test_virtualsrli() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRLI(Default::default())));

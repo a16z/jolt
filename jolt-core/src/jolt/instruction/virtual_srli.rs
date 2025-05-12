@@ -25,7 +25,10 @@ impl InstructionFlags for VirtualSRLI {
 
 impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRLI> {
     fn to_instruction_inputs(&self) -> (u64, i64) {
-        (self.register_state.rs1, self.instruction.operands.imm as i64)
+        (
+            self.register_state.rs1,
+            self.instruction.operands.imm as i64,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {

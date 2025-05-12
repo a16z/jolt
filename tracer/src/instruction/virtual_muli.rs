@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     emulator::cpu::Cpu,
-    instruction::{format::{format_virtual_i::FormatVirtualI, InstructionFormat}, RISCVInstruction, RISCVTrace},
+    instruction::{
+        format::{format_virtual_i::FormatVirtualI, InstructionFormat},
+        RISCVInstruction, RISCVTrace,
+    },
 };
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
