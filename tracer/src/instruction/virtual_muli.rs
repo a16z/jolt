@@ -3,15 +3,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     emulator::cpu::Cpu,
-    instruction::format::format_i::FormatI,
-    instruction::format::InstructionFormat,
-    instruction::{RISCVInstruction, RISCVTrace},
+    instruction::{format::{format_virtual_i::FormatVirtualI, InstructionFormat}, RISCVInstruction, RISCVTrace},
 };
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualMULI {
     pub address: u64,
-    pub operands: FormatI,
+    pub operands: FormatVirtualI,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
@@ -24,7 +22,7 @@ impl RISCVInstruction for VirtualMULI {
     const MASK: u32 = 0; // Virtual
     const MATCH: u32 = 0; // Virtual
 
-    type Format = FormatI;
+    type Format = FormatVirtualI;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {
@@ -38,7 +36,7 @@ impl RISCVInstruction for VirtualMULI {
     fn random(rng: &mut StdRng) -> Self {
         Self {
             address: rng.next_u64(),
-            operands: FormatI::random(rng),
+            operands: FormatVirtualI::random(rng),
             virtual_sequence_remaining: None,
         }
     }
