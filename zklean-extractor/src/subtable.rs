@@ -1,33 +1,45 @@
 use jolt_core::jolt::{subtable::LassoSubtable, vm::rv32i_vm::RV32ISubtables};
 use strum::IntoEnumIterator as _;
 
-use crate::{modules::{AsModule, Module}, util::{indent, ZkLeanReprField}};
+use crate::{constants::JoltParameterSet, modules::{AsModule, Module}, util::{indent, ZkLeanReprField}};
 
 /// Wrapper around a LassoSubtable
 // TODO: Make generic over LassoSubtableSet
 #[derive(Debug)]
-pub struct ZkLeanSubtable<F: ZkLeanReprField, const LOG_M: usize>(RV32ISubtables<F>);
+pub struct ZkLeanSubtable<F: ZkLeanReprField, J> {
+    subtables: RV32ISubtables<F>,
+    phantom: std::marker::PhantomData<J>,
+}
 
-impl<F: ZkLeanReprField, const LOG_M: usize> From<RV32ISubtables<F>> for ZkLeanSubtable<F, LOG_M> {
+impl<F: ZkLeanReprField, J> From<RV32ISubtables<F>> for ZkLeanSubtable<F, J> {
     fn from(value: RV32ISubtables<F>) -> Self {
-        Self(value)
+        Self {
+            subtables: value,
+            phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<F: ZkLeanReprField, const LOG_M: usize> From<&Box<dyn LassoSubtable<F>>> for ZkLeanSubtable<F, LOG_M> {
+impl<F: ZkLeanReprField, J> From<&Box<dyn LassoSubtable<F>>> for ZkLeanSubtable<F, J> {
     fn from(value: &Box<dyn LassoSubtable<F>>) -> Self {
-        Self(value.subtable_id().into())
+        Self {
+            subtables: value.subtable_id().into(),
+            phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<F: ZkLeanReprField, const LOG_M: usize> ZkLeanSubtable<F, LOG_M> {
+impl<F: ZkLeanReprField, J: JoltParameterSet> ZkLeanSubtable<F, J> {
     pub fn name(&self) -> String {
-        format!("{}_{LOG_M}", <&'static str>::from(&self.0))
+        let name = <&'static str>::from(&self.subtables);
+        let log_m = J::LOG_M;
+
+        format!("{name}_{log_m}")
     }
 
     pub fn evaluate_mle(&self, reg_name: char) -> F {
-       let reg = F::register(reg_name, LOG_M);
-       self.0.evaluate_mle(&reg)
+       let reg = F::register(reg_name, J::LOG_M);
+       self.subtables.evaluate_mle(&reg)
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
@@ -41,10 +53,11 @@ impl<F: ZkLeanReprField, const LOG_M: usize> ZkLeanSubtable<F, LOG_M> {
         mut indent_level: usize,
     ) -> std::io::Result<()> {
         let name = self.name();
+        let log_m = J::LOG_M;
         let mle = self.evaluate_mle('x').as_computation();
 
         f.write_fmt(format_args!(
-                "{}def {name} [Field f] : Subtable f {LOG_M} :=\n",
+                "{}def {name} [Field f] : Subtable f {log_m} :=\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;
@@ -57,14 +70,16 @@ impl<F: ZkLeanReprField, const LOG_M: usize> ZkLeanSubtable<F, LOG_M> {
     }
 }
 
-pub struct ZkLeanSubtables<F: ZkLeanReprField, const LOG_M: usize> {
-    subtables: Vec<ZkLeanSubtable<F, LOG_M>>,
+pub struct ZkLeanSubtables<F: ZkLeanReprField, J> {
+    subtables: Vec<ZkLeanSubtable<F, J>>,
+    phantom: std::marker::PhantomData<J>,
 }
 
-impl<F: ZkLeanReprField, const LOG_M: usize> ZkLeanSubtables<F, LOG_M> {
+impl<F: ZkLeanReprField, J: JoltParameterSet> ZkLeanSubtables<F, J> {
     pub fn extract() -> Self {
         Self {
-            subtables: ZkLeanSubtable::<F, LOG_M>::iter().collect(),
+            subtables: ZkLeanSubtable::<F, J>::iter().collect(),
+            phantom: std::marker::PhantomData,
         }
     }
 
@@ -82,7 +97,7 @@ impl<F: ZkLeanReprField, const LOG_M: usize> ZkLeanSubtables<F, LOG_M> {
     }
 }
 
-impl<F: ZkLeanReprField, const LOG_M: usize> AsModule for ZkLeanSubtables<F, LOG_M> {
+impl<F: ZkLeanReprField, J: JoltParameterSet> AsModule for ZkLeanSubtables<F, J> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents, 0)?;

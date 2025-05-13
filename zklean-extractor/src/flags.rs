@@ -1,3 +1,4 @@
+use crate::constants::JoltParameterSet;
 use crate::instruction::ZkLeanInstruction;
 use crate::modules::{Module, AsModule};
 use jolt_core::r1cs::inputs::JoltR1CSInputs;
@@ -5,18 +6,20 @@ use jolt_core::r1cs::inputs::JoltR1CSInputs;
 use crate::{r1cs::input_to_field_name, util::indent};
 
 /// This represents a mapping between a [`JoltR1CSInputs`] variable and an instruction
-pub struct ZkLeanInstructionFlags<const WORD_SIZE: usize, const CHUNKS: usize, const REG_SIZE: usize> {
+pub struct ZkLeanInstructionFlags<J> {
     r1cs_input: JoltR1CSInputs,
-    instruction: ZkLeanInstruction<WORD_SIZE, CHUNKS, REG_SIZE>,
+    instruction: ZkLeanInstruction<J>,
+    phantom: std::marker::PhantomData<J>,
 }
 
-impl ZkLeanInstructionFlags<32, 4, 16> {
+impl<J: JoltParameterSet> ZkLeanInstructionFlags<J> {
     /// Extract the [`JoltR1CSInputs::InstructionFlags`] variable for a given instruction.
-    pub fn from_instruction(instruction: ZkLeanInstruction<32, 4, 16>) -> Self {
+    pub fn from_instruction(instruction: ZkLeanInstruction<J>) -> Self {
         let opcode = instruction.to_instruction_set();
         Self {
             r1cs_input: JoltR1CSInputs::InstructionFlags(opcode),
             instruction,
+            phantom: std::marker::PhantomData,
         }
     }
 
@@ -31,15 +34,15 @@ impl ZkLeanInstructionFlags<32, 4, 16> {
 }
 
 /// The R1CS-variable <-> instruction mappings for the entire instruction set.
-pub struct ZkLeanLookupCases<const WORD_SIZE: usize, const CHUNKS: usize, const REG_SIZE: usize> {
-    instruction_flags: Vec<ZkLeanInstructionFlags<WORD_SIZE, CHUNKS, REG_SIZE>>,
+pub struct ZkLeanLookupCases<J> {
+    instruction_flags: Vec<ZkLeanInstructionFlags<J>>,
 }
 
-impl ZkLeanLookupCases<32, 4, 16> {
+impl<J: JoltParameterSet> ZkLeanLookupCases<J> {
     /// Iterate over the instruction set and extract each R1CS input variable.
     pub fn extract() -> Self {
         Self {
-            instruction_flags: ZkLeanInstruction::<32, 4, 16>::iter()
+            instruction_flags: ZkLeanInstruction::<J>::iter()
                 .map(ZkLeanInstructionFlags::from_instruction)
                 .collect(),
         }
@@ -100,7 +103,7 @@ impl ZkLeanLookupCases<32, 4, 16> {
     }
 }
 
-impl AsModule for ZkLeanLookupCases<32, 4, 16> {
+impl<J: JoltParameterSet> AsModule for ZkLeanLookupCases<J> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents, 0)?;

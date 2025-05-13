@@ -7,42 +7,42 @@ use jolt_core::r1cs::{
 use common::rv_trace::MemoryLayout;
 use regex::{NoExpand, Regex};
 
-use crate::{modules::{AsModule, Module}, util::indent};
-
-// NOTE: C=4 is taken from the invocation of the `impl_r1cs_input_lc_conversions` macro for
-// `JoltR1CSInputs` in `jolt-core/src/r1cs/inputs.rs`.
-// XXX Do we want to take `C` as a type parameter instead?
-const C: usize = 4;
+use crate::{constants::JoltParameterSet, modules::{AsModule, Module}, util::indent};
 
 type F = ark_bn254::Fr;
 type CS = jolt_core::r1cs::constraints::JoltRV32IMConstraints;
 
-pub struct ZkLeanR1CSConstraints<const MAX_INPUT_SIZE: u64, const MAX_OUTPUT_SIZE: u64> {
+pub struct ZkLeanR1CSConstraints<J> {
     inputs: Vec<JoltR1CSInputs>,
     uniform_constraints: Vec<Constraint>,
     non_uniform_constraints: Vec<OffsetEqConstraint>,
+    phantom: std::marker::PhantomData<J>,
 }
 
-impl<const MAX_INPUT_SIZE: u64, const MAX_OUTPUT_SIZE: u64> ZkLeanR1CSConstraints<MAX_INPUT_SIZE, MAX_OUTPUT_SIZE> {
+impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J>
+where
+    [(); J::C]:
+{
     pub fn extract() -> Self {
-        let inputs = JoltR1CSInputs::flatten::<C>();
+        let inputs = JoltR1CSInputs::flatten::<{J::C}>();
 
         // XXX Make max input/output sizes configurable?
         let uniform_constraints = {
-            let memory_layout = MemoryLayout::new(MAX_INPUT_SIZE, MAX_OUTPUT_SIZE);
+            let memory_layout = MemoryLayout::new(J::MAX_INPUT_SIZE, J::MAX_OUTPUT_SIZE);
 
-            let mut r1cs_builder = R1CSBuilder::<C, F, JoltR1CSInputs>::new();
+            let mut r1cs_builder = R1CSBuilder::<{J::C}, F, JoltR1CSInputs>::new();
             CS::uniform_constraints(&mut r1cs_builder, memory_layout.input_start);
 
             r1cs_builder.get_constraints()
         };
 
-        let non_uniform_constraints = <CS as R1CSConstraints<C, F>>::cross_step_constraints();
+        let non_uniform_constraints = <CS as R1CSConstraints<{J::C}, F>>::cross_step_constraints();
 
         Self {
             inputs,
             uniform_constraints,
             non_uniform_constraints,
+            phantom: std::marker::PhantomData,
         }
     }
 
@@ -135,17 +135,17 @@ impl<const MAX_INPUT_SIZE: u64, const MAX_OUTPUT_SIZE: u64> ZkLeanR1CSConstraint
             f.write_fmt(format_args!(
                     "{}{}\n",
                     indent(indent_level),
-                    pretty_print_lc("jolt_inputs", a),
+                    pretty_print_lc::<{J::C}>("jolt_inputs", a),
             ))?;
             f.write_fmt(format_args!(
                     "{}{}\n",
                     indent(indent_level),
-                    pretty_print_lc("jolt_inputs", b),
+                    pretty_print_lc::<{J::C}>("jolt_inputs", b),
             ))?;
             f.write_fmt(format_args!(
                     "{}{}\n",
                     indent(indent_level),
-                    pretty_print_lc("jolt_inputs", c),
+                    pretty_print_lc::<{J::C}>("jolt_inputs", c),
             ))?;
             indent_level -= 1;
         }
@@ -173,13 +173,13 @@ impl<const MAX_INPUT_SIZE: u64, const MAX_OUTPUT_SIZE: u64> ZkLeanR1CSConstraint
             f.write_fmt(format_args!(
                     "{}({} - {})\n",
                     indent(indent_level),
-                    pretty_print_offset_lc("jolt_inputs", "jolt_offset_inputs", a),
-                    pretty_print_offset_lc("jolt_inputs", "jolt_offset_inputs", b),
+                    pretty_print_offset_lc::<{J::C}>("jolt_inputs", "jolt_offset_inputs", a),
+                    pretty_print_offset_lc::<{J::C}>("jolt_inputs", "jolt_offset_inputs", b),
             ))?;
             f.write_fmt(format_args!(
                     "{}{}\n",
                     indent(indent_level),
-                    pretty_print_offset_lc("jolt_inputs", "jolt_offset_inputs", cond),
+                    pretty_print_offset_lc::<{J::C}>("jolt_inputs", "jolt_offset_inputs", cond),
             ))?;
             f.write_fmt(format_args!(
                     "{}0\n",
@@ -198,7 +198,10 @@ impl<const MAX_INPUT_SIZE: u64, const MAX_OUTPUT_SIZE: u64> ZkLeanR1CSConstraint
     }
 }
 
-impl<const MAX_INPUT_SIZE: u64, const MAX_OUTPUT_SIZE: u64> AsModule for ZkLeanR1CSConstraints<MAX_INPUT_SIZE, MAX_OUTPUT_SIZE> {
+impl<J: JoltParameterSet> AsModule for ZkLeanR1CSConstraints<J>
+where
+    [(); J::C]:
+{
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents, 0)?;
@@ -226,13 +229,13 @@ pub fn input_to_field_name(input: &JoltR1CSInputs) -> String {
     string
 }
 
-fn input_index_to_field_name(index: usize) -> String {
+fn input_index_to_field_name<const C: usize>(index: usize) -> String {
     input_to_field_name(&JoltR1CSInputs::from_index::<C>(index))
 }
 
-fn pretty_print_term(inputs_struct: &str, Term(var, coeff): &Term) -> Option<String> {
+fn pretty_print_term<const C: usize>(inputs_struct: &str, Term(var, coeff): &Term) -> Option<String> {
     let var = match *var {
-        Variable::Input(index) | Variable::Auxiliary(index) => Some(input_index_to_field_name(index)),
+        Variable::Input(index) | Variable::Auxiliary(index) => Some(input_index_to_field_name::<C>(index)),
         Variable::Constant => None,
     };
     match (coeff, var) {
@@ -243,10 +246,10 @@ fn pretty_print_term(inputs_struct: &str, Term(var, coeff): &Term) -> Option<Str
     }
 }
 
-fn pretty_print_lc(inputs_struct: &str, lc: &LC) -> String {
+fn pretty_print_lc<const C: usize>(inputs_struct: &str, lc: &LC) -> String {
     let terms = lc.terms()
         .into_iter()
-        .filter_map(|term| pretty_print_term(inputs_struct, term))
+        .filter_map(|term| pretty_print_term::<C>(inputs_struct, term))
         .collect::<Vec<_>>();
     match terms.len() {
         0 => "0".to_string(),
@@ -255,11 +258,11 @@ fn pretty_print_lc(inputs_struct: &str, lc: &LC) -> String {
     }
 }
 
-fn pretty_print_offset_lc(inputs_struct: &str, offset_inputs_struct: &str, (offset, lc): &OffsetLC) -> String {
+fn pretty_print_offset_lc<const C: usize>(inputs_struct: &str, offset_inputs_struct: &str, (offset, lc): &OffsetLC) -> String {
     let inputs_struct = if *offset {
         offset_inputs_struct
     } else {
         inputs_struct
     };
-    pretty_print_lc(inputs_struct, lc)
+    pretty_print_lc::<C>(inputs_struct, lc)
 }

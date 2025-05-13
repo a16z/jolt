@@ -1,38 +1,49 @@
 use jolt_core::jolt::{instruction::JoltInstruction, vm::rv32i_vm::RV32I};
 use strum::IntoEnumIterator as _;
 
-use crate::{modules::{AsModule, Module}, subtable::ZkLeanSubtable, util::{indent, ZkLeanReprField}, MleAst};
+use crate::{constants::JoltParameterSet, modules::{AsModule, Module}, subtable::ZkLeanSubtable, util::{indent, ZkLeanReprField}, MleAst};
 
 /// Wrapper around a JoltInstruction
 // TODO: Make this generic over the instruction set
 #[derive(Debug)]
-pub struct ZkLeanInstruction<const WORD_SIZE: usize, const C: usize, const LOG_M: usize>(RV32I);
+pub struct ZkLeanInstruction<J> {
+    instruction: RV32I,
+    phantom: std::marker::PhantomData<J>,
+}
 
-impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> From<RV32I> for ZkLeanInstruction<WORD_SIZE, C, LOG_M> {
+impl<J> From<RV32I> for ZkLeanInstruction<J> {
     fn from(value: RV32I) -> Self {
-        Self(value)
+        Self {
+            instruction: value,
+            phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstruction<WORD_SIZE, C, LOG_M> {
+impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     pub fn name(&self) -> String {
-        format!("{}_{WORD_SIZE}_{C}_{LOG_M}", <&'static str>::from(&self.0))
+        let name = <&'static str>::from(&self.instruction);
+        let word_size = J::WORD_SIZE;
+        let c = J::C;
+        let log_m = J::LOG_M;
+
+        format!("{name}_{word_size}_{c}_{log_m}")
     }
 
     fn combine_lookups<F: ZkLeanReprField>(&self, reg_name: char) -> F {
         // We need one wire for each subtable evaluation
         let reg_size = self.subtables::<F>().count();
         let reg = F::register(reg_name, reg_size);
-        self.0.combine_lookups(&reg, C, 1 << LOG_M)
+        self.instruction.combine_lookups(&reg, J::C, 1 << J::LOG_M)
     }
 
-    fn subtables<F: ZkLeanReprField>(&self) -> impl Iterator<Item = (ZkLeanSubtable<F, LOG_M>, usize)> {
-        self.0
-            .subtables(C, 1 << LOG_M)
+    fn subtables<F: ZkLeanReprField>(&self) -> impl Iterator<Item = (ZkLeanSubtable<F, J>, usize)> {
+        self.instruction
+            .subtables(J::C, 1 << J::LOG_M)
             .into_iter()
             .flat_map(|(subtable, ixs)|
                 ixs.iter()
-                    .map(|ix| (ZkLeanSubtable::<F, LOG_M>::from(&subtable), ix))
+                    .map(|ix| (ZkLeanSubtable::<F, J>::from(&subtable), ix))
                     .collect::<Vec<_>>()
             )
     }
@@ -42,7 +53,7 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructi
     }
 
     pub fn to_instruction_set(&self) -> RV32I {
-        self.0
+        self.instruction
     }
 
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
@@ -52,6 +63,8 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructi
         mut indent_level: usize,
     ) -> std::io::Result<()> {
         let name = self.name();
+        let log_m = J::LOG_M;
+        let c = J::C;
         let mle = self.combine_lookups::<F>('x').as_computation();
         let subtables = std::iter::once("#[ ".to_string())
             .chain(self.subtables::<F>().map(|(subtable, ix)|
@@ -62,7 +75,7 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructi
             .fold(String::new(), |acc, s| format!("{acc}{s}"));
 
         f.write_fmt(format_args!(
-                "{}def {name} [Field f] : ComposedLookupTable f {LOG_M} {C}\n",
+                "{}def {name} [Field f] : ComposedLookupTable f {log_m} {c}\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;
@@ -75,14 +88,16 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructi
     }
 }
 
-pub struct ZkLeanInstructions<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> {
-    instructions: Vec<ZkLeanInstruction<WORD_SIZE, C, LOG_M>>,
+pub struct ZkLeanInstructions<J> {
+    instructions: Vec<ZkLeanInstruction<J>>,
+    phantom: std::marker::PhantomData<J>,
 }
 
-impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructions<WORD_SIZE, C, LOG_M> {
+impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     pub fn extract() -> Self {
         Self {
-            instructions: ZkLeanInstruction::<WORD_SIZE, C, LOG_M>::iter().collect(),
+            instructions: ZkLeanInstruction::<J>::iter().collect(),
+            phantom: std::marker::PhantomData,
         }
     }
 
@@ -105,7 +120,7 @@ impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> ZkLeanInstructi
     }
 }
 
-impl<const WORD_SIZE: usize, const C: usize, const LOG_M: usize> AsModule for ZkLeanInstructions<WORD_SIZE, C, LOG_M> {
+impl<J: JoltParameterSet> AsModule for ZkLeanInstructions<J> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents, 0)?;

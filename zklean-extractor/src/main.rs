@@ -1,8 +1,11 @@
-#![feature(iter_intersperse)]
+#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
+#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
 
-mod mle_ast;
 use std::path::PathBuf;
 
+mod constants;
+use crate::constants::*;
+mod mle_ast;
 use crate::mle_ast::*;
 mod util;
 //use crate::util::*;
@@ -19,8 +22,6 @@ use crate::modules::*;
 
 use clap::Parser;
 use build_fs_tree::{MergeableFileSystemTree, Build};
-
-use common::constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE};
 
 /// Simple argument parsing to allow writing to a file.
 #[derive(Parser)]
@@ -71,14 +72,16 @@ fn write_flat_file(f: &mut impl std::io::Write, modules: Vec<Box<dyn AsModule>>)
     Ok(())
 }
 
+type ParameterSet = RV32IParameterSet;
+
 fn main() -> Result<(), FSError> {
     let args = Args::parse();
 
     let modules: Vec<Box<dyn AsModule>> = vec![
-        Box::new(ZkLeanR1CSConstraints::<DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE>::extract()),
-        Box::new(ZkLeanSubtables::<MleAst<16000>, 16>::extract()),
-        Box::new(ZkLeanInstructions::<32, 4, 16>::extract()),
-        Box::new(ZkLeanLookupCases::extract()),
+        Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
+        Box::new(ZkLeanSubtables::<MleAst<16000>, ParameterSet>::extract()),
+        Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
+        Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
     ];
 
     if let Some(package_path) = args.package_path {
