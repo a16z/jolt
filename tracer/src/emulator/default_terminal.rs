@@ -1,5 +1,8 @@
 use super::terminal::Terminal;
 
+#[cfg(not(feature = "std"))]
+use alloc::{vec, vec::Vec};
+
 /// Standard `Terminal`.
 pub struct DefaultTerminal {
     input_data: Vec<u8>,
