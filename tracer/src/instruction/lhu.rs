@@ -25,7 +25,7 @@ use super::{
 declare_riscv_instr!(
     name   = LHU,
     mask   = 0x0000707f,
-    match  = 0x00001003,
+    match  = 0x00005003,
     format = FormatLoad,
     ram    = RAMRead
 );
