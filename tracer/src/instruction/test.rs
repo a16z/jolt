@@ -1,89 +1,109 @@
-use rand::{rngs::StdRng, RngCore, SeedableRng};
-
 use crate::emulator::cpu::{Cpu, Xlen};
 
-use super::{RAMAccess, RISCVInstruction, RISCVTrace, VirtualInstructionSequence};
+use crate::emulator::terminal::DummyTerminal;
 
-// /// Tests the consistency and correctness of a virtual instruction sequence.
-// /// In detail:
-// /// 1. Sets the registers to given values for rs1 and rs2.
-// /// 2. Constructs an RVTraceRow with the provided instruction and register values.
-// /// 3. Generates the virtual instruction sequence using the RISCVTrace trait.
-// /// 4. Iterates over each row in the virtual sequence and validates the state changes.
-// /// 5. Verifies that rs1 and rs2 have not been clobbered.
-// /// 6. Ensures that the result is correctly written to the rd register.
-// /// 7. Checks that no unintended modifications have been made to other registers.
-// pub fn virtual_sequence_trace_test<I: RISCVInstruction + VirtualInstructionSequence + Copy>() {
-//     let mut rng = StdRng::seed_from_u64(12345);
+use rand::rngs::OsRng;
 
-//     for _ in 0..1000 {
-//         let rs1 = rng.next_u64() % 32;
-//         let rs2 = rng.next_u64() % 32;
-//         let mut rd = rng.next_u64() % 32;
-//         while rd == 0 {
-//             rd = rng.next_u64() % 32;
-//         }
-//         let rs1_val = if rs1 == 0 { 0 } else { rng.next_u32() as u64 };
-//         let rs2_val = if rs2 == rs1 {
-//             rs1_val
-//         } else if rs2 == 0 {
-//             0
-//         } else {
-//             rng.next_u32() as u64
-//         };
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-//         let mut registers = vec![0u64; REGISTER_COUNT as usize];
-//         registers[rs1 as usize] = rs1_val;
-//         registers[rs2 as usize] = rs2_val;
+use super::{RISCVInstruction, RISCVTrace, VirtualInstructionSequence};
 
-//         let instruction = I::new(rng.next_u32(), rng.next_u64());
+use super::{RISCVCycle, RV32IMCycle};
 
-//         let mut cpu = Cpu::new(Xlen::Bit32);
-//         cpu.x[rs1 as usize] = rs1_val;
-//         cpu.x[rs2 as usize] = rs2_val;
 
-//         instruction.trace(&mut cpu);
+macro_rules! test_virtual_sequences {
+  ($( $instr:ty ),* $(,)?) => {
+      $(
+          paste::paste! {
+              #[test]
+              fn [<test_ $instr:snake _virtual_sequence>]() {
+                  virtual_sequence_trace_test::<$instr>();
+              }
+          }
+      )*
+  };
+}
 
-//         // for cycle in cpu.trace {
-//         //     let ram_access = cycle.ram_access();
-//         //     match ram_access {
-//         //         RAMAccess::Read(read) => {
-//         //             assert_eq!(
-//         //                 registers[read.address as usize], read.value,
-//         //                 "RAM read value mismatch"
-//         //             );
-//         //         }
-//         //         RAMAccess::Write(write) => {
-//         //             assert_eq!(
-//         //                 registers[write.address as usize], write.pre_value,
-//         //                 "RAM write pre-value mismatch"
-//         //             );
-//         //             registers[write.address as usize] = write.post_value;
-//         //         }
-//         //         RAMAccess::NoOp => {}
-//         //     }
-//         // }
+// List of instruction types to test.
+// Each must implement `VirtualInstructionSequence`.
+test_virtual_sequences!(
+  DIV, DIVU, LB, LBU, LH, LHU, MULH, MULHSU, REM, REMU,
+  SB, SH, SLL, SLLI, SRA, SRAI, SRL, SRLI,
+);
 
-//         // Verify state
-//         let rd_post_val = cpu.x[rd as usize];
 
-//         // Check registers not clobbered
-//         if rs1 != rd {
-//             assert_eq!(registers[rs1 as usize], rs1_val, "rs1 was clobbered");
-//         }
-//         if rs2 != rd {
-//             assert_eq!(registers[rs2 as usize], rs2_val, "rs2 was clobbered");
-//         }
+fn test_rng() -> StdRng {
+    let mut seed = [0u8; 32];
 
-//         // Verify other registers untouched
-//         for i in 0..32 {
-//             if i != rs1 as usize && i != rs2 as usize && i != rd as usize {
-//                 assert_eq!(
-//                     registers[i], 0,
-//                     "Register {} was modified when it shouldn't have been",
-//                     i
-//                 );
-//             }
-//         }
-//     }
-// }
+    OsRng.fill_bytes(&mut seed);
+
+    StdRng::from_seed(seed)
+}
+
+pub fn virtual_sequence_trace_test<
+    I: RISCVInstruction + VirtualInstructionSequence + RISCVTrace + Copy,
+>()
+where
+    RV32IMCycle: From<RISCVCycle<I>>,
+{
+    let mut rng = test_rng();
+
+    const STANDARD_REGISTER_COUNT: usize = 32; //@TODO support 64 bit?
+
+    for _ in 0..100 {
+        let rs1 = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
+
+        let rs2 = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
+
+        let mut rd = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
+
+        while rd == 0 {
+            rd = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
+        }
+
+        let rs1_val = if rs1 == 0 { 0 } else { rng.next_u64() };
+
+        let rs2_val = if rs2 == 0 {
+            0
+        } else if rs2 == rs1 {
+            rs1_val
+        } else {
+            rng.next_u64()
+        };
+
+        let instruction = I::random(&mut rng);
+
+        let mut original_cpu = Cpu::new(Box::new(DummyTerminal::new()));
+
+        let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::new()));
+
+        original_cpu.x[rs1 as usize] = rs1_val as i64;
+
+        original_cpu.x[rs2 as usize] = rs2_val as i64;
+
+        virtual_cpu.x[rs1 as usize] = rs1_val as i64;
+
+        virtual_cpu.x[rs2 as usize] = rs2_val as i64;
+
+        let mut ram_access = Default::default();
+
+        instruction.execute(&mut original_cpu, &mut ram_access);
+
+        instruction.trace(&mut virtual_cpu);
+
+        assert_eq!(
+            original_cpu.pc, virtual_cpu.pc,
+            "PC register has different values after execution"
+        );
+
+        //@TODO markosg04: load/store/others are failing this check? what is the desired output...
+
+        for i in 0..STANDARD_REGISTER_COUNT {
+            assert_eq!(
+                original_cpu.x[i], virtual_cpu.x[i],
+                "Register {} has different values after execution. Original: {:?}, Virtual: {:?}",
+                i, original_cpu.x[i], virtual_cpu.x[i]
+            );
+        }
+    }
+}

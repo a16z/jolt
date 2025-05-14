@@ -1982,6 +1982,7 @@ dependencies = [
  "eyre",
  "jolt-core",
  "jolt-sdk",
+ "paste",
  "rand 0.8.5",
  "rmp-serde",
  "serde",
