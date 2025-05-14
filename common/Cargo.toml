@@ -3,10 +3,20 @@ name = "common"
 version = "0.2.0"
 edition = "2021"
 
+[features]
+default = ["std"]
+std = [
+    "ark-serialize/std",
+    "serde/std",
+    "serde_json/std",
+    "strum/std",
+    "syn/full",
+]
+
 [dependencies]
-ark-serialize = { version = "0.5.0", features = ["derive"] }
-serde = { version = "1.0.193", features = ["derive"] }
-serde_json = "1.0.108"
+ark-serialize = { version = "0.5.0", features = ["derive"], default-features = false }
+serde = { version = "1.0.193", features = ["derive"], default-features = false }
+serde_json = { version = "1.0.108", features = ["alloc"], default-features = false }
 strum_macros = "0.26.4"
-strum = "0.26.3"
-syn = { version = "1.0", features = ["full"] }
+strum = { version = "0.26.3", default-features = false }
+syn = { version = "1.0", optional = true }
