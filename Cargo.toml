@@ -78,7 +78,6 @@ jolt-sdk = { path = "./jolt-sdk" }
 jolt-core = { path = "./jolt-core" }
 tracer = { path = "./tracer" }
 common = { path = "./common" }
-paste = "1.0.15"
 
 [profile.test]
 opt-level = 3

@@ -1,15 +1,18 @@
 use crate::emulator::cpu::{Cpu, Xlen};
 
+use super::{
+    div::DIV, divu::DIVU, lb::LB, lbu::LBU, lh::LH, lhu::LHU, mulh::MULH, mulhsu::MULHSU, rem::REM,
+    remu::REMU, sb::SB, sh::SH, sll::SLL, slli::SLLI, sra::SRA, srai::SRAI, srl::SRL, srli::SRLI,
+    RISCVInstruction, RISCVTrace, VirtualInstructionSequence,
+};
+
 use crate::emulator::terminal::DummyTerminal;
 
 use rand::rngs::OsRng;
 
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-use super::{RISCVInstruction, RISCVTrace, VirtualInstructionSequence};
-
 use super::{RISCVCycle, RV32IMCycle};
-
 
 macro_rules! test_virtual_sequences {
   ($( $instr:ty ),* $(,)?) => {
@@ -27,10 +30,8 @@ macro_rules! test_virtual_sequences {
 // List of instruction types to test.
 // Each must implement `VirtualInstructionSequence`.
 test_virtual_sequences!(
-  DIV, DIVU, LB, LBU, LH, LHU, MULH, MULHSU, REM, REMU,
-  SB, SH, SLL, SLLI, SRA, SRAI, SRL, SRLI,
+    DIV, DIVU, LB, LBU, LH, LHU, MULH, MULHSU, REM, REMU, SB, SH, SLL, SLLI, SRA, SRAI, SRL, SRLI,
 );
-
 
 fn test_rng() -> StdRng {
     let mut seed = [0u8; 32];

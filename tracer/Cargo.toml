@@ -28,3 +28,4 @@ strum = "0.26.3"
 rand = "0.7.3"
 
 common = { path = "../common" }
+paste = "1.0.15"
