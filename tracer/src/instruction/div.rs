@@ -24,7 +24,7 @@ use super::{
 declare_riscv_instr!(
     name   = DIV,
     mask   = 0xfe00707f,
-    match  = 0x02005033,
+    match  = 0x02004033,
     format = FormatR,
     ram    = ()
 );
