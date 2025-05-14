@@ -27,7 +27,6 @@ pub struct CompressedUniPoly<F: JoltField> {
 }
 
 impl<F: JoltField> UniPoly<F> {
-    #[allow(dead_code)]
     pub fn from_coeff(coeffs: Vec<F>) -> Self {
         UniPoly { coeffs }
     }
@@ -262,6 +261,14 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     fn mul(self, rhs: &F) -> Self {
         let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+    }
+}
+
+impl<F: JoltField> Mul<&F> for &UniPoly<F> {
+    type Output = UniPoly<F>;
+
+    fn mul(self, rhs: &F) -> UniPoly<F> {
+        UniPoly::from_coeff(self.coeffs.iter().map(|c| *c * *rhs).collect::<Vec<_>>())
     }
 }
 
