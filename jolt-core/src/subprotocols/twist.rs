@@ -427,6 +427,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
     // Linear combination of the read-checking claim (which is rv(r')) and the
     // write-checking claim (which is Inc(r, r'))
+    // rv(r') + z * Inc(r, r')
     let mut previous_claim = rv_eval + inc_eval;
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 

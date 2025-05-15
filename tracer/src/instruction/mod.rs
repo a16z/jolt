@@ -77,6 +77,8 @@ use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 pub mod format;
 
+pub mod instruction_macros;
+
 pub mod add;
 pub mod addi;
 pub mod and;
