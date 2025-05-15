@@ -1,3 +1,6 @@
+#[cfg(not(feature = "std"))]
+use alloc::{vec, vec::Vec};
+
 /// Emulates main memory.
 pub struct Memory {
     /// Memory content

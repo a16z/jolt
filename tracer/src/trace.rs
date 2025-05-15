@@ -1,8 +1,11 @@
-use std::cell::RefCell;
+use core::cell::RefCell;
 
 use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
 
 use crate::emulator::cpu::Xlen;
+
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
 
 pub struct Tracer {
     pub rows: RefCell<Vec<RVTraceRow>>,
