@@ -131,7 +131,7 @@ where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
         polys
-            .iter()
+            .par_iter()
             .map(|poly| Self::commit(poly.borrow(), gens))
             .collect()
     }
@@ -176,7 +176,7 @@ where
 
         // Todo: Batch commit
         let com_list: Vec<_> = polys[1..]
-            .iter()
+            .par_iter()
             .map(|poly| {
                 UnivariatePolynomialCommitment::<P, ProofTranscript>::commit(p_srs, poly).unwrap()
             })
@@ -185,7 +185,6 @@ where
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
-        // CANT JUST PARALLELIZE transcript is &mut
         com_list
             .iter()
             .for_each(|g| transcript.append_serializable(&g.0));
@@ -209,14 +208,10 @@ where
             .map(|(comm, polynomial)| {
                 let y_pos = polynomial.evaluate(&r);
                 let y_neg = polynomial.evaluate(&-r);
-                let y = polynomial.evaluate(&(r * r));
+                let y = polynomial.evaluate(&r.square());
                 SubProof {
                     proof: UnivariatePolynomialCommitment::open(
-                        p_srs,
-                        &polynomial,
-                        comm,
-                        &r,
-                        transcript,
+                        p_srs, polynomial, comm, &r, transcript,
                     )
                     .unwrap(), // opening
                     y,
@@ -308,7 +303,7 @@ where
                         *commitment,
                         r,
                         *eval,
-                        &proof,
+                        proof,
                         transcript,
                     )
                 },
@@ -362,13 +357,22 @@ mod tests {
             .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
             .collect::<Vec<_>>();
 
-        let mut transcript = KeccakTranscript::new(b"TestEval");
+        let mut prover_transcript = KeccakTranscript::new(b"TestEval");
 
-        let proof = HyperTest::prove(&setup, &poly, &point, &mut transcript);
+        let proof = HyperTest::prove(&setup, &poly, &point, &mut prover_transcript);
 
-        let mut transcript = KeccakTranscript::new(b"TestEval");
+        let mut verifier_transcript = KeccakTranscript::new(b"TestEval");
+        verifier_transcript.compare_to(prover_transcript);
 
         let opening = poly.evaluate(&point);
-        HyperTest::verify(&proof, &setup, &mut transcript, &point, &opening, &commit).unwrap();
+        HyperTest::verify(
+            &proof,
+            &setup,
+            &mut verifier_transcript,
+            &point,
+            &opening,
+            &commit,
+        )
+        .unwrap();
     }
 }
