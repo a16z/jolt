@@ -79,6 +79,10 @@ impl<F: JoltField> EqPolynomial<F> {
 
         evals
     }
+
+    pub fn len(&self) -> usize {
+        self.r.len().pow2()
+    }
 }
 
 impl<F: JoltField> EqPlusOnePolynomial<F> {
