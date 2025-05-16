@@ -1995,6 +1995,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "once_cell",
+ "paste",
  "postcard",
  "rand 0.7.3",
  "rand_chacha 0.3.1",

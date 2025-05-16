@@ -6,6 +6,7 @@ use ark_ec::{
     CurveGroup,
 };
 use ark_ff::{Field, One, Zero};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use tracing::Level;
 
 use super::{
@@ -44,6 +45,7 @@ where
     }
 }
 
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct OpeningProof<P: Pairing> {
     ip_proof: MippKProof<P>,
     y_eval_comm: P::G1,
@@ -197,12 +199,6 @@ where
         (sqrt / skew_factor - 1, sqrt * skew_factor - 1)
     }
 
-    fn parse_bivariate_degrees_from_srs(srs: &KZGProverKey<P>) -> (usize, usize) {
-        let x_degree = (srs.g2_powers().len() - 1) / 2;
-        let y_degree = srs.len() - 1;
-        (x_degree, y_degree)
-    }
-
     fn bivariate_form(
         bivariate_degrees: (usize, usize),
         polynomial: &UnivariatePolynomial<P::ScalarField>,
@@ -235,7 +231,7 @@ where
         srs: &KZGProverKey<P>,
         polynomial: &UnivariatePolynomial<P::ScalarField>,
     ) -> Result<(PairingOutput<P>, Vec<P::G1>), Error> {
-        let bivariate_degrees = Self::parse_bivariate_degrees_from_srs(srs);
+        let bivariate_degrees = Self::bivariate_degrees(polynomial.len() - 1);
         BivariatePolynomialCommitment::<P, ProofTranscript>::commit(
             srs,
             &Self::bivariate_form(bivariate_degrees, polynomial),
@@ -249,7 +245,7 @@ where
         point: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<OpeningProof<P>, Error> {
-        let (x_degree, y_degree) = Self::parse_bivariate_degrees_from_srs(srs);
+        let (x_degree, y_degree) = Self::bivariate_degrees(polynomial.len() - 1);
         let y = *point;
         let x = point.pow(vec![(y_degree + 1) as u64]);
         BivariatePolynomialCommitment::<P, ProofTranscript>::open(

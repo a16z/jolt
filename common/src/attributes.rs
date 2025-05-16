@@ -1,6 +1,9 @@
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+#[cfg(feature = "std")]
 use syn::{Lit, Meta, MetaNameValue, NestedMeta};
 
+#[cfg(feature = "std")]
 use crate::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
 };
@@ -13,6 +16,7 @@ pub struct Attributes {
     pub max_output_size: u64,
 }
 
+#[cfg(feature = "std")]
 pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
