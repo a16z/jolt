@@ -264,7 +264,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
         let K = lookup_table.len();
 
         let core_piop_verifier_state = ShoutVerifierState::initialize(lookup_table, transcript);
-        let booleanity_verifier_state = BooleanityVerifierState::initalize(r_cycle, K, transcript);
+        let booleanity_verifier_state = BooleanityVerifierState::initialize(r_cycle, K, transcript);
 
         let core_piop_sumcheck = ShoutSumcheck {
             prover_state: None,
@@ -449,7 +449,7 @@ struct BooleanityVerifierState<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanityVerifierState<F> {
-    fn initalize<ProofTranscript: Transcript>(
+    fn initialize<ProofTranscript: Transcript>(
         r_cycle: &[F],
         K: usize,
         transcript: &mut ProofTranscript,
