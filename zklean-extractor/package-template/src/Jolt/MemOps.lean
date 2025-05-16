@@ -1,16 +1,14 @@
 import ZkLean
 import Jolt.InstructionFlags
 
-def jolt_step [JoltField f]
+/--
+  The in-circuit memory operations for a single Jolt step.
+  Note: This is NOT automatically extracted, but currently manually written based on the current Jolt implementation.
+-/
+def memory_step [JoltField f]
+  (inputs : JoltR1CSInputs f)
   (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
-  : ZKBuilder f (JoltR1CSInputs f) :=
-  do
-  let inputs: JoltR1CSInputs f <- Witnessable.witness;
-  uniform_jolt_constraints inputs
-
-  lookup_step inputs
-
-
+  : ZKBuilder f PUnit := do
   let v <- ram_read mem_elfaddress inputs.Bytecode_A
   constrainEq v inputs.Bytecode_ELFAddress
 
@@ -47,13 +45,3 @@ def jolt_step [JoltField f]
   constrainEq ram_v inputs.RAM_Read
   ram_write mem_ram inputs.RAM_Address inputs.RAM_Write
 
-  pure inputs
-
-def jolt_step_fold [JoltField f]
-  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
-  (prev_state: JoltR1CSInputs f):
-  ZKBuilder f (JoltR1CSInputs f) :=
-  do
-  let new_state <- jolt_step mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm
-  non_uniform_jolt_constraints prev_state new_state
-  pure new_state
