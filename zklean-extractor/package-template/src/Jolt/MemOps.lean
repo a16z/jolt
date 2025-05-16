@@ -7,7 +7,7 @@ import Jolt.InstructionFlags
 -/
 def memory_step [JoltField f]
   (inputs : JoltR1CSInputs f)
-  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
+  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f) /- We don't currently support storing tuples inside RAM so we've split them into separate ROMs -/
   : ZKBuilder f PUnit := do
   let v <- ram_read mem_elfaddress inputs.Bytecode_A
   constrainEq v inputs.Bytecode_ELFAddress
