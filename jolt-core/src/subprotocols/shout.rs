@@ -195,7 +195,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         );
     }
 
-    fn cache_claims(&mut self) {
+    fn cache_openings(&mut self) {
         debug_assert!(self.claims.is_none());
         let ShoutProverState { rv_claim, ra, .. } = self.prover_state.as_ref().unwrap();
         self.claims = Some(ShoutSumcheckClaims {
@@ -658,7 +658,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchableSumcheckInstance<F, Pro
         }
     }
 
-    fn cache_claims(&mut self) {
+    fn cache_openings(&mut self) {
         debug_assert!(self.ra_claim.is_none());
         let BooleanityProverState { H, .. } = self.prover_state.as_ref().unwrap();
         let ra_claim = H.as_ref().unwrap().final_sumcheck_claim();

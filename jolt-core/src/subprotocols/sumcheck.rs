@@ -15,9 +15,7 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use rayon::prelude::*;
-use std::cell::RefCell;
 use std::marker::PhantomData;
-use std::rc::Rc;
 
 pub trait Bindable<F: JoltField>: Sync {
     fn bind(&mut self, r: F);
@@ -81,19 +79,42 @@ where
     }
 }
 
-pub type SharedSumcheckState<T> = Rc<RefCell<(T, usize)>>;
-pub type SharedSumcheckClaim<F: JoltField> = Rc<RefCell<F>>;
-
+/// Trait for a sumcheck instance that can be batched with other instances.
+///
+/// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
+/// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
 pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
+    /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
+
+    /// Returns the number of rounds/variables in this sumcheck instance.
     fn num_rounds(&self) -> usize;
+
+    /// Returns the initial claim of this sumcheck instance, i.e.
+    /// input_claim = \sum_{x \in \{0, 1}^N} P(x)
     fn input_claim(&self) -> F;
+
+    /// Computes the prover's message for a specific round of the sumcheck protocol.
+    /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
+    /// The point evaluation at 1 can be interpolated using the previous round's claim.
     fn compute_prover_message(&self, round: usize) -> Vec<F>;
+
+    /// Binds this sumcheck instance to the verifier's challenge from a specific round.
+    /// This updates the internal state to prepare for the next round.
     fn bind(&mut self, r_j: F, round: usize);
-    fn cache_claims(&mut self);
+
+    /// Caches polynomial opening claims needed after the sumcheck protocol completes.
+    /// These openings will later be proven using either an opening proof or another sumcheck.
+    fn cache_openings(&mut self);
+
+    /// Computes the expected output claim given the verifier's challenges.
+    /// This is used to verify the final result of the sumcheck protocol.
     fn expected_output_claim(&self, r: &[F]) -> F;
 }
 
+/// Implements the standard technique for batching parallel sumchecks to reduce
+/// verifier cost and proof size.
+/// See, for instance, Section 4.2.1 of the Twist/Shout paper.
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
@@ -108,6 +129,15 @@ impl BatchedSumcheck {
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
+        // To see why we may need to scale by a power of two, consider a batch of
+        // two sumchecks:
+        //   claim_a = \sum_x P(x)             where x \in {0, 1}^M
+        //   claim_b = \sum_{x, y} Q(x, y)     where x \in {0, 1}^M, y \in {0, 1}^N
+        // Then the batched sumcheck is:
+        //   \sum_{x, y} A * P(x) + B * Q(x, y)  where A and B are batching coefficients
+        //   = A * \sum_y \sum_x P(x) + B * \sum_{x, y} Q(x, y)
+        //   = A * \sum_y claim_a + B * claim_b
+        //   = A * 2^N * claim_a + B * claim_b
         let mut individual_claims: Vec<F> = sumcheck_instances
             .iter()
             .map(|sumcheck| {
@@ -137,6 +167,9 @@ impl BatchedSumcheck {
                 .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
                     if remaining_rounds > num_rounds {
+                        // We haven't gotten to this sumcheck's variables yet, so
+                        // the univariate polynomial is just a constant equal to
+                        // the input claim, scaled by a power of 2.
                         let num_rounds = sumcheck.num_rounds();
                         let scaled_input_claim = sumcheck
                             .input_claim()
@@ -153,6 +186,7 @@ impl BatchedSumcheck {
                 })
                 .collect();
 
+            // Linear combination of individual univariate polynomials
             let batched_univariate_poly: UniPoly<F> =
                 univariate_polys.iter().zip(batching_coeffs.iter()).fold(
                     UniPoly::from_coeff(vec![]),
@@ -169,6 +203,7 @@ impl BatchedSumcheck {
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
+            // Cache individual claims for this round
             individual_claims
                 .iter_mut()
                 .zip(univariate_polys.into_iter())
@@ -176,6 +211,7 @@ impl BatchedSumcheck {
 
             #[cfg(test)]
             {
+                // Sanity check
                 let h0 = batched_univariate_poly.evaluate(&F::zero());
                 let h1 = batched_univariate_poly.evaluate(&F::one());
                 assert_eq!(
@@ -191,6 +227,9 @@ impl BatchedSumcheck {
             }
 
             for sumcheck in sumcheck_instances.iter_mut() {
+                // If a sumcheck instance has fewer than `max_num_rounds`,
+                // we wait until there are <= `sumcheck.num_rounds()` left
+                // before binding its variables.
                 if remaining_rounds <= sumcheck.num_rounds() {
                     let offset = max_num_rounds - sumcheck.num_rounds();
                     sumcheck.bind(r_j, round - offset);
@@ -201,7 +240,9 @@ impl BatchedSumcheck {
         }
 
         for sumcheck in sumcheck_instances.iter_mut() {
-            sumcheck.cache_claims();
+            // Cache polynomial opening claims, to be proven using either an
+            // opening proof or sumcheck (in the case of virtual polynomials).
+            sumcheck.cache_openings();
         }
 
         (SumcheckInstanceProof::new(compressed_polys), r)
@@ -225,6 +266,15 @@ impl BatchedSumcheck {
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
+        // To see why we may need to scale by a power of two, consider a batch of
+        // two sumchecks:
+        //   claim_a = \sum_x P(x)             where x \in {0, 1}^M
+        //   claim_b = \sum_{x, y} Q(x, y)     where x \in {0, 1}^M, y \in {0, 1}^N
+        // Then the batched sumcheck is:
+        //   \sum_{x, y} A * P(x) + B * Q(x, y)  where A and B are batching coefficients
+        //   = A * \sum_y \sum_x P(x) + B * \sum_{x, y} Q(x, y)
+        //   = A * \sum_y claim_a + B * claim_b
+        //   = A * 2^N * claim_a + B * claim_b
         let claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
@@ -244,6 +294,11 @@ impl BatchedSumcheck {
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
+                // If a sumcheck instance has fewer than `max_num_rounds`,
+                // we wait until there are <= `sumcheck.num_rounds()` left
+                // before binding its variables.
+                // So, the sumcheck *actually* uses just the last `sumcheck.num_rounds()`
+                // values of `r_sumcheck`.
                 let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
                 sumcheck.expected_output_claim(r_slice) * coeff
             })
