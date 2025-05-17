@@ -40,17 +40,17 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
     pub fn new(w: &[F]) -> Self {
         let m = w.len() / 2;
-        //   w = [w2, w1, w_last]
+        //   w = [w_out, w_in, w_last]
         //        ↑   ↑    ↑
         //        |   |    |
         //        |   |    last element
-        //        |   second half of remaining elements (for E1)
-        //        first half of remaining elements (for E2)
+        //        |   second half of remaining elements (for E_in)
+        //        first half of remaining elements (for E_out)
         let (_, wprime) = w.split_last().unwrap();
-        let (w2, w1) = wprime.split_at(m);
+        let (w_out, w_in) = wprime.split_at(m);
         let (E_out_vec, E_in_vec) = rayon::join(
-            || EqPolynomial::evals_cached(w2),
-            || EqPolynomial::evals_cached(w1),
+            || EqPolynomial::evals_cached(w_out),
+            || EqPolynomial::evals_cached(w_in),
         );
         Self {
             current_index: w.len(),
@@ -120,9 +120,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
-        self.current_scalar *= F::one() - self.w[self.current_index - 1] - r
-            + self.w[self.current_index - 1] * r
-            + self.w[self.current_index - 1] * r;
+        // which is the same as `1 - w[i] - r + 2 * w[i] * r`
+        let prod_w_r = self.w[self.current_index - 1] * r;
+        self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
         // decrement `current_index`
         self.current_index -= 1;
         // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -131,12 +131,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         } else if 0 < self.current_index {
             self.E_out_vec.pop();
         }
-        // println!(
-        //     "current_index: {}, E1_len: {}, E2_len: {}",
-        //     self.current_index,
-        //     self.E_in_vec.len(),
-        //     self.E_out_vec.len()
-        // );
     }
 
     #[cfg(test)]
