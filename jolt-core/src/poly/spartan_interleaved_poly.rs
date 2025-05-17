@@ -1,19 +1,17 @@
 use super::{
-    multilinear_polynomial::MultilinearPolynomial,
-    sparse_interleaved_poly::SparseCoefficient,
-    split_eq_poly::GruenSplitEqPolynomial,
-    unipoly::CompressedUniPoly,
+    multilinear_polynomial::MultilinearPolynomial, sparse_interleaved_poly::SparseCoefficient,
+    split_eq_poly::GruenSplitEqPolynomial, unipoly::CompressedUniPoly,
 };
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
 #[cfg(test)]
 use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
     utils::{math::Math, transcript::Transcript},
 };
-use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use ark_ff::Zero;
 use rayon::prelude::*;
 
@@ -227,10 +225,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     ///
     /// Note that we implement the extra optimization of only computing the quadratic
     /// evaluation at infinity, since the eval at zero is always zero.
-    #[tracing::instrument(
-        skip_all,
-        name = "SpartanInterleavedPolynomial::first_sumcheck_round"
-    )]
+    #[tracing::instrument(skip_all, name = "SpartanInterleavedPolynomial::first_sumcheck_round")]
     pub fn first_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
