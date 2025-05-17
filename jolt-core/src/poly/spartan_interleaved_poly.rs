@@ -1,8 +1,8 @@
 use super::{
     multilinear_polynomial::MultilinearPolynomial,
     sparse_interleaved_poly::SparseCoefficient,
-    split_eq_poly::SplitEqPolynomial,
-    unipoly::{CompressedUniPoly, UniPoly},
+    split_eq_poly::GruenSplitEqPolynomial,
+    unipoly::CompressedUniPoly,
 };
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -11,11 +11,9 @@ use crate::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
-    utils::{
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::{math::Math, transcript::Transcript},
 };
+use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use ark_ff::Zero;
 use rayon::prelude::*;
 
@@ -226,9 +224,16 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     /// The first round of the first Spartan sumcheck. Since the polynomials
     /// are still unbound at the beginning of this round, we can replace some
     /// of the field arithmetic with `i128` arithmetic.
+    ///
+    /// Note that we implement the extra optimization of only computing the quadratic
+    /// evaluation at infinity, since the eval at zero is always zero.
+    #[tracing::instrument(
+        skip_all,
+        name = "SpartanInterleavedPolynomial::first_sumcheck_round"
+    )]
     pub fn first_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
-        eq_poly: &mut SplitEqPolynomial<F>,
+        eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
         r: &mut Vec<F>,
         polys: &mut Vec<CompressedUniPoly<F>>,
@@ -250,104 +255,72 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
-        // We start by computing the E1 evals:
-        // (1 - j) * E1[0, x1] + j * E1[1, x1]
-        let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
-            .par_chunks(2)
-            .map(|E1_chunk| {
-                let eval_point_0 = E1_chunk[0];
-                let m_eq = E1_chunk[1] - E1_chunk[0];
-                let eval_point_2 = E1_chunk[1] + m_eq;
-                let eval_point_3 = eval_point_2 + m_eq;
-                (eval_point_0, eval_point_2, eval_point_3)
-            })
-            .collect();
+        let num_x_in_bits = eq_poly.E_in_current_len().log_2();
+        let x_in_bitmask = (1 << num_x_in_bits) - 1;
 
-        let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-        let x1_bitmask = (1 << num_x1_bits) - 1;
-
-        let evals: (F, F, F) = chunks
+        // In the first round, we only need to compute the quadratic evaluation at infinity,
+        // since the eval at zero is always zero.
+        let quadratic_eval_at_infty = chunks
             .par_iter()
             .map(|chunk| {
-                let mut eval_point_0 = F::zero();
-                let mut eval_point_2 = F::zero();
-                let mut eval_point_3 = F::zero();
+                let mut eval_point_infty = F::zero();
 
-                let mut inner_sums = (F::zero(), F::zero(), F::zero());
-                let mut prev_x2 = 0;
+                let mut inner_sums = F::zero();
+                let mut prev_x_out = 0;
 
                 for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = sparse_block[0].index / 6;
-                    let x1 = block_index & x1_bitmask;
-                    let E1_evals = E1_evals[x1];
-                    let x2 = block_index >> num_x1_bits;
+                    let x_in = block_index & x_in_bitmask;
+                    let E_in_evals = eq_poly.E_in_current()[x_in];
+                    let x_out = block_index >> num_x_in_bits;
 
-                    if x2 != prev_x2 {
-                        eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                        eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                        eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
-
-                        inner_sums = (F::zero(), F::zero(), F::zero());
-                        prev_x2 = x2;
+                    if x_out != prev_x_out {
+                        eval_point_infty += eq_poly.E_out_current()[prev_x_out] * inner_sums;
+                        inner_sums = F::zero();
+                        prev_x_out = x_out;
                     }
 
-                    let mut block = [0; 6];
+                    // This holds the az0, az1, bz0, bz1 evals. No need for cz0, cz1 since we only need
+                    // the eval at infinity.
+                    let mut az0 = 0i128;
+                    let mut az1 = 0i128;
+                    let mut bz0 = 0i128;
+                    let mut bz1 = 0i128;
                     for coeff in sparse_block {
-                        block[coeff.index % 6] = coeff.value;
+                        let local_idx = coeff.index % 6;
+                        if local_idx == 0 {
+                            az0 = coeff.value;
+                        } else if local_idx == 1 {
+                            bz0 = coeff.value;
+                        } else if local_idx == 3 {
+                            az1 = coeff.value;
+                        } else if local_idx == 4 {
+                            bz1 = coeff.value;
+                        }
                     }
-
-                    let az = (block[0], block[3]);
-                    let bz = (block[1], block[4]);
-                    let cz = (block[2], block[5]);
-
-                    let m_az = az.1 - az.0;
-                    let m_bz = bz.1 - bz.0;
-                    let m_cz = cz.1 - cz.0;
-
-                    let az_eval_2 = az.1 + m_az;
-                    let az_eval_3 = az_eval_2 + m_az;
-
-                    let bz_eval_2 = bz.1 + m_bz;
-                    let bz_eval_3 = bz_eval_2 + m_bz;
-
-                    let cz_eval_2 = cz.1 + m_cz;
-                    let cz_eval_3 = cz_eval_2 + m_cz;
-
-                    // TODO(moodlezoup): optimize
-                    inner_sums.0 += E1_evals.0.mul_i128(az.0 * bz.0 - cz.0);
-                    inner_sums.1 += E1_evals.1.mul_i128(az_eval_2 * bz_eval_2 - cz_eval_2);
-                    inner_sums.2 += E1_evals.2.mul_i128(az_eval_3 * bz_eval_3 - cz_eval_3);
+                    let az_infty = az1 - az0;
+                    let bz_infty = bz1 - bz0;
+                    if az_infty != 0 && bz_infty != 0 {
+                        inner_sums += E_in_evals.mul_i128(
+                            az_infty.checked_mul(bz_infty).unwrap_or_else(|| {
+                                panic!("az_infty * bz_infty overflow");
+                            }),
+                        );
+                    }
                 }
-
-                eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
-
-                (eval_point_0, eval_point_2, eval_point_3)
+                eval_point_infty += eq_poly.E_out_current()[prev_x_out] * inner_sums;
+                eval_point_infty
             })
-            .reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            );
+            .reduce(|| F::zero(), |sum, evals| sum + evals);
 
-        let cubic_evals = [evals.0, /* 0 */ -evals.0, evals.1, evals.2];
-        let cubic_poly = UniPoly::from_evals(&cubic_evals);
-
-        let compressed_poly = cubic_poly.compress();
-
-        // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
-
-        // derive the verifier's challenge for the next round
-        let r_i = transcript.challenge_scalar();
-        r.push(r_i);
-        polys.push(compressed_poly);
-
-        // Set up next round
-        *claim = cubic_poly.evaluate(&r_i);
-
-        // Bind polynomials
-        eq_poly.bind(r_i);
+        let r_i = process_eq_sumcheck_round(
+            (F::zero(), quadratic_eval_at_infty),
+            eq_poly,
+            polys,
+            r,
+            claim,
+            transcript,
+        );
 
         #[cfg(test)]
         let (mut az, mut bz, mut cz) = self.uninterleave();
@@ -431,8 +404,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
         #[cfg(test)]
         {
-            // Check that the binding is consistent with binding
-            // Az, Bz, Cz individually
+            // Check that the binding is consistent with binding Az, Bz, Cz individually
             let (az_bound, bz_bound, cz_bound) = self.uninterleave();
             az.bound_poly_var_bot(&r_i);
             bz.bound_poly_var_bot(&r_i);
@@ -449,9 +421,13 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     }
 
     /// All subsequent rounds of the first Spartan sumcheck.
+    #[tracing::instrument(
+        skip_all,
+        name = "SpartanInterleavedPolynomial::subsequent_sumcheck_round"
+    )]
     pub fn subsequent_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
-        eq_poly: &mut SplitEqPolynomial<F>,
+        eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
         r: &mut Vec<F>,
         polys: &mut Vec<CompressedUniPoly<F>>,
@@ -473,19 +449,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
-        let cubic_poly = if eq_poly.E1_len == 1 {
-            let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
-                .par_chunks(2)
-                .map(|eq_chunk| {
-                    let eval_point_0 = eq_chunk[0];
-                    let m_eq = eq_chunk[1] - eq_chunk[0];
-                    let eval_point_2 = eq_chunk[1] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
-
-            let evals: (F, F, F) = chunks
+        let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
+            let evals = chunks
                 .par_iter()
                 .flat_map_iter(|chunk| {
                     chunk
@@ -499,83 +464,51 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
                             let az = (block[0], block[3]);
                             let bz = (block[1], block[4]);
-                            let cz = (block[2], block[5]);
+                            let cz0 = block[2];
 
-                            let m_az = az.1 - az.0;
-                            let m_bz = bz.1 - bz.0;
-                            let m_cz = cz.1 - cz.0;
+                            let az_eval_infty = az.1 - az.0;
+                            let bz_eval_infty = bz.1 - bz.0;
 
-                            let az_eval_2 = az.1 + m_az;
-                            let az_eval_3 = az_eval_2 + m_az;
-
-                            let bz_eval_2 = bz.1 + m_bz;
-                            let bz_eval_3 = bz_eval_2 + m_bz;
-
-                            let cz_eval_2 = cz.1 + m_cz;
-                            let cz_eval_3 = cz_eval_2 + m_cz;
-
-                            let eq_evals = eq_evals[block_index];
+                            let eq_evals = eq_poly.E_out_current()[block_index];
 
                             (
+                                eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
                                 eq_evals
-                                    .0
-                                    .mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0),
-                                eq_evals.1.mul_0_optimized(
-                                    az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2,
-                                ),
-                                eq_evals.2.mul_0_optimized(
-                                    az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3,
-                                ),
+                                    .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
                             )
                         })
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
-
-            let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
-            UniPoly::from_evals(&cubic_evals)
+            evals
         } else {
-            // We start by computing the E1 evals:
-            // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
-                .par_chunks(2)
-                .map(|E1_chunk| {
-                    let eval_point_0 = E1_chunk[0];
-                    let m_eq = E1_chunk[1] - E1_chunk[0];
-                    let eval_point_2 = E1_chunk[1] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
+            let num_x_in_bits = eq_poly.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
 
-            let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-            let x1_bitmask = (1 << num_x1_bits) - 1;
-
-            let evals: (F, F, F) = chunks
+            let evals = chunks
                 .par_iter()
                 .map(|chunk| {
                     let mut eval_point_0 = F::zero();
-                    let mut eval_point_2 = F::zero();
-                    let mut eval_point_3 = F::zero();
+                    let mut eval_point_infty = F::zero();
 
-                    let mut inner_sums = (F::zero(), F::zero(), F::zero());
-                    let mut prev_x2 = 0;
+                    let mut inner_sums = (F::zero(), F::zero());
+                    let mut prev_x_out = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                         let block_index = sparse_block[0].index / 6;
-                        let x1 = block_index & x1_bitmask;
-                        let E1_evals = E1_evals[x1];
-                        let x2 = block_index >> num_x1_bits;
+                        let x_in = block_index & x_bitmask;
+                        let E_in_eval = eq_poly.E_in_current()[x_in];
+                        let x_out = block_index >> num_x_in_bits;
 
-                        if x2 != prev_x2 {
-                            eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                            eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                            eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
+                        if x_out != prev_x_out {
+                            let E_out_eval = eq_poly.E_out_current()[prev_x_out];
+                            eval_point_0 += E_out_eval * inner_sums.0;
+                            eval_point_infty += E_out_eval * inner_sums.1;
 
-                            inner_sums = (F::zero(), F::zero(), F::zero());
-                            prev_x2 = x2;
+                            inner_sums = (F::zero(), F::zero());
+                            prev_x_out = x_out;
                         }
 
                         let mut block = [F::zero(); 6];
@@ -585,62 +518,29 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
                         let az = (block[0], block[3]);
                         let bz = (block[1], block[4]);
-                        let cz = (block[2], block[5]);
+                        let cz0 = block[2];
 
-                        let m_az = az.1 - az.0;
-                        let m_bz = bz.1 - bz.0;
-                        let m_cz = cz.1 - cz.0;
+                        let az_eval_infty = az.1 - az.0;
+                        let bz_eval_infty = bz.1 - bz.0;
 
-                        let az_eval_2 = az.1 + m_az;
-                        let az_eval_3 = az_eval_2 + m_az;
-
-                        let bz_eval_2 = bz.1 + m_bz;
-                        let bz_eval_3 = bz_eval_2 + m_bz;
-
-                        let cz_eval_2 = cz.1 + m_cz;
-                        let cz_eval_3 = cz_eval_2 + m_cz;
-
-                        inner_sums.0 += E1_evals
-                            .0
-                            .mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0);
-                        inner_sums.1 += E1_evals
-                            .1
-                            .mul_0_optimized(az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2);
-                        inner_sums.2 += E1_evals
-                            .2
-                            .mul_0_optimized(az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3);
+                        inner_sums.0 += E_in_eval.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
+                        inner_sums.1 +=
+                            E_in_eval.mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
                     }
 
-                    eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                    eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                    eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
+                    eval_point_0 += eq_poly.E_out_current()[prev_x_out] * inner_sums.0;
+                    eval_point_infty += eq_poly.E_out_current()[prev_x_out] * inner_sums.1;
 
-                    (eval_point_0, eval_point_2, eval_point_3)
+                    (eval_point_0, eval_point_infty)
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
-
-            let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
-            UniPoly::from_evals(&cubic_evals)
+            evals
         };
 
-        let compressed_poly = cubic_poly.compress();
-
-        // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
-
-        // derive the verifier's challenge for the next round
-        let r_i = transcript.challenge_scalar();
-        r.push(r_i);
-        polys.push(compressed_poly);
-
-        // Set up next round
-        *claim = cubic_poly.evaluate(&r_i);
-
-        // Bind polynomials
-        eq_poly.bind(r_i);
+        let r_i = process_eq_sumcheck_round(quadratic_evals, eq_poly, polys, r, claim, transcript);
 
         #[cfg(test)]
         let (mut az, mut bz, mut cz) = self.uninterleave();
@@ -726,8 +626,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
         #[cfg(test)]
         {
-            // Check that the binding is consistent with binding
-            // Az, Bz, Cz individually
+            // Check that the binding is consistent with binding Az, Bz, Cz individually
             let (az_bound, bz_bound, cz_bound) = self.uninterleave();
             az.bound_poly_var_bot(&r_i);
             bz.bound_poly_var_bot(&r_i);

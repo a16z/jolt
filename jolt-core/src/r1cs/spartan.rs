@@ -9,7 +9,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -130,7 +130,7 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
-        let mut eq_tau = SplitEqPolynomial::new(&tau);
+        let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
