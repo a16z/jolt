@@ -156,7 +156,7 @@ where
         polys.push(poly.into());
         for i in 0..ell - 1 {
             let previous_poly: &UniPoly<P::ScalarField> = &polys[i];
-            let Pi_len = previous_poly.len() / 2;
+            let Pi_len = previous_poly.coeffs.len() / 2;
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
             let x = point[ell - i - 1];
 
@@ -170,7 +170,7 @@ where
         }
 
         assert_eq!(polys.len(), ell);
-        assert_eq!(polys[ell - 1].len(), 2);
+        assert_eq!(polys[ell - 1].coeffs.len(), 2);
 
         // We do not need to commit to the first polynomial as it is already committed.
 
