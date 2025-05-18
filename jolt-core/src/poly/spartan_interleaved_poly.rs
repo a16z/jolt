@@ -478,15 +478,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             }
             // Compare the underlying Z vectors directly after ensuring lengths match.
             assert_eq!(
-                az_bound.Z, az_for_test.Z,
+                &az_bound.Z[..az_for_test.len()], &az_for_test.Z[..az_for_test.len()],
                 "Az polynomial data mismatch after binding"
             );
             assert_eq!(
-                bz_bound.Z, bz_for_test.Z,
+                &bz_bound.Z[..bz_for_test.len()], &bz_for_test.Z[..bz_for_test.len()],
                 "Bz polynomial data mismatch after binding"
             );
             assert_eq!(
-                cz_bound.Z, cz_for_test.Z,
+                &cz_bound.Z[..cz_for_test.len()], &cz_for_test.Z[..cz_for_test.len()],
                 "Cz polynomial data mismatch after binding"
             );
         }
