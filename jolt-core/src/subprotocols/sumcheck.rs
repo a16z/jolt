@@ -114,7 +114,9 @@ pub trait BatchableSumcheckInstance<F: JoltField, ProofTranscript: Transcript> {
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.
-/// See, for instance, Section 4.2.1 of the Twist/Shout paper.
+///
+/// For details, refer to Jim Posen's ["Perspectives on Sumcheck Batching"](https://hackmd.io/s/HyxaupAAA).
+/// We do what they describe as "front-loaded" batch sumcheck.
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
