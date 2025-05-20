@@ -10,7 +10,7 @@ import Jolt.MemOps
 /--
   All the constraints a single Jolt step enforces.
 -/
-def jolt_step [JoltField f]
+def jolt_step [ZKField f]
   (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
   : ZKBuilder f (JoltR1CSInputs f) :=
   do
@@ -27,10 +27,10 @@ def jolt_step [JoltField f]
 /--
   Build constraints for a new Jolt step and constrain them with the previous step's state.
 -/
-def jolt_next_step [JoltField f]
+def jolt_next_step [ZKField f]
   (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
-  (prev_state: JoltR1CSInputs f):
-  ZKBuilder f (JoltR1CSInputs f) :=
+  (prev_state: JoltR1CSInputs f)
+  : ZKBuilder f (JoltR1CSInputs f) :=
   do
   let new_state <- jolt_step mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm
   non_uniform_jolt_constraints prev_state new_state

@@ -56,7 +56,7 @@ impl<J: JoltParameterSet> ZkLeanLookupCases<J> {
         let input_var = String::from("inputs");
 
         f.write_fmt(format_args!(
-                "{}def lookup_step [JoltField f] ({input_var}: JoltR1CSInputs f): ZKBuilder f PUnit := do\n",
+                "{}def lookup_step [ZKField f] ({input_var}: JoltR1CSInputs f): ZKBuilder f PUnit := do\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;

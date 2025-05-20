@@ -122,7 +122,7 @@ where
 
         indent_level = top_level_indent;
         f.write_fmt(format_args!(
-                "{}def uniform_jolt_constraints [JoltField f] (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
+                "{}def uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;
@@ -153,7 +153,7 @@ where
         f.write(b"\n")?;
         indent_level = top_level_indent;
         f.write_fmt(format_args!(
-                "{}def non_uniform_jolt_constraints [JoltField f] (jolt_inputs : JoltR1CSInputs f) (jolt_offset_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
+                "{}def non_uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) (jolt_offset_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
                 indent(indent_level),
         ))?;
         indent_level += 1;
