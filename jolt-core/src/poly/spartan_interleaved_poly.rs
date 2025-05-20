@@ -1,30 +1,26 @@
 use super::{
-    multilinear_polynomial::MultilinearPolynomial,
-    sparse_interleaved_poly::SparseCoefficient,
-    split_eq_poly::SplitEqPolynomial,
-    unipoly::{CompressedUniPoly, UniPoly},
+    multilinear_polynomial::MultilinearPolynomial, sparse_interleaved_poly::SparseCoefficient,
+    split_eq_poly::GruenSplitEqPolynomial, unipoly::CompressedUniPoly,
 };
 #[cfg(test)]
 use crate::poly::dense_mlpoly::DensePolynomial;
 #[cfg(test)]
 use crate::r1cs::inputs::JoltR1CSInputs;
+use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
-    utils::{
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::{math::Math, transcript::Transcript},
 };
 use ark_ff::Zero;
 use rayon::prelude::*;
 
 #[derive(Default, Debug, Clone)]
 pub struct SpartanInterleavedPolynomial<F: JoltField> {
-    /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
+    /// Shards of sparse vectors representing the (interleaved) coefficients in the Az, Bz, Cz
     /// polynomials used in the first Spartan sumcheck. Before the polynomial is bound
     /// the first time, all the coefficients can be represented by `i128`s.
-    pub(crate) unbound_coeffs: Vec<SparseCoefficient<i128>>,
+    pub(crate) unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>>,
     /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
     /// polynomials used in the first Spartan sumcheck. Once the polynomial has been
     /// bound, we switch to using `bound_coeffs` instead of `unbound_coeffs`, because
@@ -49,12 +45,12 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
 
-        let num_chunks = rayon::current_num_threads().next_power_of_two() * 4;
+        let num_chunks = rayon::current_num_threads().next_power_of_two() * 16;
         let chunk_size = num_steps.div_ceil(num_chunks);
 
-        let unbound_coeffs: Vec<SparseCoefficient<i128>> = (0..num_chunks)
+        let unbound_coeffs_shards_iter = (0..num_chunks)
             .into_par_iter()
-            .flat_map_iter(|chunk_index| {
+            .map(|chunk_index| {
                 let mut coeffs = Vec::with_capacity(chunk_size * padded_num_constraints * 3);
                 for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
                     // Uniform constraints
@@ -166,21 +162,31 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                 }
 
                 coeffs
-            })
-            .collect();
+            });
+        let unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>> =
+            unbound_coeffs_shards_iter.collect();
 
         #[cfg(test)]
         {
             // Check that indices are monotonically increasing
-            let mut prev_index = unbound_coeffs[0].index;
-            for coeff in unbound_coeffs[1..].iter() {
-                assert!(coeff.index > prev_index);
-                prev_index = coeff.index;
+            for shard in &unbound_coeffs_shards {
+                if !shard.is_empty() {
+                    let mut prev_index = shard[0].index;
+                    for coeff in shard.iter().skip(1) {
+                        assert!(
+                            coeff.index > prev_index,
+                            "Indices not monotonically increasing in shard: prev {}, current {}",
+                            prev_index,
+                            coeff.index
+                        );
+                        prev_index = coeff.index;
+                    }
+                }
             }
         }
 
         Self {
-            unbound_coeffs,
+            unbound_coeffs_shards,
             bound_coeffs: vec![],
             binding_scratch_space: vec![],
             dense_len: num_steps * padded_num_constraints,
@@ -194,21 +200,35 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         let mut cz = vec![F::zero(); self.dense_len];
 
         if !self.is_bound() {
-            for coeff in &self.unbound_coeffs {
-                match coeff.index % 3 {
-                    0 => az[coeff.index / 3] = F::from_i128(coeff.value),
-                    1 => bz[coeff.index / 3] = F::from_i128(coeff.value),
-                    2 => cz[coeff.index / 3] = F::from_i128(coeff.value),
-                    _ => unreachable!(),
+            for shard_arc in &self.unbound_coeffs_shards {
+                for coeff in shard_arc {
+                    // Ensure that the index is within bounds for az, bz, cz vectors.
+                    // This check is mostly a safeguard; coeff.index / 3 should be < self.dense_len.
+                    if coeff.index / 3 < self.dense_len {
+                        match coeff.index % 3 {
+                            0 => az[coeff.index / 3] = F::from_i128(coeff.value),
+                            1 => bz[coeff.index / 3] = F::from_i128(coeff.value),
+                            2 => cz[coeff.index / 3] = F::from_i128(coeff.value),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        // This case should ideally not be reached if dense_len is calculated correctly.
+                        panic!("Coefficient index out of bounds during uninterleave (unbound)");
+                    }
                 }
             }
         } else {
             for coeff in &self.bound_coeffs {
-                match coeff.index % 3 {
-                    0 => az[coeff.index / 3] = coeff.value,
-                    1 => bz[coeff.index / 3] = coeff.value,
-                    2 => cz[coeff.index / 3] = coeff.value,
-                    _ => unreachable!(),
+                // Similar bounds check for the bound case.
+                if coeff.index / 3 < self.dense_len {
+                    match coeff.index % 3 {
+                        0 => az[coeff.index / 3] = coeff.value,
+                        1 => bz[coeff.index / 3] = coeff.value,
+                        2 => cz[coeff.index / 3] = coeff.value,
+                        _ => unreachable!(),
+                    }
+                } else {
+                    panic!("Coefficient index out of bounds during uninterleave (bound)");
                 }
             }
         }
@@ -226,9 +246,13 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     /// The first round of the first Spartan sumcheck. Since the polynomials
     /// are still unbound at the beginning of this round, we can replace some
     /// of the field arithmetic with `i128` arithmetic.
+    ///
+    /// Note that we implement the extra optimization of only computing the quadratic
+    /// evaluation at infinity, since the eval at zero is always zero.
+    #[tracing::instrument(skip_all, name = "SpartanInterleavedPolynomial::first_sumcheck_round")]
     pub fn first_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
-        eq_poly: &mut SplitEqPolynomial<F>,
+        eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
         r: &mut Vec<F>,
         polys: &mut Vec<CompressedUniPoly<F>>,
@@ -236,127 +260,82 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
     ) {
         assert!(!self.is_bound());
 
-        // In order to parallelize, we do a first pass over the coefficients to
-        // determine how to divide it into chunks that can be processed independently.
-        // In particular, coefficients whose indices are the same modulo 6 cannot
-        // be processed independently.
-        let block_size = self
-            .unbound_coeffs
-            .len()
-            .div_ceil(rayon::current_num_threads())
-            .next_multiple_of(6);
-        let chunks: Vec<_> = self
-            .unbound_coeffs
-            .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
-            .collect();
+        let num_x_in_bits = eq_poly.E_in_current_len().log_2();
+        let x_in_bitmask = (1 << num_x_in_bits) - 1;
 
-        // We start by computing the E1 evals:
-        // (1 - j) * E1[0, x1] + j * E1[1, x1]
-        let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
-            .par_chunks(2)
-            .map(|E1_chunk| {
-                let eval_point_0 = E1_chunk[0];
-                let m_eq = E1_chunk[1] - E1_chunk[0];
-                let eval_point_2 = E1_chunk[1] + m_eq;
-                let eval_point_3 = eval_point_2 + m_eq;
-                (eval_point_0, eval_point_2, eval_point_3)
-            })
-            .collect();
-
-        let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-        let x1_bitmask = (1 << num_x1_bits) - 1;
-
-        let evals: (F, F, F) = chunks
+        // In the first round, we only need to compute the quadratic evaluation at infinity,
+        // since the eval at zero is always zero.
+        let quadratic_eval_at_infty = self
+            .unbound_coeffs_shards
             .par_iter()
-            .map(|chunk| {
-                let mut eval_point_0 = F::zero();
-                let mut eval_point_2 = F::zero();
-                let mut eval_point_3 = F::zero();
+            .map(|shard_coeffs| {
+                let mut shard_eval_point_infty = F::zero();
 
-                let mut inner_sums = (F::zero(), F::zero(), F::zero());
-                let mut prev_x2 = 0;
+                let mut current_shard_inner_sums = F::zero();
+                let mut current_shard_prev_x_out = 0;
 
-                for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
+                for sparse_block in shard_coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = sparse_block[0].index / 6;
-                    let x1 = block_index & x1_bitmask;
-                    let E1_evals = E1_evals[x1];
-                    let x2 = block_index >> num_x1_bits;
+                    let x_in = block_index & x_in_bitmask;
+                    let E_in_evals = eq_poly.E_in_current()[x_in];
+                    let x_out = block_index >> num_x_in_bits;
 
-                    if x2 != prev_x2 {
-                        eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                        eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                        eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
-
-                        inner_sums = (F::zero(), F::zero(), F::zero());
-                        prev_x2 = x2;
+                    if x_out != current_shard_prev_x_out {
+                        shard_eval_point_infty += eq_poly.E_out_current()[current_shard_prev_x_out]
+                            * current_shard_inner_sums;
+                        current_shard_inner_sums = F::zero();
+                        current_shard_prev_x_out = x_out;
                     }
 
-                    let mut block = [0; 6];
+                    // This holds the az0, az1, bz0, bz1 evals. No need for cz0, cz1 since we only need
+                    // the eval at infinity.
+                    let mut az0 = 0i128;
+                    let mut az1 = 0i128;
+                    let mut bz0 = 0i128;
+                    let mut bz1 = 0i128;
                     for coeff in sparse_block {
-                        block[coeff.index % 6] = coeff.value;
+                        let local_idx = coeff.index % 6;
+                        if local_idx == 0 {
+                            az0 = coeff.value;
+                        } else if local_idx == 1 {
+                            bz0 = coeff.value;
+                        } else if local_idx == 3 {
+                            az1 = coeff.value;
+                        } else if local_idx == 4 {
+                            bz1 = coeff.value;
+                        }
                     }
-
-                    let az = (block[0], block[3]);
-                    let bz = (block[1], block[4]);
-                    let cz = (block[2], block[5]);
-
-                    let m_az = az.1 - az.0;
-                    let m_bz = bz.1 - bz.0;
-                    let m_cz = cz.1 - cz.0;
-
-                    let az_eval_2 = az.1 + m_az;
-                    let az_eval_3 = az_eval_2 + m_az;
-
-                    let bz_eval_2 = bz.1 + m_bz;
-                    let bz_eval_3 = bz_eval_2 + m_bz;
-
-                    let cz_eval_2 = cz.1 + m_cz;
-                    let cz_eval_3 = cz_eval_2 + m_cz;
-
-                    // TODO(moodlezoup): optimize
-                    inner_sums.0 += E1_evals.0.mul_i128(az.0 * bz.0 - cz.0);
-                    inner_sums.1 += E1_evals.1.mul_i128(az_eval_2 * bz_eval_2 - cz_eval_2);
-                    inner_sums.2 += E1_evals.2.mul_i128(az_eval_3 * bz_eval_3 - cz_eval_3);
+                    let az_infty = az1 - az0;
+                    let bz_infty = bz1 - bz0;
+                    if az_infty != 0 && bz_infty != 0 {
+                        current_shard_inner_sums += E_in_evals.mul_i128(
+                            az_infty.checked_mul(bz_infty).unwrap_or_else(|| {
+                                panic!("az_infty * bz_infty overflow");
+                            }),
+                        );
+                    }
                 }
-
-                eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
-
-                (eval_point_0, eval_point_2, eval_point_3)
+                shard_eval_point_infty +=
+                    eq_poly.E_out_current()[current_shard_prev_x_out] * current_shard_inner_sums;
+                shard_eval_point_infty
             })
-            .reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-            );
+            .sum();
 
-        let cubic_evals = [evals.0, /* 0 */ -evals.0, evals.1, evals.2];
-        let cubic_poly = UniPoly::from_evals(&cubic_evals);
-
-        let compressed_poly = cubic_poly.compress();
-
-        // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
-
-        // derive the verifier's challenge for the next round
-        let r_i = transcript.challenge_scalar();
-        r.push(r_i);
-        polys.push(compressed_poly);
-
-        // Set up next round
-        *claim = cubic_poly.evaluate(&r_i);
-
-        // Bind polynomials
-        eq_poly.bind(r_i);
-
-        #[cfg(test)]
-        let (mut az, mut bz, mut cz) = self.uninterleave();
+        let r_i = process_eq_sumcheck_round(
+            (F::zero(), quadratic_eval_at_infty),
+            eq_poly,
+            polys,
+            r,
+            claim,
+            transcript,
+        );
 
         // Compute the number of non-zero bound coefficients that will be produced
         // per chunk.
-        let output_sizes: Vec<_> = chunks
+        let output_sizes: Vec<_> = self
+            .unbound_coeffs_shards
             .par_iter()
-            .map(|chunk| Self::binding_output_length(chunk))
+            .map(|shard| Self::binding_output_length(shard))
             .collect();
 
         let total_output_len = output_sizes.iter().sum();
@@ -365,7 +344,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         unsafe {
             self.bound_coeffs.set_len(total_output_len);
         }
-        let mut output_slices: Vec<&mut [SparseCoefficient<F>]> = Vec::with_capacity(chunks.len());
+        let mut output_slices: Vec<&mut [SparseCoefficient<F>]> =
+            Vec::with_capacity(self.unbound_coeffs_shards.len());
         let mut remainder = self.bound_coeffs.as_mut_slice();
         for slice_len in output_sizes {
             let (first, second) = remainder.split_at_mut(slice_len);
@@ -374,12 +354,12 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         }
         debug_assert_eq!(remainder.len(), 0);
 
-        chunks
+        self.unbound_coeffs_shards
             .par_iter()
             .zip_eq(output_slices.into_par_iter())
-            .for_each(|(unbound_coeffs, output_slice)| {
+            .for_each(|(unbound_coeffs_in_shard, output_slice_for_shard)| {
                 let mut output_index = 0;
-                for block in unbound_coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
+                for block in unbound_coeffs_in_shard.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
                     let mut az_coeff: (Option<i128>, Option<i128>) = (None, None);
@@ -399,7 +379,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     }
                     if az_coeff != (None, None) {
                         let (low, high) = (az_coeff.0.unwrap_or(0), az_coeff.1.unwrap_or(0));
-                        output_slice[output_index] = (
+                        output_slice_for_shard[output_index] = (
                             3 * block_index,
                             F::from_i128(low) + r_i.mul_i128(high - low),
                         )
@@ -408,7 +388,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     }
                     if bz_coeff != (None, None) {
                         let (low, high) = (bz_coeff.0.unwrap_or(0), bz_coeff.1.unwrap_or(0));
-                        output_slice[output_index] = (
+                        output_slice_for_shard[output_index] = (
                             3 * block_index + 1,
                             F::from_i128(low) + r_i.mul_i128(high - low),
                         )
@@ -417,7 +397,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     }
                     if cz_coeff != (None, None) {
                         let (low, high) = (cz_coeff.0.unwrap_or(0), cz_coeff.1.unwrap_or(0));
-                        output_slice[output_index] = (
+                        output_slice_for_shard[output_index] = (
                             3 * block_index + 2,
                             F::from_i128(low) + r_i.mul_i128(high - low),
                         )
@@ -425,33 +405,100 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                         output_index += 1;
                     }
                 }
-                debug_assert_eq!(output_index, output_slice.len())
+                debug_assert_eq!(output_index, output_slice_for_shard.len())
             });
+
+        #[cfg(test)]
+        let (mut az_for_test, mut bz_for_test, mut cz_for_test) = {
+            let original_dense_len = self.dense_len; // dense_len before it's halved for self
+            let mut az_vec = vec![F::zero(); original_dense_len];
+            let mut bz_vec = vec![F::zero(); original_dense_len];
+            let mut cz_vec = vec![F::zero(); original_dense_len];
+
+            for shard_arc in &self.unbound_coeffs_shards {
+                for coeff in shard_arc {
+                    if coeff.index / 3 < original_dense_len {
+                        match coeff.index % 3 {
+                            0 => az_vec[coeff.index / 3] = F::from_i128(coeff.value),
+                            1 => bz_vec[coeff.index / 3] = F::from_i128(coeff.value),
+                            2 => cz_vec[coeff.index / 3] = F::from_i128(coeff.value),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            (
+                DensePolynomial::new(az_vec),
+                DensePolynomial::new(bz_vec),
+                DensePolynomial::new(cz_vec),
+            )
+        };
+
+        // Drop the unbound coeffs shards now that we've bound them
+        self.unbound_coeffs_shards.clear();
+        self.unbound_coeffs_shards.shrink_to_fit();
+
         self.dense_len /= 2;
 
         #[cfg(test)]
         {
-            // Check that the binding is consistent with binding
-            // Az, Bz, Cz individually
+            // Check that the binding is consistent with binding Az, Bz, Cz individually
             let (az_bound, bz_bound, cz_bound) = self.uninterleave();
-            az.bound_poly_var_bot(&r_i);
-            bz.bound_poly_var_bot(&r_i);
-            cz.bound_poly_var_bot(&r_i);
-            for i in 0..az.len() {
-                if az_bound[i] != az[i] {
-                    println!("{i} {} != {}", az_bound[i], az[i]);
+            az_for_test.bound_poly_var_bot(&r_i);
+            bz_for_test.bound_poly_var_bot(&r_i);
+            cz_for_test.bound_poly_var_bot(&r_i);
+
+            assert_eq!(
+                az_bound.len(),
+                az_for_test.len(),
+                "Mismatch in length of Az polynomials after binding"
+            );
+            assert_eq!(
+                bz_bound.len(),
+                bz_for_test.len(),
+                "Mismatch in length of Bz polynomials after binding"
+            );
+            assert_eq!(
+                cz_bound.len(),
+                cz_for_test.len(),
+                "Mismatch in length of Cz polynomials after binding"
+            );
+
+            for i in 0..az_for_test.len() {
+                if az_bound[i] != az_for_test[i] {
+                    println!(
+                        "az mismatch at index {}: bound = {}, test_bound = {}",
+                        i, az_bound[i], az_for_test[i]
+                    );
                 }
             }
-            assert!(az_bound.Z[..az_bound.len()] == az.Z[..az.len()]);
-            assert!(bz_bound.Z[..bz_bound.len()] == bz.Z[..bz.len()]);
-            assert!(cz_bound.Z[..cz_bound.len()] == cz.Z[..cz.len()]);
+            // Compare the underlying Z vectors directly after ensuring lengths match.
+            assert_eq!(
+                &az_bound.Z[..az_for_test.len()],
+                &az_for_test.Z[..az_for_test.len()],
+                "Az polynomial data mismatch after binding"
+            );
+            assert_eq!(
+                &bz_bound.Z[..bz_for_test.len()],
+                &bz_for_test.Z[..bz_for_test.len()],
+                "Bz polynomial data mismatch after binding"
+            );
+            assert_eq!(
+                &cz_bound.Z[..cz_for_test.len()],
+                &cz_for_test.Z[..cz_for_test.len()],
+                "Cz polynomial data mismatch after binding"
+            );
         }
     }
 
     /// All subsequent rounds of the first Spartan sumcheck.
+    #[tracing::instrument(
+        skip_all,
+        name = "SpartanInterleavedPolynomial::subsequent_sumcheck_round"
+    )]
     pub fn subsequent_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
-        eq_poly: &mut SplitEqPolynomial<F>,
+        eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
         r: &mut Vec<F>,
         polys: &mut Vec<CompressedUniPoly<F>>,
@@ -473,19 +520,8 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
 
-        let cubic_poly = if eq_poly.E1_len == 1 {
-            let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
-                .par_chunks(2)
-                .map(|eq_chunk| {
-                    let eval_point_0 = eq_chunk[0];
-                    let m_eq = eq_chunk[1] - eq_chunk[0];
-                    let eval_point_2 = eq_chunk[1] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
-
-            let evals: (F, F, F) = chunks
+        let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
+            let evals = chunks
                 .par_iter()
                 .flat_map_iter(|chunk| {
                     chunk
@@ -499,83 +535,51 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
                             let az = (block[0], block[3]);
                             let bz = (block[1], block[4]);
-                            let cz = (block[2], block[5]);
+                            let cz0 = block[2];
 
-                            let m_az = az.1 - az.0;
-                            let m_bz = bz.1 - bz.0;
-                            let m_cz = cz.1 - cz.0;
+                            let az_eval_infty = az.1 - az.0;
+                            let bz_eval_infty = bz.1 - bz.0;
 
-                            let az_eval_2 = az.1 + m_az;
-                            let az_eval_3 = az_eval_2 + m_az;
-
-                            let bz_eval_2 = bz.1 + m_bz;
-                            let bz_eval_3 = bz_eval_2 + m_bz;
-
-                            let cz_eval_2 = cz.1 + m_cz;
-                            let cz_eval_3 = cz_eval_2 + m_cz;
-
-                            let eq_evals = eq_evals[block_index];
+                            let eq_evals = eq_poly.E_out_current()[block_index];
 
                             (
+                                eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
                                 eq_evals
-                                    .0
-                                    .mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0),
-                                eq_evals.1.mul_0_optimized(
-                                    az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2,
-                                ),
-                                eq_evals.2.mul_0_optimized(
-                                    az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3,
-                                ),
+                                    .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
                             )
                         })
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
-
-            let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
-            UniPoly::from_evals(&cubic_evals)
+            evals
         } else {
-            // We start by computing the E1 evals:
-            // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
-                .par_chunks(2)
-                .map(|E1_chunk| {
-                    let eval_point_0 = E1_chunk[0];
-                    let m_eq = E1_chunk[1] - E1_chunk[0];
-                    let eval_point_2 = E1_chunk[1] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
+            let num_x_in_bits = eq_poly.E_in_current_len().log_2();
+            let x_bitmask = (1 << num_x_in_bits) - 1;
 
-            let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-            let x1_bitmask = (1 << num_x1_bits) - 1;
-
-            let evals: (F, F, F) = chunks
+            let evals = chunks
                 .par_iter()
                 .map(|chunk| {
                     let mut eval_point_0 = F::zero();
-                    let mut eval_point_2 = F::zero();
-                    let mut eval_point_3 = F::zero();
+                    let mut eval_point_infty = F::zero();
 
-                    let mut inner_sums = (F::zero(), F::zero(), F::zero());
-                    let mut prev_x2 = 0;
+                    let mut inner_sums = (F::zero(), F::zero());
+                    let mut prev_x_out = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                         let block_index = sparse_block[0].index / 6;
-                        let x1 = block_index & x1_bitmask;
-                        let E1_evals = E1_evals[x1];
-                        let x2 = block_index >> num_x1_bits;
+                        let x_in = block_index & x_bitmask;
+                        let E_in_eval = eq_poly.E_in_current()[x_in];
+                        let x_out = block_index >> num_x_in_bits;
 
-                        if x2 != prev_x2 {
-                            eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                            eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                            eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
+                        if x_out != prev_x_out {
+                            let E_out_eval = eq_poly.E_out_current()[prev_x_out];
+                            eval_point_0 += E_out_eval * inner_sums.0;
+                            eval_point_infty += E_out_eval * inner_sums.1;
 
-                            inner_sums = (F::zero(), F::zero(), F::zero());
-                            prev_x2 = x2;
+                            inner_sums = (F::zero(), F::zero());
+                            prev_x_out = x_out;
                         }
 
                         let mut block = [F::zero(); 6];
@@ -585,62 +589,29 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
                         let az = (block[0], block[3]);
                         let bz = (block[1], block[4]);
-                        let cz = (block[2], block[5]);
+                        let cz0 = block[2];
 
-                        let m_az = az.1 - az.0;
-                        let m_bz = bz.1 - bz.0;
-                        let m_cz = cz.1 - cz.0;
+                        let az_eval_infty = az.1 - az.0;
+                        let bz_eval_infty = bz.1 - bz.0;
 
-                        let az_eval_2 = az.1 + m_az;
-                        let az_eval_3 = az_eval_2 + m_az;
-
-                        let bz_eval_2 = bz.1 + m_bz;
-                        let bz_eval_3 = bz_eval_2 + m_bz;
-
-                        let cz_eval_2 = cz.1 + m_cz;
-                        let cz_eval_3 = cz_eval_2 + m_cz;
-
-                        inner_sums.0 += E1_evals
-                            .0
-                            .mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz.0);
-                        inner_sums.1 += E1_evals
-                            .1
-                            .mul_0_optimized(az_eval_2.mul_0_optimized(bz_eval_2) - cz_eval_2);
-                        inner_sums.2 += E1_evals
-                            .2
-                            .mul_0_optimized(az_eval_3.mul_0_optimized(bz_eval_3) - cz_eval_3);
+                        inner_sums.0 += E_in_eval.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
+                        inner_sums.1 +=
+                            E_in_eval.mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
                     }
 
-                    eval_point_0 += eq_poly.E2[prev_x2] * inner_sums.0;
-                    eval_point_2 += eq_poly.E2[prev_x2] * inner_sums.1;
-                    eval_point_3 += eq_poly.E2[prev_x2] * inner_sums.2;
+                    eval_point_0 += eq_poly.E_out_current()[prev_x_out] * inner_sums.0;
+                    eval_point_infty += eq_poly.E_out_current()[prev_x_out] * inner_sums.1;
 
-                    (eval_point_0, eval_point_2, eval_point_3)
+                    (eval_point_0, eval_point_infty)
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
-
-            let cubic_evals = [evals.0, *claim - evals.0, evals.1, evals.2];
-            UniPoly::from_evals(&cubic_evals)
+            evals
         };
 
-        let compressed_poly = cubic_poly.compress();
-
-        // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
-
-        // derive the verifier's challenge for the next round
-        let r_i = transcript.challenge_scalar();
-        r.push(r_i);
-        polys.push(compressed_poly);
-
-        // Set up next round
-        *claim = cubic_poly.evaluate(&r_i);
-
-        // Bind polynomials
-        eq_poly.bind(r_i);
+        let r_i = process_eq_sumcheck_round(quadratic_evals, eq_poly, polys, r, claim, transcript);
 
         #[cfg(test)]
         let (mut az, mut bz, mut cz) = self.uninterleave();
@@ -726,8 +697,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
         #[cfg(test)]
         {
-            // Check that the binding is consistent with binding
-            // Az, Bz, Cz individually
+            // Check that the binding is consistent with binding Az, Bz, Cz individually
             let (az_bound, bz_bound, cz_bound) = self.uninterleave();
             az.bound_poly_var_bot(&r_i);
             bz.bound_poly_var_bot(&r_i);
