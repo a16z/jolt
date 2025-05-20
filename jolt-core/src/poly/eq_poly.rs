@@ -40,8 +40,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
     /// 0..r.len()`.
     pub fn evals_cached(r: &[F]) -> Vec<Vec<F>> {
-        // TODO: implement parallel version (it seems more difficult to parallelize all the
-        // intermediate results)
+        // TODO: implement parallel version & determine switchover point
         Self::evals_serial_cached(r, None)
     }
 

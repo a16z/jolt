@@ -41,11 +41,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     pub fn new(w: &[F]) -> Self {
         let m = w.len() / 2;
         //   w = [w_out, w_in, w_last]
-        //        ↑   ↑    ↑
-        //        |   |    |
-        //        |   |    last element
-        //        |   second half of remaining elements (for E_in)
-        //        first half of remaining elements (for E_out)
+        //         ↑      ↑      ↑
+        //         |      |      |
+        //         |      |      last element
+        //         |      second half of remaining elements (for E_in)
+        //         first half of remaining elements (for E_out)
         let (_, wprime) = w.split_last().unwrap();
         let (w_out, w_in) = wprime.split_at(m);
         let (E_out_vec, E_in_vec) = rayon::join(
@@ -82,7 +82,29 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         self.E_in_vec.last().unwrap()
     }
 
-    pub fn to_E1_old(&self) -> Vec<F> {
+    /// Return the last vector from `E2` as a slice
+    pub fn E_out_current(&self) -> &[F] {
+        self.E_out_vec.last().unwrap()
+    }
+
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
+    pub fn bind(&mut self, r: F) {
+        // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
+        // which is the same as `1 - w[i] - r + 2 * w[i] * r`
+        let prod_w_r = self.w[self.current_index - 1] * r;
+        self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
+        // decrement `current_index`
+        self.current_index -= 1;
+        // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
+        if self.w.len() / 2 < self.current_index {
+            self.E_in_vec.pop();
+        } else if 0 < self.current_index {
+            self.E_out_vec.pop();
+        }
+    }
+
+    #[cfg(test)]
+    fn to_E1_old(&self) -> Vec<F> {
         if self.current_index > self.w.len() / 2 {
             let wi = self.w[self.current_index - 1];
             let E1_old_odd: Vec<F> = self
@@ -109,27 +131,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         } else {
             // println!("Don't expect to call this");
             vec![self.current_scalar; 1]
-        }
-    }
-
-    /// Return the last vector from `E2` as a slice
-    pub fn E_out_current(&self) -> &[F] {
-        self.E_out_vec.last().unwrap()
-    }
-
-    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
-    pub fn bind(&mut self, r: F) {
-        // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
-        // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-        let prod_w_r = self.w[self.current_index - 1] * r;
-        self.current_scalar *= F::one() - self.w[self.current_index - 1] - r + prod_w_r + prod_w_r;
-        // decrement `current_index`
-        self.current_index -= 1;
-        // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
-        if self.w.len() / 2 < self.current_index {
-            self.E_in_vec.pop();
-        } else if 0 < self.current_index {
-            self.E_out_vec.pop();
         }
     }
 

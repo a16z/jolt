@@ -14,14 +14,13 @@ use crate::{
 };
 use ark_ff::Zero;
 use rayon::prelude::*;
-use std::sync::Arc;
 
 #[derive(Default, Debug, Clone)]
 pub struct SpartanInterleavedPolynomial<F: JoltField> {
     /// Shards of sparse vectors representing the (interleaved) coefficients in the Az, Bz, Cz
     /// polynomials used in the first Spartan sumcheck. Before the polynomial is bound
     /// the first time, all the coefficients can be represented by `i128`s.
-    pub(crate) unbound_coeffs_shards: Vec<Arc<Vec<SparseCoefficient<i128>>>>,
+    pub(crate) unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>>,
     /// A sparse vector representing the (interleaved) coefficients in the Az, Bz, Cz
     /// polynomials used in the first Spartan sumcheck. Once the polynomial has been
     /// bound, we switch to using `bound_coeffs` instead of `unbound_coeffs`, because
@@ -162,16 +161,15 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     }
                 }
 
-                Arc::new(coeffs)
+                coeffs
             });
-        let unbound_coeffs_shards: Vec<Arc<Vec<SparseCoefficient<i128>>>> =
+        let unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>> =
             unbound_coeffs_shards_iter.collect();
 
         #[cfg(test)]
         {
             // Check that indices are monotonically increasing
-            for shard_arc in &unbound_coeffs_shards {
-                let shard = shard_arc.as_ref();
+            for shard in &unbound_coeffs_shards {
                 if !shard.is_empty() {
                     let mut prev_index = shard[0].index;
                     for coeff in shard.iter().skip(1) {
@@ -203,7 +201,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
 
         if !self.is_bound() {
             for shard_arc in &self.unbound_coeffs_shards {
-                for coeff in shard_arc.as_ref() {
+                for coeff in shard_arc {
                     // Ensure that the index is within bounds for az, bz, cz vectors.
                     // This check is mostly a safeguard; coeff.index / 3 should be < self.dense_len.
                     if coeff.index / 3 < self.dense_len {
@@ -270,8 +268,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         let quadratic_eval_at_infty = self
             .unbound_coeffs_shards
             .par_iter()
-            .map(|shard_arc| {
-                let shard_coeffs = shard_arc.as_ref();
+            .map(|shard_coeffs| {
                 let mut shard_eval_point_infty = F::zero();
 
                 let mut current_shard_inner_sums = F::zero();
@@ -322,7 +319,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
                     eq_poly.E_out_current()[current_shard_prev_x_out] * current_shard_inner_sums;
                 shard_eval_point_infty
             })
-            .reduce(|| F::zero(), |sum, evals| sum + evals);
+            .sum();
 
         let r_i = process_eq_sumcheck_round(
             (F::zero(), quadratic_eval_at_infty),
@@ -338,7 +335,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         let output_sizes: Vec<_> = self
             .unbound_coeffs_shards
             .par_iter()
-            .map(|shard_arc| Self::binding_output_length(shard_arc.as_ref()))
+            .map(|shard| Self::binding_output_length(shard))
             .collect();
 
         let total_output_len = output_sizes.iter().sum();
@@ -360,8 +357,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         self.unbound_coeffs_shards
             .par_iter()
             .zip_eq(output_slices.into_par_iter())
-            .for_each(|(unbound_shard_arc, output_slice_for_shard)| {
-                let unbound_coeffs_in_shard = unbound_shard_arc.as_ref();
+            .for_each(|(unbound_coeffs_in_shard, output_slice_for_shard)| {
                 let mut output_index = 0;
                 for block in unbound_coeffs_in_shard.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
@@ -420,7 +416,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             let mut cz_vec = vec![F::zero(); original_dense_len];
 
             for shard_arc in &self.unbound_coeffs_shards {
-                for coeff in shard_arc.as_ref() {
+                for coeff in shard_arc {
                     if coeff.index / 3 < original_dense_len {
                         match coeff.index % 3 {
                             0 => az_vec[coeff.index / 3] = F::from_i128(coeff.value),
