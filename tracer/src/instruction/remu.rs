@@ -43,7 +43,7 @@ impl REMU {
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu) {
         let mut virtual_sequence = self.virtual_sequence();
-        if let RV32IMInstruction::Advice(instr) = &mut virtual_sequence[0] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
                 match cpu.xlen {
                     Xlen::Bit32 => u32::MAX as u64,
@@ -56,7 +56,7 @@ impl RISCVTrace for REMU {
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::Advice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
             instr.advice = match cpu.unsigned_data(cpu.x[self.operands.rs2]) {
                 0 => cpu.unsigned_data(cpu.x[self.operands.rs1]),
                 divisor => {

@@ -79,12 +79,12 @@ impl RISCVTrace for DIV {
         };
 
         let mut virtual_sequence = self.virtual_sequence();
-        if let RV32IMInstruction::Advice(instr) = &mut virtual_sequence[0] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::Advice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
