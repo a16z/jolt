@@ -142,37 +142,32 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                         }
                         MultilinearPolynomial::U8Scalars(poly) => {
                             let poly_evals = &poly.coeffs[index..];
-                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(coeff_r2);
+                                *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
                         MultilinearPolynomial::U16Scalars(poly) => {
                             let poly_evals = &poly.coeffs[index..];
-                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(coeff_r2);
+                                *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
                         MultilinearPolynomial::U32Scalars(poly) => {
                             let poly_evals = &poly.coeffs[index..];
-                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(coeff_r2);
+                                *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
                         MultilinearPolynomial::U64Scalars(poly) => {
                             let poly_evals = &poly.coeffs[index..];
-                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(coeff_r2);
+                                *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
                         MultilinearPolynomial::I64Scalars(poly) => {
                             let poly_evals = &poly.coeffs[index..];
-                            let coeff_r2 = F::montgomery_r2().unwrap_or(F::one()) * coeff;
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(coeff_r2);
+                                *rlc += poly_eval.field_mul(*coeff);
                             }
                         }
                     }
@@ -270,41 +265,39 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
-    /// Computes the dot product of the polynomial's coefficients amd a vector
+    /// Computes the dot product of the polynomial's coefficients and a vector
     /// of field elements.
-    pub fn dot_product(&self, other: Option<&[F]>, other_r2_adjusted: Option<&[F]>) -> F {
+    pub fn dot_product(&self, other: &[F]) -> F {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                compute_dotproduct(&poly.Z, other.unwrap())
-            }
+            MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, other),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
                 .par_iter()
-                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::U16Scalars(poly) => poly
                 .coeffs
                 .par_iter()
-                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::U32Scalars(poly) => poly
                 .coeffs
                 .par_iter()
-                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::U64Scalars(poly) => poly
                 .coeffs
                 .par_iter()
-                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::I64Scalars(poly) => poly
                 .coeffs
                 .par_iter()
-                .zip_eq(other_r2_adjusted.unwrap().par_iter())
+                .zip_eq(other.par_iter())
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
         }
@@ -629,8 +622,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
             _ => {
-                let chis = EqPolynomial::evals_with_r2(r);
-                self.dot_product(None, Some(&chis))
+                let chis = EqPolynomial::evals(r);
+                self.dot_product(&chis)
             }
         }
     }
@@ -643,16 +636,13 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             .iter()
             .any(|poly| !matches!(poly, MultilinearPolynomial::LargeScalars(_)))
         {
-            // If any of the polynomials contain non-Montgomery form coefficients,
-            // we need to compute the R^2-adjusted EQ table.
-            let eq_r2 = EqPolynomial::evals_with_r2(r);
             let evals: Vec<F> = polys
                 .into_par_iter()
                 .map(|&poly| match poly {
                     MultilinearPolynomial::LargeScalars(poly) => {
                         poly.evaluate_at_chi_low_optimized(&eq)
                     }
-                    _ => poly.dot_product(None, Some(&eq_r2)),
+                    _ => poly.dot_product(&eq),
                 })
                 .collect();
             (evals, eq)

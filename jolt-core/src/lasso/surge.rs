@@ -6,6 +6,7 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
+    subprotocols::grand_product::BatchedDenseGrandProduct,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -101,10 +102,18 @@ where
     Instruction: JoltInstruction + Default + Sync,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
+
     type Polynomials = SurgePolynomials<F>;
     type Openings = SurgeOpenings<F>;
     type Commitments = SurgeCommitments<PCS, ProofTranscript>;
+    type ExogenousOpenings = NoExogenousOpenings;
+
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
+
+    /// The data associated with each memory slot. A triple (a, v, t) by default.
+    type MemoryTuple = (F, F, F); // (a, v, t)
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
@@ -120,14 +129,6 @@ where
         tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
-
-        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
-        // into Montgomery form while multiplying them by gamma or gamma_squared
-        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
-            (*gamma * r2, gamma_squared * r2)
-        } else {
-            (*gamma, gamma_squared)
-        };
 
         let num_lookups = polynomials.dim[0].len();
 
@@ -146,7 +147,7 @@ where
                         let a = dim[i];
                         let v = E_poly[i];
                         let t = read_cts[i];
-                        t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
+                        t.field_mul(gamma_squared) + v.field_mul(*gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
                 let t_adjustment = 1u64.field_mul(gamma_squared);
@@ -168,7 +169,7 @@ where
                 let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
                         // 0 * gamma^2 +
-                        preprocessing.materialized_subtables[subtable_index][i].field_mul(gamma)
+                        preprocessing.materialized_subtables[subtable_index][i].field_mul(*gamma)
                             + F::from_u64(i as u64)
                             - *tau
                     })

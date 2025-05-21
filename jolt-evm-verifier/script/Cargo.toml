@@ -8,19 +8,19 @@ edition = "2021"
 [dependencies]
 alloy-primitives = "0.7.6"
 alloy-sol-types = "0.7.6"
-ark-bn254 = "0.4.0"
-ark-ff = "0.4.2"
-ark-serialize = "0.4.2"
-ark-ec = "0.4.2"
-ark-std = "0.4.0"
+ark-bn254 = "0.5.0"
+ark-ff = "0.5.0"
+ark-serialize = "0.5.0"
+ark-ec = "0.5.0"
+ark-std = "0.5.0"
 jolt-core = { path = "../../jolt-core", package = "jolt-core"}
 rand_core = "0.6.4"
 rand_chacha = { version = "0.3.0", default-features = false }
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 
 
 [workspace]

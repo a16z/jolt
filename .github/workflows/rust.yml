@@ -87,7 +87,7 @@ jobs:
         working-directory: ./jolt-evm-verifier
         run: cargo build --manifest-path script/Cargo.toml --release
 
-      - name: Check build and denny warnings
+      - name: Check build and deny warnings
         working-directory: ./jolt-evm-verifier
         run: forge build --deny-warnings
 
@@ -95,7 +95,7 @@ jobs:
         working-directory: ./jolt-evm-verifier
         run: forge test -vvv --via-ir --ffi
 
-      - name: Check Format
+      - name: Check format
         working-directory: ./jolt-evm-verifier
         run: forge fmt --check
 

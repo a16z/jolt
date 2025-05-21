@@ -1,4 +1,9 @@
-use std::str::FromStr;
+#[cfg(not(feature = "std"))]
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::str::FromStr;
 
 use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -400,7 +405,9 @@ impl RVTraceRow {
 }
 
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize, Hash)]
+#[derive(
+    Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize, Hash, PartialOrd, Ord,
+)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 pub enum RV32IM {
@@ -581,6 +588,7 @@ impl JoltDevice {
 
     pub fn store(&mut self, address: u64, value: u8) {
         if address == self.memory_layout.panic {
+            #[cfg(feature = "std")]
             println!("GUEST PANIC");
             self.panic = true;
             return;

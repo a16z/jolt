@@ -12,9 +12,7 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
-    subprotocols::grand_product::{
-        BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
-    },
+    subprotocols::grand_product::{BatchedGrandProduct, BatchedGrandProductProof},
 };
 
 use crate::field::JoltField;
@@ -216,20 +214,18 @@ where
     ProofTranscript: Transcript,
     Self: Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
-        BatchedDenseGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static =
-        BatchedDenseGrandProduct<F>;
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static;
+    type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static;
 
     type Polynomials: StructuredPolynomialData<MultilinearPolynomial<F>>;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
     type Commitments: StructuredPolynomialData<PCS::Commitment>;
-    type ExogenousOpenings: ExogenousOpenings<F> + Sync = NoExogenousOpenings;
+    type ExogenousOpenings: ExogenousOpenings<F> + Sync;
 
-    type Preprocessing = NoPreprocessing;
+    type Preprocessing;
 
     /// The data associated with each memory slot. A triple (a, v, t) by default.
-    type MemoryTuple: Copy + Clone = (F, F, F);
+    type MemoryTuple: Copy + Clone;
 
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.

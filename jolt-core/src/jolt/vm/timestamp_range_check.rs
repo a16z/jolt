@@ -269,14 +269,18 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    // Init/final grand products are batched together with read/write grand products
+    type InitFinalGrandProduct = NoopGrandProduct;
+
     type Polynomials = TimestampRangeCheckPolynomials<F>;
     type Openings = TimestampRangeCheckOpenings<F>;
     type Commitments = TimestampRangeCheckCommitments<PCS, ProofTranscript>;
     type ExogenousOpenings = ReadTimestampOpenings<F>;
-    type MemoryTuple = (F, F); // a = v for all range check tuples
 
-    // Init/final grand products are batched together with read/write grand products
-    type InitFinalGrandProduct = NoopGrandProduct;
+    type Preprocessing = NoPreprocessing;
+
+    type MemoryTuple = (F, F); // a = v for all range check tuples
 
     fn prove_memory_checking(
         _: &PCS::Setup,
@@ -309,14 +313,6 @@ where
         gamma: &F,
         tau: &F,
     ) -> ((Vec<F>, usize), ()) {
-        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
-        // into Montgomery form while multiplying them by gamma
-        let gamma = if let Some(r2) = F::montgomery_r2() {
-            *gamma * r2
-        } else {
-            *gamma
-        };
-
         let read_timestamps: [&CompactPolynomial<u32, F>; 4] = [
             (&jolt_polynomials.read_write_memory.t_read_rd)
                 .try_into()
@@ -356,7 +352,7 @@ where
                 let read_fingerprints_0: Vec<F> = (0..M)
                     .into_par_iter()
                     .map(|j| {
-                        read_timestamps[i][j].field_mul(gamma)
+                        read_timestamps[i][j].field_mul(*gamma)
                             + F::from_u32(read_cts_read_timestamp[i][j])
                             - *tau
                     })
@@ -370,7 +366,7 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let global_minus_read = j as u32 - read_timestamps[i][j];
-                        global_minus_read.field_mul(gamma)
+                        global_minus_read.field_mul(*gamma)
                             + F::from_u32(read_cts_global_minus_read[i][j])
                             - *tau
                     })
@@ -395,7 +391,7 @@ where
             .into_par_iter()
             .map(|i| {
                 // t = 0
-                (i as u64).field_mul(gamma) - *tau
+                (i as u64).field_mul(*gamma) - *tau
             })
             .collect();
 

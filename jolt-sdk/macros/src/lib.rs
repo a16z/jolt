@@ -1,5 +1,3 @@
-#![feature(proc_macro_tracked_env)]
-
 extern crate proc_macro;
 
 use core::panic;
@@ -621,11 +619,11 @@ impl MacroBuilder {
     }
 
     fn get_guest_name(&self) -> String {
-        proc_macro::tracked_env::var("CARGO_PKG_NAME").unwrap()
+        std::env::var("CARGO_PKG_NAME").unwrap()
     }
 
     fn get_func_selector(&self) -> Option<String> {
-        proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
+        std::env::var("JOLT_FUNC_NAME").ok()
     }
 
     fn has_wasm_attr(&self) -> bool {

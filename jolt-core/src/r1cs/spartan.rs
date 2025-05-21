@@ -9,7 +9,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -130,7 +130,7 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
-        let mut eq_tau = SplitEqPolynomial::new(&tau);
+        let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
@@ -173,8 +173,6 @@ where
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
         let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
-        let (eq_rx_step_r2, eq_plus_one_rx_step_r2) =
-            EqPlusOnePolynomial::evals(rx_step, F::montgomery_r2());
 
         /* Compute the two polynomials provided as input to the second sumcheck:
            - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
@@ -198,9 +196,8 @@ where
             .par_iter()
             .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
             .for_each(|(poly, (eval, eval_shifted))| {
-                *eval = poly.dot_product(Some(&eq_rx_step), Some(&eq_rx_step_r2));
-                *eval_shifted =
-                    poly.dot_product(Some(&eq_plus_one_rx_step), Some(&eq_plus_one_rx_step_r2));
+                *eval = poly.dot_product(&eq_rx_step);
+                *eval_shifted = poly.dot_product(&eq_plus_one_rx_step);
             });
 
         bind_z[num_vars_uniform] = F::one();
@@ -242,7 +239,7 @@ where
 
         let ry_var = inner_sumcheck_r[1..].to_vec();
         let eq_ry_var = EqPolynomial::evals(&ry_var);
-        let eq_ry_var_r2 = EqPolynomial::evals_with_r2(&ry_var);
+        let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
         let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
 

@@ -35,20 +35,12 @@ impl<F: JoltField> LassoSubtable<F> for LowBitSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use binius_field::BinaryField128b;
 
     use crate::{
-        field::binius::BiniusField,
         field::JoltField,
         jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
     subtable_materialize_mle_parity_test!(lsb_materialize_mle_parity, LowBitSubtable<Fr>, Fr, 256);
-    subtable_materialize_mle_parity_test!(
-        lsb_binius_materialize_mle_parity,
-        LowBitSubtable<BiniusField<BinaryField128b>>,
-        BiniusField<BinaryField128b>,
-        1 << 16
-    );
 }
