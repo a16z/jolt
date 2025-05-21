@@ -1,5 +1,3 @@
-#![feature(proc_macro_tracked_env)]
-
 extern crate proc_macro;
 
 use core::panic;
@@ -94,13 +92,13 @@ impl MacroBuilder {
 
     fn make_build_prover_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let build_prover_fn_name = Ident::new(&format!("build_prover_{}", fn_name), fn_name.span());
+        let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
 
         let input_names = self.func_args.iter().map(|(name, _)| name);
         let input_types = self.func_args.iter().map(|(_, ty)| ty);
         let inputs = &self.func.sig.inputs;
-        let prove_fn_name = Ident::new(&format!("prove_{}", fn_name), fn_name.span());
+        let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
 
         quote! {
@@ -128,7 +126,7 @@ impl MacroBuilder {
     fn make_build_verifier_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let build_verifier_fn_name =
-            Ident::new(&format!("build_verifier_{}", fn_name), fn_name.span());
+            Ident::new(&format!("build_verifier_{fn_name}"), fn_name.span());
 
         let input_types = self.func_args.iter().map(|(_, ty)| ty);
         let output_type: Type = match &self.func.sig.output {
@@ -192,7 +190,7 @@ impl MacroBuilder {
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
-        let analyze_fn_name = Ident::new(&format!("analyze_{}", fn_name), fn_name.span());
+        let analyze_fn_name = Ident::new(&format!("analyze_{fn_name}"), fn_name.span());
         let inputs = &self.func.sig.inputs;
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
@@ -227,7 +225,7 @@ impl MacroBuilder {
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
-        let compile_fn_name = Ident::new(&format!("compile_{}", fn_name), fn_name.span());
+        let compile_fn_name = Ident::new(&format!("compile_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #compile_fn_name(target_dir: &str) -> jolt::host::Program {
@@ -252,7 +250,7 @@ impl MacroBuilder {
 
         let fn_name = self.get_func_name();
         let preprocess_prover_fn_name =
-            Ident::new(&format!("preprocess_prover_{}", fn_name), fn_name.span());
+            Ident::new(&format!("preprocess_prover_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(program: &jolt::host::Program)
@@ -287,7 +285,7 @@ impl MacroBuilder {
 
         let fn_name = self.get_func_name();
         let preprocess_verifier_fn_name =
-            Ident::new(&format!("preprocess_verifier_{}", fn_name), fn_name.span());
+            Ident::new(&format!("preprocess_verifier_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(program: &jolt::host::Program)
@@ -336,7 +334,7 @@ impl MacroBuilder {
         let inputs = &self.func.sig.inputs;
         let imports = self.make_imports();
 
-        let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
+        let prove_fn_name = syn::Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
@@ -621,11 +619,11 @@ impl MacroBuilder {
     }
 
     fn get_guest_name(&self) -> String {
-        proc_macro::tracked_env::var("CARGO_PKG_NAME").unwrap()
+        std::env::var("CARGO_PKG_NAME").unwrap()
     }
 
     fn get_func_selector(&self) -> Option<String> {
-        proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
+        std::env::var("JOLT_FUNC_NAME").ok()
     }
 
     fn has_wasm_attr(&self) -> bool {
@@ -634,7 +632,7 @@ impl MacroBuilder {
 
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let verify_wasm_fn_name = Ident::new(&format!("verify_{}", fn_name), fn_name.span());
+        let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
 
         quote! {
             #[wasm_bindgen]

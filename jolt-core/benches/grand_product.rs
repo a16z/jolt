@@ -43,8 +43,7 @@ where
 {
     assert!(
         percent_ones <= 100,
-        "Threshold must be between 0 and 100, but got {}",
-        percent_ones
+        "Threshold must be between 0 and 100, but got {percent_ones}"
     );
 
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);

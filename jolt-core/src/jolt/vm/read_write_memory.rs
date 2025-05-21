@@ -6,6 +6,7 @@ use crate::lasso::memory_checking::{
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::subprotocols::grand_product::BatchedDenseGrandProduct;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use rayon::prelude::*;
 #[cfg(test)]
@@ -96,7 +97,7 @@ fn remap_address(a: u64, memory_layout: &MemoryLayout) -> u64 {
         // need to be remapped
         a
     } else {
-        panic!("Unexpected address {}", a)
+        panic!("Unexpected address {a}")
     }
 }
 
@@ -352,7 +353,7 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                     t_final[a] = timestamp;
                 }
                 MemoryOp::Write(a, v) => {
-                    panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+                    panic!("Unexpected rs1 MemoryOp::Write({a}, {v})");
                 }
             };
 
@@ -373,13 +374,13 @@ impl<F: JoltField> ReadWriteMemoryPolynomials<F> {
                     t_final[a] = timestamp;
                 }
                 MemoryOp::Write(a, v) => {
-                    panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v)
+                    panic!("Unexpected rs2 MemoryOp::Write({a}, {v})")
                 }
             };
 
             match step.memory_ops[RD] {
                 MemoryOp::Read(a) => {
-                    panic!("Unexpected rd MemoryOp::Read({})", a)
+                    panic!("Unexpected rd MemoryOp::Read({a})")
                 }
                 MemoryOp::Write(a, v_new) => {
                     assert!(a < REGISTER_COUNT);
@@ -501,12 +502,15 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    type ReadWriteGrandProduct = BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
+
     type Polynomials = ReadWriteMemoryPolynomials<F>;
     type Openings = ReadWriteMemoryOpenings<F>;
     type Commitments = ReadWriteMemoryCommitments<PCS, ProofTranscript>;
-    type Preprocessing = ReadWriteMemoryPreprocessing;
-
     type ExogenousOpenings = RegisterAddressOpenings<F>;
+
+    type Preprocessing = ReadWriteMemoryPreprocessing;
 
     // (a, v, t)
     type MemoryTuple = (F, F, F);
@@ -525,14 +529,7 @@ where
         tau: &F,
     ) -> ((Vec<F>, usize), (Vec<F>, usize)) {
         let gamma_squared = gamma.square();
-
-        // Add a R^2 factor so that we effectively convert CompactPolynomial coefficients
-        // into Montgomery form while multiplying them by gamma or gamma_squared
-        let (gamma, gamma_squared) = if let Some(r2) = F::montgomery_r2() {
-            (*gamma * r2, gamma_squared * r2)
-        } else {
-            (*gamma, gamma_squared)
-        };
+        let gamma = *gamma;
 
         let num_ops = polynomials.a_ram.len();
         let memory_size = polynomials.v_final.len();

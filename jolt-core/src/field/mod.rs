@@ -45,7 +45,7 @@ pub trait JoltField:
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
-    type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize = ();
+    type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.
@@ -56,6 +56,7 @@ pub trait JoltField:
     fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
         unimplemented!("Small-value lookup tables are unimplemented")
     }
+    /// Conversion from primitive integers to field elements in Montgomery form.
     fn from_u8(n: u8) -> Self;
     fn from_u16(n: u16) -> Self;
     fn from_u32(n: u32) -> Self;
@@ -72,20 +73,15 @@ pub trait JoltField:
         unimplemented!("num_bits is not implemented");
     }
 
-    /// The R^2 value used in Montgomery arithmetic for some prime fields.
-    /// Returns `None` if the field doesn't use Montgomery arithmetic.
-    fn montgomery_r2() -> Option<Self> {
-        None
-    }
-
-    /// Does an "unchecked" field multiplication with a `u64`.
-    /// WARNING: For `x.mul_u64_unchecked(y)` to be equal to `x * F::from_u64(y)`,
-    /// which is presumably what you want, we need to correct for the fact that `y` is
-    /// not in Montgomery form. This is typically accomplished by multiplying the left
-    /// operand by an additional R^2 factor (see `JoltField::montgomery_r2`).
+    /// Does a field multiplication with a `u64`.
+    /// The result will be in Montgomery form (if BN254)
     #[inline(always)]
-    fn mul_u64_unchecked(&self, n: u64) -> Self {
+    fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
+    }
+    #[inline(always)]
+    fn mul_i128(&self, n: i128) -> Self {
+        *self * Self::from_i128(n)
     }
 }
 
@@ -130,4 +126,3 @@ where
 }
 
 pub mod ark;
-pub mod binius;

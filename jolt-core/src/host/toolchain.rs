@@ -160,8 +160,7 @@ fn remove_archive() -> Result<()> {
 fn toolchain_url() -> String {
     let target = target_lexicon::HOST;
     format!(
-        "https://github.com/a16z/rust/releases/download/{}/rust-toolchain-{}.tar.gz",
-        TOOLCHAIN_TAG, target,
+        "https://github.com/a16z/rust/releases/download/{TOOLCHAIN_TAG}/rust-toolchain-{target}.tar.gz",
     )
 }
 

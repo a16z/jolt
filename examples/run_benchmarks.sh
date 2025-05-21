@@ -60,6 +60,19 @@ for dir in "${test_directories[@]}"; do
   echo "$dir"
 done
 
+# Determine appropriate `time` command based on OS and availability
+if command -v gtime &> /dev/null; then
+  TIME_CMD="gtime"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "GNU time (gtime) not found. Install it with 'brew install gnu-time'."
+  exit 1
+elif /usr/bin/time --version &> /dev/null; then
+  TIME_CMD="/usr/bin/time"
+else
+  echo "Unable to find a compatible 'time' command. Please install GNU time."
+  exit 1
+fi
+
 # Start creating the JSON structure
 printf "[\n" >"$output_file"
 echo "-----------------"
@@ -76,11 +89,16 @@ for i in "${!test_directories[@]}"; do
   # wall: 0:02.00 (HH:MM:SS)
   # real: 2.00 s
   # MRS: 1964 KB
-  output=$(/usr/bin/time -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1)
+  # Capture timing and output into a temp file
+  temp_output=$(mktemp)
+  if ! $TIME_CMD -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1 | tee "$temp_output"; then
+    echo "Error running benchmark for $file. Skipping..."
+    continue
+  fi
   # Extract 'real' time value using awk
-  exec_time=$(echo "$output" | awk '/Prover runtime:/ {print $3}') # in seconds
+  exec_time=$(awk '/Prover runtime:/ {print $3}' "$temp_output") # in seconds
   # Extract 'MRS' value using awk
-  mem_used=$(echo "$output" | awk '/MRS:/ {print $2}') # in KB
+  mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in KB
   echo "$output" # Print the output for debugging
   # Append execution time to JSON file
   write_to_json "${file}-time" "$exec_time" "s" false
@@ -88,7 +106,8 @@ for i in "${!test_directories[@]}"; do
   is_last=$([ "$i" -lt $((${#test_directories[@]} - 1)) ] && echo false || echo true)
   # Append memory usage to JSON file
   write_to_json "${file}-mem" "$mem_used" "KB" $is_last
-
+  # Clean up
+  rm "$temp_output"
 done
 
 # Close the JSON structure

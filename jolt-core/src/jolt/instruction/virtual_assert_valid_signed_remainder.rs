@@ -121,7 +121,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
                         .into()
                 }
             }
-            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
         }
     }
 

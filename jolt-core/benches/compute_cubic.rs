@@ -36,10 +36,7 @@ fn random_sparse_coeffs<F: JoltField>(
 
 fn benchmark_dense_interleaved<F: JoltField>(c: &mut Criterion, num_vars: usize) {
     c.bench_function(
-        &format!(
-            "DenseInterleavedPolynomial::compute_cubic {} variables",
-            num_vars
-        ),
+        &format!("DenseInterleavedPolynomial::compute_cubic {num_vars} variables"),
         |b| {
             b.iter_with_setup(
                 || {

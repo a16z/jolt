@@ -18,8 +18,8 @@ pub fn main() {
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_collatz_single(input, output, proof);
 
-    println!("output: {}", output);
-    println!("valid: {}", is_valid);
+    println!("output: {output}");
+    println!("valid: {is_valid}");
 
     // Prove/verify convergence for a range of numbers:
     let program = guest::compile_collatz_convergence_range(target_dir);
@@ -39,6 +39,6 @@ pub fn main() {
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_collatz_convergence(start, start + 100, output, proof);
 
-    println!("output: {}", output);
-    println!("valid: {}", is_valid);
+    println!("output: {output}");
+    println!("valid: {is_valid}");
 }

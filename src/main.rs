@@ -14,7 +14,7 @@ use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = version(), about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -38,6 +38,17 @@ enum Command {
     BuildWasm,
 }
 
+fn version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("GIT_SHORT_HASH"),
+        " ",
+        env!("GIT_DATE"),
+        ")"
+    )
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -59,51 +70,51 @@ fn create_project(name: String, wasm: bool) {
 
 fn install_toolchain() {
     if let Err(err) = toolchain::install_toolchain() {
-        panic!("toolchain install failed: {}", err);
+        panic!("toolchain install failed: {err}");
     }
     display_welcome();
 }
 
 fn uninstall_toolchain() {
     if let Err(err) = toolchain::uninstall_toolchain() {
-        panic!("toolchain uninstall failed: {}", err);
+        panic!("toolchain uninstall failed: {err}");
     }
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
     fs::create_dir(name)?;
-    fs::create_dir(format!("{}/src", name))?;
-    fs::create_dir(format!("{}/guest", name))?;
-    fs::create_dir(format!("{}/guest/src", name))?;
+    fs::create_dir(format!("{name}/src"))?;
+    fs::create_dir(format!("{name}/guest"))?;
+    fs::create_dir(format!("{name}/guest/src"))?;
 
     Ok(())
 }
 
 fn create_host_files(name: &str) -> Result<()> {
-    let mut toolchain_file = File::create(format!("{}/rust-toolchain.toml", name))?;
+    let mut toolchain_file = File::create(format!("{name}/rust-toolchain.toml"))?;
     toolchain_file.write_all(RUST_TOOLCHAIN.as_bytes())?;
 
-    let mut gitignore_file = File::create(format!("{}/.gitignore", name))?;
+    let mut gitignore_file = File::create(format!("{name}/.gitignore"))?;
     gitignore_file.write_all(GITIGNORE.as_bytes())?;
 
     let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
-    let mut cargo_file = File::create(format!("{}/Cargo.toml", name))?;
+    let mut cargo_file = File::create(format!("{name}/Cargo.toml"))?;
     cargo_file.write_all(cargo_file_contents.as_bytes())?;
 
-    let mut main_file = File::create(format!("{}/src/main.rs", name))?;
+    let mut main_file = File::create(format!("{name}/src/main.rs"))?;
     main_file.write_all(HOST_MAIN.as_bytes())?;
 
     Ok(())
 }
 
 fn create_guest_files(name: &str) -> Result<()> {
-    let mut cargo_file = File::create(format!("{}/guest/Cargo.toml", name))?;
+    let mut cargo_file = File::create(format!("{name}/guest/Cargo.toml"))?;
     cargo_file.write_all(GUEST_CARGO.as_bytes())?;
 
-    let mut lib_file = File::create(format!("{}/guest/src/lib.rs", name))?;
+    let mut lib_file = File::create(format!("{name}/guest/src/lib.rs"))?;
     lib_file.write_all(GUEST_LIB.as_bytes())?;
 
-    let mut main_file = File::create(format!("{}/guest/src/main.rs", name))?;
+    let mut main_file = File::create(format!("{name}/guest/src/main.rs"))?;
     main_file.write_all(GUEST_MAIN.as_bytes())?;
 
     Ok(())
@@ -118,7 +129,7 @@ fn display_welcome() {
 fn display_greeting() {
     let jolt_logo_ascii = include_str!("ascii/jolt_ascii.ans");
     println!("\n\n\n\n");
-    println!("{}", jolt_logo_ascii);
+    println!("{jolt_logo_ascii}");
     println!("\n\n\n\n");
 
     let prompts = [
@@ -143,7 +154,7 @@ fn display_greeting() {
     ];
     let prompt = prompts.choose(&mut rand::thread_rng()).unwrap();
     println!("\x1B[1mWelcome to Jolt.\x1B[0m");
-    println!("\x1B[3m{}\x1B[0m", prompt);
+    println!("\x1B[3m{prompt}\x1B[0m");
 }
 
 fn display_sysinfo() {
@@ -188,15 +199,15 @@ lto = "fat"
 [dependencies]
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
-ark-serialize = "0.4.2"
+ark-serialize = "0.5.0"
 
 [features]
 icicle = ["jolt-sdk/icicle"]
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {
@@ -212,8 +223,8 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let (output, proof) = prove_fib(50);
     let is_valid = verify_fib(50, output, proof);
 
-    println!("output: {}", output);
-    println!("valid: {}", is_valid);
+    println!("output: {output}");
+    println!("valid: {is_valid}");
 }
 "#;
 
