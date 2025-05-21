@@ -359,7 +359,7 @@ define_rv32im_enums! {
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualSHA256Compression,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
