@@ -109,3 +109,73 @@ impl<F: ZkLeanReprField, J: JoltParameterSet> AsModule for ZkLeanSubtables<F, J>
         })
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::util::arb_field_elem;
+
+    use jolt_core::{field::JoltField, jolt::subtable::LassoSubtable};
+
+    use proptest::{prelude::*, collection::vec};
+    use strum::EnumCount as _;
+
+    type RefField = ark_bn254::Fr;
+    type TestField = crate::mle_ast::MleAst<4096>;
+    type ParamSet = crate::constants::RV32IParameterSet;
+
+    struct TestableSubtable<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet> {
+        reference: RV32ISubtables<R>,
+        test: ZkLeanSubtable<T, J>,
+    }
+
+    impl<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet> std::fmt::Debug for TestableSubtable<R, T, J> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{}", self.test.name()))
+        }
+    }
+
+    impl<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet> TestableSubtable<R, T, J> {
+        fn iter() -> impl Iterator<Item = Self> {
+            RV32ISubtables::iter()
+                .zip(ZkLeanSubtable::iter())
+                .map(|(reference, test)| Self { reference, test })
+        }
+
+        fn reference_evaluate_mle(&self, inputs: &[R]) -> R {
+            assert_eq!(inputs.len(), J::LOG_M);
+
+            self.reference.evaluate_mle(inputs)
+        }
+
+        fn test_evaluate_mle(&self, inputs: &[R]) -> R {
+            assert_eq!(inputs.len(), J::LOG_M);
+
+            let ast = self.test.evaluate_mle('x');
+            ast.evaluate(inputs)
+        }
+    }
+
+    fn arb_subtable<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet>()
+        -> impl Strategy<Value = TestableSubtable<R, T, J>>
+    {
+        (0..RV32ISubtables::<R>::COUNT)
+            .prop_map(|n| TestableSubtable::iter().nth(n).unwrap())
+    }
+
+    proptest! {
+        #[test]
+        fn evaluate_mle(
+            subtable in arb_subtable::<RefField, TestField, ParamSet>(),
+            inputs in vec(arb_field_elem::<RefField>(), ParamSet::LOG_M),
+        ) {
+            // NOTE: Omitting this causes index OOB errors when converting from `uXX`
+            crate::util::initialize_fields();
+
+            prop_assert_eq!(
+                subtable.test_evaluate_mle(&inputs),
+                subtable.reference_evaluate_mle(&inputs),
+            );
+        }
+    }
+}

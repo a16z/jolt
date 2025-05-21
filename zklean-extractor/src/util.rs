@@ -14,25 +14,39 @@ pub trait ZkLeanReprField: JoltField + Sized {
     fn register(name: char, size: usize) -> Vec<Self>;
 
     fn as_computation(&self) -> String;
-}
 
-/// A [`JoltField`] that can be evaluated over another [`JoltField`] (e.g., [`crate::mle_ast::MleAst`]).
-#[cfg(test)]
-pub trait Evaluatable: ZkLeanReprField + Sized {
+    #[cfg(test)]
     fn evaluate<F: JoltField>(&self, vars: &[F]) -> F;
 }
 
+/// NB: Call this at the start of each test that uses field arithmetic.
+///
+/// This needs to be called in order for the small-value lookup tables to be initialized for our
+/// test field, however calling it more than once will cause memory errors. In `jolt_core`, this is
+/// handled by omitting the small-value lookup tables from the testing configuration. However,
+/// that's not an option for us unless we want to add a feature flag to `jolt_core`.
+///
+/// TODO(hamlinb): It seems like this could be fixed easily in `jolt_core` by initializing the
+/// small-value lookup tables using `lazy_static`, rather than exposing an initialization function
+/// that needs to be called manually
 #[cfg(test)]
-pub fn test_evaluate_fn<F: JoltField, G: Evaluatable>(
-    values_u64: &[u64],
-    subtable_over_ref_field: impl jolt_core::jolt::subtable::LassoSubtable<F>,
-    subtable_over_ast_field: impl jolt_core::jolt::subtable::LassoSubtable<G>,
-) -> (F, F, G) {
-    let reg_size = values_u64.len();
-    let values = values_u64.into_iter().map(|&n| F::from_u64(n)).collect::<Vec<_>>();
-    let expected_result = subtable_over_ref_field.evaluate_mle(&values);
-    let register = G::register('x', reg_size);
-    let to_evaluate = subtable_over_ast_field.evaluate_mle(&register);
-    let actual_result = to_evaluate.evaluate(&values);
-    (actual_result, expected_result, to_evaluate)
+pub fn initialize_fields() {
+    use ark_bn254::Fr;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        let small_value_lookup_tables = Fr::compute_lookup_tables();
+        Fr::initialize_lookup_tables(small_value_lookup_tables);
+    })
+}
+
+#[cfg(test)]
+use proptest::prelude::*;
+
+#[cfg(test)]
+pub fn arb_field_elem<F: JoltField>() -> impl Strategy<Value = F> {
+    proptest::collection::vec(any::<u8>(), F::NUM_BYTES)
+        .prop_map(|bytes| F::from_bytes(&bytes))
 }

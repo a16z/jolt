@@ -1,11 +1,11 @@
-use jolt_core::jolt::{instruction::JoltInstruction, vm::rv32i_vm::RV32I};
+use jolt_core::{field::JoltField, jolt::{instruction::JoltInstruction, vm::rv32i_vm::RV32I}};
 use strum::IntoEnumIterator as _;
 
 use crate::{constants::JoltParameterSet, modules::{AsModule, Module}, subtable::ZkLeanSubtable, util::{indent, ZkLeanReprField}, MleAst};
 
 /// Wrapper around a JoltInstruction
 // TODO: Make this generic over the instruction set
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
     instruction: RV32I,
     phantom: std::marker::PhantomData<J>,
@@ -30,9 +30,19 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         format!("{name}_{word_size}_{c}_{log_m}")
     }
 
+    /// The number of field elements in the input to `combine_lookups`. See the doc comment for
+    /// [`JoltInstruction::combine_lookups`] for more info.
+    fn num_lookups<F: JoltField>(&self) -> usize {
+        // We need one wire for each subtable evaluation, i.e., one wire per subtable, per chunk
+        self.instruction
+            .subtables::<F>(J::C, 1 << J::LOG_M)
+            .iter()
+            .flat_map(|(_, ixs)| ixs.iter())
+            .count()
+    }
+
     fn combine_lookups<F: ZkLeanReprField>(&self, reg_name: char) -> F {
-        // We need one wire for each subtable evaluation
-        let reg_size = self.subtables::<F>().count();
+        let reg_size = self.num_lookups::<F>();
         let reg = F::register(reg_name, reg_size);
         self.instruction.combine_lookups(&reg, J::C, 1 << J::LOG_M)
     }
@@ -130,5 +140,86 @@ impl<J: JoltParameterSet> AsModule for ZkLeanInstructions<J> {
             imports: self.zklean_imports(),
             contents,
         })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::util::arb_field_elem;
+
+    use jolt_core::field::JoltField;
+
+    use proptest::{prelude::*, collection::vec};
+    use strum::EnumCount as _;
+
+    type RefField = ark_bn254::Fr;
+    type TestField = crate::mle_ast::MleAst<2048>;
+    type ParamSet = crate::constants::RV32IParameterSet;
+
+    #[derive(Clone)]
+    struct TestableInstruction<J: JoltParameterSet> {
+        reference: RV32I,
+        test: ZkLeanInstruction<J>,
+    }
+
+    impl<J: JoltParameterSet> std::fmt::Debug for TestableInstruction<J> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{}", self.test.name()))
+        }
+    }
+
+    impl<J: JoltParameterSet> TestableInstruction<J> {
+        fn iter() -> impl Iterator<Item = Self> {
+            RV32I::iter()
+                .zip(ZkLeanInstruction::iter())
+                .map(|(reference, test)| Self { reference, test })
+        }
+
+        fn reference_combine_lookups<R: JoltField>(&self, inputs: &[R]) -> R {
+            assert_eq!(inputs.len(), self.test.num_lookups::<R>());
+
+            self.reference.combine_lookups(inputs, J::C, J::M)
+        }
+
+        fn test_combine_lookups<R: JoltField, T: ZkLeanReprField>(&self, inputs: &[R]) -> R {
+            assert_eq!(inputs.len(), self.test.num_lookups::<R>());
+
+            let ast: T = self.test.combine_lookups('x');
+            ast.evaluate(inputs)
+        }
+    }
+
+    fn arb_instruction<J: JoltParameterSet>()
+        -> impl Strategy<Value = TestableInstruction<J>>
+    {
+        (0..RV32I::COUNT)
+            .prop_map(|n| TestableInstruction::iter().nth(n).unwrap())
+    }
+
+    fn arb_instruction_and_input<J: JoltParameterSet + Clone, R: JoltField>()
+        -> impl Strategy<Value = (TestableInstruction<J>, Vec<R>)>
+    {
+        arb_instruction().prop_flat_map(|instr| {
+            let input_len = instr.test.num_lookups::<R>();
+            let inputs = vec(arb_field_elem::<R>(), input_len);
+
+            (Just(instr), inputs)
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn combine_lookups(
+            (instr, inputs) in arb_instruction_and_input::<ParamSet, RefField>(),
+        ) {
+            // NOTE: Omitting this causes index OOB errors when converting from `uXX`
+            crate::util::initialize_fields();
+
+            prop_assert_eq!(
+                instr.test_combine_lookups::<_, TestField>(&inputs),
+                instr.reference_combine_lookups(&inputs),
+            );
+        }
     }
 }

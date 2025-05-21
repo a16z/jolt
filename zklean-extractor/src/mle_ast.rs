@@ -141,6 +141,37 @@ impl<const NUM_NODES: usize> crate::util::ZkLeanReprField for MleAst<NUM_NODES> 
         write!(res, "{self}").unwrap();
         res
     }
+
+    /// Evaluate the computation represented by the AST over another [`JoltField`], starting at
+    /// `root`, and using the variable assignments in `vars`.
+    #[cfg(test)]
+    fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
+        fn helper<F: JoltField>(
+            vars: &[F],
+            nodes: &[Option<MleAstNode>],
+            root: usize,
+        ) -> F {
+            match nodes[root] {
+                Some(MleAstNode::Scalar(f)) => F::from_u64(f as u64), // TODO: handle negative scalars?
+                Some(MleAstNode::Var(_, var)) => vars[var], // TODO: handle multiple registers?
+                Some(MleAstNode::Neg(next_root)) =>
+                    -helper(vars, nodes, root - next_root),
+                Some(MleAstNode::Inv(next_root)) =>
+                    helper(vars, nodes, root - next_root).inverse().expect("division by 0"),
+                Some(MleAstNode::Add(lhs_root, rhs_root)) =>
+                    helper(vars, nodes, root - lhs_root) + helper(vars, nodes, root - rhs_root),
+                Some(MleAstNode::Mul(lhs_root, rhs_root)) =>
+                    helper(vars, nodes, root - lhs_root) * helper(vars, nodes, root - rhs_root),
+                Some(MleAstNode::Sub(lhs_root, rhs_root)) =>
+                    helper(vars, nodes, root - lhs_root) - helper(vars, nodes, root - rhs_root),
+                Some(MleAstNode::Div(lhs_root, rhs_root)) =>
+                    helper(vars, nodes, root - lhs_root) / helper(vars, nodes, root - rhs_root),
+                None => panic!("unreachable")
+            }
+        }
+
+        helper(vars, &self.nodes, self.root)
+    }
 }
 
 impl<const NUM_NODES: usize> Zero for MleAst<NUM_NODES> {
@@ -406,39 +437,5 @@ impl<const NUM_NODES: usize> JoltField for MleAst<NUM_NODES> {
             res.unop(MleAstNode::Inv);
             Some(res)
         }
-    }
-}
-
-/// Evaluate the computation represented by the AST over another [`JoltField`], starting at
-/// `root`, and using the variable assignments in `vars`.
-#[cfg(test)]
-fn evaluate_helper<F: JoltField>(
-    vars: &[F],
-    nodes: &[Option<MleAstNode>],
-    root: usize,
-) -> F {
-    match nodes[root] {
-        Some(MleAstNode::Scalar(f)) => F::from_u64(f as u64), // TODO: handle negative scalars?
-        Some(MleAstNode::Var(_, var)) => vars[var], // TODO: handle multiple registers?
-        Some(MleAstNode::Neg(next_root)) =>
-            -evaluate_helper(vars, nodes, root - next_root),
-        Some(MleAstNode::Inv(next_root)) =>
-            evaluate_helper(vars, nodes, root - next_root).inverse().expect("division by 0"),
-        Some(MleAstNode::Add(lhs_root, rhs_root)) =>
-            evaluate_helper(vars, nodes, root - lhs_root) + evaluate_helper(vars, nodes, root - rhs_root),
-        Some(MleAstNode::Mul(lhs_root, rhs_root)) =>
-            evaluate_helper(vars, nodes, root - lhs_root) * evaluate_helper(vars, nodes, root - rhs_root),
-        Some(MleAstNode::Sub(lhs_root, rhs_root)) =>
-            evaluate_helper(vars, nodes, root - lhs_root) - evaluate_helper(vars, nodes, root - rhs_root),
-        Some(MleAstNode::Div(lhs_root, rhs_root)) =>
-            evaluate_helper(vars, nodes, root - lhs_root) / evaluate_helper(vars, nodes, root - rhs_root),
-        None => panic!("unreachable")
-    }
-}
-
-#[cfg(test)]
-impl<const NUM_NODES: usize> crate::util::Evaluatable for MleAst<NUM_NODES> {
-    fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
-        evaluate_helper(vars, &self.nodes, self.root)
     }
 }

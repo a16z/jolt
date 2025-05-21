@@ -22,6 +22,7 @@ pub trait JoltParameterSet {
 }
 
 /// The parameters used by Jolt for 32-bit risc-v
+#[derive(Clone)]
 pub struct RV32IParameterSet;
 
 impl JoltParameterSet for RV32IParameterSet {
