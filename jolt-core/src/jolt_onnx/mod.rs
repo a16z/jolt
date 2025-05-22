@@ -6,6 +6,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod instruction;
+pub mod onnx_host;
 pub mod subtable;
 pub mod trace;
 pub mod vm;

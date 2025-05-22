@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn print_model() {
-        let model_path = "./onnx/add_mul_sub_shift.onnx";
+        let model_path = "./onnx/simple_perceptron.onnx";
         let graph = ONNXParser::load_model(model_path).unwrap();
         graph.print();
     }
