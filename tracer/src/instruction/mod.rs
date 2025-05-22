@@ -52,6 +52,8 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
+use precompile_sha256::virtual_sha256_compression::VirtualSha256Compression;
+use precompile_sha256::virtual_sha256_compression_i::VirtualSha256CompressionI;
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -64,6 +66,7 @@ use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2i::VirtualPow2I;
+use virtual_rotri::VirtualROTRI;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sra::VirtualSRA;
@@ -108,6 +111,7 @@ pub mod mulhsu;
 pub mod mulhu;
 pub mod or;
 pub mod ori;
+pub mod precompile_sha256;
 pub mod rem;
 pub mod remu;
 pub mod sb;
@@ -136,6 +140,7 @@ pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
+pub mod virtual_rotri;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
@@ -358,9 +363,9 @@ define_rv32im_enums! {
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
-        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualSha256Compression,
+        VirtualSha256CompressionI, VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
 

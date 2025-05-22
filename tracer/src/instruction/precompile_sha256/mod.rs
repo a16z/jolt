@@ -1,0 +1,419 @@
+use self::Input::{Imm, Reg};
+use crate::instruction::add::ADD;
+use crate::instruction::addi::ADDI;
+use crate::instruction::and::AND;
+use crate::instruction::andi::ANDI;
+use crate::instruction::format::format_i::FormatI;
+use crate::instruction::format::format_load::FormatLoad;
+use crate::instruction::format::format_r::FormatR;
+use crate::instruction::lw::LW;
+use crate::instruction::srli::SRLI;
+use crate::instruction::virtual_rotri::VirtualROTRI;
+use crate::instruction::xor::XOR;
+use crate::instruction::xori::XORI;
+use crate::instruction::RV32IMInstruction;
+
+pub mod virtual_sha256_compression;
+pub mod virtual_sha256_compression_i;
+
+/// SHA-256 initial hash values
+/// These are the first 32 bits of the fractional parts of the square roots
+/// of the first 8 primes (2, 3, 5, 7, 11, 13, 17, 19)
+pub const BLOCK: [u64; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
+
+/// SHA-256 round constants (K)
+/// These are the first 32 bits of the fractional parts of the cube roots
+/// of the first 64 primes (2, 3, 5, 7, 11, ..., 311)
+pub const K: [u64; 64] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+
+pub const NEEDED_REGISTERS: usize = 28;
+
+struct Sha256SequenceBuilder {
+    address: u64,
+    sequence: Vec<RV32IMInstruction>,
+    /// Round id
+    rid: i32,
+    vr: [usize; 28],
+    operand_rs1: usize,
+    operand_rs2: Option<usize>,
+}
+
+impl Sha256SequenceBuilder {
+    fn new(
+        address: u64,
+        vr: [usize; NEEDED_REGISTERS],
+        operand_rs1: usize,
+        operand_rs2: Option<usize>,
+    ) -> Self {
+        Sha256SequenceBuilder {
+            address,
+            sequence: vec![],
+            rid: 0,
+            vr,
+            operand_rs1,
+            operand_rs2,
+        }
+    }
+
+    /// Loads and runs all SHA256 rounds
+    fn build(mut self) -> Vec<RV32IMInstruction> {
+        if let Some(rs2) = self.operand_rs2 {
+            // Load A..H only if instruction is not Imm - second operand was given
+            (0..7).for_each(|i| self.lw(rs2, i, self.vr[i as usize]));
+        }
+        (8..24).for_each(|i| self.lw(self.operand_rs1, i, self.vr[i as usize]));
+        // Run 64 rounds
+        (0..64).for_each(|_| self.round());
+        self.sequence
+    }
+
+    /// Assumes for words A-H to be loaded in registers 0..7
+    /// Assumes for words W_0..W_15 to be loaded in registers 8..24
+    fn round(&mut self) {
+        assert!(self.rid < 64);
+        let t1 = self.vr[24];
+        let t2 = self.vr[25];
+        // scratch space
+        let ss = self.vr[26];
+        let ss2 = self.vr[27];
+        // Put T_1 into register t1
+        // Put H + K
+        // We do this first because H is going to be Imm the longest of all inputs
+        let h_add_k = self.add(Imm(K[self.rid as usize]), self.vri('H'), t1);
+        let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
+        let add_sigma_1 = self.add(h_add_k, sigma_1, t1);
+        // Put Ch(E_0, F_0, G_0) into register t2
+        let ch = self.sha_ch(self.vri('E'), self.vri('F'), self.vri('G'), ss, ss2);
+        let add_ch = self.add(add_sigma_1, ch, t1);
+        self.update_w([ss, ss2]);
+        // Add W_(rid)
+        let t1 = self.add(add_ch, Reg(self.w(0)), t1);
+        // Done with T_1
+
+        // Put T_2 into register t2
+        // Put Sigma_0(A_0) into register t2
+        let sigma_0 = self.sha_sigma_0(self.vri('A'), t2, ss);
+        // Put Maj(A_0, B_0, C_0) into register ss
+        let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
+        // Add Maj to t2
+        let t2 = self.add(sigma_0, maj, t2);
+        // Done with T_2
+
+        // Overwrite H with T_1 + T_2
+        self.add(t1, t2, self.vr_block_index('H'));
+        // Overwrite D_0 with D_0 + T_1
+        self.add(t1, self.vri('D'), self.vr_block_index('D'));
+
+        self.rid += 1;
+    }
+
+    fn vr(&self, i: usize) -> Input {
+        Reg(i)
+    }
+
+    fn vri(&self, shift: char) -> Input {
+        // Make sure that A..H are in registers. If not, supply Imm values
+        if self.operand_rs2.is_none()
+            && (self.rid == 0
+                || (self.rid == 1 && !['A', 'E'].contains(&shift))
+                || (self.rid == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
+                || (self.rid == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
+        {
+            return Imm(BLOCK[(shift as usize - 'A' as usize) % 8]);
+        }
+        self.vr(self.vr_block_index(shift))
+    }
+
+    fn vr_block_index(&self, shift: char) -> usize {
+        assert!(('A'..='H').contains(&shift));
+        ((-self.rid + (shift as i32 - 'A' as i32)) % 8) as usize
+    }
+
+    /// Register number contaiting W_(rid+shift)
+    fn w(&self, shift: i32) -> usize {
+        ((self.rid + shift) % 16 + 8) as usize
+    }
+
+    fn update_w(&mut self, ss: [usize; 2]) {
+        // This W is the input message, so should be in registers already
+        if self.rid < 16 {
+            return;
+        }
+        // We don't need to do Imm shenanigans here since words are always in registers
+        // Calculate sigma_0(W_(rid - 15))
+        self.sha_word_sigma_0(self.w(-15), ss[0], ss[1]);
+        // Add sigma_0 to W_(rid - 16)
+        self.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
+        // Add W_(rid - 7) to W_(rid - 16)
+        self.add(Reg(self.w(-7)), Reg(self.w(-16)), self.w(-16));
+        // Calculate sigma_1(W_(rid - 2))
+        self.sha_word_sigma_1(self.w(-2), ss[0], ss[1]);
+        // Add sigma_1 to W_(rid - 16)
+        self.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
+    }
+
+    /// Computes sha256 Ch function
+    /// Ch(E, F, G) = (E and F) xor ((not E) and G)
+    /// ss is scratch space
+    fn sha_ch(&mut self, rs1: Input, rs2: Input, rs3: Input, rd: usize, ss: usize) -> Input {
+        let e_and_f = self.and(rs1, rs2, ss);
+        let neg_e = self.xor(rs1, Imm(0xffff_ffff), rd);
+        let neg_e_and_g = self.and(neg_e, rs3, rd);
+        self.xor(e_and_f, neg_e_and_g, rd)
+    }
+
+    /// Computes sha256 Maj function
+    /// Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
+    fn sha_maj(&mut self, rs1: Input, rs2: Input, rs3: Input, rd: usize, ss: usize) -> Input {
+        let b_and_c = self.and(rs2, rs3, ss);
+        let b_xor_c = self.xor(rs2, rs3, rd);
+        let a_and_b_xor_c = self.and(rs1, b_xor_c, rd);
+        self.xor(b_and_c, a_and_b_xor_c, rd)
+    }
+
+    /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
+    /// This function is used to modify block data, and not word
+    /// `sha_word_sigma` is used for word computation.
+    fn sha_sigma_0(&mut self, rs1: Input, rd: usize, ss: usize) -> Input {
+        let rotri_xor = self.rotri_xor_rotri(rs1, 2, 13, rd, ss);
+        let rotri_22 = self.rotri(rs1, 22, ss);
+        self.xor(rotri_xor, rotri_22, rd)
+    }
+
+    /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
+    /// This function is used to modify block data, and not word
+    /// `sha_word_sigma` is used for word computation.
+    fn sha_sigma_1(&mut self, rs1: Input, rd: usize, ss: usize) -> Input {
+        let rotri_xor = self.rotri_xor_rotri(rs1, 6, 11, rd, ss);
+        let rotri_25 = self.rotri(rs1, 25, ss);
+        self.xor(rotri_xor, rotri_25, rd)
+    }
+
+    /// sigma_0 for word computation
+    fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
+        // We don't need to do Imm shenanigans here since words are always in registers
+        self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
+        let srli = SRLI {
+            address: self.address,
+            operands: FormatI {
+                rd: ss,
+                rs1,
+                imm: 3,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        self.sequence.push(srli.into());
+        self.xor(Reg(rd), Reg(ss), rd);
+    }
+
+    /// sigma_1 for word computation
+    fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
+        // We don't need to do Imm shenanigans here since words are always in registers
+        self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
+        let srli = SRLI {
+            address: self.address,
+            operands: FormatI {
+                rd: ss,
+                rs1,
+                imm: 10,
+            },
+            virtual_sequence_remaining: Some(0),
+        };
+        self.sequence.push(srli.into());
+        self.xor(Reg(rd), Reg(ss), rd);
+    }
+
+    fn lw(&mut self, rs1: usize, imm: i64, rd: usize) {
+        let lw = LW {
+            address: self.address,
+            operands: FormatLoad { rd, rs1, imm },
+            virtual_sequence_remaining: Some(0),
+        };
+        self.sequence.push(lw.into());
+    }
+
+    /// Addition modulo 2^32
+    fn add(&mut self, rs1: Input, rs2: Input, rd: usize) -> Input {
+        match (rs1, rs2) {
+            (Reg(rs1), Reg(rs2)) => {
+                let add = ADD {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(add.into());
+                Reg(rd)
+            }
+            (Reg(rs1), Imm(imm)) => {
+                let addi = ADDI {
+                    address: self.address,
+                    operands: FormatI { rd, rs1, imm },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(addi.into());
+                Reg(rd)
+            }
+            (Imm(_), Reg(_)) => self.add(rs2, rs1, rd),
+            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
+        }
+    }
+
+    fn and(&mut self, rs1: Input, rs2: Input, rd: usize) -> Input {
+        match (rs1, rs2) {
+            (Reg(rs1), Reg(rs2)) => {
+                let add = AND {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(add.into());
+                Reg(rd)
+            }
+            (Reg(rs1), Imm(imm)) => {
+                let add = ANDI {
+                    address: self.address,
+                    operands: FormatI { rd, rs1, imm },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(add.into());
+                Reg(rd)
+            }
+            (Imm(_), Reg(_)) => self.and(rs2, rs1, rd),
+            (Imm(imm1), Imm(imm2)) => Imm(imm1 & imm2),
+        }
+    }
+
+    fn xor(&mut self, rs1: Input, rs2: Input, rd: usize) -> Input {
+        match (rs1, rs2) {
+            (Reg(rs1), Reg(rs2)) => {
+                let xor = XOR {
+                    address: self.address,
+                    operands: FormatR { rd, rs1, rs2 },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xor.into());
+                Reg(rd)
+            }
+            (Reg(rs1), Imm(imm)) => {
+                let xori = XORI {
+                    address: self.address,
+                    operands: FormatI { rd, rs1, imm },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(xori.into());
+                Reg(rd)
+            }
+            (Imm(_), Reg(_)) => self.xor(rs2, rs1, rd),
+            (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
+        }
+    }
+
+    /// ROTRI instruction - Rotate Right Immediate
+    fn rotri(&mut self, rs1: Input, imm: u64, rd: usize) -> Input {
+        match rs1 {
+            Reg(rs1) => {
+                let rotri = VirtualROTRI {
+                    address: self.address,
+                    operands: FormatI { rd, rs1, imm },
+                    virtual_sequence_remaining: Some(0),
+                };
+                self.sequence.push(rotri.into());
+                Reg(rd)
+            }
+            Imm(val) => Imm(val.rotate_right(imm as u32)),
+        }
+    }
+
+    fn rotri_xor_rotri(&mut self, rs1: Input, imm1: u32, imm2: u32, rd: usize, ss: usize) -> Input {
+        match rs1 {
+            Reg(_) => {
+                // TODO: Implement actual ROTRI_XOR_ROTRI instruction when available
+                let rotri = self.rotri(rs1, imm1 as u64, ss);
+                let rotri2 = self.rotri(rs1, imm2 as u64, rd);
+                self.xor(rotri, rotri2, rd)
+            }
+            Imm(val) => Imm(val.rotate_right(imm1) ^ val.rotate_right(imm2)),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Input {
+    Imm(u64),
+    Reg(usize),
+}
+
+fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32; 8] {
+    let mut a = initial_state[0];
+    let mut b = initial_state[1];
+    let mut c = initial_state[2];
+    let mut d = initial_state[3];
+    let mut e = initial_state[4];
+    let mut f = initial_state[5];
+    let mut g = initial_state[6];
+    let mut h = initial_state[7];
+
+    let mut w = [0u32; 64];
+
+    for i in 0..16 {
+        w[i] = input[i];
+    }
+
+    for i in 16..64 {
+        // σ₁(w[i-2]) + w[i-7] + σ₀(w[i-15]) + w[i-16]
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
+    }
+
+    for i in 0..64 {
+        let ch = (e & f) ^ ((!e) & g);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+
+        let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22); // Σ₀(a)
+        let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25); // Σ₁(e)
+
+        let t1 = h
+            .wrapping_add(sigma1)
+            .wrapping_add(ch)
+            .wrapping_add(K[i] as u32)
+            .wrapping_add(w[i]);
+        let t2 = sigma0.wrapping_add(maj);
+
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+
+    let result = [
+        initial_state[0].wrapping_add(a),
+        initial_state[1].wrapping_add(b),
+        initial_state[2].wrapping_add(c),
+        initial_state[3].wrapping_add(d),
+        initial_state[4].wrapping_add(e),
+        initial_state[5].wrapping_add(f),
+        initial_state[6].wrapping_add(g),
+        initial_state[7].wrapping_add(h),
+    ];
+
+    result
+}
