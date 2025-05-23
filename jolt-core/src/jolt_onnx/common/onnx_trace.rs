@@ -4,12 +4,15 @@ use crate::jolt_onnx::onnx_host::tracer::tensor::LiteTensor;
 use serde::{Deserialize, Serialize};
 use tract_onnx::pb::NodeProto;
 
+/// Represents a row in the execution trace
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ONNXTraceRow {
     pub instruction: ONNXInstruction,
     pub layer_state: LayerState,
 }
 
+/// Stores the input and output values of a layer
+/// during the execution of the ONNX model
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayerState {
     pub input_vals: Option<Vec<LiteTensor>>,
