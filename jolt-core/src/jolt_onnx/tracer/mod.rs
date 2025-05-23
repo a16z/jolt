@@ -5,7 +5,6 @@
 
 use model::QuantizedONNXModel;
 use std::path::PathBuf;
-use tensor::LiteTensor;
 
 use crate::jolt_onnx::common::onnx_trace::{JoltONNXDevice, ONNXTraceRow};
 

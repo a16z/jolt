@@ -5,11 +5,7 @@
 //! - [`tracer`] - This module provides a tracer for the ONNX runtime.
 //! - [`ONNXProgram`] - Represents an ONNX model
 
-pub mod tracer;
-
-#[cfg(test)]
-mod tests;
-
+use super::tracer;
 use std::path::PathBuf;
 
 /// This type represents an ONNX model

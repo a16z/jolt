@@ -1,4 +1,4 @@
-use crate::jolt_onnx::onnx_host::tracer::model::QuantizedONNXModel;
+use crate::jolt_onnx::tracer::model::QuantizedONNXModel;
 use crate::jolt_onnx::utils::random_floatvec;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

@@ -8,6 +8,7 @@ pub struct LiteTensor {
     pub data: Vec<f32>,
 }
 
+#[allow(dead_code)]
 impl LiteTensor {
     fn transposed(&self, alpha: f32) -> LiteTensor {
         let mut tensor_shape = self.shape.clone();

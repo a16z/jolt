@@ -1,8 +1,9 @@
 //! This module provides the types that are used to construct the execution trace from an ONNX runtime context.
 
-use crate::jolt_onnx::onnx_host::tracer::tensor::LiteTensor;
 use serde::{Deserialize, Serialize};
 use tract_onnx::pb::NodeProto;
+
+use crate::jolt_onnx::tracer::tensor::LiteTensor;
 
 /// Represents a row in the execution trace
 #[derive(Clone, Debug, Serialize, Deserialize)]
