@@ -197,7 +197,7 @@ pub fn input_to_field_name(input: &JoltR1CSInputs) -> String {
     let paren = Regex::new(r"\((.*)\)").unwrap();
     let comma = Regex::new(r", *").unwrap();
 
-    let mut string: String = format!("{:?}", input);
+    let mut string: String = format!("{input:?}");
 
     string = comma
         .replace_all(string.as_str(), NoExpand("_"))
