@@ -4,6 +4,8 @@
 // Plan is to keep unwraps/expects where panics help catch dev bugs, and switch to proper error handling for actual runtime errors.
 
 use crate::jolt_onnx::utils::create_tensor;
+use onnx_trace::{ONNXInstruction, Operator};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::{path::PathBuf, str::FromStr};
@@ -13,6 +15,8 @@ use tract_onnx::{
     pb::{type_proto::Value, GraphProto},
     prelude::*,
 };
+
+pub mod onnx_trace;
 
 #[cfg(test)]
 mod tests;
@@ -69,6 +73,9 @@ impl QuantizedONNXModel {
                 Operator::MatMul => {
                     // Y = alpha * A * B^T + beta * C
                     // A: [M, K], B: [N, K], C: [N]
+
+                    // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
+
                     let a = io_values.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
                     let b = io_values.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
                     let c = io_values.get(&instr.inputs[2]).unwrap(); // shape: [N]
@@ -137,54 +144,6 @@ impl QuantizedONNXModel {
     }
 }
 
-/// Represents a single layer (node) in the ONNX model
-#[derive(Debug)]
-pub struct ONNXInstruction {
-    opcode: Operator,
-    attributes: Option<Vec<f32>>,
-    inputs: Vec<String>,
-    outputs: Vec<String>,
-}
-
-impl ONNXInstruction {
-    /// Create a new instance of [`ONNXInstruction`]
-    pub fn new(opcode: Operator) -> Self {
-        Self {
-            opcode,
-            attributes: None,
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-        }
-    }
-
-    /// Decorate opcode with their attributes - uses the ONNX model's initializers
-    /// to get the serialized data for the attributes.
-    fn decorate(&mut self, node_proto: &NodeProto) {
-        self.inputs = node_proto.input.clone();
-        self.outputs = node_proto.output.clone();
-        match self.opcode {
-            Operator::MatMul => {
-                // Get the alpha and beta values from the node attributes
-                self.decorate_matmul(node_proto);
-            }
-            Operator::Relu => {}
-        }
-    }
-
-    /// Add the alpha and beta values to the instruction's attributes
-    fn decorate_matmul(&mut self, node_proto: &NodeProto) {
-        let (alpha, beta) = alpha_beta(node_proto);
-        self.attributes = Some(vec![alpha, beta]);
-    }
-}
-
-/// Represents an operator in the ONNX model
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum Operator {
-    MatMul,
-    Relu,
-}
-
 impl FromStr for Operator {
     type Err = String;
     /// Match the [`Operator`] type to its string representation
@@ -199,7 +158,7 @@ impl FromStr for Operator {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Represents a [`tract_onnx`] tensor for this codebase
 pub struct LiteTensor {
     shape: Vec<usize>,
@@ -314,19 +273,4 @@ fn input_shape(graph: &GraphProto) -> (usize, usize) {
         DimParam(_) => panic!("Dynamic input shape is not supported"),
     };
     (1, size as usize)
-}
-
-///
-fn alpha_beta(node_proto: &NodeProto) -> (f32, f32) {
-    let attribute = |name: &str| {
-        node_proto
-            .attribute
-            .iter()
-            .find(|&a| a.name == name)
-            .map(|a| a.f)
-            .unwrap_or(1.0)
-    };
-    let alpha = attribute("alpha");
-    let beta = attribute("beta");
-    (alpha, beta)
 }
