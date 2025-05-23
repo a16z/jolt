@@ -46,6 +46,7 @@ impl QuantizedONNXModel {
 
     /// Execute the model on a given input
     pub fn execute(&mut self, input: &[f32]) -> LiteTensor {
+        //
         let mut io_map = HashMap::<String, LiteTensor>::new();
         let input = LiteTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
         io_map.insert(

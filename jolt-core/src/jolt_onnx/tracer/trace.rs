@@ -1,3 +1,4 @@
+//!
 use super::tensor::LiteTensor;
 use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
 use std::collections::HashMap;
@@ -8,6 +9,7 @@ pub struct Tracer {
 }
 
 impl Tracer {
+    ///
     pub fn start_instruction(&mut self, inst: ONNXInstruction) {
         self.rows.push(ONNXTraceRow {
             instruction: inst,
@@ -15,6 +17,7 @@ impl Tracer {
         });
     }
 
+    ///
     pub fn capture_pre_state(&mut self, io_map: &HashMap<String, LiteTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut input_vals = Vec::new();
@@ -25,6 +28,7 @@ impl Tracer {
         row.layer_state.input_vals = Some(input_vals);
     }
 
+    ///
     pub fn capture_post_state(&mut self, io_map: &HashMap<String, LiteTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut output_vals = Vec::new();
