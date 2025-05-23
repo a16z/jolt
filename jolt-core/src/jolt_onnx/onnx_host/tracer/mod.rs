@@ -20,7 +20,6 @@ mod tests;
 /// Parse the ONNX model & quantize it from `model_path`
 pub fn parse(model_path: &PathBuf) -> QuantizedONNXModel {
     let graph = computational_graph(model_path);
-    let input_shape = input_shape(&graph);
 
     // Get constant-inputs of the graph.
     let initializer_map = ONNXInitializerMap::new(&graph.initializer);
@@ -36,7 +35,7 @@ pub fn parse(model_path: &PathBuf) -> QuantizedONNXModel {
         instruction.decorate(node);
         instrs.push(instruction);
     }
-    QuantizedONNXModel::new(initializer_map, input_shape, instrs)
+    QuantizedONNXModel::new(initializer_map, instrs)
 }
 
 /// Generate's an execution trace for an ONNX model
@@ -45,10 +44,9 @@ pub fn trace(model_path: &PathBuf, input: &[f32]) -> LiteTensor {
     model.execute(input)
 }
 
-/// Represents a topologically-sorted, quantized  ONNX model
+/// Represents a topologically-sorted ONNX model
 #[derive(Debug)]
 pub struct QuantizedONNXModel {
-    input_shape: (usize, usize),
     instrs: Vec<ONNXInstruction>,
     initializer_map: ONNXInitializerMap,
 }
@@ -56,35 +54,38 @@ pub struct QuantizedONNXModel {
 impl QuantizedONNXModel {
     /// Execute the model on a given input
     pub fn execute(&self, input: &[f32]) -> LiteTensor {
-        // let mut node_outputs: HashMap<usize, Vec<Vec<f32>>> = HashMap::new();
-        let mut input_values = HashMap::<String, LiteTensor>::new();
+        let mut io_values = HashMap::<String, LiteTensor>::new();
         let input = LiteTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
-        input_values.insert(
+        io_values.insert(
             "input".to_string(), // TODO: Make this more robust
             input.clone(),
         );
         for (key, value) in self.initializer_map.iter() {
-            input_values.insert(key.clone(), value.clone());
+            io_values.insert(key.clone(), value.clone());
         }
 
         for instr in self.instrs.iter() {
             match instr.opcode {
                 Operator::MatMul => {
-                    let a = input_values.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
-                    let b = input_values.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
-                    let c = input_values.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    // Y = alpha * A * B^T + beta * C
+                    // A: [M, K], B: [N, K], C: [N]
+                    let a = io_values.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
+                    let b = io_values.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
+                    let c = io_values.get(&instr.inputs[2]).unwrap(); // shape: [N]
                     let (alpha, beta) = {
                         let attributes = instr.attributes.as_ref().unwrap();
                         (attributes[0], attributes[1])
                     };
 
-                    let m = a.shape[0]; // rows in A
-                    let k = a.shape[1]; // cols in A == cols in B^T
-                    let n = b.shape[0]; // rows in B == output cols
+                    // rows in A
+                    let m = a.shape[0];
+                    // cols in A == cols in B^T
+                    let k = a.shape[1];
+                    // rows in B == output cols
+                    let n = b.shape[0];
 
                     // Output shape is [M, N]
                     let mut result = vec![0.0; m * n];
-
                     for i in 0..m {
                         for j in 0..n {
                             let mut sum = 0.0;
@@ -97,17 +98,15 @@ impl QuantizedONNXModel {
                             result[i * n + j] = alpha * sum + bias;
                         }
                     }
-
                     let output_tensor = LiteTensor {
                         shape: vec![m, n],
                         data: result,
                     };
-
-                    input_values.insert(instr.outputs[0].clone(), output_tensor);
+                    io_values.insert(instr.outputs[0].clone(), output_tensor);
                 }
 
                 Operator::Relu => {
-                    let a = input_values.get(&instr.inputs[0]).unwrap();
+                    let a = io_values.get(&instr.inputs[0]).unwrap();
                     let relu_data = a
                         .data
                         .iter()
@@ -117,26 +116,22 @@ impl QuantizedONNXModel {
                         shape: a.shape.clone(),
                         data: relu_data,
                     };
-                    input_values.insert(instr.outputs[0].clone(), output_tensor);
+                    io_values.insert(instr.outputs[0].clone(), output_tensor);
                 }
             }
         }
-        // Get the output tensor
-        let output_tensor = input_values
+
+        // Get the output tensor // TODO: Make this more robust
+        let output_tensor = io_values
             .get(&self.instrs.last().unwrap().outputs[0])
             .unwrap();
         output_tensor.clone()
     }
 
     /// Create a new instance of [`QuantizedONNXModel`]
-    pub fn new(
-        initializer_map: ONNXInitializerMap,
-        input_shape: (usize, usize),
-        instrs: Vec<ONNXInstruction>,
-    ) -> Self {
+    pub fn new(initializer_map: ONNXInitializerMap, instrs: Vec<ONNXInstruction>) -> Self {
         Self {
             initializer_map,
-            input_shape,
             instrs,
         }
     }
@@ -176,6 +171,7 @@ impl ONNXInstruction {
         }
     }
 
+    /// Add the alpha and beta values to the instruction's attributes
     fn decorate_matmul(&mut self, node_proto: &NodeProto) {
         let (alpha, beta) = alpha_beta(node_proto);
         self.attributes = Some(vec![alpha, beta]);
