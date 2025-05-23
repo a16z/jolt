@@ -1,10 +1,8 @@
 //! This module provides the types that are used to construct the execution trace from an ONNX runtime context.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use tract_onnx::pb::NodeProto;
-
 use crate::jolt_onnx::onnx_host::tracer::tensor::LiteTensor;
+use serde::{Deserialize, Serialize};
+use tract_onnx::pb::NodeProto;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ONNXTraceRow {
@@ -79,4 +77,24 @@ fn alpha_beta(node_proto: &NodeProto) -> (f32, f32) {
     let alpha = attribute("alpha");
     let beta = attribute("beta");
     (alpha, beta)
+}
+
+/// I/O for ONNX runtime context.
+/// The inputs and outputs are part of the public inputs to the proof.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JoltONNXDevice {
+    pub inputs: Vec<f32>,
+    pub outputs: Vec<f32>,
+    pub panic: bool,
+}
+
+impl JoltONNXDevice {
+    /// Create a new instance of [`JoltONNXDevice`]
+    pub fn new(inputs: Vec<f32>, outputs: Vec<f32>) -> Self {
+        Self {
+            inputs,
+            outputs,
+            panic: false,
+        }
+    }
 }
