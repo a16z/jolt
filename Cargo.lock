@@ -1998,6 +1998,7 @@ dependencies = [
  "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
+ "lazy_static",
  "memory-stats",
  "num",
  "num-derive",
