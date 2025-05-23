@@ -563,51 +563,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "binius_field"
-version = "0.2.0"
-source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
-dependencies = [
- "binius_maybe_rayon",
- "binius_utils",
- "bytemuck",
- "cfg-if",
- "derive_more 0.99.20",
- "rand 0.8.5",
- "seq-macro",
- "subtle",
- "thiserror 2.0.12",
- "tracing",
- "trait-set",
- "transpose",
-]
-
-[[package]]
-name = "binius_maybe_rayon"
-version = "0.2.0"
-source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
-dependencies = [
- "cfg-if",
- "either",
- "itertools 0.14.0",
-]
-
-[[package]]
-name = "binius_utils"
-version = "0.2.0"
-source = "git+https://gitlab.com/IrreducibleOSS/binius#7a8d1021006e0fd8608b2941df636b8198fbb604"
-dependencies = [
- "auto_impl",
- "binius_maybe_rayon",
- "bytemuck",
- "bytes",
- "cfg-if",
- "generic-array",
- "itertools 0.14.0",
- "thiserror 2.0.12",
- "thread_local",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3242,17 +3197,6 @@ dependencies = [
  "quick-error",
  "tempfile",
  "wait-timeout",
-]
-
-[[package]]
-name = "ruzstd"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58c4eb8a81997cf040a091d1f7e1938aeab6749d3a0dfa73af43cdc32393483d"
-dependencies = [
- "byteorder",
- "derive_more 0.99.20",
- "twox-hash",
 ]
 
 [[package]]
