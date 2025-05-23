@@ -1,5 +1,6 @@
 //! This module provides a way to parse and execute ONNX models.
 use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
+use crate::jolt_onnx::tracer::tensor::quantize_affine_i8;
 use crate::jolt_onnx::utils::create_tensor;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -151,10 +152,9 @@ impl QuantizedONNXModel {
                     let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
                     let c = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
                     let (alpha, beta) = {
-                        let (attributes, scale) = quantize(instr.attributes.as_ref().unwrap());
-                        (attributes[0], attributes[1])
+                        let attributes = instr.attributes.as_ref().unwrap();
+                        (attributes[0] as i32, attributes[1] as i32)
                     };
-
                     // rows in A
                     let m = a.shape[0];
                     // cols in A == cols in B^T
@@ -162,30 +162,50 @@ impl QuantizedONNXModel {
                     // rows in B == output cols
                     let n = b.shape[0];
 
+                    let a_zp = a.zero_point as i32;
+                    let b_zp = b.zero_point as i32;
+
                     // Output shape is [M, N]
-                    let mut result = vec![0; m * n];
+                    let mut result = vec![0i32; m * n];
+
                     for i in 0..m {
                         for j in 0..n {
-                            let mut sum = 0i8;
+                            let mut acc = 0i32;
                             for t in 0..k {
-                                let a_val = a.data[i * k + t]; // A[i][t]
-                                let b_val = b.data[j * k + t]; // B[j][t] → B^T[t][j]
-                                sum = sum.wrapping_add(a_val.wrapping_mul(b_val));
+                                let a_val = a.data[i * k + t] as i32 - a_zp;
+                                let b_val = b.data[j * k + t] as i32 - b_zp;
+                                acc += a_val * b_val;
                             }
+
                             let bias = if beta != 0 {
-                                beta.wrapping_mul(c.data[j])
+                                beta * c.data[j] as i32
                             } else {
                                 0
                             };
-                            result[i * n + j] = alpha.wrapping_mul(sum).wrapping_add(bias);
+                            result[i * n + j] = alpha * acc + bias;
                         }
                     }
+
+                    // Requantize back to i8 (simulate TFLite or tract post-processing)
+                    let output_scale = a.scale * b.scale + c.scale;
+                    let output_zero_point = 0; // can be set based on min/max of result if needed
+
+                    let quantized_result: Vec<i8> = result
+                        .iter()
+                        .map(|&x| {
+                            ((x as f32 / output_scale) + output_zero_point as f32)
+                                .round()
+                                .clamp(-128.0, 127.0) as i8
+                        })
+                        .collect();
+
                     let output_tensor = QuantizedLiteTensor {
                         shape: vec![m, n],
-                        data: result,
-                        scale: a.scale * b.scale,
-                        zero_point: 0,
+                        data: quantized_result,
+                        scale: output_scale,
+                        zero_point: output_zero_point,
                     };
+
                     io_map.insert(instr.outputs[0].clone(), output_tensor);
                 }
 
