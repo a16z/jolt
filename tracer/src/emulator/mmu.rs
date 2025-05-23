@@ -6,12 +6,21 @@ const DTB_SIZE: usize = 0xfe0;
 
 extern crate fnv;
 
+#[cfg(not(feature = "std"))]
+use alloc::rc::Rc;
+#[cfg(feature = "std")]
 use std::rc::Rc;
 
 use crate::trace::Tracer;
 use common::rv_trace::{JoltDevice, MemoryState};
 
+#[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
+#[cfg(not(feature = "std"))]
+use alloc::collections::btree_map::BTreeMap as FnvHashMap;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec, vec::Vec};
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
 use super::device::clint::Clint;

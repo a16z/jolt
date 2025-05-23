@@ -1,18 +1,26 @@
 #![allow(clippy::useless_format, clippy::type_complexity)]
 
+#[cfg(feature = "std")]
 extern crate fnv;
 
-use std::convert::TryInto;
+use core::convert::TryInto;
+use core::str::FromStr;
+#[cfg(feature = "std")]
 use std::rc::Rc;
-use std::str::FromStr;
 
 use crate::trace::Tracer;
 use common::rv_trace::*;
 
+#[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
+#[cfg(not(feature = "std"))]
+use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 
 const CSR_CAPACITY: usize = 4096;
 
@@ -847,6 +855,7 @@ impl Cpu {
                 8 => AddressingMode::SV39,
                 9 => AddressingMode::SV48,
                 _ => {
+                    #[cfg(feature = "std")]
                     println!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
@@ -876,8 +885,8 @@ impl Cpu {
     // @TODO: Rename to better name?
     fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => std::i32::MIN as i64,
-            Xlen::Bit64 => std::i64::MIN,
+            Xlen::Bit32 => core::i32::MIN as i64,
+            Xlen::Bit64 => core::i64::MIN,
         }
     }
 
@@ -1749,6 +1758,7 @@ fn parse_format_u(word: u32) -> FormatU {
 }
 
 fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
+    #[cfg(feature = "std")]
     println!("f format: {word:x}");
     let f = parse_format_u(word);
     let mut s = String::new();
@@ -2482,7 +2492,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let divisor = cpu.x[f.rs2] as i32;
             if divisor == 0 {
                 cpu.x[f.rd] = -1;
-            } else if dividend == std::i32::MIN && divisor == -1 {
+            } else if dividend == core::i32::MIN && divisor == -1 {
                 cpu.x[f.rd] = dividend as i32 as i64;
             } else {
                 cpu.x[f.rd] = dividend.wrapping_div(divisor) as i32 as i64
@@ -2619,10 +2629,10 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let divisor = cpu.f[f.rs2];
             // Is this implementation correct?
             if divisor == 0.0 {
-                cpu.f[f.rd] = std::f64::INFINITY;
+                cpu.f[f.rd] = core::f64::INFINITY;
                 cpu.set_fcsr_dz();
             } else if divisor == -0.0 {
-                cpu.f[f.rd] = std::f64::NEG_INFINITY;
+                cpu.f[f.rd] = core::f64::NEG_INFINITY;
                 cpu.set_fcsr_dz();
             } else {
                 cpu.f[f.rd] = dividend / divisor;
@@ -3294,7 +3304,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let divisor = cpu.x[f.rs2] as i32;
             if divisor == 0 {
                 cpu.x[f.rd] = dividend as i64;
-            } else if dividend == std::i32::MIN && divisor == -1 {
+            } else if dividend == core::i32::MIN && divisor == -1 {
                 cpu.x[f.rd] = 0;
             } else {
                 cpu.x[f.rd] = dividend.wrapping_rem(divisor) as i64;
