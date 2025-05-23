@@ -24,7 +24,7 @@ fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
 
     println!("Expected: {expected:?}",);
     println!("Result: {:?}", res.data);
-    // assert_eq!(res.data, expected.to_vec());
+    // assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
 }
 
 #[test]
