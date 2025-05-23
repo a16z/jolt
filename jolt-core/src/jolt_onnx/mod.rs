@@ -9,4 +9,5 @@ pub mod instruction;
 pub mod onnx_host;
 pub mod subtable;
 pub mod trace;
+pub mod utils;
 pub mod vm;
