@@ -166,7 +166,7 @@ impl QuantizedONNXModel {
                     let mut result = vec![0; m * n];
                     for i in 0..m {
                         for j in 0..n {
-                            let mut sum = 0i32;
+                            let mut sum = 0i8;
                             for t in 0..k {
                                 let a_val = a.data[i * k + t]; // A[i][t]
                                 let b_val = b.data[j * k + t]; // B[j][t] → B^T[t][j]
@@ -184,6 +184,7 @@ impl QuantizedONNXModel {
                         shape: vec![m, n],
                         data: result,
                         scale: a.scale * b.scale,
+                        zero_point: 0,
                     };
                     io_map.insert(instr.outputs[0].clone(), output_tensor);
                 }
@@ -199,6 +200,7 @@ impl QuantizedONNXModel {
                         shape: a.shape.clone(),
                         data: relu_data,
                         scale: a.scale,
+                        zero_point: a.zero_point,
                     };
                     io_map.insert(instr.outputs[0].clone(), output_tensor);
                 }
