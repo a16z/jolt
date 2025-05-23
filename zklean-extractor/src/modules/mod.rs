@@ -5,7 +5,7 @@ mod util;
 use util::{read_fs_tree_recursively, FSTree, FSResult};
 pub use util::FSError;
 
-const DEFAULT_TEMPLATE_YAML: &'static str = include_str!(env!("TEMPLATE_YAML_PATH"));
+const DEFAULT_TEMPLATE_YAML: &str = include_str!(env!("TEMPLATE_YAML_PATH"));
 
 /// A module to write to the ZkLean Jolt package
 pub struct Module {
@@ -38,7 +38,7 @@ pub fn make_jolt_zk_lean_package(
         .as_ref()
         .map_or(
             serde_yaml::from_str(DEFAULT_TEMPLATE_YAML).map_err(FSError::from),
-            |dir| read_fs_tree_recursively(dir)
+            read_fs_tree_recursively
         )?;
 
     let src_jolt_dir = builder
@@ -52,8 +52,7 @@ pub fn make_jolt_zk_lean_package(
         let module = module.as_module()?;
         let contents_with_imports: Vec<u8> = module.imports
             .into_iter()
-            .map(|i| format!("import {i}\n").bytes().collect::<Vec<u8>>())
-            .flatten()
+            .flat_map(|i| format!("import {i}\n").bytes().collect::<Vec<u8>>())
             .chain(vec![b'\n'])
             .chain(module.contents)
             .collect();

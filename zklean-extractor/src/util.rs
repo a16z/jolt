@@ -3,8 +3,7 @@ use jolt_core::field::JoltField;
 const TAB: &str = "  ";
 
 pub fn indent(level: usize) -> String {
-    std::iter::repeat(String::from(TAB))
-        .take(level)
+    std::iter::repeat_n(String::from(TAB), level)
         .collect::<Vec<_>>()
         .concat()
 }

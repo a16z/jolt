@@ -27,7 +27,7 @@ impl From<FSError> for std::io::Error {
     fn from(value: FSError) -> Self {
         match value {
             FSError::IOError(io_error) => io_error,
-            e => std::io::Error::new(std::io::ErrorKind::Other, e),
+            e => std::io::Error::other(e),
         }
     }
 }
@@ -75,7 +75,7 @@ pub fn read_fs_tree_recursively(root: &PathBuf) -> FSResult<FSTree> {
     }
 
     Ok(FileSystemTree::Directory(
-            read_dir(&root)?
+            read_dir(root)?
             .map(|ent| {
                 let ent = ent?;
                 let ftype = ent.file_type()?;
