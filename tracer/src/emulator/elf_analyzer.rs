@@ -652,18 +652,23 @@ impl ElfAnalyzer {
         map
     }
 
-    /// Finds a program data section whose name is .tohost. If found this method
+    /// Finds a program data section by its name. If found this method
     /// returns an address of the section.
     ///
     /// # Arguments
-    /// * `program_data_section_headers`
-    /// * `string_table_section_headers`
-    pub fn find_tohost_addr(
+    /// * `section_name` - The name of the section to find (e.g., ".tohost", ".begin_signature")
+    /// * `program_data_section_headers` - The program data section headers.
+    /// * `string_table_section_headers` - The string table section headers.
+    ///
+    /// # Returns
+    /// * `Option<u64>` - The address of the section if found, `None` otherwise.
+    pub fn find_section_addr(
         &self,
+        section_name: &str,
         program_data_section_headers: &Vec<&SectionHeader>,
         string_table_section_headers: &Vec<&SectionHeader>,
     ) -> Option<u64> {
-        let tohost_values = [0x2e, 0x74, 0x6f, 0x68, 0x6f, 0x73, 0x74, 0x00]; // ".tohost\null"
+        let section_bytes: Vec<u8> = section_name.bytes().chain(std::iter::once(0)).collect();
         for program_data_header in program_data_section_headers {
             let sh_addr = program_data_header.sh_addr;
             let sh_name = program_data_header.sh_name as u64;
@@ -674,10 +679,10 @@ impl ElfAnalyzer {
                 let sh_offset = string_table_header.sh_offset;
                 let sh_size = string_table_header.sh_size;
                 let mut found = true;
-                for k in 0..tohost_values.len() as u64 {
+                for k in 0..section_bytes.len() as u64 {
                     let addr = sh_offset + sh_name + k;
                     if addr >= sh_offset + sh_size
-                        || self.read_byte(addr as usize) != tohost_values[k as usize]
+                        || self.read_byte(addr as usize) != section_bytes[k as usize]
                     {
                         found = false;
                         break;
