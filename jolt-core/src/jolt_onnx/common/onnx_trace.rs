@@ -1,9 +1,10 @@
 //! This module provides the types that are used to construct the execution trace from an ONNX runtime context.
 
-use super::LiteTensor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tract_onnx::pb::NodeProto;
+
+use crate::jolt_onnx::onnx_host::tracer::tensor::LiteTensor;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ONNXTraceRow {

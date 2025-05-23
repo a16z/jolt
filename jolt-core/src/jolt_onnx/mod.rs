@@ -5,9 +5,10 @@
 // #![warn(missing_docs)]
 #![allow(clippy::type_complexity)]
 
+pub mod common;
 pub mod instruction;
 pub mod onnx_host;
 pub mod subtable;
-pub mod trace;
+pub mod trace; // TODO: Remove this module
 pub mod utils;
 pub mod vm;

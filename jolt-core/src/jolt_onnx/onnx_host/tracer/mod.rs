@@ -3,20 +3,20 @@
 // TODO: Still need to decide on panic strategy — this module is unwrap/expect-heavy.
 // Plan is to keep unwraps/expects where panics help catch dev bugs, and switch to proper error handling for actual runtime errors.
 
+use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
 use crate::jolt_onnx::utils::create_tensor;
-use onnx_trace::{ONNXInstruction, Operator};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::{path::PathBuf, str::FromStr};
+use tensor::LiteTensor;
 use tract_onnx::pb::tensor_shape_proto::dimension::Value::{DimParam, DimValue};
-use tract_onnx::pb::{NodeProto, TensorProto};
+use tract_onnx::pb::TensorProto;
 use tract_onnx::{
     pb::{type_proto::Value, GraphProto},
     prelude::*,
 };
 
-pub mod onnx_trace;
+pub mod tensor;
 
 #[cfg(test)]
 mod tests;
@@ -155,54 +155,6 @@ impl FromStr for Operator {
                 "Could not match instruction {op} to ONNX operator set."
             )),
         }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-/// Represents a [`tract_onnx`] tensor for this codebase
-pub struct LiteTensor {
-    shape: Vec<usize>,
-    data: Vec<f32>,
-}
-
-impl LiteTensor {
-    fn transposed(&self, alpha: f32) -> LiteTensor {
-        let mut tensor_shape = self.shape.clone();
-        // Reverse the shape to get the correct dimensions for transposing
-        tensor_shape.reverse();
-        let tensor_data = &self.data;
-        let (m, n) = (tensor_shape[0], tensor_shape[1]);
-        let mut transposed_data = vec![0.0; tensor_data.len()];
-
-        // Transpose the data matrix
-        for i in 0..m {
-            for j in 0..n {
-                transposed_data[i * n + j] = tensor_data[j * m + i] * alpha;
-            }
-        }
-        LiteTensor {
-            shape: tensor_shape,
-            data: transposed_data,
-        }
-    }
-
-    /// Multiply tensor with a scalar
-    fn multiply(&self, beta: f32) -> LiteTensor {
-        let tensor_data = &self.data;
-        let tensor_shape = self.shape.clone();
-        let multiplied_data = tensor_data.iter().map(|&x| x * beta).collect::<Vec<f32>>();
-        LiteTensor {
-            shape: tensor_shape,
-            data: multiplied_data,
-        }
-    }
-}
-
-impl From<Tensor> for LiteTensor {
-    fn from(tensor: Tensor) -> Self {
-        let shape = tensor.shape().to_vec();
-        let data = tensor.as_slice::<f32>().unwrap().to_vec();
-        Self { shape, data }
     }
 }
 
