@@ -1,4 +1,4 @@
-use crate::jolt_onnx::tracer::model::QuantizedONNXModel;
+use crate::jolt_onnx::tracer::trace;
 use crate::jolt_onnx::utils::random_floatvec;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -27,11 +27,11 @@ fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
     let expected = output.as_slice().unwrap();
 
     // Check output with tracer
-    let res = QuantizedONNXModel::parse(&PathBuf::from(path)).execute(&data);
-
+    let (_trace, io) = trace(&PathBuf::from(path), &data);
+    println!("Trace: {_trace:#?}",);
     println!("Expected: {expected:?}",);
-    println!("Result: {:?}", res.data); // TODO: Add tracing::info! for this and add tracing logs in general
-                                        // assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
+    println!("Result: {:?}", io.outputs); // TODO: Add tracing::info! for this and add tracing logs in general
+                                          // assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
 }
 
 #[test]
