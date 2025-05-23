@@ -67,7 +67,7 @@ where
             let field = input_to_field_name(input);
             f.write_fmt(format_args!("{}{field} : ZKExpr f\n", indent(indent_level),))?;
         }
-        f.write(b"\n")?;
+        f.write_all(b"\n")?;
 
         // for every input make it Witnessable following the pattern
         // ```
@@ -99,7 +99,7 @@ where
                 indent(indent_level),
             ))?;
         }
-        f.write(b"\n")?;
+        f.write_all(b"\n")?;
         f.write_fmt(format_args!("{}pure {{\n", indent(indent_level),))?;
         indent_level += 1;
         for input in &self.inputs {
@@ -108,7 +108,7 @@ where
         }
         indent_level -= 1;
         f.write_fmt(format_args!("{}}}\n", indent(indent_level),))?;
-        f.write(b"\n")?;
+        f.write_all(b"\n")?;
 
         indent_level = top_level_indent;
         f.write_fmt(format_args!(
@@ -137,7 +137,7 @@ where
             indent_level -= 1;
         }
 
-        f.write(b"\n")?;
+        f.write_all(b"\n")?;
         indent_level = top_level_indent;
         f.write_fmt(format_args!(
                 "{}def non_uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) (jolt_offset_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
@@ -145,7 +145,7 @@ where
         ))?;
         indent_level += 1;
         for OffsetEqConstraint { cond, a, b } in &self.non_uniform_constraints {
-            // NOTE: See comments on `materialize_offset_eq` and `OffsetLC`. An offset contraint is three
+            // NOTE: See comments on `materialize_offset_eq` and `OffsetLC`. An offset constraint is three
             // `OffsetLC`s, cond, a, and b. An `OffsetLC` is an `LC` and a `bool`. If the bool is true,
             // then the variables in the LC come from the *next* step. The cond, a, and b `LC`s resolve to
             // a constraint as

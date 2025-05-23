@@ -58,18 +58,16 @@ impl From<serde_yaml::Error> for FSError {
 impl std::fmt::Display for FSError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FSError::TemplateError(s) => {
-                f.write_fmt(format_args!("Template directory error: {}", s))
-            }
+            FSError::TemplateError(s) => f.write_fmt(format_args!("Template directory error: {s}")),
             FSError::BadFilename(s) => {
-                f.write_fmt(format_args!("Bad file name in template directory: {:?}", s))
+                f.write_fmt(format_args!("Bad file name in template directory: {s:?}"))
             }
             FSError::BuildError(build_error) => {
-                f.write_fmt(format_args!("Filesystem build error: {}", build_error))
+                f.write_fmt(format_args!("Filesystem build error: {build_error}"))
             }
-            FSError::IOError(error) => f.write_fmt(format_args!("IO error: {}", error)),
+            FSError::IOError(error) => f.write_fmt(format_args!("IO error: {error}")),
             FSError::DeserializationError(error) => {
-                f.write_fmt(format_args!("YAML deserialization error: {}", error))
+                f.write_fmt(format_args!("YAML deserialization error: {error}"))
             }
         }
     }

@@ -70,7 +70,7 @@ fn write_flat_file(
         f.write_fmt(format_args!("import {i}\n"))?;
     }
 
-    f.write(&contents)?;
+    f.write_all(&contents)?;
 
     Ok(())
 }

@@ -386,7 +386,7 @@ impl<const NUM_NODES: usize> std::hash::Hash for MleAst<NUM_NODES> {
 impl<const NUM_NODES: usize> JoltField for MleAst<NUM_NODES> {
     const NUM_BYTES: usize = 0;
 
-    //type SmallValueLookupTables = ();
+    type SmallValueLookupTables = ();
 
     fn random<R: rand_core::RngCore>(_rng: &mut R) -> Self {
         unimplemented!("Not needed for constructing ASTs");
