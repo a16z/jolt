@@ -350,6 +350,16 @@ macro_rules! define_rv32im_enums {
                     )*
                 }
             }
+
+            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<usize>) {
+                match self {
+                    RV32IMInstruction::NoOp => (),
+                    RV32IMInstruction::UNIMPL => (),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
+                    )*
+                }
+            }
         }
     };
 }

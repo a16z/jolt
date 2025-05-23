@@ -6,8 +6,10 @@ use crate::instruction::andi::ANDI;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
+use crate::instruction::format::format_s::FormatS;
 use crate::instruction::lw::LW;
 use crate::instruction::srli::SRLI;
+use crate::instruction::sw::SW;
 use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
@@ -37,15 +39,25 @@ pub const K: [u64; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-pub const NEEDED_REGISTERS: usize = 28;
+pub const NEEDED_REGISTERS: usize = 32;
 
+/// Builds assembly sequence for SHA256 compression
+/// Expects input words to be in RAM at location rs1..rs1+16
+/// Expects optionally A..H to be in RAM at location rs2..rs2+8
+/// Output will be written to rs1+16..rs1+24
+/// 24 words have to be preallocated in RAM at rs1 location
 struct Sha256SequenceBuilder {
     address: u64,
     sequence: Vec<RV32IMInstruction>,
     /// Round id
     rid: i32,
-    vr: [usize; 28],
+    /// Virtual registers used by the sequence
+    vr: [usize; NEEDED_REGISTERS],
+    /// Location input words to the hash function in 16 memory slots
+    /// Output will be written after those input words
     operand_rs1: usize,
+    /// Optionally, previous hash values A..H
+    /// If None, `BLOCK` constants are used
     operand_rs2: Option<usize>,
 }
 
@@ -70,12 +82,57 @@ impl Sha256SequenceBuilder {
     fn build(mut self) -> Vec<RV32IMInstruction> {
         if let Some(rs2) = self.operand_rs2 {
             // Load A..H only if instruction is not Imm - second operand was given
-            (0..7).for_each(|i| self.lw(rs2, i, self.vr[i as usize]));
+            (0..8).for_each(|i| self.lw(rs2, i, self.vr[i as usize]));
         }
         (8..24).for_each(|i| self.lw(self.operand_rs1, i, self.vr[i as usize]));
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
+        self.final_add_iv();
+        // We are doing 64 rounds, so we can just call straight into vr since all values
+        // should be in order. Store values after rs1 input in memory
+        (0..8).for_each(|i| self.sw(self.operand_rs1, self.vr[i as usize], i + 16));
+        self.enumerate_sequence();
         self.sequence
+    }
+
+    /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
+    fn enumerate_sequence(&mut self) {
+        let len = self.sequence.len();
+        self.sequence
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, instruction)| {
+                instruction.set_virtual_sequence_remaining(Some(len - i - 1));
+            });
+    }
+
+    /// Adds IV to the final hash value to produce output
+    fn final_add_iv(&mut self) {
+        if let Some(rs2) = self.operand_rs2 {
+            // We have initial values E, F, G, H stored in the end registers, but we didn't have
+            // enough space for A, B, C, D, so we need to load them from memory. We can load them
+            // into space that was used for t1, t2, ss, ss2. (technically there's no preference,
+            // but it just keeps those in order).
+            (0..4).for_each(|i| self.lw(rs2, i, self.vr[24 + i as usize]));
+            self.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
+            self.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
+            self.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
+            self.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
+            self.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
+            self.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
+            self.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
+            self.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
+        } else {
+            // We are using constants for final addition round
+            self.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
+            self.add(self.vri('B'), Imm(BLOCK[1]), self.vr('B'));
+            self.add(self.vri('C'), Imm(BLOCK[2]), self.vr('C'));
+            self.add(self.vri('D'), Imm(BLOCK[3]), self.vr('D'));
+            self.add(self.vri('E'), Imm(BLOCK[4]), self.vr('E'));
+            self.add(self.vri('F'), Imm(BLOCK[5]), self.vr('F'));
+            self.add(self.vri('G'), Imm(BLOCK[6]), self.vr('G'));
+            self.add(self.vri('H'), Imm(BLOCK[7]), self.vr('H'));
+        }
     }
 
     /// Assumes for words A-H to be loaded in registers 0..7
@@ -110,16 +167,12 @@ impl Sha256SequenceBuilder {
         let t2 = self.add(sigma_0, maj, t2);
         // Done with T_2
 
-        // Overwrite H with T_1 + T_2
-        self.add(t1, t2, self.vr_block_index('H'));
-        // Overwrite D_0 with D_0 + T_1
-        self.add(t1, self.vri('D'), self.vr_block_index('D'));
-
+        let old_d = self.vri('D');
         self.rid += 1;
-    }
-
-    fn vr(&self, i: usize) -> Input {
-        Reg(i)
+        // Overwrite new A with T_1 + T_2
+        self.add(t1, t2, self.vr('A'));
+        // Overwrite D_0 with D_0 + T_1
+        self.add(t1, old_d, self.vr('E'));
     }
 
     fn vri(&self, shift: char) -> Input {
@@ -132,17 +185,26 @@ impl Sha256SequenceBuilder {
         {
             return Imm(BLOCK[(shift as usize - 'A' as usize) % 8]);
         }
-        self.vr(self.vr_block_index(shift))
+        Reg(self.vr(shift))
     }
 
-    fn vr_block_index(&self, shift: char) -> usize {
+    fn vr(&self, shift: char) -> usize {
         assert!(('A'..='H').contains(&shift));
-        ((-self.rid + (shift as i32 - 'A' as i32)) % 8) as usize
+        let shift = shift as i32 - 'A' as i32;
+        if self.rid == 0 && shift >= 4 {
+            // in the first round E, F, G, H are stored in the end of the registers
+            return 28 + shift as usize;
+        }
+        let mut reg = (-self.rid + shift) % 8;
+        if reg < 0 {
+            reg += 8;
+        }
+        self.vr[reg as usize]
     }
 
-    /// Register number contaiting W_(rid+shift)
+    /// Register number containing W_(rid+shift)
     fn w(&self, shift: i32) -> usize {
-        ((self.rid + shift) % 16 + 8) as usize
+        self.vr[((self.rid + shift) % 16 + 8) as usize]
     }
 
     fn update_w(&mut self, ss: [usize; 2]) {
@@ -200,7 +262,7 @@ impl Sha256SequenceBuilder {
         self.xor(rotri_xor, rotri_25, rd)
     }
 
-    /// sigma_0 for word computation
+    /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: usize, rd: usize, ss: usize) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
@@ -217,7 +279,7 @@ impl Sha256SequenceBuilder {
         self.xor(Reg(rd), Reg(ss), rd);
     }
 
-    /// sigma_1 for word computation
+    /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
     fn sha_word_sigma_1(&mut self, rs1: usize, rd: usize, ss: usize) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
@@ -241,6 +303,15 @@ impl Sha256SequenceBuilder {
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(lw.into());
+    }
+
+    fn sw(&mut self, rs1: usize, rs2: usize, imm: i64) {
+        let sw = SW {
+            address: self.address,
+            operands: FormatS { rs1, rs2, imm },
+            virtual_sequence_remaining: Some(0),
+        };
+        self.sequence.push(sw.into());
     }
 
     /// Addition modulo 2^32
@@ -366,9 +437,7 @@ fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32
 
     let mut w = [0u32; 64];
 
-    for i in 0..16 {
-        w[i] = input[i];
-    }
+    w[..16].copy_from_slice(&input);
 
     for i in 16..64 {
         // σ₁(w[i-2]) + w[i-7] + σ₀(w[i-15]) + w[i-16]
@@ -404,7 +473,7 @@ fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32
         a = t1.wrapping_add(t2);
     }
 
-    let result = [
+    [
         initial_state[0].wrapping_add(a),
         initial_state[1].wrapping_add(b),
         initial_state[2].wrapping_add(c),
@@ -413,7 +482,5 @@ fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32
         initial_state[5].wrapping_add(f),
         initial_state[6].wrapping_add(g),
         initial_state[7].wrapping_add(h),
-    ];
-
-    result
+    ]
 }
