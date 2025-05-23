@@ -20,5 +20,5 @@ fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let serialized_template_path = Path::new(&out_dir).join(format!("{TEMPLATE_DIR}.yaml"));
     fs::write(&serialized_template_path, serialized_template).unwrap();
-    println!("cargo::rustc-env=TEMPLATE_YAML_PATH={}", serialized_template_path.as_os_str().to_string_lossy());
+    println!("cargo:rustc-env=TEMPLATE_YAML_PATH={}", serialized_template_path.as_os_str().to_string_lossy());
 }

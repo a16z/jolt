@@ -62,7 +62,7 @@ impl std::fmt::Display for FSError {
             FSError::IOError(error) =>
                 f.write_fmt(format_args!("IO error: {}", error)),
             FSError::DeserializationError(error) =>
-                f.write_fmt(format_args!("bincode decode error: {}", error)),
+                f.write_fmt(format_args!("YAML deserialization error: {}", error)),
         }
     }
 }

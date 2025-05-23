@@ -305,7 +305,7 @@ impl<'a, const NUM_NODES: usize> core::iter::Sum<&'a Self> for MleAst<NUM_NODES>
 impl<const NUM_NODES: usize> core::iter::Product for MleAst<NUM_NODES> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.reduce(|product, factor| product * factor)
-            .unwrap_or(Self::zero())
+            .unwrap_or(Self::one())
     }
 }
 
