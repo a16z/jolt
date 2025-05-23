@@ -1,19 +1,12 @@
-use std::path::PathBuf;
-
+use crate::jolt_onnx::onnx_host::tracer::parse;
+use crate::jolt_onnx::utils::random_floatvec;
 use rand::rngs::StdRng;
-use rand::Rng;
-use rand::RngCore;
 use rand::SeedableRng;
+use std::path::PathBuf;
 use tract_onnx::prelude::*;
 
-use crate::jolt_onnx::onnx_host::tracer::parse;
-use crate::jolt_onnx::onnx_host::ONNXProgram;
-
-#[test]
-fn test_perceptron() {
-    let rng = StdRng::from_seed([0; 32]);
-    let size = 10;
-    let path = "onnx/perceptron.onnx";
+fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
+    let rng = StdRng::from_seed(seed);
     let model = tract_onnx::onnx()
         .model_for_path(path)
         .unwrap()
@@ -21,38 +14,25 @@ fn test_perceptron() {
         .unwrap()
         .into_runnable()
         .unwrap();
+
     let data = random_floatvec(rng, size);
     let input = Tensor::from_shape(&[1, size], &data).unwrap();
     let output = model.run(tvec!(input.into_tvalue())).unwrap();
     let output = output[0].to_array_view::<f32>().unwrap();
-    let output = output.as_slice().unwrap();
-    println!("Output: {output:?}",);
+    let expected = output.as_slice().unwrap();
+    let res = parse(&PathBuf::from(path)).execute(&data);
 
-    let jolt_model = parse(&PathBuf::from(path)).execute(&data);
+    println!("Expected: {expected:?}",);
+    println!("Result: {:?}", res.data);
+    // assert_eq!(res.data, expected.to_vec());
+}
+
+#[test]
+fn test_perceptron() {
+    run_perceptron_test("onnx/perceptron.onnx", 10, [0; 32]);
 }
 
 #[test]
 fn test_perceptron_2() {
-    let rng = StdRng::from_seed([0; 32]);
-    let size = 4;
-    let path = "onnx/perceptron_2.onnx";
-    let model = tract_onnx::onnx()
-        .model_for_path(path)
-        .unwrap()
-        .into_optimized()
-        .unwrap()
-        .into_runnable()
-        .unwrap();
-    let data = random_floatvec(rng, size);
-    let input = Tensor::from_shape(&[1, size], &data).unwrap();
-    let output = model.run(tvec!(input.into_tvalue())).unwrap();
-    let output = output[0].to_array_view::<f32>().unwrap();
-    let output = output.as_slice().unwrap();
-    println!("Output: {output:?}",);
-
-    let jolt_model = parse(&PathBuf::from(path)).execute(&data);
-}
-
-fn random_floatvec(mut rng: impl RngCore, size: usize) -> Vec<f32> {
-    (0..size).map(|_| rng.gen::<f32>()).collect()
+    run_perceptron_test("onnx/perceptron_2.onnx", 4, [0; 32]);
 }

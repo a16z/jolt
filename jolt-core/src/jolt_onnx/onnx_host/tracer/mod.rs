@@ -17,19 +17,22 @@ use tract_onnx::{
 #[cfg(test)]
 mod tests;
 
-/// Parse the ONNX model & quantize it.
+/// Parse the ONNX model & quantize it from `model_path`
 pub fn parse(model_path: &PathBuf) -> QuantizedONNXModel {
     let graph = computational_graph(model_path);
-
-    // Get input shape. This is used to track the i/o shapes of the rest of the model layers.
     let input_shape = input_shape(&graph);
-    let mut instrs = Vec::new();
+
+    // Get constant-inputs of the graph.
     let initializer_map = ONNXInitializerMap::new(&graph.initializer);
+    let mut instrs = Vec::new();
     for node in graph.node.iter() {
         let mut instruction =
             ONNXInstruction::new(Operator::from_str(node.op_type.as_str()).unwrap());
 
-        // Decorate the instruction with its attributes
+        // Decorate the instruction with its attributes. For example, the MatMul operator has
+        // attributes for alpha and beta, which are used to scale the input tensors.
+        // The attributes are stored in the ONNX model's initializers, so we need to get the
+        // serialized data for the attributes.
         instruction.decorate(node);
         instrs.push(instruction);
     }
@@ -37,9 +40,9 @@ pub fn parse(model_path: &PathBuf) -> QuantizedONNXModel {
 }
 
 /// Generate's an execution trace for an ONNX model
-pub fn trace(model_path: &PathBuf) {
+pub fn trace(model_path: &PathBuf, input: &[f32]) -> LiteTensor {
     let model = parse(model_path);
-    println!("Model: {model:#?}");
+    model.execute(input)
 }
 
 /// Represents a topologically-sorted, quantized  ONNX model
@@ -52,7 +55,7 @@ pub struct QuantizedONNXModel {
 
 impl QuantizedONNXModel {
     /// Execute the model on a given input
-    pub fn execute(&self, input: &[f32]) {
+    pub fn execute(&self, input: &[f32]) -> LiteTensor {
         // let mut node_outputs: HashMap<usize, Vec<Vec<f32>>> = HashMap::new();
         let mut input_values = HashMap::<String, LiteTensor>::new();
         let input = LiteTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
@@ -63,21 +66,6 @@ impl QuantizedONNXModel {
         for (key, value) in self.initializer_map.iter() {
             input_values.insert(key.clone(), value.clone());
         }
-
-        // Store input values
-        // for (&node_idx, input) in self.inputs.iter().zip(inputs.iter()) {
-        // // Get the input node to check its dimensions
-        // if let Some(NodeType::Node(node)) = self.nodes.get(&node_idx) {
-        //     if node.out_dims.len() > 1 {
-        //         // If input node expects a tensor, reshape the input
-        //         node_outputs.insert(node_idx, vec![input.clone()]);
-        //     } else {
-        //         node_outputs.insert(node_idx, vec![input.clone()]);
-        //     }
-        // } else {
-        //     node_outputs.insert(node_idx, vec![input.clone()]);
-        // }
-        // }
 
         for instr in self.instrs.iter() {
             match instr.opcode {
@@ -119,15 +107,12 @@ impl QuantizedONNXModel {
                 }
 
                 Operator::Relu => {
-                    // Get the input tensor
                     let a = input_values.get(&instr.inputs[0]).unwrap();
-                    // Apply ReLU activation
                     let relu_data = a
                         .data
                         .iter()
                         .map(|&x| if x < 0.0 { 0.0 } else { x })
                         .collect::<Vec<f32>>();
-                    // Store the output tensor
                     let output_tensor = LiteTensor {
                         shape: a.shape.clone(),
                         data: relu_data,
@@ -140,7 +125,7 @@ impl QuantizedONNXModel {
         let output_tensor = input_values
             .get(&self.instrs.last().unwrap().outputs[0])
             .unwrap();
-        println!("Output tensor: {:?}", output_tensor);
+        output_tensor.clone()
     }
 
     /// Create a new instance of [`QuantizedONNXModel`]
@@ -267,7 +252,7 @@ impl From<Tensor> for LiteTensor {
 }
 
 #[derive(Debug, Clone)]
-/// Represents the initializers in the ONNX model
+/// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
 pub struct ONNXInitializerMap(HashMap<String, LiteTensor>);
 
 impl Deref for ONNXInitializerMap {

@@ -15,13 +15,15 @@ use std::path::PathBuf;
 /// This type represents an ONNX model
 pub struct ONNXProgram {
     pub model: PathBuf,
+    pub input: Vec<f32>,
 }
 
 impl ONNXProgram {
     /// Create a new instance of [`ONNXProgram`]
-    pub fn new(model: &str) -> Self {
+    pub fn new(model: &str, input: &[f32]) -> Self {
         Self {
             model: PathBuf::from(model),
+            input: input.to_vec(),
         }
     }
 }
@@ -29,6 +31,6 @@ impl ONNXProgram {
 impl ONNXProgram {
     /// Parse the ONNX model, quantize it & get the execution trace
     pub fn trace(&self) {
-        tracer::trace(&self.model);
+        tracer::trace(&self.model, &self.input);
     }
 }

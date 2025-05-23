@@ -1,3 +1,5 @@
+use rand::Rng;
+use rand::RngCore;
 use tract_onnx::prelude::*;
 
 /// Given serialized data and its tract DatumType, build a tract tensor.
@@ -22,4 +24,8 @@ pub fn create_tensor(shape: Vec<usize>, dt: DatumType, data: &[u8]) -> TractResu
             _ => unimplemented!("create_tensor: Failed"),
         }
     }
+}
+
+pub fn random_floatvec(mut rng: impl RngCore, size: usize) -> Vec<f32> {
+    (0..size).map(|_| rng.gen::<f32>()).collect()
 }
