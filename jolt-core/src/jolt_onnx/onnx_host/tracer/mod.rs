@@ -51,6 +51,98 @@ pub struct QuantizedONNXModel {
 }
 
 impl QuantizedONNXModel {
+    /// Execute the model on a given input
+    pub fn execute(&self, input: &[f32]) {
+        // let mut node_outputs: HashMap<usize, Vec<Vec<f32>>> = HashMap::new();
+        let mut input_values = HashMap::<String, LiteTensor>::new();
+        let input = LiteTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
+        input_values.insert(
+            "input".to_string(), // TODO: Make this more robust
+            input.clone(),
+        );
+        for (key, value) in self.initializer_map.iter() {
+            input_values.insert(key.clone(), value.clone());
+        }
+
+        // Store input values
+        // for (&node_idx, input) in self.inputs.iter().zip(inputs.iter()) {
+        // // Get the input node to check its dimensions
+        // if let Some(NodeType::Node(node)) = self.nodes.get(&node_idx) {
+        //     if node.out_dims.len() > 1 {
+        //         // If input node expects a tensor, reshape the input
+        //         node_outputs.insert(node_idx, vec![input.clone()]);
+        //     } else {
+        //         node_outputs.insert(node_idx, vec![input.clone()]);
+        //     }
+        // } else {
+        //     node_outputs.insert(node_idx, vec![input.clone()]);
+        // }
+        // }
+
+        for instr in self.instrs.iter() {
+            match instr.opcode {
+                Operator::MatMul => {
+                    let a = input_values.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
+                    let b = input_values.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
+                    let c = input_values.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    let (alpha, beta) = {
+                        let attributes = instr.attributes.as_ref().unwrap();
+                        (attributes[0], attributes[1])
+                    };
+
+                    let m = a.shape[0]; // rows in A
+                    let k = a.shape[1]; // cols in A == cols in B^T
+                    let n = b.shape[0]; // rows in B == output cols
+
+                    // Output shape is [M, N]
+                    let mut result = vec![0.0; m * n];
+
+                    for i in 0..m {
+                        for j in 0..n {
+                            let mut sum = 0.0;
+                            for t in 0..k {
+                                let a_val = a.data[i * k + t]; // A[i][t]
+                                let b_val = b.data[j * k + t]; // B[j][t] → B^T[t][j]
+                                sum += a_val * b_val;
+                            }
+                            let bias = if beta != 0.0 { beta * c.data[j] } else { 0.0 };
+                            result[i * n + j] = alpha * sum + bias;
+                        }
+                    }
+
+                    let output_tensor = LiteTensor {
+                        shape: vec![m, n],
+                        data: result,
+                    };
+
+                    input_values.insert(instr.outputs[0].clone(), output_tensor);
+                }
+
+                Operator::Relu => {
+                    // Get the input tensor
+                    let a = input_values.get(&instr.inputs[0]).unwrap();
+                    // Apply ReLU activation
+                    let relu_data = a
+                        .data
+                        .iter()
+                        .map(|&x| if x < 0.0 { 0.0 } else { x })
+                        .collect::<Vec<f32>>();
+                    // Store the output tensor
+                    let output_tensor = LiteTensor {
+                        shape: a.shape.clone(),
+                        data: relu_data,
+                    };
+                    input_values.insert(instr.outputs[0].clone(), output_tensor);
+                }
+            }
+        }
+        // Get the output tensor
+        let output_tensor = input_values
+            .get(&self.instrs.last().unwrap().outputs[0])
+            .unwrap();
+        println!("Output tensor: {:?}", output_tensor);
+    }
+
     /// Create a new instance of [`QuantizedONNXModel`]
     pub fn new(
         initializer_map: ONNXInitializerMap,
@@ -88,8 +180,11 @@ impl ONNXInstruction {
     /// Decorate opcode with their attributes - uses the ONNX model's initializers
     /// to get the serialized data for the attributes.
     fn decorate(&mut self, node_proto: &NodeProto) {
+        self.inputs = node_proto.input.clone();
+        self.outputs = node_proto.output.clone();
         match self.opcode {
             Operator::MatMul => {
+                // Get the alpha and beta values from the node attributes
                 self.decorate_matmul(node_proto);
             }
             Operator::Relu => {}
@@ -99,8 +194,6 @@ impl ONNXInstruction {
     fn decorate_matmul(&mut self, node_proto: &NodeProto) {
         let (alpha, beta) = alpha_beta(node_proto);
         self.attributes = Some(vec![alpha, beta]);
-        self.inputs = node_proto.input.clone();
-        self.outputs = node_proto.output.clone();
     }
 }
 
