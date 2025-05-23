@@ -1,6 +1,7 @@
 //! This module provides a way to parse and execute ONNX models.
 use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
 use crate::jolt_onnx::utils::create_tensor;
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::{path::PathBuf, str::FromStr};
@@ -11,7 +12,7 @@ use tract_onnx::{
     prelude::*,
 };
 
-use super::tensor::LiteTensor;
+use super::tensor::{quantize, LiteTensor, QuantizedLiteTensor};
 use super::trace::Tracer;
 
 /// Represents a topologically-sorted ONNX model
@@ -58,8 +59,6 @@ impl QuantizedONNXModel {
         }
 
         for instr in self.instrs.iter() {
-            self.tracer.start_instruction(instr.clone());
-            self.tracer.capture_pre_state(&io_map);
             match instr.opcode {
                 Operator::MatMul => {
                     // Y = alpha * A * B^T + beta * C
@@ -117,6 +116,93 @@ impl QuantizedONNXModel {
                     io_map.insert(instr.outputs[0].clone(), output_tensor);
                 }
             }
+        }
+
+        // Get the output tensor // TODO: Make this more robust
+        let output_tensor = io_map.get(&self.instrs.last().unwrap().outputs[0]).unwrap();
+        output_tensor.clone()
+    }
+
+    /// Execute the model with quantization on a given input
+    pub fn execute_quantized(&mut self, input: &[f32]) -> QuantizedLiteTensor {
+        //
+        let mut io_map = HashMap::<String, QuantizedLiteTensor>::new();
+        let input =
+            LiteTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap()).quantize();
+        io_map.insert(
+            "input".to_string(), // TODO: Make this more robust
+            input.clone(),
+        );
+        for (key, value) in self.initializer_map.iter() {
+            io_map.insert(key.clone(), value.quantize());
+        }
+
+        for instr in self.instrs.iter() {
+            self.tracer.start_instruction(instr.clone());
+            self.tracer.capture_pre_state(&io_map);
+            match instr.opcode {
+                Operator::MatMul => {
+                    // Y = alpha * A * B^T + beta * C
+                    // A: [M, K], B: [N, K], C: [N]
+
+                    // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
+
+                    let a = io_map.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
+                    let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
+                    let c = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    let (alpha, beta) = {
+                        let (attributes, scale) = quantize(instr.attributes.as_ref().unwrap());
+                        (attributes[0], attributes[1])
+                    };
+
+                    // rows in A
+                    let m = a.shape[0];
+                    // cols in A == cols in B^T
+                    let k = a.shape[1];
+                    // rows in B == output cols
+                    let n = b.shape[0];
+
+                    // Output shape is [M, N]
+                    let mut result = vec![0; m * n];
+                    for i in 0..m {
+                        for j in 0..n {
+                            let mut sum = 0i32;
+                            for t in 0..k {
+                                let a_val = a.data[i * k + t]; // A[i][t]
+                                let b_val = b.data[j * k + t]; // B[j][t] → B^T[t][j]
+                                sum = sum.wrapping_add(a_val.wrapping_mul(b_val));
+                            }
+                            let bias = if beta != 0 {
+                                beta.wrapping_mul(c.data[j])
+                            } else {
+                                0
+                            };
+                            result[i * n + j] = alpha.wrapping_mul(sum).wrapping_add(bias);
+                        }
+                    }
+                    let output_tensor = QuantizedLiteTensor {
+                        shape: vec![m, n],
+                        data: result,
+                        scale: a.scale * b.scale,
+                    };
+                    io_map.insert(instr.outputs[0].clone(), output_tensor);
+                }
+
+                Operator::Relu => {
+                    let a = io_map.get(&instr.inputs[0]).unwrap();
+                    let relu_data = a
+                        .data
+                        .iter()
+                        .map(|&x| if x < 0 { 0 } else { x })
+                        .collect_vec();
+                    let output_tensor = QuantizedLiteTensor {
+                        shape: a.shape.clone(),
+                        data: relu_data,
+                        scale: a.scale,
+                    };
+                    io_map.insert(instr.outputs[0].clone(), output_tensor);
+                }
+            }
             self.tracer.capture_post_state(&io_map);
         }
 
@@ -151,6 +237,17 @@ impl FromStr for Operator {
 
 #[derive(Debug, Clone)]
 /// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
+pub struct QuantONNXInitializerMap(HashMap<String, QuantizedLiteTensor>);
+
+impl Deref for QuantONNXInitializerMap {
+    type Target = HashMap<String, QuantizedLiteTensor>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+/// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
 pub struct ONNXInitializerMap(HashMap<String, LiteTensor>);
 
 impl Deref for ONNXInitializerMap {
@@ -175,6 +272,16 @@ impl ONNXInitializerMap {
             initializers_map.insert(key, value.into());
         }
         Self(initializers_map)
+    }
+
+    /// Quantize the initializers
+    pub fn quantize(&self) -> QuantONNXInitializerMap {
+        let mut initializers_map: HashMap<String, QuantizedLiteTensor> = HashMap::new();
+        for (key, value) in self.0.iter() {
+            let quantized = value.quantize();
+            initializers_map.insert(key.clone(), quantized);
+        }
+        QuantONNXInitializerMap(initializers_map)
     }
 }
 

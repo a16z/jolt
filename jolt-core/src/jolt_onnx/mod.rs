@@ -9,7 +9,7 @@ pub mod common;
 pub mod instruction;
 pub mod onnx_host;
 pub mod subtable;
-pub mod trace; // TODO: Remove this module
+pub mod trace;
 pub mod tracer;
 pub mod utils;
 pub mod vm;

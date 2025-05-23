@@ -1,6 +1,6 @@
 //! This module provides a [`Tracer`] for the ONNX runtime.
 
-use super::tensor::LiteTensor;
+use super::tensor::{LiteTensor, QuantizedLiteTensor};
 use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
 use std::collections::HashMap;
 
@@ -19,7 +19,7 @@ impl Tracer {
     }
 
     /// Capture the input values of a layer
-    pub fn capture_pre_state(&mut self, io_map: &HashMap<String, LiteTensor>) {
+    pub fn capture_pre_state(&mut self, io_map: &HashMap<String, QuantizedLiteTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut input_vals = Vec::new();
         for input_name in row.instruction.inputs.iter() {
@@ -30,7 +30,7 @@ impl Tracer {
     }
 
     /// Capture the output values of a layer
-    pub fn capture_post_state(&mut self, io_map: &HashMap<String, LiteTensor>) {
+    pub fn capture_post_state(&mut self, io_map: &HashMap<String, QuantizedLiteTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut output_vals = Vec::new();
         for output_name in row.instruction.outputs.iter() {

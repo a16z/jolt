@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use tract_onnx::pb::NodeProto;
 
-use crate::jolt_onnx::tracer::tensor::LiteTensor;
+use crate::jolt_onnx::tracer::tensor::{LiteTensor, QuantizedLiteTensor};
 
 /// Represents a row in the execution trace
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -16,8 +16,8 @@ pub struct ONNXTraceRow {
 /// during the execution of the ONNX model
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayerState {
-    pub input_vals: Option<Vec<LiteTensor>>,
-    pub output_vals: Option<Vec<LiteTensor>>,
+    pub input_vals: Option<Vec<QuantizedLiteTensor>>,
+    pub output_vals: Option<Vec<QuantizedLiteTensor>>,
 }
 
 /// Represents a single layer (node) in the ONNX model
