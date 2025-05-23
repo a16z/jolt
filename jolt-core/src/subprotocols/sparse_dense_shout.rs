@@ -976,7 +976,9 @@ mod tests {
 
     #[test]
     fn test_assertvaliddiv0() {
-        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAssertValidDiv0(Default::default())));
+        test_sparse_dense_shout(Some(
+            RV32IMCycle::VirtualAssertValidDiv0(Default::default()),
+        ));
     }
 
     #[test]
@@ -1020,12 +1022,16 @@ mod tests {
 
     #[test]
     fn test_shiftrightbitmask() {
-        test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmask(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmask(
+            Default::default(),
+        )));
     }
 
     #[test]
     fn test_shiftrightbitmaski() {
-        test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmaskI(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmaskI(
+            Default::default(),
+        )));
     }
 
     #[test]
