@@ -14,8 +14,8 @@ pub struct ONNXTraceRow {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayerState {
-    pub input_vals: Option<HashMap<String, LiteTensor>>,
-    pub output_vals: Option<HashMap<String, LiteTensor>>,
+    pub input_vals: Option<Vec<LiteTensor>>,
+    pub output_vals: Option<Vec<LiteTensor>>,
 }
 
 /// Represents a single layer (node) in the ONNX model
