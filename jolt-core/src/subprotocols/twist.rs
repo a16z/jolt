@@ -375,6 +375,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     let _guard = span.enter();
 
     // Data structure described in Equation (72)
+    // I in round i stores all non-zero evaluations of the form Inc(k,r1,...,ri,j) for j∈{0,1}^(log(T)−i)
+    // Table I in round i has size T / 2^i
     let mut I: Vec<Vec<(usize, usize, F, F)>> = write_addresses
         .par_chunks(chunk_size)
         .zip(write_increments.par_chunks(chunk_size))
