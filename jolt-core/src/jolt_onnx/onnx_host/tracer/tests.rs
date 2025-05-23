@@ -6,7 +6,7 @@ use tract_onnx::prelude::*;
 
 #[test]
 fn test_perceptron() {
-    let mut rng = StdRng::from_seed([0; 32]);
+    let rng = StdRng::from_seed([0; 32]);
     let size = 10;
     let path = "onnx/perceptron.onnx";
     let model = tract_onnx::onnx()
