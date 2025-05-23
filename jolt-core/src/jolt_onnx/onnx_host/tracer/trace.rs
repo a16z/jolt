@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
-use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
-
 use super::tensor::LiteTensor;
+use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Tracer {
