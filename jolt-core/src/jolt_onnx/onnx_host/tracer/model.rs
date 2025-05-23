@@ -12,12 +12,14 @@ use tract_onnx::{
 };
 
 use super::tensor::LiteTensor;
+use super::trace::Tracer;
 
 /// Represents a topologically-sorted ONNX model
 #[derive(Debug)]
 pub struct QuantizedONNXModel {
     instrs: Vec<ONNXInstruction>,
     initializer_map: ONNXInitializerMap,
+    pub tracer: Tracer,
 }
 
 impl QuantizedONNXModel {
@@ -43,18 +45,20 @@ impl QuantizedONNXModel {
     }
 
     /// Execute the model on a given input
-    pub fn execute(&self, input: &[f32]) -> LiteTensor {
-        let mut io_values = HashMap::<String, LiteTensor>::new();
+    pub fn execute(&mut self, input: &[f32]) -> LiteTensor {
+        let mut io_map = HashMap::<String, LiteTensor>::new();
         let input = LiteTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
-        io_values.insert(
+        io_map.insert(
             "input".to_string(), // TODO: Make this more robust
             input.clone(),
         );
         for (key, value) in self.initializer_map.iter() {
-            io_values.insert(key.clone(), value.clone());
+            io_map.insert(key.clone(), value.clone());
         }
 
         for instr in self.instrs.iter() {
+            self.tracer.start_instruction(instr.clone());
+            self.tracer.capture_pre_state(&io_map);
             match instr.opcode {
                 Operator::MatMul => {
                     // Y = alpha * A * B^T + beta * C
@@ -62,9 +66,9 @@ impl QuantizedONNXModel {
 
                     // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
 
-                    let a = io_values.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
-                    let b = io_values.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
-                    let c = io_values.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    let a = io_map.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
+                    let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
+                    let c = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
                     let (alpha, beta) = {
                         let attributes = instr.attributes.as_ref().unwrap();
                         (attributes[0], attributes[1])
@@ -95,11 +99,11 @@ impl QuantizedONNXModel {
                         shape: vec![m, n],
                         data: result,
                     };
-                    io_values.insert(instr.outputs[0].clone(), output_tensor);
+                    io_map.insert(instr.outputs[0].clone(), output_tensor);
                 }
 
                 Operator::Relu => {
-                    let a = io_values.get(&instr.inputs[0]).unwrap();
+                    let a = io_map.get(&instr.inputs[0]).unwrap();
                     let relu_data = a
                         .data
                         .iter()
@@ -109,15 +113,14 @@ impl QuantizedONNXModel {
                         shape: a.shape.clone(),
                         data: relu_data,
                     };
-                    io_values.insert(instr.outputs[0].clone(), output_tensor);
+                    io_map.insert(instr.outputs[0].clone(), output_tensor);
                 }
             }
+            self.tracer.capture_post_state(&io_map);
         }
 
         // Get the output tensor // TODO: Make this more robust
-        let output_tensor = io_values
-            .get(&self.instrs.last().unwrap().outputs[0])
-            .unwrap();
+        let output_tensor = io_map.get(&self.instrs.last().unwrap().outputs[0]).unwrap();
         output_tensor.clone()
     }
 
@@ -126,6 +129,7 @@ impl QuantizedONNXModel {
         Self {
             initializer_map,
             instrs,
+            tracer: Tracer::default(),
         }
     }
 }

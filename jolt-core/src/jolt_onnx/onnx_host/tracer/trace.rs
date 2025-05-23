@@ -2,7 +2,7 @@ use super::tensor::LiteTensor;
 use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
 use std::collections::HashMap;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Tracer {
     pub rows: Vec<ONNXTraceRow>,
 }

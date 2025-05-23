@@ -30,8 +30,8 @@ fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
     let res = QuantizedONNXModel::parse(&PathBuf::from(path)).execute(&data);
 
     println!("Expected: {expected:?}",);
-    println!("Result: {:?}", res.data);
-    // assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
+    println!("Result: {:?}", res.data); // TODO: Add tracing::info! for this and add tracing logs in general
+                                        // assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
 }
 
 #[test]
