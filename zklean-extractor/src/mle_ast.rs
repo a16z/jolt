@@ -80,11 +80,9 @@ pub struct MleAst<const NUM_NODES: usize> {
 impl<const NUM_NODES: usize> MleAst<NUM_NODES> {
     /// Construct a new AST with the given node as the root.
     fn new_with_root(root: MleAstNode) -> Self {
-        let nodes = std::array::from_fn(|i| {
-            match i {
-                0 => Some(root),
-                _ => None,
-            }
+        let nodes = std::array::from_fn(|i| match i {
+            0 => Some(root),
+            _ => None,
         });
         let root = 0;
         Self { nodes, root }
@@ -94,9 +92,9 @@ impl<const NUM_NODES: usize> MleAst<NUM_NODES> {
     /// tree) will be the root the appended copy of `other` (the right tree). Return the indices of
     /// the left and right trees in the node array of `self`.
     fn concatenate(&mut self, other: Self) -> (usize, usize) {
-        let shift = self.root+1;
+        let shift = self.root + 1;
         for i in 0..=other.root {
-            self.nodes[shift+i] = other.nodes[i];
+            self.nodes[shift + i] = other.nodes[i];
             self.root += 1;
         }
 
@@ -112,28 +110,26 @@ impl<const NUM_NODES: usize> MleAst<NUM_NODES> {
         let required_nodes = self.root + 1;
         assert!(required_nodes < NUM_NODES,
             "Ran out of space for nodes. Try increasing NUM_NODES from {NUM_NODES} to at least {required_nodes}.");
-        self.nodes[self.root+1] = Some(constructor(self.root));
+        self.nodes[self.root + 1] = Some(constructor(self.root));
         self.root += 1;
     }
 
     /// Create a new root node in the form of a binary operator.
-    fn binop(
-        &mut self,
-        constructor: impl FnOnce(usize, usize) -> MleAstNode,
-        rhs: Self,
-    ) {
+    fn binop(&mut self, constructor: impl FnOnce(usize, usize) -> MleAstNode, rhs: Self) {
         let required_nodes = self.root + rhs.root + 1;
         assert!(required_nodes < NUM_NODES,
             "Ran out of space for nodes. Try increasing NUM_NODES from {NUM_NODES} to at least {required_nodes}.");
         let (lhs_root, rhs_root) = self.concatenate(rhs);
-        self.nodes[self.root+1] = Some(constructor(lhs_root, rhs_root));
+        self.nodes[self.root + 1] = Some(constructor(lhs_root, rhs_root));
         self.root += 1;
     }
 }
 
 impl<const NUM_NODES: usize> crate::util::ZkLeanReprField for MleAst<NUM_NODES> {
     fn register(name: char, size: usize) -> Vec<Self> {
-        (0..size).map(|i| Self::new_with_root(MleAstNode::Var(name, i))).collect()
+        (0..size)
+            .map(|i| Self::new_with_root(MleAstNode::Var(name, i)))
+            .collect()
     }
 
     fn as_computation(&self) -> String {
@@ -146,27 +142,27 @@ impl<const NUM_NODES: usize> crate::util::ZkLeanReprField for MleAst<NUM_NODES> 
     /// `root`, and using the variable assignments in `vars`.
     #[cfg(test)]
     fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
-        fn helper<F: JoltField>(
-            vars: &[F],
-            nodes: &[Option<MleAstNode>],
-            root: usize,
-        ) -> F {
+        fn helper<F: JoltField>(vars: &[F], nodes: &[Option<MleAstNode>], root: usize) -> F {
             match nodes[root] {
                 Some(MleAstNode::Scalar(f)) => F::from_u64(f as u64), // TODO: handle negative scalars?
                 Some(MleAstNode::Var(_, var)) => vars[var], // TODO: handle multiple registers?
-                Some(MleAstNode::Neg(next_root)) =>
-                    -helper(vars, nodes, root - next_root),
-                Some(MleAstNode::Inv(next_root)) =>
-                    helper(vars, nodes, root - next_root).inverse().expect("division by 0"),
-                Some(MleAstNode::Add(lhs_root, rhs_root)) =>
-                    helper(vars, nodes, root - lhs_root) + helper(vars, nodes, root - rhs_root),
-                Some(MleAstNode::Mul(lhs_root, rhs_root)) =>
-                    helper(vars, nodes, root - lhs_root) * helper(vars, nodes, root - rhs_root),
-                Some(MleAstNode::Sub(lhs_root, rhs_root)) =>
-                    helper(vars, nodes, root - lhs_root) - helper(vars, nodes, root - rhs_root),
-                Some(MleAstNode::Div(lhs_root, rhs_root)) =>
-                    helper(vars, nodes, root - lhs_root) / helper(vars, nodes, root - rhs_root),
-                None => panic!("unreachable")
+                Some(MleAstNode::Neg(next_root)) => -helper(vars, nodes, root - next_root),
+                Some(MleAstNode::Inv(next_root)) => helper(vars, nodes, root - next_root)
+                    .inverse()
+                    .expect("division by 0"),
+                Some(MleAstNode::Add(lhs_root, rhs_root)) => {
+                    helper(vars, nodes, root - lhs_root) + helper(vars, nodes, root - rhs_root)
+                }
+                Some(MleAstNode::Mul(lhs_root, rhs_root)) => {
+                    helper(vars, nodes, root - lhs_root) * helper(vars, nodes, root - rhs_root)
+                }
+                Some(MleAstNode::Sub(lhs_root, rhs_root)) => {
+                    helper(vars, nodes, root - lhs_root) - helper(vars, nodes, root - rhs_root)
+                }
+                Some(MleAstNode::Div(lhs_root, rhs_root)) => {
+                    helper(vars, nodes, root - lhs_root) / helper(vars, nodes, root - rhs_root)
+                }
+                None => panic!("unreachable"),
             }
         }
 
@@ -291,8 +287,7 @@ impl<const NUM_NODES: usize> std::ops::MulAssign for MleAst<NUM_NODES> {
 
 impl<const NUM_NODES: usize> core::iter::Sum for MleAst<NUM_NODES> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.reduce(|sum, term| sum + term)
-            .unwrap_or(Self::zero())
+        iter.reduce(|sum, term| sum + term).unwrap_or(Self::zero())
     }
 }
 

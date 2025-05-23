@@ -1,7 +1,11 @@
 use jolt_core::jolt::{subtable::LassoSubtable, vm::rv32i_vm::RV32ISubtables};
 use strum::IntoEnumIterator as _;
 
-use crate::{constants::JoltParameterSet, modules::{AsModule, Module}, util::{indent, ZkLeanReprField}};
+use crate::{
+    constants::JoltParameterSet,
+    modules::{AsModule, Module},
+    util::{indent, ZkLeanReprField},
+};
 
 /// Wrapper around a LassoSubtable
 // TODO: Make generic over LassoSubtableSet
@@ -38,8 +42,8 @@ impl<F: ZkLeanReprField, J: JoltParameterSet> ZkLeanSubtable<F, J> {
     }
 
     pub fn evaluate_mle(&self, reg_name: char) -> F {
-       let reg = F::register(reg_name, J::LOG_M);
-       self.subtables.evaluate_mle(&reg)
+        let reg = F::register(reg_name, J::LOG_M);
+        self.subtables.evaluate_mle(&reg)
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
@@ -57,13 +61,13 @@ impl<F: ZkLeanReprField, J: JoltParameterSet> ZkLeanSubtable<F, J> {
         let mle = self.evaluate_mle('x').as_computation();
 
         f.write_fmt(format_args!(
-                "{}def {name} [Field f] : Subtable f {log_m} :=\n",
-                indent(indent_level),
+            "{}def {name} [Field f] : Subtable f {log_m} :=\n",
+            indent(indent_level),
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-                "{}subtableFromMLE (fun x => {mle})\n",
-                indent(indent_level),
+            "{}subtableFromMLE (fun x => {mle})\n",
+            indent(indent_level),
         ))?;
 
         Ok(())
@@ -83,7 +87,11 @@ impl<F: ZkLeanReprField, J: JoltParameterSet> ZkLeanSubtables<F, J> {
         }
     }
 
-    pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write, indent_level: usize) -> std::io::Result<()> {
+    pub fn zklean_pretty_print(
+        &self,
+        f: &mut impl std::io::Write,
+        indent_level: usize,
+    ) -> std::io::Result<()> {
         for subtable in &self.subtables {
             subtable.zklean_pretty_print(f, indent_level)?;
         }
@@ -91,9 +99,7 @@ impl<F: ZkLeanReprField, J: JoltParameterSet> ZkLeanSubtables<F, J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![
-            String::from("ZkLean"),
-        ]
+        vec![String::from("ZkLean")]
     }
 }
 
@@ -117,7 +123,7 @@ mod test {
 
     use jolt_core::{field::JoltField, jolt::subtable::LassoSubtable};
 
-    use proptest::{prelude::*, collection::vec};
+    use proptest::{collection::vec, prelude::*};
     use strum::EnumCount as _;
 
     type RefField = ark_bn254::Fr;
@@ -129,7 +135,9 @@ mod test {
         test: ZkLeanSubtable<T, J>,
     }
 
-    impl<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet> std::fmt::Debug for TestableSubtable<R, T, J> {
+    impl<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet> std::fmt::Debug
+        for TestableSubtable<R, T, J>
+    {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_fmt(format_args!("{}", self.test.name()))
         }
@@ -156,11 +164,9 @@ mod test {
         }
     }
 
-    fn arb_subtable<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet>()
-        -> impl Strategy<Value = TestableSubtable<R, T, J>>
-    {
-        (0..RV32ISubtables::<R>::COUNT)
-            .prop_map(|n| TestableSubtable::iter().nth(n).unwrap())
+    fn arb_subtable<R: JoltField, T: ZkLeanReprField, J: JoltParameterSet>(
+    ) -> impl Strategy<Value = TestableSubtable<R, T, J>> {
+        (0..RV32ISubtables::<R>::COUNT).prop_map(|n| TestableSubtable::iter().nth(n).unwrap())
     }
 
     proptest! {

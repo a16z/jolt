@@ -46,6 +46,5 @@ use proptest::prelude::*;
 
 #[cfg(test)]
 pub fn arb_field_elem<F: JoltField>() -> impl Strategy<Value = F> {
-    proptest::collection::vec(any::<u8>(), F::NUM_BYTES)
-        .prop_map(|bytes| F::from_bytes(&bytes))
+    proptest::collection::vec(any::<u8>(), F::NUM_BYTES).prop_map(|bytes| F::from_bytes(&bytes))
 }

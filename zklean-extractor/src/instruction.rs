@@ -1,7 +1,16 @@
-use jolt_core::{field::JoltField, jolt::{instruction::JoltInstruction, vm::rv32i_vm::RV32I}};
+use jolt_core::{
+    field::JoltField,
+    jolt::{instruction::JoltInstruction, vm::rv32i_vm::RV32I},
+};
 use strum::IntoEnumIterator as _;
 
-use crate::{constants::JoltParameterSet, modules::{AsModule, Module}, subtable::ZkLeanSubtable, util::{indent, ZkLeanReprField}, MleAst};
+use crate::{
+    constants::JoltParameterSet,
+    modules::{AsModule, Module},
+    subtable::ZkLeanSubtable,
+    util::{indent, ZkLeanReprField},
+    MleAst,
+};
 
 /// Wrapper around a JoltInstruction
 // TODO: Make this generic over the instruction set
@@ -51,11 +60,11 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         self.instruction
             .subtables(J::C, 1 << J::LOG_M)
             .into_iter()
-            .flat_map(|(subtable, ixs)|
+            .flat_map(|(subtable, ixs)| {
                 ixs.iter()
                     .map(|ix| (ZkLeanSubtable::<F, J>::from(&subtable), ix))
                     .collect::<Vec<_>>()
-            )
+            })
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
@@ -77,21 +86,22 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let c = J::C;
         let mle = self.combine_lookups::<F>('x').as_computation();
         let subtables = std::iter::once("#[ ".to_string())
-            .chain(self.subtables::<F>().map(|(subtable, ix)|
-                format!("({}, {ix})", subtable.name()))
-                    .intersperse(", ".to_string())
+            .chain(
+                self.subtables::<F>()
+                    .map(|(subtable, ix)| format!("({}, {ix})", subtable.name()))
+                    .intersperse(", ".to_string()),
             )
             .chain(std::iter::once(" ].toVector".to_string()))
             .fold(String::new(), |acc, s| format!("{acc}{s}"));
 
         f.write_fmt(format_args!(
-                "{}def {name} [Field f] : ComposedLookupTable f {log_m} {c}\n",
-                indent(indent_level),
+            "{}def {name} [Field f] : ComposedLookupTable f {log_m} {c}\n",
+            indent(indent_level),
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-                "{}:= mkComposedLookupTable {subtables} (fun x => {mle})\n",
-                indent(indent_level),
+            "{}:= mkComposedLookupTable {subtables} (fun x => {mle})\n",
+            indent(indent_level),
         ))?;
 
         Ok(())
@@ -123,10 +133,7 @@ impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![
-            String::from("ZkLean"),
-            String::from("Jolt.Subtables"),
-        ]
+        vec![String::from("ZkLean"), String::from("Jolt.Subtables")]
     }
 }
 
@@ -150,7 +157,7 @@ mod test {
 
     use jolt_core::field::JoltField;
 
-    use proptest::{prelude::*, collection::vec};
+    use proptest::{collection::vec, prelude::*};
     use strum::EnumCount as _;
 
     type RefField = ark_bn254::Fr;
@@ -190,16 +197,12 @@ mod test {
         }
     }
 
-    fn arb_instruction<J: JoltParameterSet>()
-        -> impl Strategy<Value = TestableInstruction<J>>
-    {
-        (0..RV32I::COUNT)
-            .prop_map(|n| TestableInstruction::iter().nth(n).unwrap())
+    fn arb_instruction<J: JoltParameterSet>() -> impl Strategy<Value = TestableInstruction<J>> {
+        (0..RV32I::COUNT).prop_map(|n| TestableInstruction::iter().nth(n).unwrap())
     }
 
-    fn arb_instruction_and_input<J: JoltParameterSet + Clone, R: JoltField>()
-        -> impl Strategy<Value = (TestableInstruction<J>, Vec<R>)>
-    {
+    fn arb_instruction_and_input<J: JoltParameterSet + Clone, R: JoltField>(
+    ) -> impl Strategy<Value = (TestableInstruction<J>, Vec<R>)> {
         arb_instruction().prop_flat_map(|instr| {
             let input_len = instr.test.num_lookups::<R>();
             let inputs = vec(arb_field_elem::<R>(), input_len);

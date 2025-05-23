@@ -1,6 +1,6 @@
 use crate::constants::JoltParameterSet;
 use crate::instruction::ZkLeanInstruction;
-use crate::modules::{Module, AsModule};
+use crate::modules::{AsModule, Module};
 use jolt_core::r1cs::inputs::JoltR1CSInputs;
 
 use crate::{r1cs::input_to_field_name, util::indent};
@@ -23,10 +23,7 @@ impl<J: JoltParameterSet> ZkLeanInstructionFlags<J> {
         }
     }
 
-    pub fn to_string(
-        &self,
-        input_var: &str,
-    ) -> String {
+    pub fn to_string(&self, input_var: &str) -> String {
         let r1cs_input = input_to_field_name(&self.r1cs_input);
         let instruction_name = self.instruction.name();
         format!("({input_var}.{r1cs_input}, {instruction_name})")
@@ -60,35 +57,36 @@ impl<J: JoltParameterSet> ZkLeanLookupCases<J> {
                 indent(indent_level),
         ))?;
         indent_level += 1;
-        f.write_fmt(format_args!("{}let res <- mux_lookup\n", indent(indent_level)))?;
+        f.write_fmt(format_args!(
+            "{}let res <- mux_lookup\n",
+            indent(indent_level)
+        ))?;
         // TODO(hamlinb) Extract these too?
         indent_level += 1;
         f.write_fmt(format_args!(
                 "{}(#v[inputs.ChunksQuery_0, inputs.ChunksQuery_1, inputs.ChunksQuery_2, inputs.ChunksQuery_3])\n",
                 indent(indent_level),
         ))?;
-        f.write_fmt(format_args!(
-                "{}(#[\n",
-                indent(indent_level),
-        ))?;
+        f.write_fmt(format_args!("{}(#[\n", indent(indent_level),))?;
         indent_level += 1;
         for (i, iflags) in self.instruction_flags.iter().enumerate() {
             f.write_fmt(format_args!(
-                    "{}{}{}",
-                    indent(indent_level),
-                    iflags.to_string(&input_var),
-                    if i < self.instruction_flags.len() - 1 { ",\n" } else { "\n" },
+                "{}{}{}",
+                indent(indent_level),
+                iflags.to_string(&input_var),
+                if i < self.instruction_flags.len() - 1 {
+                    ",\n"
+                } else {
+                    "\n"
+                },
             ))?;
         }
         indent_level -= 1;
-        f.write_fmt(format_args!(
-                "{}])\n",
-                indent(indent_level),
-        ))?;
+        f.write_fmt(format_args!("{}])\n", indent(indent_level),))?;
         indent_level -= 1;
         f.write_fmt(format_args!(
-                "{}constrainEq res inputs.LookupOutput\n",
-                indent(indent_level),
+            "{}constrainEq res inputs.LookupOutput\n",
+            indent(indent_level),
         ))?;
         Ok(())
     }

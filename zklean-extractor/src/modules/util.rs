@@ -1,5 +1,10 @@
-use std::{ffi::OsString, fs::{read_dir, File}, io::Read, path::PathBuf};
-use build_fs_tree::{file, BuildError, FileSystemTree, serde_yaml};
+use build_fs_tree::{file, serde_yaml, BuildError, FileSystemTree};
+use std::{
+    ffi::OsString,
+    fs::{read_dir, File},
+    io::Read,
+    path::PathBuf,
+};
 
 pub type FSPath = String;
 pub type FSContent = Vec<u8>;
@@ -12,7 +17,7 @@ pub enum FSError {
     BadFilename(OsString),
     BuildError(FSBuildError),
     IOError(std::io::Error),
-    DeserializationError(serde_yaml::Error)
+    DeserializationError(serde_yaml::Error),
 }
 
 impl std::error::Error for FSError {}
@@ -53,16 +58,19 @@ impl From<serde_yaml::Error> for FSError {
 impl std::fmt::Display for FSError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FSError::TemplateError(s) =>
-                f.write_fmt(format_args!("Template directory error: {}", s)),
-            FSError::BadFilename(s) =>
-                f.write_fmt(format_args!("Bad file name in template directory: {:?}", s)),
-            FSError::BuildError(build_error) =>
-                f.write_fmt(format_args!("Filesystem build error: {}", build_error)),
-            FSError::IOError(error) =>
-                f.write_fmt(format_args!("IO error: {}", error)),
-            FSError::DeserializationError(error) =>
-                f.write_fmt(format_args!("YAML deserialization error: {}", error)),
+            FSError::TemplateError(s) => {
+                f.write_fmt(format_args!("Template directory error: {}", s))
+            }
+            FSError::BadFilename(s) => {
+                f.write_fmt(format_args!("Bad file name in template directory: {:?}", s))
+            }
+            FSError::BuildError(build_error) => {
+                f.write_fmt(format_args!("Filesystem build error: {}", build_error))
+            }
+            FSError::IOError(error) => f.write_fmt(format_args!("IO error: {}", error)),
+            FSError::DeserializationError(error) => {
+                f.write_fmt(format_args!("YAML deserialization error: {}", error))
+            }
         }
     }
 }
@@ -71,11 +79,13 @@ pub type FSResult<T> = Result<T, FSError>;
 
 pub fn read_fs_tree_recursively(root: &PathBuf) -> FSResult<FSTree> {
     if !root.is_dir() {
-        Err(FSError::TemplateError("template is not a directory".to_string()))?;
+        Err(FSError::TemplateError(
+            "template is not a directory".to_string(),
+        ))?;
     }
 
     Ok(FileSystemTree::Directory(
-            read_dir(root)?
+        read_dir(root)?
             .map(|ent| {
                 let ent = ent?;
                 let ftype = ent.file_type()?;
@@ -93,9 +103,11 @@ pub fn read_fs_tree_recursively(root: &PathBuf) -> FSResult<FSTree> {
                 } else if ftype.is_dir() {
                     Ok((fname, read_fs_tree_recursively(&ent.path())?))
                 } else {
-                    Err(FSError::TemplateError("unsupported file type (e.g., symlink)".to_string()))
+                    Err(FSError::TemplateError(
+                        "unsupported file type (e.g., symlink)".to_string(),
+                    ))
                 }
-            }).collect::<FSResult<_>>()?
+            })
+            .collect::<FSResult<_>>()?,
     ))
 }
-

@@ -20,8 +20,8 @@ use crate::flags::*;
 mod modules;
 use crate::modules::*;
 
+use build_fs_tree::{Build, MergeableFileSystemTree};
 use clap::Parser;
-use build_fs_tree::{MergeableFileSystemTree, Build};
 
 /// Simple argument parsing to allow writing to a file.
 #[derive(Parser)]
@@ -47,7 +47,10 @@ struct Args {
     overwrite: bool,
 }
 
-fn write_flat_file(f: &mut impl std::io::Write, modules: Vec<Box<dyn AsModule>>) -> std::io::Result<()> {
+fn write_flat_file(
+    f: &mut impl std::io::Write,
+    modules: Vec<Box<dyn AsModule>>,
+) -> std::io::Result<()> {
     let mut import_set = std::collections::HashSet::new();
     let mut contents: Vec<u8> = vec![];
 

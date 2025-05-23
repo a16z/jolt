@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use build_fs_tree::{dir, file, serde_yaml};
+use std::path::PathBuf;
 
 mod util;
-use util::{read_fs_tree_recursively, FSTree, FSResult};
 pub use util::FSError;
+use util::{read_fs_tree_recursively, FSResult, FSTree};
 
 const DEFAULT_TEMPLATE_YAML: &str = include_str!(env!("TEMPLATE_YAML_PATH"));
 
@@ -34,29 +34,42 @@ pub fn make_jolt_zk_lean_package(
     template_dir: &Option<PathBuf>,
     modules: Vec<Box<dyn AsModule>>,
 ) -> FSResult<FSTree> {
-    let mut builder: util::FSTree = template_dir
-        .as_ref()
-        .map_or(
-            serde_yaml::from_str(DEFAULT_TEMPLATE_YAML).map_err(FSError::from),
-            read_fs_tree_recursively
-        )?;
+    let mut builder: util::FSTree = template_dir.as_ref().map_or(
+        serde_yaml::from_str(DEFAULT_TEMPLATE_YAML).map_err(FSError::from),
+        read_fs_tree_recursively,
+    )?;
 
     let src_jolt_dir = builder
-        .dir_content_mut().ok_or(FSError::TemplateError(format!("{template_dir:?} is not a directory")))?
-        .entry(String::from("src")).or_insert(dir! {})
-        .dir_content_mut().ok_or(FSError::TemplateError(format!("{template_dir:?}/src is not a directory")))?
-        .entry(String::from("Jolt")).or_insert(dir! {})
-        .dir_content_mut().ok_or(FSError::TemplateError(format!("{template_dir:?}/src/Jolt is not a directory")))?;
+        .dir_content_mut()
+        .ok_or(FSError::TemplateError(format!(
+            "{template_dir:?} is not a directory"
+        )))?
+        .entry(String::from("src"))
+        .or_insert(dir! {})
+        .dir_content_mut()
+        .ok_or(FSError::TemplateError(format!(
+            "{template_dir:?}/src is not a directory"
+        )))?
+        .entry(String::from("Jolt"))
+        .or_insert(dir! {})
+        .dir_content_mut()
+        .ok_or(FSError::TemplateError(format!(
+            "{template_dir:?}/src/Jolt is not a directory"
+        )))?;
 
     for module in modules {
         let module = module.as_module()?;
-        let contents_with_imports: Vec<u8> = module.imports
+        let contents_with_imports: Vec<u8> = module
+            .imports
             .into_iter()
             .flat_map(|i| format!("import {i}\n").bytes().collect::<Vec<u8>>())
             .chain(vec![b'\n'])
             .chain(module.contents)
             .collect();
-        let _ = src_jolt_dir.insert(format!("{}.lean", module.name), file!(contents_with_imports));
+        let _ = src_jolt_dir.insert(
+            format!("{}.lean", module.name),
+            file!(contents_with_imports),
+        );
     }
 
     Ok(builder)
