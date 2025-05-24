@@ -29,7 +29,7 @@ impl VirtualSha256CompressionI {
         (0..16).for_each(|i| {
             input[i] = match cpu
                 .mmu
-                .load_word(cpu.x[self.operands.rs1].wrapping_add(i as i64) as u64)
+                .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
             {
                 Ok((word, _memory_read)) => {
                     // *ram_access = memory_read;
@@ -45,7 +45,7 @@ impl VirtualSha256CompressionI {
         result.into_iter().enumerate().for_each(|(i, r)| {
             match cpu
                 .mmu
-                .store_word(cpu.x[self.operands.rs2].wrapping_add(i as i64) as u64, r)
+                .store_word(cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64, r)
             {
                 Ok(_) => {
                     // *ram_access = memory_write;

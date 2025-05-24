@@ -300,7 +300,7 @@ impl Sha256SequenceBuilder {
     fn lw(&mut self, rs1: usize, imm: i64, rd: usize) {
         let lw = LW {
             address: self.address,
-            operands: FormatLoad { rd, rs1, imm },
+            operands: FormatLoad { rd, rs1, imm: imm * 4 },
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(lw.into());
@@ -309,7 +309,7 @@ impl Sha256SequenceBuilder {
     fn sw(&mut self, rs1: usize, rs2: usize, imm: i64) {
         let sw = SW {
             address: self.address,
-            operands: FormatS { rs1, rs2, imm },
+            operands: FormatS { rs1, rs2, imm: imm * 4 },
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(sw.into());
