@@ -256,6 +256,10 @@ impl Cpu {
         };
         cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
+        
+        // Synchronize CLINT mtime with CPU clock to bind it to CSR time register
+        cpu.mmu.get_mut_clint().sync_with_cpu_clock(cpu.clock);
+        
         cpu
     }
 
@@ -309,8 +313,8 @@ impl Cpu {
         self.clock = self.clock.wrapping_add(1);
 
         // cpu core clock : mtime clock in clint = 8 : 1 is
-        // just an arbitrary ratio.
-        // @TODO: Implement more properly
+        // synchronized with CLINT via sync_with_cpu_clock() during CPU initialization.
+        // CSR TIME register reads/writes are properly routed to CLINT's mtime.
         self.write_csr_raw(CSR_CYCLE_ADDRESS, self.clock * 8);
     }
 
@@ -339,17 +343,21 @@ impl Cpu {
         match self.decode(word).cloned() {
             Ok(inst) => {
                 // setup trace
-                let trace_inst = inst.trace.unwrap()(&inst, &self.xlen, word, instruction_address);
-                self.tracer.start_instruction(trace_inst);
-                self.tracer.capture_pre_state(self.x, &self.xlen);
+                if let Some(trace_fn) = inst.trace {
+                    let trace_inst = trace_fn(&inst, &self.xlen, word, instruction_address);
+                    self.tracer.start_instruction(trace_inst);
+                    self.tracer.capture_pre_state(self.x, &self.xlen);
+                }
 
                 // execute
                 let result = (inst.operation)(self, word, instruction_address);
                 self.x[0] = 0; // hardwired zero
 
                 // complete trace
-                self.tracer.capture_post_state(self.x, &self.xlen);
-                self.tracer.end_instruction();
+                if inst.trace.is_some() {
+                    self.tracer.capture_post_state(self.x, &self.xlen);
+                    self.tracer.end_instruction();
+                }
 
                 result
             }
@@ -4016,7 +4024,7 @@ mod test_cpu {
     #[test]
     fn tick() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(64); // Increased to 64 to accommodate larger trace operations in 64-bit mode
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x1, x1, 1" instruction
@@ -4044,7 +4052,7 @@ mod test_cpu {
     #[test]
     fn tick_operate() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(32); // Increased to 32 to accommodate 8-byte trace reads in 64-bit mode
         cpu.update_pc(DRAM_BASE);
         // write non-compressed "addi a0, a0, 12" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xc50513) {
@@ -4072,7 +4080,7 @@ mod test_cpu {
         // .fetch() doesn't increment the program counter.
         // .tick_operate() does.
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(32); // Increased to 32 to accommodate 8-byte trace reads in 64-bit mode
         cpu.update_pc(DRAM_BASE);
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xaaaaaaaa) {
             Ok(()) => {}
@@ -4130,7 +4138,7 @@ mod test_cpu {
             Ok(inst) => assert_eq!(inst.name, "WFI"),
             Err(_e) => panic!("Failed to decode"),
         };
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(32); // Increased to 32 to accommodate 8-byte trace reads in 64-bit mode
         cpu.update_pc(DRAM_BASE);
         // write WFI instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, wfi_instruction) {
@@ -4159,7 +4167,7 @@ mod test_cpu {
     fn interrupt() {
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(32); // Increased to 32 to accommodate 8-byte trace reads in 64-bit mode
         // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
             Ok(()) => {}
@@ -4200,7 +4208,7 @@ mod test_cpu {
     fn exception() {
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(32); // Increased to 32 to accommodate 8-byte trace reads in 64-bit mode
         // Write ECALL instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00000073) {
             Ok(()) => {}
@@ -4226,7 +4234,7 @@ mod test_cpu {
     #[test]
     fn hardocded_zero() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(8);
+        cpu.get_mut_mmu().init_memory(64); // Increased to 64 to accommodate larger trace operations in 64-bit mode
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x0, x0, 1" instruction
@@ -4256,7 +4264,7 @@ mod test_cpu {
     #[test]
     fn disassemble_next_instruction() {
         let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().init_memory(32); // Increased to 32 to accommodate 8-byte trace reads in 64-bit mode
         cpu.update_pc(DRAM_BASE);
 
         // Write non-compressed "addi x0, x0, 1" instruction
