@@ -7,6 +7,7 @@ use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
+use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::lw::LW;
 use crate::instruction::srli::SRLI;
 use crate::instruction::sw::SW;
@@ -394,9 +395,14 @@ impl Sha256SequenceBuilder {
     fn rotri(&mut self, rs1: Input, imm: u64, rd: usize) -> Input {
         match rs1 {
             Reg(rs1) => {
+                // Construct custom bitmask for VirtualROTRI instruction
+                // It should be 11111100000, with number of zeroes corresponding
+                // to shift amount
+                let ones = (1u64 << (32 - imm)) - 1;
+                let imm = ones << imm;
                 let rotri = VirtualROTRI {
                     address: self.address,
-                    operands: FormatI { rd, rs1, imm },
+                    operands: FormatVirtualRightShiftI { rd, rs1, imm },
                     virtual_sequence_remaining: Some(0),
                 };
                 self.sequence.push(rotri.into());
