@@ -27,7 +27,7 @@ pub mod svo_helpers {
         let mut res = 1;
         let mut i = 0;
         while i < exp {
-            res = res * base;
+            res *= base;
             i += 1;
         }
         res
@@ -38,20 +38,21 @@ pub mod svo_helpers {
         // This is equivalent to num_non_binary_points
         num_non_binary_points(num_svo_rounds)
     }
-    
+
     pub const fn total_num_accums(num_svo_rounds: usize) -> usize {
         // Compute the sum \sum_{i=1}^{num_svo_rounds} (3^i - 2^i)
         // Note: original loop was 1 to num_svo_rounds inclusive.
         // num_non_binary_points(i) is 3^i - 2^i
         let mut sum = 0;
         let mut i = 1;
-        while i <= num_svo_rounds { // Original was i <= num_svo_rounds
+        while i <= num_svo_rounds {
+            // Original was i <= num_svo_rounds
             sum += num_non_binary_points(i);
             i += 1;
         }
         sum
     }
-    
+
     pub const fn num_accums_eval_zero(num_svo_rounds: usize) -> usize {
         // Returns \sum_{i=0}^{num_svo_rounds - 1} (3^i - 2^i)
         let mut sum = 0;
@@ -62,7 +63,7 @@ pub mod svo_helpers {
         }
         sum
     }
-    
+
     pub const fn num_accums_eval_infty(num_svo_rounds: usize) -> usize {
         // Returns \sum_{i=0}^{num_svo_rounds - 1} 3^i
         let mut sum = 0;
@@ -122,11 +123,9 @@ pub mod svo_helpers {
         let mut k_ternary_idx = 0;
         while k_ternary_idx < num_total_ternary_points {
             let (coords_msb, is_binary) = k_to_y_ext_msb::<N>(k_ternary_idx);
-            if !is_binary {
-                if current_map_idx < M {
-                    map[current_map_idx] = coords_msb;
-                    current_map_idx += 1;
-                }
+            if !is_binary && current_map_idx < M {
+                map[current_map_idx] = coords_msb;
+                current_map_idx += 1;
             }
             k_ternary_idx += 1;
         }
@@ -145,7 +144,7 @@ pub mod svo_helpers {
             };
             idx += point_val * current_power_of_3;
             if i < v_coords_lsb_y_ext_order.len() - 1 {
-                    current_power_of_3 = current_power_of_3 * 3;
+                current_power_of_3 *= 3;
             }
             i += 1;
         }
@@ -163,10 +162,12 @@ pub mod svo_helpers {
         false
     }
 
-    pub const fn v_coords_to_non_binary_base3_idx(v_coords_lsb_y_ext_order: &[SVOEvalPoint]) -> usize {
+    pub const fn v_coords_to_non_binary_base3_idx(
+        v_coords_lsb_y_ext_order: &[SVOEvalPoint],
+    ) -> usize {
         let num_v_vars = v_coords_lsb_y_ext_order.len();
         if num_v_vars == 0 {
-            return 0; 
+            return 0;
         }
 
         let mut index_count = 0;
@@ -238,7 +239,7 @@ pub mod svo_helpers {
 
     #[inline]
     fn is_v_config_non_binary(v_config: &[usize]) -> bool {
-        v_config.iter().any(|&digit| digit == 2)
+        v_config.contains(&2)
     }
 
     pub fn compute_and_update_tA_inplace_generic<const NUM_SVO_ROUNDS: usize, F: JoltField>(
@@ -258,12 +259,7 @@ pub mod svo_helpers {
                 compute_and_update_tA_inplace_3(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
             }
             // 81 - 16 = 65 non-binary points
-            4 => compute_and_update_tA_inplace::<
-                    4, 
-                    65, 
-                    81,
-                    F, 
-                >(
+            4 => compute_and_update_tA_inplace::<4, 65, 81, F>(
                 binary_az_evals,
                 binary_bz_evals,
                 e_in_val,
@@ -626,9 +622,11 @@ pub mod svo_helpers {
 
     /// Converts MSB-first SVOEvalPoint coordinates to their global ternary index k.
     /// k = sum_{i=0}^{N-1} val(coords_msb[i]) * 3^(N-1-i)
-    pub const fn svo_coords_msb_to_k_ternary_idx<const N: usize>(coords_msb: &[SVOEvalPoint; N]) -> usize {
+    pub const fn svo_coords_msb_to_k_ternary_idx<const N: usize>(
+        coords_msb: &[SVOEvalPoint; N],
+    ) -> usize {
         if N == 0 {
-            return 0; 
+            return 0;
         }
         let mut k_val = 0;
         let mut i_msb_dim = 0; // iterates from 0 (MSB) to N-1 (LSB)
@@ -687,9 +685,9 @@ pub mod svo_helpers {
     /// TODO: optimize this further
     #[inline]
     pub fn compute_and_update_tA_inplace<
-        const NUM_SVO_ROUNDS: usize, 
+        const NUM_SVO_ROUNDS: usize,
         const M_NON_BINARY_POINTS_CONST: usize, // num_non_binary_points(NUM_SVO_ROUNDS)
-        const NUM_TERNARY_POINTS_CONST: usize, // pow(3, NUM_SVO_ROUNDS)
+        const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
         F: JoltField,
     >(
         binary_az_evals_input: &[i128], // Source of 2^N binary evals for Az
@@ -706,11 +704,18 @@ pub mod svo_helpers {
             // The loops below would not run.
             return;
         }
-        
-        // Verify consistency of const generic arguments with NUM_SVO_ROUNDS
-        debug_assert_eq!(M_NON_BINARY_POINTS_CONST, num_non_binary_points(NUM_SVO_ROUNDS), "M_NON_BINARY_POINTS_CONST mismatch");
-        debug_assert_eq!(NUM_TERNARY_POINTS_CONST, pow(3, NUM_SVO_ROUNDS), "NUM_TERNARY_POINTS_CONST mismatch");
 
+        // Verify consistency of const generic arguments with NUM_SVO_ROUNDS
+        debug_assert_eq!(
+            M_NON_BINARY_POINTS_CONST,
+            num_non_binary_points(NUM_SVO_ROUNDS),
+            "M_NON_BINARY_POINTS_CONST mismatch"
+        );
+        debug_assert_eq!(
+            NUM_TERNARY_POINTS_CONST,
+            pow(3, NUM_SVO_ROUNDS),
+            "NUM_TERNARY_POINTS_CONST mismatch"
+        );
 
         let num_binary_points = 1 << NUM_SVO_ROUNDS;
         // temp_tA length is M_NON_BINARY_POINTS_CONST
@@ -738,23 +743,34 @@ pub mod svo_helpers {
         // Memoization tables for all 3^N points.
         // Initialize with a value that signifies "not computed yet".
         // Using array for memoization tables.
-        let mut memoized_az_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
-        let mut memoized_bz_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
-        
+        let mut memoized_az_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] =
+            [None; NUM_TERNARY_POINTS_CONST];
+        let mut memoized_bz_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] =
+            [None; NUM_TERNARY_POINTS_CONST];
+
         // Get the map of non-binary points. The order here dictates temp_tA indexing.
         let y_ext_code_map_non_binary: [[SVOEvalPoint; NUM_SVO_ROUNDS]; M_NON_BINARY_POINTS_CONST] =
             build_y_ext_code_map::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
-        
+
         for i_temp_tA in 0..M_NON_BINARY_POINTS_CONST {
-            let current_y_ext_coords_msb: &[SVOEvalPoint; NUM_SVO_ROUNDS] = &y_ext_code_map_non_binary[i_temp_tA];
-            
+            let current_y_ext_coords_msb: &[SVOEvalPoint; NUM_SVO_ROUNDS] =
+                &y_ext_code_map_non_binary[i_temp_tA];
+
             // Convert the MSB coordinates of the current non-binary point to its global k_ternary_idx
-            let k_target_idx = svo_coords_msb_to_k_ternary_idx::<NUM_SVO_ROUNDS>(current_y_ext_coords_msb);
+            let k_target_idx =
+                svo_coords_msb_to_k_ternary_idx::<NUM_SVO_ROUNDS>(current_y_ext_coords_msb);
 
             // Sanity check: the k_target_idx must be non-binary.
             // The ternary_point_info_table can be indexed by k_target_idx.
-            debug_assert!(k_target_idx < NUM_TERNARY_POINTS_CONST, "k_target_idx out of bounds for ternary_point_info_table");
-            debug_assert!(!ternary_point_info_table[k_target_idx].is_binary, "Target for temp_tA[{}] (k={}) is unexpectedly binary.", i_temp_tA, k_target_idx);
+            debug_assert!(
+                k_target_idx < NUM_TERNARY_POINTS_CONST,
+                "k_target_idx out of bounds for ternary_point_info_table"
+            );
+            debug_assert!(
+                !ternary_point_info_table[k_target_idx].is_binary,
+                "Target for temp_tA[{}] (k={}) is unexpectedly binary.",
+                i_temp_tA, k_target_idx
+            );
 
             let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
                 k_target_idx,
@@ -816,21 +832,23 @@ pub mod svo_helpers {
             4 => {
                 // 81 - 16 = 65 non-binary points
                 distribute_tA_to_svo_accumulators::<4, 65, F>(
-                tA_accums,
-                x_out_val,
-                E_out_vec,
-                accums_zero,
-                accums_infty,)
-            },
+                    tA_accums,
+                    x_out_val,
+                    E_out_vec,
+                    accums_zero,
+                    accums_infty,
+                )
+            }
             5 => {
                 // 243 - 32 = 211 non-binary points
                 distribute_tA_to_svo_accumulators::<5, 211, F>(
-                tA_accums,
-                x_out_val,
-                E_out_vec,
-                accums_zero,
-                accums_infty,)
-            },
+                    tA_accums,
+                    x_out_val,
+                    E_out_vec,
+                    accums_zero,
+                    accums_infty,
+                )
+            }
             _ => unreachable!("You should not try this many rounds of SVO"),
         }
     }
@@ -845,7 +863,7 @@ pub mod svo_helpers {
         _accums_zero: &mut [F],
         accums_infty: &mut [F],
     ) {
-        debug_assert!(_accums_zero.len() == 0);
+        debug_assert!(_accums_zero.is_empty());
         debug_assert!(accums_infty.len() == 1);
         debug_assert!(tA_accums.len() == 1);
 
@@ -878,7 +896,7 @@ pub mod svo_helpers {
         debug_assert!(accums_infty.len() == 4);
         debug_assert!(E_out_vec.len() >= 2);
 
-        let E0_y0 = E_out_vec[0][(x_out_val << 1) | 0];
+        let E0_y0 = E_out_vec[0][x_out_val << 1];
         let E0_y1 = E_out_vec[0][(x_out_val << 1) | 1];
         let E1_yempty = E_out_vec[1][x_out_val];
 
@@ -952,13 +970,13 @@ pub mod svo_helpers {
 
         // E_out_vec[s_code] interpretation (s_code is MSB-first index for Y_c variables):
         // E_out_vec[0] (s_code=0 in E_out_vec): Y2_c is u_eff for E. y_suffix_eff=(Y0_c, Y1_c). Index (x_out << 2) | (Y0_c_bit << 1) | Y1_c_bit
-        let e0_suf00 = E_out_vec[0][(x_out_val << 2) | 0b00]; // y_suffix_eff=(Y0_c=0, Y1_c=0)
+        let e0_suf00 = E_out_vec[0][x_out_val << 2]; // y_suffix_eff=(Y0_c=0, Y1_c=0)
         let e0_suf01 = E_out_vec[0][(x_out_val << 2) | 0b01]; // y_suffix_eff=(Y0_c=0, Y1_c=1)
         let e0_suf10 = E_out_vec[0][(x_out_val << 2) | 0b10]; // y_suffix_eff=(Y0_c=1, Y1_c=0)
         let e0_suf11 = E_out_vec[0][(x_out_val << 2) | 0b11]; // y_suffix_eff=(Y0_c=1, Y1_c=1)
 
         // E_out_vec[1] (s_code=1 in E_out_vec): Y1_c is u_eff for E. y_suffix_eff=(Y0_c). Index (x_out << 1) | Y0_c_bit
-        let e1_suf0 = E_out_vec[1][(x_out_val << 1) | 0]; // y_suffix_eff=(Y0_c=0)
+        let e1_suf0 = E_out_vec[1][x_out_val << 1]; // y_suffix_eff=(Y0_c=0)
         let e1_suf1 = E_out_vec[1][(x_out_val << 1) | 1]; // y_suffix_eff=(Y0_c=1)
 
         // E_out_vec[2] (s_code=2 in E_out_vec): Y0_c is u_eff for E. y_suffix_eff=(). Index x_out_val
@@ -1105,7 +1123,11 @@ pub mod svo_helpers {
     // Distributes the accumulated tA values (sum over x_in) for a single x_out_val
     // to the appropriate SVO round accumulators.
     #[inline]
-    pub fn distribute_tA_to_svo_accumulators<const NUM_SVO_ROUNDS: usize, const M_NON_BINARY_POINTS: usize, F: JoltField>(
+    pub fn distribute_tA_to_svo_accumulators<
+        const NUM_SVO_ROUNDS: usize,
+        const M_NON_BINARY_POINTS: usize,
+        F: JoltField,
+    >(
         tA_accums: &[F],
         x_out_val: usize,
         E_out_vec: &[Vec<F>],
@@ -1114,8 +1136,14 @@ pub mod svo_helpers {
     ) {
         if NUM_SVO_ROUNDS == 0 {
             debug_assert!(tA_accums.is_empty(), "tA_accums should be empty for N=0");
-            debug_assert!(accums_zero.is_empty(), "accums_zero should be empty for N=0");
-            debug_assert!(accums_infty.is_empty(), "accums_infty should be empty for N=0");
+            debug_assert!(
+                accums_zero.is_empty(),
+                "accums_zero should be empty for N=0"
+            );
+            debug_assert!(
+                accums_infty.is_empty(),
+                "accums_infty should be empty for N=0"
+            );
             return;
         }
 
@@ -1125,15 +1153,19 @@ pub mod svo_helpers {
             num_non_binary_points(NUM_SVO_ROUNDS),
             "M_NON_BINARY_POINTS mismatch with calculated value"
         );
-        
+
         let y_ext_code_map: [[SVOEvalPoint; NUM_SVO_ROUNDS]; M_NON_BINARY_POINTS] =
             build_y_ext_code_map::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS>();
-        
+
         let round_offsets_tuple = precompute_accumulator_offsets::<NUM_SVO_ROUNDS>();
         let round_offsets_infty: [usize; NUM_SVO_ROUNDS] = round_offsets_tuple.0;
         let round_offsets_zero: [usize; NUM_SVO_ROUNDS] = round_offsets_tuple.1;
 
-        debug_assert_eq!(tA_accums.len(), M_NON_BINARY_POINTS, "tA_accums length mismatch with expected non-binary points");
+        debug_assert_eq!(
+            tA_accums.len(),
+            M_NON_BINARY_POINTS,
+            "tA_accums length mismatch with expected non-binary points"
+        );
 
         for tA_idx in 0..M_NON_BINARY_POINTS {
             let current_tA_val = tA_accums[tA_idx];
@@ -1157,8 +1189,10 @@ pub mod svo_helpers {
                         let coord_val_for_suffix = y_ext_coords_msb[i_suffix_msb];
                         e_suffix_bin_idx <<= 1;
                         match coord_val_for_suffix {
-                            SVOEvalPoint::Zero => { }
-                            SVOEvalPoint::One  => { e_suffix_bin_idx |= 1; }
+                            SVOEvalPoint::Zero => {}
+                            SVOEvalPoint::One => {
+                                e_suffix_bin_idx |= 1;
+                            }
                             SVOEvalPoint::Infinity => {
                                 e_suffix_is_binary = false;
                                 break;
@@ -1166,7 +1200,7 @@ pub mod svo_helpers {
                         }
                     }
                 }
-                
+
                 let e_factor: F;
                 if e_suffix_is_binary && E_out_vec.len() > s_p && !E_out_vec[s_p].is_empty() {
                     let e_vec_target_idx = (x_out_val << num_suffix_vars_for_E) | e_suffix_bin_idx;
@@ -1188,7 +1222,8 @@ pub mod svo_helpers {
                 let mut v_A_coords_lsb_buffer = [SVOEvalPoint::Zero; NUM_SVO_ROUNDS];
                 if s_p > 0 {
                     for i_v_lsb in 0..s_p {
-                        v_A_coords_lsb_buffer[i_v_lsb] = y_ext_coords_msb[NUM_SVO_ROUNDS - 1 - i_v_lsb];
+                        v_A_coords_lsb_buffer[i_v_lsb] =
+                            y_ext_coords_msb[NUM_SVO_ROUNDS - 1 - i_v_lsb];
                     }
                 }
                 let v_A_slice_lsb_order = &v_A_coords_lsb_buffer[0..s_p];
@@ -1199,29 +1234,31 @@ pub mod svo_helpers {
                         let idx_within_block = v_coords_to_base3_idx(v_A_slice_lsb_order);
                         let final_idx = base_offset + idx_within_block;
                         if final_idx < accums_infty.len() {
-                             accums_infty[final_idx] += current_tA_val * e_factor;
+                            accums_infty[final_idx] += current_tA_val * e_factor;
                         }
                     }
                     SVOEvalPoint::Zero => {
-                        if s_p == 0 { 
-                            continue; 
+                        if s_p == 0 {
+                            continue;
                         }
-                        
+
                         if v_coords_has_infinity(v_A_slice_lsb_order) {
                             let base_offset = round_offsets_zero[s_p];
-                            let num_slots_in_block_A_sp_zero = 
-                                pow(3, s_p) - pow(2, s_p);
+                            let num_slots_in_block_A_sp_zero = pow(3, s_p) - pow(2, s_p);
 
-                            if num_slots_in_block_A_sp_zero > 0 { 
-                                 let idx_within_block = v_coords_to_non_binary_base3_idx(v_A_slice_lsb_order);
-                                 let final_idx = base_offset + idx_within_block;
-                                 if final_idx < accums_zero.len() && idx_within_block < num_slots_in_block_A_sp_zero {
-                                     accums_zero[final_idx] += current_tA_val * e_factor;
-                                 }
+                            if num_slots_in_block_A_sp_zero > 0 {
+                                let idx_within_block =
+                                    v_coords_to_non_binary_base3_idx(v_A_slice_lsb_order);
+                                let final_idx = base_offset + idx_within_block;
+                                if final_idx < accums_zero.len()
+                                    && idx_within_block < num_slots_in_block_A_sp_zero
+                                {
+                                    accums_zero[final_idx] += current_tA_val * e_factor;
+                                }
                             }
                         }
                     }
-                    SVOEvalPoint::One => { }
+                    SVOEvalPoint::One => {}
                 }
             }
         }
@@ -1293,19 +1330,18 @@ pub mod svo_helpers {
             if num_accs_zero_curr_round > 0
                 && current_acc_zero_offset + num_accs_zero_curr_round <= accums_zero.len()
             {
-                let accums_zero_slice = &accums_zero[current_acc_zero_offset
-                    ..current_acc_zero_offset + num_accs_zero_curr_round];
+                let accums_zero_slice = &accums_zero
+                    [current_acc_zero_offset..current_acc_zero_offset + num_accs_zero_curr_round];
                 let mut non_binary_v_config_counter = 0;
                 for k_global in 0..num_lagrange_coeffs_for_round {
                     let v_config = get_v_config_digits(k_global, num_vars_in_v_config);
-                    if is_v_config_non_binary(&v_config) {
-                        if non_binary_v_config_counter < accums_zero_slice.len()
-                            && k_global < lagrange_coeffs.len()
-                        {
-                            quadratic_eval_0 += accums_zero_slice[non_binary_v_config_counter]
-                                * lagrange_coeffs[k_global];
-                            non_binary_v_config_counter += 1;
-                        }
+                    if is_v_config_non_binary(&v_config)
+                        && non_binary_v_config_counter < accums_zero_slice.len()
+                        && k_global < lagrange_coeffs.len()
+                    {
+                        quadratic_eval_0 += accums_zero_slice[non_binary_v_config_counter]
+                            * lagrange_coeffs[k_global];
+                        non_binary_v_config_counter += 1;
                     }
                 }
                 current_acc_zero_offset += num_accs_zero_curr_round;
@@ -1382,13 +1418,16 @@ pub mod svo_helpers {
         digits
     }
 
-    pub const fn precompute_ternary_point_infos<const N: usize, const NUM_TERNARY_POINTS_VAL: usize>() -> [TernaryPointInfo<N>; NUM_TERNARY_POINTS_VAL] {
+    pub const fn precompute_ternary_point_infos<
+        const N: usize,
+        const NUM_TERNARY_POINTS_VAL: usize,
+    >() -> [TernaryPointInfo<N>; NUM_TERNARY_POINTS_VAL] {
         if N == 0 {
             // NUM_TERNARY_POINTS_VAL should be 1 in this case (pow(3,0)=1)
             // An empty array cannot be returned if NUM_TERNARY_POINTS_VAL is > 0.
             // The caller should handle N=0 as a special case if an empty array is truly desired.
             // For now, if N=0 but NUM_TERNARY_POINTS_VAL = 1, we provide one default entry.
-             if NUM_TERNARY_POINTS_VAL == 1 {
+            if NUM_TERNARY_POINTS_VAL == 1 {
                 let mut infos = [TernaryPointInfo::<N>::default_val(); NUM_TERNARY_POINTS_VAL];
                 // For N=0, point k=0 is binary, index 0.
                 // infos[0] = TernaryPointInfo { is_binary: true, binary_eval_idx: 0, k_val_at_one: 0, k_val_at_zero: 0 };
@@ -1399,17 +1438,17 @@ pub mod svo_helpers {
                 // The actual logic in compute_and_update_tA_inplace will handle N=0 separately.
                 // So this precomputation for N=0 might not even be used directly if compute_and_update_tA_inplace returns early.
                 // For safety, and if it were used, the single point k=0 is binary.
-                 let mut point_info = TernaryPointInfo::<N>::default_val();
-                 point_info.is_binary = true;
-                 point_info.binary_eval_idx = 0;
-                 infos[0] = point_info;
-                 return infos;
-             } else {
+                let mut point_info = TernaryPointInfo::<N>::default_val();
+                point_info.is_binary = true;
+                point_info.binary_eval_idx = 0;
+                infos[0] = point_info;
+                return infos;
+            } else {
                 // This state implies an inconsistency (e.g. N=0 but NUM_TERNARY_POINTS_VAL != 1)
                 // Const panics are not stable yet, so we return a default array.
                 // This should be caught by debug_asserts in the calling function.
-                 return [TernaryPointInfo::<N>::default_val(); NUM_TERNARY_POINTS_VAL];
-             }
+                return [TernaryPointInfo::<N>::default_val(); NUM_TERNARY_POINTS_VAL];
+            }
         }
 
         let mut infos = [TernaryPointInfo::<N>::default_val(); NUM_TERNARY_POINTS_VAL];
@@ -1421,7 +1460,8 @@ pub mod svo_helpers {
 
             let mut i_dim_msb = 0;
             while i_dim_msb < N {
-                if current_coords_base3_msb[i_dim_msb] == 2 { // 2 represents Infinity
+                if current_coords_base3_msb[i_dim_msb] == 2 {
+                    // 2 represents Infinity
                     is_binary_point_flag = false;
                     if first_inf_dim_msb_idx.is_none() {
                         first_inf_dim_msb_idx = Some(i_dim_msb);
@@ -1446,7 +1486,7 @@ pub mod svo_helpers {
                 infos[k_ternary_idx] = TernaryPointInfo {
                     is_binary: true,
                     binary_eval_idx: binary_idx,
-                    k_val_at_one: 0, // Unused
+                    k_val_at_one: 0,  // Unused
                     k_val_at_zero: 0, // Unused
                 };
             } else {
@@ -1506,7 +1546,7 @@ mod tests {
 
         // Call the new general function (the one being tested)
         match num_svo_rounds {
-            1 => compute_and_update_tA_inplace::<1,  1, 3, TestField>(
+            1 => compute_and_update_tA_inplace::<1, 1, 3, TestField>(
                 &binary_az_evals,
                 &binary_bz_evals,
                 &e_in_val,
@@ -1562,7 +1602,7 @@ mod tests {
         let mut temp_tA_old_zeros = vec![TestField::zero(); num_temp_tA];
 
         match num_svo_rounds {
-            1 => compute_and_update_tA_inplace::<1,  1, 3, TestField>(
+            1 => compute_and_update_tA_inplace::<1, 1, 3, TestField>(
                 &binary_az_evals_zeros,
                 &binary_bz_evals_zeros,
                 &e_in_val,
@@ -1616,7 +1656,7 @@ mod tests {
         let mut temp_tA_old_zero_e = vec![TestField::zero(); num_temp_tA];
 
         match num_svo_rounds {
-            1 => compute_and_update_tA_inplace::<1,  1, 3, TestField>(
+            1 => compute_and_update_tA_inplace::<1, 1, 3, TestField>(
                 &binary_az_evals,
                 &binary_bz_evals,
                 &e_in_val_zero,
@@ -1705,7 +1745,7 @@ mod tests {
                 0
             };
             let num_e_entries_for_x_out = 1 << num_suffix_vars;
-            let total_e_entries = (x_out_val + 10) * num_e_entries_for_x_out; 
+            let total_e_entries = (x_out_val + 10) * num_e_entries_for_x_out;
             let mut e_s: Vec<TestField> = Vec::with_capacity(total_e_entries);
             for i in 0..total_e_entries {
                 e_s.push(TestField::from((s_e + 1) as u64 * 10 + (i + 1) as u64));

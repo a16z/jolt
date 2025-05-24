@@ -113,11 +113,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             n - 1 // Use up to n-1, excluding the last variable of w (tau)
         };
 
-        let num_actual_suffix_vars = if split_point_x_in < suffix_slice_end {
-            suffix_slice_end - split_point_x_in
-        } else {
-            0
-        };
+        let num_actual_suffix_vars = suffix_slice_end.saturating_sub(split_point_x_in);
 
         let mut w_E_out_vars: Vec<F> = Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
         w_E_out_vars.extend_from_slice(&w[0..split_point_x_out]);

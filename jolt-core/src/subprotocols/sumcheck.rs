@@ -208,7 +208,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 padded_num_constraints,
                 uniform_constraints,
                 cross_step_constraints,
-                &flattened_polys,
+                flattened_polys,
                 tau,
             );
 

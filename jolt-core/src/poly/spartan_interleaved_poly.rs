@@ -1,8 +1,6 @@
 use super::{
-    eq_poly::EqPolynomial,
-    multilinear_polynomial::MultilinearPolynomial,
-    sparse_interleaved_poly::SparseCoefficient,
-    split_eq_poly::GruenSplitEqPolynomial,
+    eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial,
+    sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
     unipoly::CompressedUniPoly,
 };
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
@@ -11,7 +9,7 @@ use crate::{
     r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
     utils::{
         math::Math,
-        small_value::{NUM_SVO_ROUNDS, svo_helpers},
+        small_value::{svo_helpers, NUM_SVO_ROUNDS},
         transcript::Transcript,
     },
 };
@@ -19,7 +17,8 @@ use ark_ff::Zero;
 use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
-pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize = svo_helpers::num_non_trivial_ternary_points(NUM_SVO_ROUNDS);
+pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
+    svo_helpers::num_non_trivial_ternary_points(NUM_SVO_ROUNDS);
 pub const NUM_ACCUMS_EVAL_ZERO: usize = svo_helpers::num_accums_eval_zero(NUM_SVO_ROUNDS);
 pub const NUM_ACCUMS_EVAL_INFTY: usize = svo_helpers::num_accums_eval_infty(NUM_SVO_ROUNDS);
 
@@ -455,7 +454,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         #[cfg(test)]
         {
             if NUM_SVO_ROUNDS > 0 {
-                for shard in &final_ab_unbound_coeffs_shards { // Iterate over &Vec directly
+                for shard in &final_ab_unbound_coeffs_shards {
+                    // Iterate over &Vec directly
                     if !shard.is_empty() {
                         let mut prev_index = shard[0].index;
                         for coeff in shard.iter().skip(1) {
