@@ -9,7 +9,6 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -26,6 +25,7 @@ use crate::{
         eq_poly::{EqPlusOnePolynomial, EqPolynomial},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
+    utils::small_value::NUM_SVO_ROUNDS,
 };
 
 use super::builder::CombinedUniformBuilder;
@@ -130,18 +130,18 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
-        let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
 
-        let mut az_bz_cz_poly = constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys);
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_cubic(
+            SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
                 num_rounds_x,
-                &mut eq_tau,
-                &mut az_bz_cz_poly,
+                constraint_builder.padded_rows_per_step(),
+                &constraint_builder.uniform_builder.constraints,
+                &constraint_builder.offset_equality_constraints,
+                &flattened_polys,
+                &tau,
                 transcript,
             );
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        drop_in_background_thread((az_bz_cz_poly, eq_tau));
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
         // claims from the end of sum-check

@@ -9,8 +9,10 @@ use crate::poly::multilinear_polynomial::{
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::r1cs::builder::{Constraint, OffsetEqConstraint};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
@@ -186,25 +188,60 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
-    pub fn prove_spartan_cubic(
+    #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
+    pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
-        eq_poly: &mut GruenSplitEqPolynomial<F>,
-        az_bz_cz_poly: &mut SpartanInterleavedPolynomial<F>,
+        padded_num_constraints: usize,
+        uniform_constraints: &[Constraint],
+        cross_step_constraints: &[OffsetEqConstraint],
+        flattened_polys: &[&MultilinearPolynomial<F>],
+        tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, [F; 3]) {
-        let mut r: Vec<F> = Vec::new();
-        let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut r = Vec::new();
+        let mut polys = Vec::new();
         let mut claim = F::zero();
 
-        for round in 0..num_rounds {
-            if round == 0 {
-                az_bz_cz_poly
-                    .first_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
-            } else {
-                az_bz_cz_poly
-                    .subsequent_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
-            }
+        // First, precompute the accumulators and also the `SpartanInterleavedPolynomial`
+        let (accums_zero, accums_infty, mut az_bz_cz_poly) =
+            SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
+                padded_num_constraints,
+                uniform_constraints,
+                cross_step_constraints,
+                &flattened_polys,
+                tau,
+            );
+
+        let mut eq_poly = GruenSplitEqPolynomial::new(tau);
+
+        process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
+            &accums_zero,
+            &accums_infty,
+            &mut r,
+            &mut polys,
+            &mut claim,
+            transcript,
+            &mut eq_poly,
+        );
+
+        // Round NUM_SVO_ROUNDS : do the streaming sumcheck to compute cached values
+        az_bz_cz_poly.streaming_sumcheck_round(
+            &mut eq_poly,
+            transcript,
+            &mut r,
+            &mut polys,
+            &mut claim,
+        );
+
+        // Round (NUM_SVO_ROUNDS + 1)..num_rounds : do the linear time sumcheck
+        for _ in (NUM_SVO_ROUNDS + 1)..num_rounds {
+            az_bz_cz_poly.remaining_sumcheck_round(
+                &mut eq_poly,
+                transcript,
+                &mut r,
+                &mut polys,
+                &mut claim,
+            );
         }
 
         (

@@ -7,7 +7,6 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::{
     field::JoltField,
     jolt::vm::JoltPolynomials,
-    poly::spartan_interleaved_poly::SpartanInterleavedPolynomial,
     r1cs::key::{SparseConstraints, UniformR1CS},
 };
 use ark_ff::One;
@@ -183,7 +182,7 @@ impl<F: JoltField> AuxComputation<F> {
 
 pub struct R1CSBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
     _inputs: PhantomData<I>,
-    constraints: Vec<Constraint>,
+    pub(crate) constraints: Vec<Constraint>,
     aux_computations: BTreeMap<usize, AuxComputation<F>>,
 }
 
@@ -506,12 +505,12 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
 
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<const C: usize, F: JoltField, I: ConstraintInput> {
-    uniform_builder: R1CSBuilder<C, F, I>,
+    pub(crate) uniform_builder: R1CSBuilder<C, F, I>,
 
     /// Padded to the nearest power of 2
-    uniform_repeat: usize, // TODO(JP): Remove padding of steps
+    pub(crate) uniform_repeat: usize, // TODO(JP): Remove padding of steps
 
-    offset_equality_constraints: Vec<OffsetEqConstraint>,
+    pub(crate) offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
 impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C, F, I> {
@@ -619,18 +618,5 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         }
 
         CrossStepR1CS { constraints }
-    }
-
-    #[tracing::instrument(skip_all)]
-    pub fn compute_spartan_Az_Bz_Cz(
-        &self,
-        flattened_polynomials: &[&MultilinearPolynomial<F>], // N variables of (S steps)
-    ) -> SpartanInterleavedPolynomial<F> {
-        SpartanInterleavedPolynomial::new(
-            &self.uniform_builder.constraints,
-            &self.offset_equality_constraints,
-            flattened_polynomials,
-            self.padded_rows_per_step(),
-        )
     }
 }

@@ -61,6 +61,90 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    /// Compute the split equality polynomial for the small value optimization
+    ///
+    /// The split is done as follows: (here `l = num_small_value_rounds`)
+    ///
+    /// 0 ..... (n/2 - l) ..... (n - l) ..... n
+    ///
+    ///           <-- E_in -->
+    ///
+    /// E_out --->                <--- E_out
+    ///
+    /// where the first E_out part (0 to n/2 - l) corresponds to x_out, and the second E_out part
+    /// (n/2 - l to n) corresponds to y_suffix
+    ///
+    /// Returns E_out which contains `l` vectors of eq evals for the same x_out part, with decreasing
+    /// length for y_suffix, and E_in which contains the single vector of eq evals for the x_in part.
+    ///
+    /// Note the differences between this and the `new` constructor: this is specialized for the
+    /// small value optimization.
+    pub fn new_for_small_value(
+        w: &[F],
+        num_x_out_vars: usize,
+        num_x_in_vars: usize,
+        num_small_value_rounds: usize,
+    ) -> Self {
+        // Split w into the slices: (l = num_small_value_rounds)
+        // (n/2 - l) ..... (n - l)
+        // 0..(n/2 - l - 1) concatenated with (n - l)...n
+        // Then invoke the evals_cached constructor on the concatenated slice, producing E_out
+        // Invoke the evals constructor (no caching) on the middle slice, producing E_in
+        // In other words, there is only 1 vector in E_in, and l vectors in E_out
+        // (we may drop the rest of the vectors after evals_cached)
+        let n = w.len();
+
+        assert!(
+            n > 0,
+            "length of w must be positive for the split to be valid."
+        );
+        assert!(num_x_out_vars + num_x_in_vars + num_small_value_rounds == n, "num_x_out_vars + num_x_in_vars + num_small_value_rounds must be == n for the split to be valid.");
+
+        // This should be `min(num_steps, n/2 - num_small_value_rounds)`, computed externally before calling this function.
+        let split_point_x_out = num_x_out_vars;
+        let split_point_x_in = split_point_x_out + num_x_in_vars;
+
+        let w_E_in_vars: Vec<F> = w[split_point_x_out..split_point_x_in].to_vec();
+
+        // Determine the end index for the suffix part of w_E_out_vars
+        let suffix_slice_end = if num_small_value_rounds == 0 {
+            split_point_x_in // Results in an empty suffix, e.g., w[n..n]
+        } else {
+            n - 1 // Use up to n-1, excluding the last variable of w (tau)
+        };
+
+        let num_actual_suffix_vars = if split_point_x_in < suffix_slice_end {
+            suffix_slice_end - split_point_x_in
+        } else {
+            0
+        };
+
+        let mut w_E_out_vars: Vec<F> = Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
+        w_E_out_vars.extend_from_slice(&w[0..split_point_x_out]);
+        if split_point_x_in < suffix_slice_end {
+            // Add suffix only if range is valid and non-empty
+            w_E_out_vars.extend_from_slice(&w[split_point_x_in..suffix_slice_end]);
+        }
+
+        let (mut E_out_vec, E_in) = rayon::join(
+            || EqPolynomial::evals_cached(&w_E_out_vars),
+            || EqPolynomial::evals(&w_E_in_vars),
+        );
+
+        // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)
+        // Recall that at this point, E_out_vec[0] = `eq(w[0..split_point_x_out] ++ w[split_point_x_in..n-1], x)`
+        E_out_vec.reverse();
+        E_out_vec.truncate(num_small_value_rounds);
+
+        Self {
+            current_index: 0,
+            current_scalar: F::one(),
+            w: w.to_vec(),
+            E_in_vec: vec![E_in],
+            E_out_vec,
+        }
+    }
+
     pub fn get_num_vars(&self) -> usize {
         self.w.len()
     }
