@@ -910,7 +910,7 @@ pub mod svo_helpers {
 
         // Y_ext = (1,I) -> tA_accums[1]
         // Contributes to A_0(empty,I) (i.e. accums_infty[0]) via E_out_0[x_out_val | 1]
-        // (no term A_1(1,I) as it is not needed i.e. it\'s an eval at 1)
+        // (no term A_1(1,I) as it is not needed i.e. it's an eval at 1)
         accums_infty[0] += E0_y1 * tA_accums[1];
 
         // Y_ext = (I,0) -> tA_accums[2]

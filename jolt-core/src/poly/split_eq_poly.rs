@@ -133,7 +133,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         E_out_vec.truncate(num_small_value_rounds);
 
         Self {
-            current_index: 0,
+            current_index: num_x_out_vars,
             current_scalar: F::one(),
             w: w.to_vec(),
             E_in_vec: vec![E_in],
@@ -382,4 +382,103 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_new_for_small_value() {
+        let mut rng = test_rng();
+        const N: usize = 10; // Total variables
+        const L0: usize = 3; // SVO rounds
+
+        // Test case 1: Standard setup
+        let num_x_out_vars_1 = 2; // Example split for x_out part
+        let w1: Vec<Fr> = (0..N).map(|i| Fr::from(i as u64)).collect(); // Use predictable values
+
+        let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
+        let split_eq1 =
+            GruenSplitEqPolynomial::new_for_small_value(&w1, num_x_out_vars_1, num_x_in_vars_1, L0);
+
+        // Verify split points and variable slices
+        let split_point1_expected1 = num_x_out_vars_1; // Should be 2
+        let split_point_x_in_expected1 = num_x_out_vars_1 + num_x_in_vars_1;
+        assert_eq!(split_eq1.current_index, split_point1_expected1); // repurposed current_index
+
+        let w_E_in_vars_expected1: Vec<Fr> =
+            w1[split_point1_expected1..split_point_x_in_expected1].to_vec(); // w[2..7] = [2,3,4,5,6]
+        let mut w_E_out_vars_expected1: Vec<Fr> = Vec::new();
+        w_E_out_vars_expected1.extend_from_slice(&w1[0..split_point1_expected1]); // w[0..2] = [0,1]
+                                                                                  // Suffix slice is w[split_point_x_in .. N-1] = w[7..9] for N=10, L0=3.
+        if split_point_x_in_expected1 < N - 1 {
+            // Match logic in main code for L0 > 0
+            w_E_out_vars_expected1.extend_from_slice(&w1[split_point_x_in_expected1..N - 1]);
+            // w[7..9] = [7,8]
+        }
+        // Combined = [0, 1, 7, 8]
+
+        // Verify E_in content
+        assert_eq!(split_eq1.E_in_vec.len(), 1);
+        let expected_E_in1 = EqPolynomial::evals(&w_E_in_vars_expected1);
+        assert_eq!(split_eq1.E_in_vec[0], expected_E_in1);
+
+        // Verify E_out content (structure and count)
+        assert_eq!(split_eq1.E_out_vec.len(), L0); // Should have L0 = 3 vectors
+
+        // Verify E_out content requires understanding evals_cached internal structure
+        // evals_cached(w_E_out) returns [ T(w_E_out[0..k], x), T(w_E_out[0..k-1], x), ..., T(w_E_out[0], x), T([], x) ]
+        // where k = w_E_out.len(). Let k=4 here ([0,1,7,8]). Returns 5 vectors.
+        // new_for_small_value takes the *last* L0=3 vectors and reverses them.
+        // Last 3 vectors from evals_cached([0,1,7,8]) correspond to challenges w=[0,1,7], w=[0,1], w=[0]
+        // After reversal: E_out_vec[0] is cache for w=[0], E_out_vec[1] for w=[0,1], E_out_vec[2] for w=[0,1,7]
+
+        let cached_E_out1 = EqPolynomial::evals_cached(&w_E_out_vars_expected1);
+        // Expected: cached_E_out1 has len k+1 = 5
+        assert_eq!(cached_E_out1.len(), w_E_out_vars_expected1.len() + 1);
+
+        // E_out_vec[0] should be cached_E_out1[4] (evals for w=[0])
+        assert_eq!(
+            split_eq1.E_out_vec[0],
+            cached_E_out1[w_E_out_vars_expected1.len() - 0]
+        );
+        // E_out_vec[1] should be cached_E_out1[3] (evals for w=[0,1])
+        assert_eq!(
+            split_eq1.E_out_vec[1],
+            cached_E_out1[w_E_out_vars_expected1.len() - 1]
+        );
+        // E_out_vec[2] should be cached_E_out1[2] (evals for w=[0,1,7])
+        assert_eq!(
+            split_eq1.E_out_vec[2],
+            cached_E_out1[w_E_out_vars_expected1.len() - 2]
+        );
+
+        // Test case 2: Edge case L0 = 0
+        let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
+        let w2: Vec<Fr> = (0..N).map(|_| Fr::random(&mut rng)).collect();
+        let num_x_in_vars_2 = N - num_x_out_vars_2 - 0; // L0 is 0
+        let split_eq2 =
+            GruenSplitEqPolynomial::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0);
+        assert_eq!(split_eq2.E_out_vec.len(), 0);
+        assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
+        let split_point1_expected2 = num_x_out_vars_2;
+        let split_point_x_in_expected2 = num_x_out_vars_2 + num_x_in_vars_2;
+        let w_E_in_vars_expected2: Vec<Fr> =
+            w2[split_point1_expected2..split_point_x_in_expected2].to_vec();
+        assert!(w_E_in_vars_expected2.len() == num_x_in_vars_2);
+        let expected_E_in2 = EqPolynomial::evals(&w_E_in_vars_expected2); // evals of N/2 vars
+        assert_eq!(split_eq2.E_in_vec[0], expected_E_in2);
+
+        // Test case 3: Panic case N = 0
+        let w3: Vec<Fr> = vec![];
+        let l0_3 = 0;
+        let num_x_out_vars_3 = 0;
+        let n3 = w3.len();
+        let num_x_in_vars_3 = n3 - num_x_out_vars_3 - l0_3; // 0 - 0 - 0 = 0
+        let result3 = std::panic::catch_unwind(|| {
+            GruenSplitEqPolynomial::new_for_small_value(
+                &w3,
+                num_x_out_vars_3,
+                num_x_in_vars_3,
+                l0_3,
+            );
+        });
+        assert!(result3.is_err());
+    }    
 }

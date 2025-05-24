@@ -196,7 +196,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
-    ///     Σ eq(r, x) * left(x) * right(x)
+    ///     \sum_{x} eq(r, x) * left(x) * right(x)
     /// where the inner summation is over all but the "least significant bit" of the multilinear
     /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
     ///
