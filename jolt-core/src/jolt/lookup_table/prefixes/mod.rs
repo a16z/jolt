@@ -25,6 +25,8 @@ use num::FromPrimitive;
 use or::OrPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
+use rotr::RotrPrefix;
+use rotr_helper::RotrHelperPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
@@ -46,6 +48,8 @@ pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_shift;
+pub mod rotr;
+pub mod rotr_helper;
 pub mod sign_extension;
 pub mod upper_word;
 pub mod xor;
@@ -112,11 +116,26 @@ pub enum Prefixes {
     Pow2,
     RightShift,
     SignExtension,
+    Rotr,
+    RotrHelper,
 }
 
 #[derive(Clone, Copy)]
 pub struct PrefixEval<F>(F);
-pub type PrefixCheckpoint<F: JoltField> = PrefixEval<Option<F>>;
+#[derive(Clone, Copy)]
+pub enum PrefixCheckpoint<F> {
+    Default(PrefixEval<F>),
+    Rotr {
+        prod_one_plus_y: F,
+        sum_x_y_prod: F,
+        second_sum: F,
+    },
+    RotrHelper {
+        prod_one_minus_y: F,
+        sum_contributions: F,
+    },
+    None,
+}
 
 impl<F: Display> Display for PrefixEval<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -124,15 +143,58 @@ impl<F: Display> Display for PrefixEval<F> {
     }
 }
 
-impl<F> From<F> for PrefixEval<F> {
-    fn from(value: F) -> Self {
-        Self(value)
+impl<F> PrefixCheckpoint<F> {
+    /// Returns the field element if this is a default checkpoint.
+    /// Panics otherwise
+    pub fn unwrap(self) -> F {
+        match self {
+            PrefixCheckpoint::Default(e) => e.0,
+            _ => panic!("invalid prefix checkpoint"),
+        }
+    }
+
+    /// Returns the field element if this is a default checkpoint.
+    /// Returns `default` otherwise
+    pub fn unwrap_or(self, default: F) -> F {
+        match self {
+            PrefixCheckpoint::Default(e) => e.0,
+            _ => default,
+        }
     }
 }
 
-impl<F> PrefixCheckpoint<F> {
-    pub fn unwrap(self) -> PrefixEval<F> {
-        self.0.unwrap().into()
+impl<F> From<Option<F>> for PrefixCheckpoint<F> {
+    fn from(value: Option<F>) -> Self {
+        match value {
+            Some(value) => PrefixCheckpoint::Default(PrefixEval(value)),
+            None => PrefixCheckpoint::None,
+        }
+    }
+}
+
+impl<F: JoltField> Into<PrefixEval<F>> for PrefixCheckpoint<F> {
+    fn into(self) -> PrefixEval<F> {
+        match self {
+            PrefixCheckpoint::Default(e) => e,
+            PrefixCheckpoint::Rotr {
+                sum_x_y_prod,
+                second_sum,
+                ..
+            } => PrefixEval(sum_x_y_prod + second_sum),
+            PrefixCheckpoint::RotrHelper {
+                sum_contributions, ..
+            } => PrefixEval(sum_contributions),
+            PrefixCheckpoint::None => panic!("invalid prefix checkpoint"),
+        }
+    }
+}
+
+impl<F> Index<Prefixes> for &[PrefixCheckpoint<F>] {
+    type Output = PrefixCheckpoint<F>;
+
+    fn index(&self, prefix: Prefixes) -> &Self::Output {
+        let index = prefix as usize;
+        self.get(index).unwrap()
     }
 }
 
@@ -209,6 +271,10 @@ impl Prefixes {
             Prefixes::RightShift => RightShiftPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::Rotr => RotrPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::RotrHelper => {
+                RotrHelperPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -340,6 +406,12 @@ impl Prefixes {
             }
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::Rotr => {
+                RotrPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RotrHelper => {
+                RotrHelperPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

@@ -4,7 +4,7 @@ use crate::{
     jolt::{
         instruction::{InstructionLookup, LookupQuery},
         lookup_table::{
-            prefixes::{PrefixCheckpoint, Prefixes},
+            prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
         },
     },
@@ -152,6 +152,14 @@ impl LookupBits {
 
     pub fn leading_ones(&self) -> u32 {
         self.bits.unbounded_shl(64 - self.len as u32).leading_ones()
+    }
+
+    pub fn count_zeros(&self) -> u32 {
+        self.bits.count_zeros()
+    }
+    
+    pub fn count_ones(&self) -> u32 {
+        self.bits.count_ones()
     }
 }
 
@@ -520,9 +528,9 @@ pub fn prove_sparse_dense_shout<
     );
     let _guard = span.enter();
 
-    let prefixes: Vec<_> = prefix_checkpoints
+    let prefixes: Vec<PrefixEval<F>> = prefix_checkpoints
         .into_iter()
-        .map(|checkpoint| checkpoint.unwrap())
+        .map(|checkpoint| checkpoint.into())
         .collect();
 
     let mut combined_instruction_val_poly: Vec<F> = unsafe_allocate_zero_vec(T);
@@ -1033,7 +1041,12 @@ mod tests {
             Default::default(),
         )));
     }
-
+    
+    #[test]
+    fn test_virtualrotri() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualROTRI(Default::default())));
+    }
+    
     #[test]
     fn test_virtualsra() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRA(Default::default())));

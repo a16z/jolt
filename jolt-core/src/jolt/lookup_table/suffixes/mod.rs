@@ -12,6 +12,7 @@ use right_is_zero::RightOperandIsZeroSuffix;
 use right_shift::RightShiftSuffix;
 use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
+use rotr::RotrSuffix;
 use sign_extension::SignExtensionSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
@@ -36,6 +37,7 @@ pub mod right_is_zero;
 pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
+pub mod rotr;
 pub mod sign_extension;
 pub mod upper_word;
 pub mod xor;
@@ -68,6 +70,7 @@ pub enum Suffixes {
     RightShift,
     RightShiftHelper,
     SignExtension,
+    Rotr,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -95,6 +98,7 @@ impl Suffixes {
             Suffixes::RightShift => RightShiftSuffix::suffix_mle(b),
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
             Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
+            Suffixes::Rotr => RotrSuffix::<WORD_SIZE>::suffix_mle(b),
         }
     }
 }
