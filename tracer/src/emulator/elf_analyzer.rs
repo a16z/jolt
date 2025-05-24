@@ -652,50 +652,6 @@ impl ElfAnalyzer {
         map
     }
 
-    /// Finds a program data section by its name. If found this method
-    /// returns an address of the section.
-    ///
-    /// # Arguments
-    /// * `section_name` - The name of the section to find (e.g., ".tohost", ".begin_signature")
-    /// * `program_data_section_headers` - The program data section headers.
-    /// * `string_table_section_headers` - The string table section headers.
-    ///
-    /// # Returns
-    /// * `Option<u64>` - The address of the section if found, `None` otherwise.
-    pub fn find_section_addr(
-        &self,
-        section_name: &str,
-        program_data_section_headers: &Vec<&SectionHeader>,
-        string_table_section_headers: &Vec<&SectionHeader>,
-    ) -> Option<u64> {
-        let section_bytes: Vec<u8> = section_name.bytes().chain(std::iter::once(0)).collect();
-        for program_data_header in program_data_section_headers {
-            let sh_addr = program_data_header.sh_addr;
-            let sh_name = program_data_header.sh_name as u64;
-            // Find all string sections so far.
-            // @TODO: Is there a way to know which string table section
-            //        sh_name of program data section points to?
-            for string_table_header in string_table_section_headers {
-                let sh_offset = string_table_header.sh_offset;
-                let sh_size = string_table_header.sh_size;
-                let mut found = true;
-                for k in 0..section_bytes.len() as u64 {
-                    let addr = sh_offset + sh_name + k;
-                    if addr >= sh_offset + sh_size
-                        || self.read_byte(addr as usize) != section_bytes[k as usize]
-                    {
-                        found = false;
-                        break;
-                    }
-                }
-                if found {
-                    return Some(sh_addr);
-                }
-            }
-        }
-        None
-    }
-
     /// Reads a byte from ELF file content
     ///
     /// # Arguments
