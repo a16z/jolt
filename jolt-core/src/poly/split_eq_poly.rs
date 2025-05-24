@@ -480,5 +480,5 @@ mod tests {
             );
         });
         assert!(result3.is_err());
-    }    
+    }
 }
