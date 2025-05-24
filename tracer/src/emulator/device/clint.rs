@@ -16,8 +16,18 @@ impl Clint {
             clock: 0,
             msip: 0,
             mtimecmp: 0,
-            mtime: 0, // @TODO: Should be bound to csr time register
+            mtime: 0, // Will be synchronized with CSR time register via sync_with_cpu_clock()
         }
+    }
+
+    /// Synchronizes mtime with CPU clock. This should be called after CPU initialization
+    /// to ensure mtime is properly bound to CSR time register as per RISC-V specification.
+    /// 
+    /// # Arguments
+    /// * `cpu_clock` Current CPU clock value to synchronize with
+    pub fn sync_with_cpu_clock(&mut self, cpu_clock: u64) {
+        // cpu core clock : mtime clock in clint = 8 : 1 is the same ratio used in CPU tick()
+        self.mtime = cpu_clock * 8;
     }
 
     /// Runs one cycle. `Clint` can raise interrupt. If it does it rises a certain bit
