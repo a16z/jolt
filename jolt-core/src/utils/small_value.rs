@@ -327,7 +327,7 @@ pub mod svo_helpers {
         let az11 = binary_az_evals[3];
         let bz11 = binary_bz_evals[3]; // Y0=1, Y1=1
 
-        // Extended evaluations (points with at least one \'I\')
+        // Extended evaluations (points with at least one I)
         // temp_tA indices follow the order: (0,I), (1,I), (I,0), (I,1), (I,I)
 
         // 1. Point (0,I) -> temp_tA[0]
@@ -1008,9 +1008,8 @@ pub mod svo_helpers {
 
         for i in 0..19 {
             let current_tA = tA_accums[i];
-            // No !current_tA.is_zero() check, as requested
 
-            let (y0_c, y1_c, y2_c) = Y_EXT_CODE_MAP[i]; // (MSB, Mid, LSB) from code\'s perspective
+            let (y0_c, y1_c, y2_c) = Y_EXT_CODE_MAP[i]; // (MSB, Mid, LSB) from code's perspective
 
             // --- Contributions to Paper Round s_p=0 Accumulators (u = Y2_c) ---
             // E-factor uses E_out_vec[0] (where Y2_c is u_eff), E_suffix is (Y0_c, Y1_c)
@@ -1122,6 +1121,8 @@ pub mod svo_helpers {
 
     // Distributes the accumulated tA values (sum over x_in) for a single x_out_val
     // to the appropriate SVO round accumulators.
+    // This is the generic version that works for any number of SVO rounds.
+    // We keep around the hard-coded versions for intuition
     #[inline]
     pub fn distribute_tA_to_svo_accumulators<
         const NUM_SVO_ROUNDS: usize,

@@ -168,9 +168,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         assert_eq!(num_non_svo_z_vars, iter_num_x_out_vars + iter_num_x_in_vars);
 
         // Assertions about the layout of uniform + offset constraints
-        let num_uniform_r1cs_constraints = uniform_constraints.len();
-        let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
         let num_cross_step_constraints = cross_step_constraints.len();
+        let num_uniform_r1cs_constraints = uniform_constraints.len();
+        let constraints_per_cycle = num_uniform_r1cs_constraints + num_cross_step_constraints;
+        let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
+
+        // TODO: remove this assertion by handling the switchover point more generally
+        // Currently, it should not fail with 3 or 4 SVO rounds
         assert!(rem_num_uniform_r1cs_constraints + num_cross_step_constraints < Y_SVO_SPACE_SIZE,
             "The last block of {} uniform constraints + {} cross step constraints must fit in a single block of size {}",
             rem_num_uniform_r1cs_constraints,
@@ -248,14 +252,17 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let x_out_task_span = tracing::debug_span!("chunk_task", chunk_idx);
                 let _x_out_task_guard = x_out_task_span.enter();
 
-                let mut chunk_ab_coeffs = Vec::new();
-                let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
-                let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-                // let mut chunk_coeff_time = std::time::Duration::new(0, 0); // Commented out
-                // let mut chunk_ta_time = std::time::Duration::new(0, 0); // Commented out
-
                 let x_out_start = chunk_idx * x_out_chunk_size;
                 let x_out_end = std::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
+                let cycles_per_chunk = (x_out_end - x_out_start) * num_x_in_step_vals;
+
+                // We will be pushing at most 2 values (corresponding to Az and Bz) to `chunk_ab_coeffs`
+                // for each constraint in the chunk.
+                let max_ab_coeffs_capacity = 2 * cycles_per_chunk * constraints_per_cycle;
+                let mut chunk_ab_coeffs = Vec::with_capacity(max_ab_coeffs_capacity);
+
+                let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+                let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
                 // Iterate over x_out_vals in this chunk
                 for x_out_val in x_out_start..x_out_end {
