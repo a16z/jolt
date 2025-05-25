@@ -1,6 +1,6 @@
 //! This module provides a [`Tracer`] for the ONNX runtime.
 
-use super::tensor::{LiteTensor, QuantizedLiteTensor};
+use super::tensor::QuantizedLiteTensor;
 use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
 use std::collections::HashMap;
 

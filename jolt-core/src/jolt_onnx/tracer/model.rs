@@ -1,6 +1,5 @@
 //! This module provides a way to parse and execute ONNX models.
 use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
-use crate::jolt_onnx::tracer::tensor::quantize_affine_i8;
 use crate::jolt_onnx::utils::create_tensor;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -13,7 +12,7 @@ use tract_onnx::{
     prelude::*,
 };
 
-use super::tensor::{quantize, LiteTensor, QuantizedLiteTensor};
+use super::tensor::{LiteTensor, QuantizedLiteTensor};
 use super::trace::Tracer;
 
 /// Represents a topologically-sorted ONNX model
