@@ -1,7 +1,6 @@
 //! This module provides the main API for the Jolt ONNX zkVM.
 #![allow(clippy::field_reassign_with_default)] // TODO: Remove this when all zkVM portions are fully fleshed out
 
-use super::trace::onnx::JoltONNXDevice;
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::subtable::JoltSubtableSet;
@@ -21,6 +20,9 @@ use crate::r1cs::inputs::R1CSStuff;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{Deserialize, Serialize};
+
+use super::common::onnx_trace::JoltONNXDevice;
 
 pub mod onnx_vm;
 

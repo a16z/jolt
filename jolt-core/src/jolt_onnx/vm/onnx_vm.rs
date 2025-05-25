@@ -85,69 +85,49 @@ macro_rules! subtable_enum {
 
 pub const C_ONNX: usize = 4;
 pub const M_ONNX: usize = 1 << 16;
-const WORD_SIZE: usize = 32;
+const WORD_SIZE: usize = 32; // 64 bits
 
 instruction_set!(
-  ONNX,
-  ADD: ADDInstruction<WORD_SIZE>,
-  SUB: SUBInstruction<WORD_SIZE>,
-  MUL: MULInstruction<WORD_SIZE>,
-  SLL: SLLInstruction<WORD_SIZE>,
-  SRL: SRLInstruction<WORD_SIZE>,
-  AND: ANDInstruction<WORD_SIZE>,
-  OR: ORInstruction<WORD_SIZE>,
-  XOR: XORInstruction<WORD_SIZE>,
-  ReLU: ReLUInstruction
+  ONNXInstructionSet,
+  ReLU: ReLUInstruction,
+  ADD: ADDInstruction<WORD_SIZE>
 );
 
 subtable_enum!(
   ONNXSubtables,
-  AND: AndSubtable<F>,
-  OR: OrSubtable<F>,
-  XOR: XorSubtable<F>,
   IDENTITY: IdentitySubtable<F>,
-  IS_POS: IsPosSubtable<F>,
-  SLL0: SllSubtable<F, 0, WORD_SIZE>,
-  SLL1: SllSubtable<F, 1, WORD_SIZE>,
-  SLL2: SllSubtable<F, 2, WORD_SIZE>,
-  SLL3: SllSubtable<F, 3, WORD_SIZE>,
-  SRL0: SrlSubtable<F, 0, WORD_SIZE>,
-  SRL1: SrlSubtable<F, 1, WORD_SIZE>,
-  SRL2: SrlSubtable<F, 2, WORD_SIZE>,
-  SRL3: SrlSubtable<F, 3, WORD_SIZE>
+  IS_POS: IsPosSubtable<F>
 );
 
 pub type ONNXJoltVM<F, PCS, ProofTranscript> =
-    JoltProof<C_ONNX, M_ONNX, F, PCS, ONNX, ONNXSubtables<F>, ProofTranscript>;
+    JoltProof<C_ONNX, M_ONNX, F, PCS, ONNXInstructionSet, ONNXSubtables<F>, ProofTranscript>;
 
 #[cfg(test)]
 mod tests {
+    use crate::jolt_onnx::onnx_host::ONNXProgram;
+    use crate::jolt_onnx::utils::random_floatvec;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::utils::transcript::{KeccakTranscript, Transcript};
-    use crate::{
-        field::JoltField,
-        jolt_onnx::trace::onnx::{JoltONNXDevice, ONNXParser},
-        poly::commitment::commitment_scheme::CommitmentScheme,
-    };
+    use crate::{field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme};
     use ark_bn254::{Bn254, Fr};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     use super::ONNXJoltVM;
 
-    fn test_e2e_with<F, PCS, ProofTranscript>(model_path: &str)
+    fn test_e2e_with<F, PCS, ProofTranscript>(onnx_program: &ONNXProgram)
     where
         F: JoltField,
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
     {
         // Setup model and get trace (input for proving)
-        let graph = ONNXParser::load_model(model_path).unwrap();
-        let trace = graph.trace(); // TODO: make this more opaque to the user
+        let (io, trace) = onnx_program.trace();
 
         // Generate preprocessing
         let pp = ONNXJoltVM::<F, PCS, ProofTranscript>::prover_preprocess(1 << 20);
 
         // Prove
-        let io = JoltONNXDevice::new(graph.input_count as u64, graph.output_count as u64);
         let (snark, commitments, verifier_io, _) =
             ONNXJoltVM::<F, PCS, ProofTranscript>::prove(io, trace, pp.clone());
 
@@ -158,30 +138,18 @@ mod tests {
     }
 
     #[test]
-    fn test_bitwise_e2e_hkzg() {
-        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(
-            "./onnx/bitwise_test.onnx",
-        )
+    fn test_perceptron() {
+        let mut rng = StdRng::from_seed([0; 32]);
+        let input = random_floatvec(&mut rng, 10);
+        let program = ONNXProgram::new("onnx/perceptron.onnx", &input);
+        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&program)
     }
 
     #[test]
-    fn test_bitwise_with_relu_e2e_hkzg() {
-        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(
-            "./onnx/bitwise_with_relu.onnx",
-        )
-    }
-
-    #[test]
-    fn test_add_mul_e2e_hkzg() {
-        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(
-            "./onnx/add_mul.onnx",
-        )
-    }
-
-    #[test]
-    fn test_add_mul_sub_shift_e2e_hkzg() {
-        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(
-            "./onnx/add_mul_sub_shift.onnx",
-        )
+    fn test_perceptron_2() {
+        let mut rng = StdRng::from_seed([0; 32]);
+        let input = random_floatvec(&mut rng, 4);
+        let program = ONNXProgram::new("onnx/perceptron_2.onnx", &input);
+        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&program)
     }
 }
