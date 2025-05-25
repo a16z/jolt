@@ -95,14 +95,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         uniform_constraints: &[Constraint],
         cross_step_constraints: &[OffsetEqConstraint],
         flattened_polynomials: &[&MultilinearPolynomial<F>],
-        tau: &[F], // Challenges for ALL N_total R1CS variables
+        tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
-        let func_span = tracing::info_span!("new_with_precompute_body");
-        let _func_guard = func_span.enter();
-
-        let var_setup_span = tracing::debug_span!("variable_setup_and_assertions");
-        let _var_setup_guard = var_setup_span.enter();
-
         // The variable layout looks as follows:
         // 0 ... (N/2 - l) ... (n_s) ... (N - l) ... (N - i - 1) ... (N - 1)
         // where n_s = num_step_vars, n_c = num_constraint_vars, N = n_s + n_c, l = NUM_SVO_ROUNDS
@@ -182,11 +176,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             Y_SVO_SPACE_SIZE
         );
 
-        drop(_var_setup_guard);
-
-        let eq_setup_span = tracing::debug_span!("eq_poly_setup");
-        let _eq_setup_guard = eq_setup_span.enter();
-
         // --- Setup: E_in and E_out tables ---
         // Call GruenSplitEqPolynomial::new_for_small_value with the determined variable splits.
         let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
@@ -212,18 +201,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             E_in_evals.len()
         );
 
-        drop(_eq_setup_guard);
-
-        let main_fold_span = tracing::info_span!("parallel_fold_reduce_x_out");
-        let _main_fold_guard = main_fold_span.enter();
-
         // Define the structure returned by each parallel map task
         struct PrecomputeTaskOutput<F: JoltField> {
             ab_coeffs_local: Vec<SparseCoefficient<i128>>,
             svo_accums_zero_local: [F; NUM_ACCUMS_EVAL_ZERO],
             svo_accums_infty_local: [F; NUM_ACCUMS_EVAL_INFTY],
-            // coeff_computation_time_local: std::time::Duration, // Commented out
-            // ta_update_time_local: std::time::Duration, // Commented out
         }
 
         let num_parallel_chunks = if num_x_out_vals > 0 {
@@ -249,9 +231,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let collected_chunk_outputs: Vec<PrecomputeTaskOutput<F>> = (0..num_parallel_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
-                let x_out_task_span = tracing::debug_span!("chunk_task", chunk_idx);
-                let _x_out_task_guard = x_out_task_span.enter();
-
                 let x_out_start = chunk_idx * x_out_chunk_size;
                 let x_out_end = std::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
                 let cycles_per_chunk = (x_out_end - x_out_start) * num_x_in_step_vals;
@@ -282,7 +261,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                         // Phase 1: Process Uniform Constraints
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in uniform_constraints.chunks(Y_SVO_SPACE_SIZE).enumerate() {
-                            // let coeff_start_time = std::time::Instant::now(); // Commented out
                             for (idx_in_svo_block, constraint) in uniform_svo_chunk.iter().enumerate() {
                                 let original_uniform_idx_in_step = (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
 
@@ -308,7 +286,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     }
                                 }
                             }
-                            // chunk_coeff_time += coeff_start_time.elapsed(); // Commented out
 
                             // If this is a full block, compute and update tA, then reset Az, Bz blocks
                             // (the last block may not be full, in which case we need to delay
@@ -317,14 +294,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 let x_in_val = (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
                                 let E_in_val = &E_in_evals[x_in_val];
 
-                                // let ta_start_time = std::time::Instant::now(); // Commented out
                                 svo_helpers::compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, F>(
                                     &binary_az_block,
                                     &binary_bz_block,
                                     E_in_val,
                                     &mut tA_sum_for_current_x_out,
                                 );
-                                // chunk_ta_time += ta_start_time.elapsed(); // Commented out
 
                                 current_x_in_constraint_val += 1;
                                 binary_az_block = [0i128; Y_SVO_SPACE_SIZE];
@@ -334,8 +309,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                         // Phase 2: Process Offset Constraints
                         // (only 2 of them, in the same block as the last uniform constraints)
-                        // let coeff_start_time_phase2 = std::time::Instant::now(); // Commented out
-
                         for (idx, constraint) in cross_step_constraints.iter().enumerate() {
 
                             let actual_r1cs_constraint_idx = num_uniform_r1cs_constraints + idx;
@@ -373,20 +346,17 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 }
                             }
                         }
-                        // chunk_coeff_time += coeff_start_time_phase2.elapsed(); // Commented out
 
                         let x_in_val_phase2 = (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
                         let E_in_val_phase2 = &E_in_evals[x_in_val_phase2];
 
                         // No coeff computation time for padding as blocks are already zero
-                        // let ta_start_time = std::time::Instant::now(); // Commented out
                         svo_helpers::compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, F>(
                             &binary_az_block,
                             &binary_bz_block,
                             E_in_val_phase2, // Use E_in_val specific to this phase/block
                             &mut tA_sum_for_current_x_out,
                         );
-                        // chunk_ta_time += ta_start_time.elapsed(); // Commented out
                     } // End x_in_step_val loop
 
                     // Distribute the accumulated tA values to the SVO accumulators
@@ -408,33 +378,19 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 } // End loop over x_out_val in chunk
 
-                drop(_x_out_task_guard);
                 PrecomputeTaskOutput {
                     ab_coeffs_local: chunk_ab_coeffs,
                     svo_accums_zero_local: chunk_svo_accums_zero,
                     svo_accums_infty_local: chunk_svo_accums_infty,
-                    // coeff_computation_time_local: chunk_coeff_time, // Commented out
-                    // ta_update_time_local: chunk_ta_time, // Commented out
                 }
             }) // End .map() over chunks
             .collect(); // Collect all chunk outputs
 
-        drop(_main_fold_guard);
-
         // --- Finalization ---
-        let finalization_span = tracing::info_span!("finalization");
-        let _finalization_guard = finalization_span.enter();
-
         let mut final_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
         let mut final_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
         let mut final_ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>> =
             Vec::with_capacity(collected_chunk_outputs.len());
-        // let mut total_coeff_computation_time = std::time::Duration::new(0, 0); // Commented out
-        // let mut total_ta_update_time = std::time::Duration::new(0, 0); // Commented out
-
-        let aggregation_loop_span =
-            tracing::debug_span!("finalization_aggregate_chunk_outputs_loop");
-        let _aggregation_loop_guard = aggregation_loop_span.enter();
 
         for task_output in collected_chunk_outputs {
             final_ab_unbound_coeffs_shards.push(task_output.ab_coeffs_local); // Move Vec directly
@@ -450,10 +406,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     final_svo_accums_infty[idx] += task_output.svo_accums_infty_local[idx];
                 }
             }
-            // total_coeff_computation_time += task_output.coeff_computation_time_local; // Commented out
-            // total_ta_update_time += task_output.ta_update_time_local; // Commented out
         }
-        drop(_aggregation_loop_guard);
 
         // final_ab_unbound_coeffs_shards is now fully populated and SVO accumulators are summed.
 
@@ -478,32 +431,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             }
             println!("Per-shard sortedness check passed!");
         }
-
-        drop(_finalization_guard);
-        // let reporting_span = tracing::info_span!("timing_reporting"); // Commented out
-        // let _reporting_guard = reporting_span.enter(); // Commented out
-
-        // let total_instrumented_time = total_coeff_computation_time + total_ta_update_time; // Commented out
-        // if !total_instrumented_time.is_zero() { // Commented out
-        //     let coeff_time_percentage = (total_coeff_computation_time.as_secs_f64() // Commented out
-        //         / total_instrumented_time.as_secs_f64()) // Commented out
-        //         * 100.0; // Commented out
-        //     let ta_update_time_percentage = (total_ta_update_time.as_secs_f64() // Commented out
-        //         / total_instrumented_time.as_secs_f64()) // Commented out
-        //         * 100.0; // Commented out
-
-        //     println!( // Commented out
-        //         "Timing breakdown for new_with_precompute SVO part (instrumented sections):\n - Coefficient computation: {:.2}s ({:.2}%)\n - tA update (inplace extension & sum): {:.2}s ({:.2}%)\n Total instrumented: {:.2}s", // Commented out
-        //         total_coeff_computation_time.as_secs_f64(), // Commented out
-        //         coeff_time_percentage, // Commented out
-        //         total_ta_update_time.as_secs_f64(), // Commented out
-        //         ta_update_time_percentage, // Commented out
-        //         total_instrumented_time.as_secs_f64() // Commented out
-        //     ); // Commented out
-        // } else { // Commented out
-        //     // println!("Total instrumented time for SVO part was zero. No timing breakdown available."); // Commented out
-        // } // Commented out
-        // drop(_reporting_guard); // Commented out
 
         // Return final SVO accumulators and Self struct.
         (
@@ -547,9 +474,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     ///
-    /// Since `unbound_coeffs` are in sparse format, we will need to be more careful with indexing;
-    /// see the old implementation for details.
-    ///
     /// Finally, as we compute each `unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, r)`, we will
     /// store them in `bound_coeffs`. which is still in sparse format (the eval at 1 will be eval
     /// at 0 + eval at ∞). We then derive the next challenge from the transcript, and bind these
@@ -566,12 +490,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
     ) {
-        let top_level_span = tracing::span!(tracing::Level::INFO, "streaming_sumcheck_round_body");
-        let _top_level_guard = top_level_span.enter();
-
-        let setup_span = tracing::debug_span!("streaming_round_setup");
-        let _setup_guard = setup_span.enter();
-
         let num_y_svo_vars = r_challenges.len();
         assert_eq!(
             num_y_svo_vars, NUM_SVO_ROUNDS,
@@ -580,11 +498,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let mut r_rev = r_challenges.clone();
         r_rev.reverse();
         let eq_r_evals = EqPolynomial::evals(&r_rev);
-
-        drop(_setup_guard);
-
-        let main_processing_span = tracing::info_span!("streaming_round_main_processing");
-        let _main_processing_guard = main_processing_span.enter();
 
         struct StreamingTaskOutput<F: JoltField> {
             bound_coeffs_local: Vec<SparseCoefficient<F>>,
@@ -727,11 +640,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             })
             .collect();
 
-        drop(_main_processing_guard);
-
         // Aggregate sumcheck contributions directly from collected_chunk_outputs
-        let sum_aggregation_span = tracing::info_span!("streaming_round_aggregate_sums");
-        let _sum_aggregation_guard = sum_aggregation_span.enter();
         let mut total_sumcheck_eval_at_0 = F::zero();
         let mut total_sumcheck_eval_at_infty = F::zero();
         for task_output in &collected_chunk_outputs {
@@ -739,7 +648,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             total_sumcheck_eval_at_0 += task_output.sumcheck_eval_at_0_local;
             total_sumcheck_eval_at_infty += task_output.sumcheck_eval_at_infty_local;
         }
-        drop(_sum_aggregation_guard);
 
         // Compute r_i challenge using aggregated sumcheck values
         let r_i = process_eq_sumcheck_round(
@@ -752,13 +660,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
 
         // Bind coefficients directly from task outputs into scratch space
-        let bind_coeffs_span = tracing::span!(tracing::Level::INFO, "streaming_round_bind_coeffs");
-        let _bind_coeffs_guard = bind_coeffs_span.enter();
-
-        // Calculate the output size for binding for each task's local coefficients
-        let calc_output_sizes_span =
-            tracing::debug_span!("streaming_bind_calc_per_task_output_sizes");
-        let _calc_output_sizes_guard = calc_output_sizes_span.enter();
         let per_task_output_sizes: Vec<usize> = collected_chunk_outputs
             .par_iter() // Iterate over collected_chunk_outputs by reference for calculating sizes
             .map(|task_output| {
@@ -773,7 +674,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 current_task_total_output_size
             })
             .collect();
-        drop(_calc_output_sizes_guard);
 
         let total_binding_output_len: usize = per_task_output_sizes.iter().sum();
 
@@ -787,9 +687,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
 
         // Create mutable slices into binding_scratch_space, one for each task's output
-        let create_output_slices_span =
-            tracing::debug_span!("streaming_bind_create_output_slices_for_tasks");
-        let _create_output_slices_guard = create_output_slices_span.enter();
         let mut output_slices_for_tasks: Vec<&mut [SparseCoefficient<F>]> =
             Vec::with_capacity(collected_chunk_outputs.len());
         let mut scratch_remainder = self.binding_scratch_space.as_mut_slice();
@@ -799,20 +696,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             scratch_remainder = second;
         }
         debug_assert_eq!(scratch_remainder.len(), 0);
-        drop(_create_output_slices_guard);
-
-        // Parallel binding loop: iterate over tasks and their designated output slices
-        let parallel_bind_loop_span =
-            tracing::info_span!("streaming_bind_parallel_task_coeff_binding_loop");
-        let _parallel_bind_loop_guard = parallel_bind_loop_span.enter();
 
         collected_chunk_outputs // Now consume collected_chunk_outputs
             .into_par_iter()
             .zip_eq(output_slices_for_tasks.into_par_iter())
             .for_each(|(task_output, output_slice_for_task)| {
-                let bind_task_span = tracing::debug_span!("streaming_bind_process_task_coeffs");
-                let _bind_task_guard = bind_task_span.enter();
-
                 let coeffs_from_task = &task_output.bound_coeffs_local; // These are the Vec<SparseCoefficient<F>> from a StreamingTaskOutput
 
                 let mut current_output_idx_in_slice = 0;
@@ -877,17 +765,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     "Mismatch in written elements vs pre-calculated slice length for task output"
                 );
             });
-        drop(_parallel_bind_loop_guard);
 
-        let swap_span = tracing::debug_span!("streaming_bind_swap_coeff_buffers");
-        let _swap_guard = swap_span.enter();
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
-        drop(_swap_guard);
-
         self.dense_len = eq_poly.len();
-
-        drop(_bind_coeffs_guard);
-        drop(_top_level_guard);
     }
 
     /// This function computes the polynomial for each of the remaining rounds, using the
@@ -908,8 +788,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     ///
     /// We then process this to form `s_i(X) = l_i(X) * t_i(X)`, append `s_i.compress()` to the transcript,
     /// derive next challenge `r_i`, then bind both `eq_poly` and `bound_coeffs` with `r_i`.
-    ///
-    /// NOTE: this is now basically identical to `subsequent_sumcheck_round`, modulo extra Gruen's optimization, and modulo tests (we can add tests back later)
     #[tracing::instrument(
         skip_all,
         name = "NewSpartanInterleavedPolynomial::remaining_sumcheck_round"
@@ -922,9 +800,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         current_claim: &mut F,
     ) {
-        let top_level_span = tracing::span!(tracing::Level::INFO, "remaining_sumcheck_round_body");
-        let _top_level_guard = top_level_span.enter();
-
         // In order to parallelize, we do a first pass over the coefficients to
         // determine how to divide it into chunks that can be processed independently.
         // In particular, coefficients whose indices are the same modulo 6 cannot
@@ -938,9 +813,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             .bound_coeffs
             .par_chunk_by(|x, y| x.index / block_size == y.index / block_size)
             .collect();
-
-        let compute_evals_span = tracing::info_span!("remaining_round_compute_evals");
-        let _compute_evals_guard = compute_evals_span.enter();
 
         // If `E_in` is fully bound, then we simply sum over `E_out`
         let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
@@ -1034,10 +906,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 );
             evals
         };
-        drop(_compute_evals_guard);
 
-        let process_sumcheck_span = tracing::info_span!("remaining_round_process_eq_sumcheck");
-        let _process_sumcheck_guard = process_sumcheck_span.enter();
         // Use the helper function to process the rest of the sumcheck round
         let r_i = process_eq_sumcheck_round(
             quadratic_evals, // (t_i(0), t_i(infty))
@@ -1047,10 +916,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             current_claim,
             transcript,
         );
-        drop(_process_sumcheck_guard);
-
-        let bind_coeffs_span = tracing::info_span!("remaining_round_bind_coeffs");
-        let _bind_coeffs_guard = bind_coeffs_span.enter();
 
         let output_sizes: Vec<_> = chunks
             .par_iter()
@@ -1130,8 +995,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
         self.dense_len /= 2;
-        drop(_bind_coeffs_guard);
-        drop(_top_level_guard);
     }
 
     /// Computes the number of non-zero coefficients that would result from
