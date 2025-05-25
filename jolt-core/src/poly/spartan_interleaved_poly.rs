@@ -580,7 +580,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     bz_orig_for_this_az = next_coeff.value;
                                     let next_local_offset = next_coeff.index % Y_SVO_RELATED_COEFF_BLOCK_SIZE;
                                     let next_x_next_val = (next_local_offset / 2) / Y_SVO_SPACE_SIZE;
-                                    debug_assert_eq!(x_next_val, next_x_next_val, "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}", current_coeff.index, next_coeff.index, x_next_val, next_x_next_val);
+                                    debug_assert_eq!(x_next_val, next_x_next_val,
+                                        "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
+                                        current_coeff.index,
+                                        next_coeff.index,
+                                        x_next_val,
+                                        next_x_next_val,
+                                    );
 
                                     match x_next_val { // x_next_val of the current Az
                                         0 => bz0_at_r += eq_r_y.mul_i128_1_optimized(bz_orig_for_this_az),
@@ -701,7 +707,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             .into_par_iter()
             .zip_eq(output_slices_for_tasks.into_par_iter())
             .for_each(|(task_output, output_slice_for_task)| {
-                let coeffs_from_task = &task_output.bound_coeffs_local; // These are the Vec<SparseCoefficient<F>> from a StreamingTaskOutput
+                let coeffs_from_task = &task_output.bound_coeffs_local;
 
                 let mut current_output_idx_in_slice = 0;
                 // Iterate through sub-blocks of 6 within this task's coeffs_from_task
