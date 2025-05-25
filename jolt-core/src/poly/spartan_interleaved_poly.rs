@@ -223,7 +223,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
 
         let x_out_chunk_size = if num_x_out_vals > 0 {
-            num_x_out_vals.div_ceil(num_parallel_chunks)
+            std::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
         } else {
             0 // No work per chunk if no x_out_vals
         };
