@@ -16,8 +16,8 @@ use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
 
-pub mod virtual_sha256_compression;
-pub mod virtual_sha256_compression_i;
+pub mod sha256compress;
+pub mod sha256compressi;
 
 /// SHA-256 initial hash values
 /// These are the first 32 bits of the fractional parts of the square roots

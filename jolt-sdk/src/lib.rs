@@ -16,6 +16,9 @@ pub use cycle_tracking::*;
 pub mod alloc;
 pub use alloc::*;
 
+pub mod precompiles;
+pub use precompiles::*;
+
 // This is a dummy _HEAP_PTR to keep the compiler happy.
 // It should never be used when compiled as a guest or with
 // our custom allocator

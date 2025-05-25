@@ -182,6 +182,12 @@ impl Program {
                 RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
                 RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
                 RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
+                RV32IMInstruction::SHA256COMPRESS(sha256compress) => {
+                    sha256compress.virtual_sequence()
+                }
+                RV32IMInstruction::SHA256COMPRESSI(sha256compressi) => {
+                    sha256compressi.virtual_sequence()
+                }
                 _ => vec![instr],
             })
             .collect();

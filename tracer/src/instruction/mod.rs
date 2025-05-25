@@ -52,8 +52,8 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
-use precompile_sha256::virtual_sha256_compression::VirtualSha256Compression;
-use precompile_sha256::virtual_sha256_compression_i::VirtualSha256CompressionI;
+use precompile_sha256::sha256compress::SHA256COMPRESS;
+use precompile_sha256::sha256compressi::SHA256COMPRESSI;
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -374,8 +374,8 @@ define_rv32im_enums! {
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualSha256Compression,
-        VirtualSha256CompressionI, VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, SHA256COMPRESS,
+        SHA256COMPRESSI, VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
 
@@ -562,6 +562,20 @@ impl RV32IMInstruction {
                     return Ok(ECALL::new(instr, address, true).into());
                 } else {
                     return Err("Unsupported SYSTEM instruction");
+                }
+            }
+            0b0001011 => {
+                // Custom-0 opcode: SHA256 compression instructions
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                if funct7 == 0x00 {
+                    match funct3 {
+                        0x0 => Ok(SHA256COMPRESS::new(instr, address, true).into()),
+                        0x1 => Ok(SHA256COMPRESSI::new(instr, address, true).into()),
+                        _ => Err("Unknown funct3 for custom SHA256 instruction"),
+                    }
+                } else {
+                    Err("Unknown funct7 for custom-0 opcode")
                 }
             }
             _ => Err("Unknown opcode"),
