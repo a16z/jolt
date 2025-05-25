@@ -34,7 +34,6 @@ impl ONNXProgram {
     /// Parse the ONNX model, quantize it & get the execution trace
     pub fn trace(&self) -> (JoltONNXDevice, Vec<JoltTraceStep<ONNXInstructionSet>>) {
         let (raw_trace, io_device) = tracer::trace(&self.model, &self.input);
-
         let trace = raw_trace
             .iter()
             .flat_map(|row| {

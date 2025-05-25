@@ -10,6 +10,7 @@ use tracer::ELFInstruction;
 /// Convert [`ONNXTraceRow`] to [`ONNXInstructionSet`]
 pub fn onnxrow_to_lookup(row: &ONNXTraceRow) -> Option<Vec<ONNXInstructionSet>> {
     match row.instruction.opcode {
+        // TODO: clean this up to make it extensible for other operators
         Operator::Relu => row
             .layer_state
             .input_vals
