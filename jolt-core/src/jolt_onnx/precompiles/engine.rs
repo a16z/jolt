@@ -1,5 +1,6 @@
 //! This module provides the main engine for sum-check precompiles in Jolt ONNX.
 //! It defines the `BatchedSumcheck` protocol for efficiently proving and verifying multiple sumcheck instances in parallel.
+
 use crate::{
     field::JoltField,
     poly::unipoly::{CompressedUniPoly, UniPoly},

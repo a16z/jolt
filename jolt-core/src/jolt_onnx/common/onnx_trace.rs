@@ -73,7 +73,7 @@ impl ONNXInstruction {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Operator {
     /// Matrix multiplication operator
-    MatMul,
+    MatMul, // TODO: If operator has bias, handle it separately with an add operator
     /// Rectified Linear Unit (ReLU) activation function
     /// This is a non-linear activation function that outputs the input directly if it is positive;
     /// otherwise, it outputs zero.

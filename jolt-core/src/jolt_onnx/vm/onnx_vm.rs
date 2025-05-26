@@ -106,6 +106,7 @@ pub type ONNXJoltVM<F, PCS, ProofTranscript> =
 
 #[cfg(test)]
 mod tests {
+    use super::ONNXJoltVM;
     use crate::jolt_onnx::onnx_host::ONNXProgram;
     use crate::jolt_onnx::utils::random_floatvec;
     use crate::poly::commitment::hyperkzg::HyperKZG;
@@ -114,8 +115,6 @@ mod tests {
     use ark_bn254::{Bn254, Fr};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
-
-    use super::ONNXJoltVM;
 
     fn test_e2e_with<F, PCS, ProofTranscript>(onnx_program: &ONNXProgram)
     where
