@@ -1,8 +1,5 @@
 //! This module provides an interface for tracing ONNX models.
 
-// TODO: Still need to decide on panic strategy — this module is unwrap/expect-heavy.
-// Plan is to keep unwraps/expects where panics help catch dev bugs, and switch to proper error handling for actual runtime errors.
-
 use model::QuantizedONNXModel;
 use std::path::PathBuf;
 

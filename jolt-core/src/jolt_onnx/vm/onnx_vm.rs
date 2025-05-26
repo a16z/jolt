@@ -68,7 +68,7 @@ macro_rules! subtable_enum {
                 $enum_name::from(<$struct>::new())
               } else
             )+
-            { panic!("Unexpected subtable id {:?}", subtable_id) } // TODO(moodlezoup): better error handling
+            { panic!("Unexpected subtable id {:?}", subtable_id) }
           }
         }
 

@@ -118,8 +118,6 @@ where
         let mut jolt_polynomials = JoltPolynomials::default();
 
         jolt_polynomials.instruction_lookups = instruction_polynomials;
-
-        // TODO: Send commitment to jolt polynomials
         let jolt_commitments = commit_jolt_polys::<C, F, PCS, ProofTranscript>(
             &jolt_polynomials,
             &preprocessing.shared,
