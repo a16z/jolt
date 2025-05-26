@@ -1,9 +1,6 @@
-//! This module provides a tracer for the ONNX runtime.
-//!
-//! # Overview
-//!
-//! - [`tracer`] - This module provides a tracer for the ONNX runtime.
-//! - [`ONNXProgram`] - Represents an ONNX model
+//! This module provides an ONNX program type that can be traced and executed using Jolt's VM.
+//! It includes functionality to parse ONNX models, quantize them, and generate execution traces.
+//! The ONNX program can be used to run inference on ONNX models and verify the results using Jolt's proof system.
 
 use crate::jolt::vm::JoltTraceStep;
 
