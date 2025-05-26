@@ -1,5 +1,5 @@
-use std::ops::Mul;
-
+//! This module provides the main engine for sum-check precompiles in Jolt ONNX.
+//! It defines the `BatchedSumcheck` protocol for efficiently proving and verifying multiple sumcheck instances in parallel.
 use crate::{
     field::JoltField,
     poly::unipoly::{CompressedUniPoly, UniPoly},
@@ -9,6 +9,7 @@ use crate::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
+use std::ops::Mul;
 
 /// Trait for a sumcheck instance that can be batched with other instances.
 ///
@@ -151,11 +152,7 @@ impl BatchedSumcheck {
                 assert_eq!(
                     h0 + h1,
                     batched_claim,
-                    "round {}: H(0) + H(1) = {} + {} != {}",
-                    round,
-                    h0,
-                    h1,
-                    batched_claim
+                    "round {round}: H(0) + H(1) = {h0} + {h1} != {batched_claim}",
                 );
                 batched_claim = batched_univariate_poly.evaluate(&r_j);
             }
