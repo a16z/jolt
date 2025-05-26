@@ -37,7 +37,7 @@ impl QuantizedLiteTensor {
     }
 
     /// Matrix multiplication of two quantized tensors
-    pub fn matmul(&self, other: &QuantizedLiteTensor) -> Vec<i32> {
+    pub fn matmul(&self, other: &QuantizedLiteTensor) -> (Vec<i32>, Vec<usize>) {
         // Ensure the inner dimensions match for matrix multiplication (B is transposed)
         assert_eq!(
             self.shape[1], other.shape[1],
@@ -67,7 +67,7 @@ impl QuantizedLiteTensor {
                 result[i * n + j] = acc;
             }
         }
-        result
+        (result, vec![m, n])
     }
 }
 

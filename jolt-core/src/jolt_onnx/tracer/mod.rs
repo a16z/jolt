@@ -17,6 +17,5 @@ pub fn trace(model_path: &PathBuf, input: &[f32]) -> (Vec<ONNXTraceRow>, JoltONN
     let mut model = QuantizedONNXModel::parse(model_path);
     let output = model.execute_quantized(input);
     let device = JoltONNXDevice::new(input.to_vec(), output.dequantize().data);
-    let execution_trace = model.tracer.rows.clone();
-    (execution_trace, device)
+    (model.tracer.rows, device)
 }

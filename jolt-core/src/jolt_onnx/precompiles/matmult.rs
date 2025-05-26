@@ -75,7 +75,7 @@ mod tests {
             (step_inputs[0].clone(), step_inputs[1].clone())
         };
         println!("A: {A:#?}, B: {B:#?}");
-        let C = A.matmul(&B);
+        let (C, shape) = A.matmul(&B);
         println!("C: {C:#?}");
     }
 
