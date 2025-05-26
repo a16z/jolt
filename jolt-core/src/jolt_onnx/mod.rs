@@ -7,6 +7,7 @@
 pub mod common;
 pub mod instruction;
 pub mod onnx_host;
+pub mod precompiles;
 pub mod subtable;
 pub mod trace;
 pub mod tracer;
