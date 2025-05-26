@@ -3,12 +3,14 @@
 use serde::{Deserialize, Serialize};
 use tract_onnx::pb::NodeProto;
 
-use crate::jolt_onnx::tracer::tensor::{LiteTensor, QuantizedLiteTensor};
+use crate::jolt_onnx::tracer::tensor::QuantizedLiteTensor;
 
 /// Represents a row in the execution trace
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ONNXTraceRow {
+    /// The instruction that this row represents
     pub instruction: ONNXInstruction,
+    /// The state of the layer during execution, including input and output values
     pub layer_state: LayerState,
 }
 
@@ -16,16 +18,22 @@ pub struct ONNXTraceRow {
 /// during the execution of the ONNX model
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayerState {
+    /// The input values to the layer, which are the quantized tensors
     pub input_vals: Option<Vec<QuantizedLiteTensor>>,
+    /// The output values from the layer, which are the quantized tensors
     pub output_vals: Option<Vec<QuantizedLiteTensor>>,
 }
 
 /// Represents a single layer (node) in the ONNX model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ONNXInstruction {
+    /// The operator that this instruction represents
     pub opcode: Operator,
+    /// Optional attributes for the operator, such as alpha and beta for MatMul
     pub attributes: Option<Vec<f32>>,
+    /// The inputs to the operator, which are the names of the tensors
     pub inputs: Vec<String>,
+    /// The outputs of the operator, which are the names of the tensors
     pub outputs: Vec<String>,
 }
 
@@ -64,7 +72,11 @@ impl ONNXInstruction {
 /// Represents an operator in the ONNX model
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Operator {
+    /// Matrix multiplication operator
     MatMul,
+    /// Rectified Linear Unit (ReLU) activation function
+    /// This is a non-linear activation function that outputs the input directly if it is positive;
+    /// otherwise, it outputs zero.
     Relu,
 }
 
@@ -87,8 +99,11 @@ fn alpha_beta(node_proto: &NodeProto) -> (f32, f32) {
 /// The inputs and outputs are part of the public inputs to the proof.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JoltONNXDevice {
+    /// Inputs to the ONNX model
     pub inputs: Vec<f32>,
+    /// Outputs from the ONNX model
     pub outputs: Vec<f32>,
+    /// Panic flag to indicate if the ONNX model execution panicked
     pub panic: bool,
 }
 

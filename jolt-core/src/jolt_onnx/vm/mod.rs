@@ -42,7 +42,9 @@ pub struct JoltProof<
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
+    /// The length of the trace, which is the number of steps in the execution trace.
     pub trace_length: usize,
+    /// Instruction lookups proof.
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
 }
@@ -56,6 +58,7 @@ where
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
+    /// Preprocessing step for the verifier.
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     pub fn verifier_preprocess(
         max_trace_length: usize,
@@ -73,6 +76,7 @@ where
         }
     }
 
+    /// Preprocessing step for the prover.
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     pub fn prover_preprocess(
         max_trace_length: usize,
@@ -86,6 +90,7 @@ where
         }
     }
 
+    /// Prove the execution trace of an ONNX model.
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     pub fn prove(
         program_io: JoltONNXDevice,
@@ -162,6 +167,7 @@ where
         (jolt_proof, jolt_commitments, program_io, debug_info)
     }
 
+    /// Verify the [`JoltProof`]
     #[tracing::instrument(skip_all)]
     pub fn verify(
         self,
@@ -218,6 +224,7 @@ where
     }
 }
 
+/// Preprocessing for the verifier and prover
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
@@ -225,10 +232,13 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    /// Shared generators for the commitment scheme
     pub generators: PCS::Setup,
+    /// Preprocessing for instruction lookups
     pub instruction_lookups: InstructionLookupsPreprocessing<C, F>,
 }
 
+/// Preprocessing for the prover
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProverPreprocessing<const C: usize, F, PCS, ProofTranscript>
 where
@@ -236,10 +246,13 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+    /// Shared preprocessing data
+    /// that can be used by both the prover and verifier.
     pub shared: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
     field: F::SmallValueLookupTables,
 }
 
+/// Commmits to the Jolt polynomials.
 // TODO: Remove this when we have a proper implementation
 pub fn commit_jolt_polys<const C: usize, F, PCS, ProofTranscript>(
     jolt_polynomials: &JoltPolynomials<F>,

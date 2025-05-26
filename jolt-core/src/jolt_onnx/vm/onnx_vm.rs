@@ -2,14 +2,10 @@
 
 use super::JoltProof;
 use crate::field::JoltField;
-use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction, sub::SUBInstruction};
-use crate::jolt::instruction::{
-    and::ANDInstruction, or::ORInstruction, sll::SLLInstruction, srl::SRLInstruction,
-    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
-};
+use crate::jolt::instruction::add::ADDInstruction;
+use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::{
-    and::AndSubtable, identity::IdentitySubtable, or::OrSubtable, sll::SllSubtable,
-    srl::SrlSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable, SubtableId,
+    identity::IdentitySubtable, JoltSubtableSet, LassoSubtable, SubtableId,
 };
 use crate::jolt_onnx::{instruction::relu::ReLUInstruction, subtable::is_pos::IsPosSubtable};
 use enum_dispatch::enum_dispatch;
@@ -25,7 +21,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 /// are callable on the enum type via enum_dispatch.
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, missing_docs)]
         #[repr(u8)]
         #[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumCountMacro, Serialize, Deserialize)]
         #[enum_dispatch(JoltInstruction)]
@@ -34,6 +30,7 @@ macro_rules! instruction_set {
         }
         impl JoltInstructionSet for $enum_name {}
         impl $enum_name {
+            /// Create a random instruction from the enum.
             pub fn random_instruction(rng: &mut StdRng) -> Self {
                 let index = rng.next_u64() as usize % $enum_name::COUNT;
                 let instruction = $enum_name::iter()
@@ -58,7 +55,7 @@ macro_rules! instruction_set {
 /// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, missing_docs)]
         #[repr(u8)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
@@ -85,7 +82,9 @@ macro_rules! subtable_enum {
     };
 }
 
+/// C constant in Jolt paper
 pub const C_ONNX: usize = 4;
+/// Size of subtable entries
 pub const M_ONNX: usize = 1 << 16;
 const WORD_SIZE: usize = 32; // 64 bits
 
@@ -101,6 +100,7 @@ subtable_enum!(
   IS_POS: IsPosSubtable<F>
 );
 
+/// The ONNX Jolt VM type, which is a Jolt VM for ONNX models.
 pub type ONNXJoltVM<F, PCS, ProofTranscript> =
     JoltProof<C_ONNX, M_ONNX, F, PCS, ONNXInstructionSet, ONNXSubtables<F>, ProofTranscript>;
 

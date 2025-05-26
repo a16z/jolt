@@ -15,7 +15,9 @@ use std::path::PathBuf;
 
 /// This type represents an ONNX model
 pub struct ONNXProgram {
+    /// The path to the ONNX model file
     pub model: PathBuf,
+    /// The input to the ONNX model
     pub input: Vec<f32>,
 }
 

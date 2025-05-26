@@ -1,4 +1,5 @@
-extern crate alloc;
+//! This module provides an implementation to get the lookup trace from the execution trace.
+
 use crate::jolt_onnx::{
     common::onnx_trace::{ONNXTraceRow, Operator},
     instruction::relu::ReLUInstruction,
