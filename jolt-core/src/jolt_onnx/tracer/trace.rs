@@ -4,8 +4,10 @@ use super::tensor::QuantizedLiteTensor;
 use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
 use std::collections::HashMap;
 
+/// A tracer for ONNX models that captures the execution trace
 #[derive(Default, Debug)]
 pub struct Tracer {
+    /// Execution trace of the ONNX model
     pub rows: Vec<ONNXTraceRow>,
 }
 

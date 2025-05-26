@@ -20,12 +20,12 @@ use crate::r1cs::inputs::R1CSStuff;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Serialize};
 
 use super::common::onnx_trace::JoltONNXDevice;
 
 pub mod onnx_vm;
 
+/// A SNARK for correct execution of an ONNX model on a given input.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<
     const C: usize,

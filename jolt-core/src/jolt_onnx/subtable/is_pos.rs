@@ -1,13 +1,16 @@
-use std::marker::PhantomData;
+//! Lookup table for checking if a value is positive.
 
 use crate::{field::JoltField, jolt::subtable::LassoSubtable};
+use std::marker::PhantomData;
 
+/// A lookup table that checks if a value is positive.
 #[derive(Default)]
 pub struct IsPosSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
 impl<F: JoltField> IsPosSubtable<F> {
+    /// Creates a new instance of [`IsPosSubtable`].
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
