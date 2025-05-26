@@ -5,7 +5,9 @@
 use crate::jolt::vm::JoltTraceStep;
 
 use super::{
-    common::onnx_trace::JoltONNXDevice, trace::onnx::onnxrow_to_lookup, tracer,
+    common::onnx_trace::JoltONNXDevice,
+    trace::onnx::onnxrow_to_lookup,
+    tracer::{self, model::QuantizedONNXModel},
     vm::onnx_vm::ONNXInstructionSet,
 };
 use std::path::PathBuf;
@@ -29,6 +31,12 @@ impl ONNXProgram {
 }
 
 impl ONNXProgram {
+    #[tracing::instrument(skip_all, name = "ONNXProgram::decode")]
+    /// Parse the ONNX program
+    pub fn decode(&self) -> QuantizedONNXModel {
+        QuantizedONNXModel::parse(&self.model)
+    }
+
     #[tracing::instrument(skip_all, name = "ONNXProgram::trace")]
     /// Parse the ONNX model, quantize it & get the execution trace
     pub fn trace(&self) -> (JoltONNXDevice, Vec<JoltTraceStep<ONNXInstructionSet>>) {

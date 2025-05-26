@@ -35,6 +35,40 @@ impl QuantizedLiteTensor {
             data: dequantized_data,
         }
     }
+
+    /// Matrix multiplication of two quantized tensors
+    pub fn matmul(&self, other: &QuantizedLiteTensor) -> Vec<i32> {
+        // Ensure the inner dimensions match for matrix multiplication (B is transposed)
+        assert_eq!(
+            self.shape[1], other.shape[1],
+            "Inner dimensions must match for matmul"
+        );
+        // rows in A
+        let m = self.shape[0];
+        // cols in A == cols in B^T
+        let k = self.shape[1];
+        // rows in B == output cols
+        let n = other.shape[0];
+
+        let a_zp = self.zero_point as i32;
+        let b_zp = other.zero_point as i32;
+
+        // Output shape is [M, N]
+        let mut result = vec![0i32; m * n];
+
+        for i in 0..m {
+            for j in 0..n {
+                let mut acc = 0i32;
+                for t in 0..k {
+                    let a_val = self.data[i * k + t] as i32 - a_zp;
+                    let b_val = other.data[j * k + t] as i32 - b_zp;
+                    acc += a_val * b_val;
+                }
+                result[i * n + j] = acc;
+            }
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
