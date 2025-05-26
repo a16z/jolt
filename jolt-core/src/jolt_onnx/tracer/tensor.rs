@@ -1,15 +1,23 @@
+//! This module provides the tensor types used by the ONNX runtime in Jolt.
+
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Represents a [`tract_onnx`] tensor for this codebase
 pub struct QuantizedLiteTensor {
+    /// The shape of the tensor, represented as a vector of dimensions.
     pub shape: Vec<usize>,
+    /// The data of the tensor, represented as a vector of 8-bit integers.
     pub data: Vec<i8>,
+    /// The scale factor used for quantization.
     pub scale: f32,
+    /// The zero point used for quantization, which is the value that corresponds to zero in the original data.
     pub zero_point: i8,
 }
 
+/// Dequantize a slice of i8 data using the scale and zero point
+/// This function converts quantized data back to floating-point values.
 pub fn dequantize(data: &[i8], scale: f32, zero_point: i8) -> Vec<f32> {
     data.iter()
         .map(|&q| scale * (q as f32 - zero_point as f32))
@@ -30,7 +38,9 @@ impl QuantizedLiteTensor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Represents a [`tract_onnx`] tensor for this codebase
 pub struct LiteTensor {
+    /// The shape of the tensor, represented as a vector of dimensions.
     pub shape: Vec<usize>,
+    /// The data of the tensor, represented as a vector of floating-point numbers.
     pub data: Vec<f32>,
 }
 

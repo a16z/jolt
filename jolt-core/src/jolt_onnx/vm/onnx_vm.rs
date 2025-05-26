@@ -1,3 +1,5 @@
+//! This module defines the [`ONNXJoltVM`] type and its instruction set, which is a Jolt VM & ISA for ONNX models.
+
 use super::JoltProof;
 use crate::field::JoltField;
 use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction, sub::SUBInstruction};

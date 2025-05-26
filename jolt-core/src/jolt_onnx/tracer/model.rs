@@ -24,6 +24,7 @@ use super::trace::Tracer;
 pub struct QuantizedONNXModel {
     instrs: Vec<ONNXInstruction>,
     initializer_map: ONNXInitializerMap,
+    /// A tracer that captures the execution trace of the model
     pub tracer: Tracer,
 }
 
