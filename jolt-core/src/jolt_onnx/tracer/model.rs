@@ -1,7 +1,10 @@
 //! This module provides a way to parse and execute ONNX models.
 
-// TODO: Still need to decide on panic strategy — this module is unwrap/expect-heavy.
-// Plan is to keep unwraps/expects where panics help catch dev bugs, and switch to proper error handling for actual runtime errors.
+// TODO:
+//       * Still need to decide on panic strategy — this module is unwrap/expect-heavy.
+//       Plan is to keep unwraps/expects where panics help catch dev bugs, and switch to proper error handling for actual runtime errors.
+//
+//       * Refactor duplicated code in `execute` and `execute_quantized`
 
 use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
 use crate::jolt_onnx::utils::create_tensor;
