@@ -374,12 +374,16 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     );
     let _guard = span.enter();
 
-    // Data structure described in Equation (72)
+    // The table I is used to update the Val table efficiently when we compute the univariate polynomial
+    // that the prover sends to the verifier in each round. Specifically, I stores data of
+    // the form (j, k, INC * LT, INC), where j indexes the instruction cycle, k is the
+    // the memory location written, and INC * LT represents the sum of elements
+    // Inc(k, j, j') * Lt(j', r) as j' ranges over {0, 1}^(log(chunk_size) - i).
+    // for round i, where r = (r_1, ..., r_i) is the vector of committed cycle variables in F.
+    // Similarly, INC represents the sum of Inc(k, j, j') over the same range of j'.
+    // Table I in round i has size T / 2^i.
 
-    // Note that this I differs from the data structure described in the paper
-    // ("I in round i stores all non-zero evaluations of the form Inc(k,r1,...,ri,j) for j∈{0,1}^(log(T)−i)")
-    // in that the entry at index (t, k) stores (Inc * LT, Inc)
-    // Table I in round i has size T / 2^i
+    // Note this I differs from the data structure described in Equation (72)
     let mut I: Vec<Vec<(usize, usize, F, F)>> = write_addresses
         .par_chunks(chunk_size)
         .zip(write_increments.par_chunks(chunk_size))
@@ -450,13 +454,13 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     /// the endianness used in the paper.
     struct DataBuffers<F: JoltField> {
         /// Contains
-        ///     Sum Val(k, j'', j', 0, ..., 0)
+        ///     Val(k, j'', j', 0, ..., 0)
         /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i).
         val_j_0: Vec<F>,
         /// `val_j_r[0]` contains
-        ///     Sum Val(k, j'', j', 0, r_i, ..., r_1)
+        ///     Val(k, j'', j', 0, r_i, ..., r_1)
         /// `val_j_r[1]` contains
-        ///     Sum Val(k, j'', j', 1, r_i, ..., r_1)
+        ///     Val(k, j'', j', 1, r_i, ..., r_1)
         /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1)
         val_j_r: [Vec<F>; 2],
         /// `ra[0]` contains
@@ -535,6 +539,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 I_chunk
                     .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
                     .for_each(|inc_chunk| {
+                        // Iterate over chunks that get mapped to the same address. This corresponds
+                        // to incrementing j' in the description of the DataBuffer struct.
                         let j_prime = inc_chunk[0].0; // row index
 
                         // We have
@@ -713,6 +719,15 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         let _inner_guard = inner_span.enter();
 
         // Bind I
+
+        // Update I according to the recursive formula
+        // INC * TL(I(j, k))
+        // = sum Inc(k, j, (j', b)) * Lt((j', b), (r_1, ..., r_i, r_{i+1}))
+        // by (73) where (j', b) is a bounded cycle vector in the hypercube that we are summing over
+        // = sum Inc(k, j, (j', b)) * (eq(b), r_{i+1}) * Lt(j', (r_1, ..., r_i)) + (1 - b) * r_{i+1})
+        // Expand b \in {0, 1} and use that eq(b, r) = rb + (1 - b) * (1 - r)
+        // = (1 - r_{i+1}) * INC_TL(k, (j', 0)) + r_{i+1} * INC(k, (j',0)) + r_{i+1} * INC_TL(k, (j', 1))
+        // where by INC_TL and INC we mean the corresponding sums
         I.par_iter_mut().for_each(|I_chunk| {
             // Note: A given row in an I_chunk may not be ordered by k after binding
             let mut next_bound_index = 0;
