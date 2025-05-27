@@ -165,8 +165,8 @@ impl<F: JoltField> R1CSConstraints<F> for JoltRV32IMConstraints {
         //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
         // }
         cs.constrain_prod(
-            JoltR1CSInputs::Rs1Value,
-            JoltR1CSInputs::Rs2Value,
+            JoltR1CSInputs::RightInstructionInput,
+            JoltR1CSInputs::LeftInstructionInput,
             JoltR1CSInputs::Product,
         );
         cs.constrain_eq_conditional(

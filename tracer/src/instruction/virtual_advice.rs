@@ -8,6 +8,7 @@ use super::{
     RISCVInstruction, RISCVTrace,
 };
 
+// Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VirtualAdvice {
     pub address: u64,
@@ -33,7 +34,7 @@ impl RISCVInstruction for VirtualAdvice {
     }
 
     fn new(_: u32, _: u64, _: bool) -> Self {
-        unimplemented!("virtual instruction")
+        panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
     fn random(rng: &mut StdRng) -> Self {

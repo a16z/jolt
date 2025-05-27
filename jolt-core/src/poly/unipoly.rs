@@ -27,7 +27,6 @@ pub struct CompressedUniPoly<F: JoltField> {
 }
 
 impl<F: JoltField> UniPoly<F> {
-    #[allow(dead_code)]
     pub fn from_coeff(coeffs: Vec<F>) -> Self {
         UniPoly { coeffs }
     }
@@ -107,6 +106,10 @@ impl<F: JoltField> UniPoly<F> {
         self.coeffs.len() - 1
     }
 
+    pub fn len(&self) -> usize {
+        self.coeffs.len()
+    }
+
     pub fn as_vec(&self) -> Vec<F> {
         self.coeffs.clone()
     }
@@ -149,7 +152,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U8Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -158,7 +161,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U16Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -167,7 +170,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U32Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -176,7 +179,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -185,7 +188,7 @@ impl<F: JoltField> UniPoly<F> {
             }
             MultilinearPolynomial::I64Scalars(poly) => {
                 let mut eval = F::zero();
-                let mut power = F::montgomery_r2().unwrap_or(F::one());
+                let mut power = F::one();
                 for coeff in poly.coeffs.iter() {
                     eval += coeff.field_mul(power);
                     power *= *r;
@@ -262,6 +265,14 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     fn mul(self, rhs: &F) -> Self {
         let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+    }
+}
+
+impl<F: JoltField> Mul<&F> for &UniPoly<F> {
+    type Output = UniPoly<F>;
+
+    fn mul(self, rhs: &F) -> UniPoly<F> {
+        UniPoly::from_coeff(self.coeffs.iter().map(|c| *c * *rhs).collect::<Vec<_>>())
     }
 }
 

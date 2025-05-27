@@ -321,10 +321,8 @@ pub fn prove_sparse_dense_shout<
     drop(_guard);
     drop(span);
 
-    let (eq_r_prime_evals, mut u_evals) = rayon::join(
-        || EqPolynomial::evals(&r_cycle),
-        || EqPolynomial::evals_with_r2(&r_cycle),
-    );
+    let eq_r_prime_evals = EqPolynomial::evals(&r_cycle);
+    let mut u_evals = eq_r_prime_evals.clone();
 
     let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
     let mut v = ExpandingTable::new(m);
@@ -338,7 +336,7 @@ pub fn prove_sparse_dense_shout<
         .map(|((cycle, k), u)| {
             let table: Option<LookupTables<WORD_SIZE>> = cycle.lookup_table();
             match table {
-                Some(table) => u.mul_u64_unchecked(table.materialize_entry(k.into())),
+                Some(table) => u.mul_u64(table.materialize_entry(k.into())),
                 None => F::zero(),
             }
         })
@@ -438,7 +436,7 @@ pub fn prove_sparse_dense_shout<
                             let t = suffix.suffix_mle::<WORD_SIZE>(suffix_bits);
                             if t != 0 {
                                 let u = u_evals[*j];
-                                poly.Z[prefix_bits % m] += u.mul_u64_unchecked(t as u64);
+                                poly.Z[prefix_bits % m] += u.mul_u64(t as u64);
                             }
                         }
                     });
@@ -755,21 +753,24 @@ mod tests {
             RV32IMCycle::SW(cycle) => cycle.random(rng).into(),
             RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
             RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::Advice(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AssertEQ(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AssertLTE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AssertValidDiv0(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::Move(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::Movsign(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::Pow2(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::Pow2I(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ShiftRightBitmask(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualMove(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualMULI(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualPow2(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
             _ => RV32IMCycle::NoOp,
         }
     }
@@ -953,73 +954,84 @@ mod tests {
 
     #[test]
     fn test_advice() {
-        test_sparse_dense_shout(Some(RV32IMCycle::Advice(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAdvice(Default::default())));
     }
 
     #[test]
     fn test_asserteq() {
-        test_sparse_dense_shout(Some(RV32IMCycle::AssertEQ(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAssertEQ(Default::default())));
     }
 
     #[test]
     fn test_asserthalfwordalignment() {
-        test_sparse_dense_shout(Some(RV32IMCycle::AssertHalfwordAlignment(
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAssertHalfwordAlignment(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_assertlte() {
-        test_sparse_dense_shout(Some(RV32IMCycle::AssertLTE(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAssertLTE(Default::default())));
     }
 
     #[test]
     fn test_assertvaliddiv0() {
-        test_sparse_dense_shout(Some(RV32IMCycle::AssertValidDiv0(Default::default())));
+        test_sparse_dense_shout(Some(
+            RV32IMCycle::VirtualAssertValidDiv0(Default::default()),
+        ));
     }
 
     #[test]
     fn test_assertvalidsignedremainder() {
-        test_sparse_dense_shout(Some(RV32IMCycle::AssertValidSignedRemainder(
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAssertValidSignedRemainder(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_assertvalidunsignedremainder() {
-        test_sparse_dense_shout(Some(RV32IMCycle::AssertValidUnsignedRemainder(
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualAssertValidUnsignedRemainder(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_move() {
-        test_sparse_dense_shout(Some(RV32IMCycle::Move(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualMove(Default::default())));
     }
 
     #[test]
     fn test_movsign() {
-        test_sparse_dense_shout(Some(RV32IMCycle::Movsign(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualMovsign(Default::default())));
+    }
+
+    #[test]
+    fn test_muli() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualMULI(Default::default())));
     }
 
     #[test]
     fn test_pow2() {
-        test_sparse_dense_shout(Some(RV32IMCycle::Pow2(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualPow2(Default::default())));
     }
 
     #[test]
     fn test_pow2i() {
-        test_sparse_dense_shout(Some(RV32IMCycle::Pow2I(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualPow2I(Default::default())));
     }
 
     #[test]
     fn test_shiftrightbitmask() {
-        test_sparse_dense_shout(Some(RV32IMCycle::ShiftRightBitmask(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmask(
+            Default::default(),
+        )));
     }
 
     #[test]
     fn test_shiftrightbitmaski() {
-        test_sparse_dense_shout(Some(RV32IMCycle::ShiftRightBitmaskI(Default::default())));
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmaskI(
+            Default::default(),
+        )));
     }
 
     #[test]
@@ -1028,7 +1040,17 @@ mod tests {
     }
 
     #[test]
+    fn test_virtualsrai() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRAI(Default::default())));
+    }
+
+    #[test]
     fn test_virtualsrl() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRL(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualsrli() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRLI(Default::default())));
     }
 }

@@ -1,7 +1,7 @@
 use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::addi::ADDI;
 use super::and::AND;
@@ -21,42 +21,16 @@ use super::{
     RISCVInstruction, RISCVTrace,
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct SB {
-    pub address: u64,
-    pub operands: FormatS,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+declare_riscv_instr!(
+    name   = SB,
+    mask   = 0x0000707f,
+    match  = 0x00000023,
+    format = FormatS,
+    ram    = RAMWrite
+);
 
-impl RISCVInstruction for SB {
-    const MASK: u32 = 0x0000707f;
-    const MATCH: u32 = 0x00000023;
-
-    type Format = FormatS;
-    type RAMAccess = RAMWrite;
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatS::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
+impl SB {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SB as RISCVInstruction>::RAMAccess) {
         *ram_access = cpu
             .mmu
             .store(
@@ -96,7 +70,7 @@ impl VirtualInstructionSequence for SB {
                 rs1: self.operands.rs1,
                 imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
-            virtual_sequence_remaining: Some(13),
+            virtual_sequence_remaining: Some(12),
         };
         sequence.push(add.into());
 
@@ -107,7 +81,7 @@ impl VirtualInstructionSequence for SB {
                 rs1: v_address,
                 imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
             },
-            virtual_sequence_remaining: Some(12),
+            virtual_sequence_remaining: Some(11),
         };
         sequence.push(andi.into());
 
@@ -118,7 +92,7 @@ impl VirtualInstructionSequence for SB {
                 rs1: v_word_address,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(11),
+            virtual_sequence_remaining: Some(10),
         };
         sequence.push(lw.into());
 
@@ -129,7 +103,7 @@ impl VirtualInstructionSequence for SB {
                 rs1: v_address,
                 imm: 3,
             },
-            virtual_sequence_remaining: Some(10),
+            virtual_sequence_remaining: Some(9),
         };
         sequence.extend(slli.virtual_sequence());
 

@@ -1,7 +1,10 @@
 use common::constants::virtual_register_index;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::{
     add::ADD,
@@ -18,42 +21,16 @@ use super::{
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct REMU {
-    pub address: u64,
-    pub operands: FormatR,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+declare_riscv_instr!(
+    name   = REMU,
+    mask   = 0xfe00707f,
+    match  = 0x02007033,
+    format = FormatR,
+    ram    = ()
+);
 
-impl RISCVInstruction for REMU {
-    const MASK: u32 = 0xfe00707f;
-    const MATCH: u32 = 0x02007033;
-
-    type Format = FormatR;
-    type RAMAccess = ();
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            debug_assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatR::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+impl REMU {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <REMU as RISCVInstruction>::RAMAccess) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2]);
         cpu.x[self.operands.rd] = match divisor {
@@ -66,7 +43,7 @@ impl RISCVInstruction for REMU {
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu) {
         let mut virtual_sequence = self.virtual_sequence();
-        if let RV32IMInstruction::Advice(instr) = &mut virtual_sequence[0] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2]) == 0 {
                 match cpu.xlen {
                     Xlen::Bit32 => u32::MAX as u64,
@@ -79,7 +56,7 @@ impl RISCVTrace for REMU {
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::Advice(instr) = &mut virtual_sequence[1] {
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut virtual_sequence[1] {
             instr.advice = match cpu.unsigned_data(cpu.x[self.operands.rs2]) {
                 0 => cpu.unsigned_data(cpu.x[self.operands.rs1]),
                 divisor => {

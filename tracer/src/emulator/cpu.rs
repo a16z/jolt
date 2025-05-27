@@ -2,6 +2,7 @@
 
 extern crate fnv;
 
+use std::collections::HashMap;
 use std::convert::TryInto;
 
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
@@ -60,11 +61,21 @@ pub const MIP_SEIP: u64 = 0x200;
 const MIP_STIP: u64 = 0x020;
 const MIP_SSIP: u64 = 0x002;
 
+pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E;
+pub const JOLT_CYCLE_MARKER_START: u32 = 1;
+pub const JOLT_CYCLE_MARKER_END: u32 = 2;
+#[derive(Clone)]
+struct ActiveMarker {
+    label: String,
+    start_instrs: u64,      // executed_instrs  at ‘start’
+    start_trace_len: usize, // trace.len()      at ‘start’
+}
+
 /// Emulates a RISC-V CPU core
 pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
-    privilege_mode: PrivilegeMode,
+    pub(crate) privilege_mode: PrivilegeMode,
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
@@ -78,6 +89,8 @@ pub struct Cpu {
     _dump_flag: bool,
     unsigned_data_mask: u64,
     pub trace: Vec<RV32IMCycle>,
+    executed_instrs: u64, // “real” RV32IM cycles
+    active_markers: HashMap<u32, ActiveMarker>,
 }
 
 #[derive(Clone)]
@@ -237,10 +250,17 @@ impl Cpu {
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
+            executed_instrs: 0,
+            active_markers: HashMap::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
         cpu
+    }
+    /// trap wrapper for cycle tracking tool
+    #[inline(always)]
+    pub fn raise_trap(&mut self, trap: Trap, faulting_pc: u64) {
+        let _ = self.handle_trap(trap, faulting_pc, false);
     }
 
     /// Updates Program Counter content
@@ -324,6 +344,11 @@ impl Cpu {
             .ok()
             .unwrap();
         instr.trace(self);
+
+        // check if current instruction is real or not for cycle profiling
+        if instr.is_real() {
+            self.executed_instrs += 1;
+        }
         self.x[0] = 0; // hardwired zero
 
         Ok(())
@@ -442,6 +467,31 @@ impl Cpu {
     }
 
     fn handle_trap(&mut self, trap: Trap, instruction_address: u64, is_interrupt: bool) -> bool {
+        // non-interrupt case is an ECALL
+        if !is_interrupt
+            && matches!(
+                trap.trap_type,
+                TrapType::EnvironmentCallFromUMode
+                    | TrapType::EnvironmentCallFromSMode
+                    | TrapType::EnvironmentCallFromMMode
+            )
+        {
+            let call_id = self.x[10] as u32; // a0
+            if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
+                let marker_ptr = self.x[11] as u32; // a1
+                let event_type = self.x[12] as u32; // a2
+
+                // Read / update the per-label counters.
+                //
+                // Any fault raised while touching guest memory (e.g. a bad
+                // string pointer) is swallowed here and will manifest as the
+                // usual access-fault on the *next* instruction fetch.
+                let _ = self.handle_jolt_cycle_marker(marker_ptr, event_type);
+
+                return false; // we don't take the trap
+            }
+        }
+
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
         let cause = get_trap_cause(&trap, &self.xlen);
 
@@ -1385,6 +1435,83 @@ impl Cpu {
     /// Returns mutable `Mmu`
     pub fn get_mut_mmu(&mut self) -> &mut Mmu {
         &mut self.mmu
+    }
+
+    fn handle_jolt_cycle_marker(&mut self, ptr: u32, event: u32) -> Result<(), Trap> {
+        match event {
+            JOLT_CYCLE_MARKER_START => {
+                let label = self.read_c_string(ptr)?; // guest NUL-string
+
+                // Check if there's already an active marker with the same label
+                let duplicate = self
+                    .active_markers
+                    .values()
+                    .any(|marker| marker.label == label);
+                if duplicate {
+                    println!("Warning: Marker with label '{}' is already active", &label);
+                }
+
+                self.active_markers.insert(
+                    ptr,
+                    ActiveMarker {
+                        label,
+                        start_instrs: self.executed_instrs,
+                        start_trace_len: self.trace.len(),
+                    },
+                );
+            }
+
+            JOLT_CYCLE_MARKER_END => {
+                if let Some(mark) = self.active_markers.remove(&ptr) {
+                    let real = self.executed_instrs - mark.start_instrs;
+                    let virt = self.trace.len() - mark.start_trace_len;
+                    println!(
+                        "\"{}\": {} RV32IM cycles, {} virtual cycles",
+                        mark.label, real, virt
+                    );
+                } else {
+                    println!(
+                        "Warning: Attempt to end a marker (ptr: 0x{:x}) that was never started",
+                        ptr
+                    );
+                }
+            }
+            _ => {
+                panic!("Unexpected event: event must match either start or end marker.")
+            }
+        }
+        Ok(())
+    }
+
+    /// Read a NUL-terminated guest string from memory.
+    fn read_c_string(&mut self, mut addr: u32) -> Result<String, Trap> {
+        let mut bytes = Vec::new();
+        loop {
+            let (b, _) = self.mmu.load(addr.into())?;
+            if b == 0 {
+                break;
+            }
+            bytes.push(b);
+            addr += 1;
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+impl Drop for Cpu {
+    fn drop(&mut self) {
+        if !self.active_markers.is_empty() {
+            println!(
+                "Warning: Found {} unclosed cycle tracking marker(s):",
+                self.active_markers.len()
+            );
+            for (ptr, marker) in &self.active_markers {
+                println!(
+                    "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
+                    marker.label, ptr, marker.start_instrs
+                );
+            }
+        }
     }
 }
 

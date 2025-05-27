@@ -14,7 +14,7 @@ use build_wasm::{build_wasm, modify_cargo_toml};
 use jolt_core::host::toolchain;
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = version(), about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -36,6 +36,17 @@ enum Command {
     UninstallToolchain,
     /// Handles preprocessing and generates WASM compatible files
     BuildWasm,
+}
+
+fn version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("GIT_SHORT_HASH"),
+        " ",
+        env!("GIT_DATE"),
+        ")"
+    )
 }
 
 fn main() {
@@ -188,15 +199,15 @@ lto = "fat"
 [dependencies]
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
-ark-serialize = "0.4.2"
+ark-serialize = "0.5.0"
 
 [features]
 icicle = ["jolt-sdk/icicle"]
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {

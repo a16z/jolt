@@ -100,6 +100,7 @@ where
             flag_claims,
         };
 
+        // TODO(moodlezoup): Openings
         let (booleanity_sumcheck, _, _, ra_claims) =
             prove_ra_booleanity::<F, ProofTranscript>(trace, eq_r_cycle.clone(), transcript);
         let booleanity_proof = BooleanityProof {
@@ -107,6 +108,7 @@ where
             ra_claims,
         };
 
+        // TODO(moodlezoup): Openings
         let (hamming_weight_sumcheck, _, ra_claims) =
             prove_ra_hamming_weight::<F, ProofTranscript>(trace, eq_r_cycle, transcript);
         let hamming_weight_proof = HammingWeightProof {
@@ -192,7 +194,8 @@ where
                 + z_hamming_weight * self.hamming_weight_proof.ra_claims[1]
                 + z_hamming_weight_squared * self.hamming_weight_proof.ra_claims[2]
                 + z_hamming_weight_cubed * self.hamming_weight_proof.ra_claims[3],
-            sumcheck_claim
+            sumcheck_claim,
+            "Hamming weight sumcheck failed"
         );
 
         Ok(())

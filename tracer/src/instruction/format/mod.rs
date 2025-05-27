@@ -11,7 +11,8 @@ pub mod format_r;
 pub mod format_s;
 pub mod format_u;
 pub mod format_virtual_halfword_alignment;
-pub mod format_virtual_right_shift;
+pub mod format_virtual_right_shift_i;
+pub mod format_virtual_right_shift_r;
 
 #[derive(Default)]
 pub struct NormalizedOperands {
