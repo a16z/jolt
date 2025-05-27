@@ -269,17 +269,11 @@ impl Mmu {
             assert!(
                 ea <= layout.termination,
                 "Stack underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
-                verb = verb,
-                ea = ea,
-                layout = layout,
             );
             // bounds-check against the bottom of the stack
             assert!(
                 ea >= layout.stack_end,
                 "Stack overflow: Attempted to {verb} 0x{ea:X}. Stack too small.\n{layout:#?}",
-                verb = verb,
-                ea = ea,
-                layout = layout,
             );
             // then check for device I/O pages
             let ok = if is_write {
@@ -296,18 +290,14 @@ impl Mmu {
             };
             assert!(
                 ok,
-                "Illegal device {action}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
-                action = action.to_lowercase(),
-                ea = ea,
-                layout = layout,
+                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
+                action.to_lowercase(),
             );
         } else {
             // 2) above DRAM_BASE ⇒ heap
             assert!(
                 self.memory.validate_address(ea),
                 "Heap overflow: Attempted to {verb} 0x{ea:X}",
-                verb = verb,
-                ea = ea,
             );
         }
     }
