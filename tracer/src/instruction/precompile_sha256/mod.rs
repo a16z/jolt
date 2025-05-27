@@ -83,9 +83,12 @@ impl Sha256SequenceBuilder {
     fn build(mut self) -> Vec<RV32IMInstruction> {
         if let Some(rs2) = self.operand_rs2 {
             // Load A..H only if instruction is not Imm - second operand was given
-            (0..8).for_each(|i| self.lw(rs2, i, self.vr[i as usize]));
+            // Note, A..D is loaded into 0..=3, and E..H into 28..=31
+            (0..4).for_each(|i| self.lw(rs2, i, self.vr[i as usize]));
+            (0..4).for_each(|i| self.lw(rs2, i + 4, self.vr[(i + 28) as usize]));
         }
-        (8..24).for_each(|i| self.lw(self.operand_rs1, i, self.vr[i as usize]));
+        // Load input words into registers 8..23
+        (0..16).for_each(|i| self.lw(self.operand_rs1, i, self.vr[(i + 8) as usize]));
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
@@ -184,7 +187,9 @@ impl Sha256SequenceBuilder {
                 || (self.rid == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
                 || (self.rid == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
         {
-            return Imm(BLOCK[(shift as usize - 'A' as usize) % 8]);
+            return Imm(
+                BLOCK[((shift as usize - 'A' as usize) as i32 - self.rid).rem_euclid(8) as usize]
+            );
         }
         Reg(self.vr(shift))
     }
@@ -192,20 +197,21 @@ impl Sha256SequenceBuilder {
     fn vr(&self, shift: char) -> usize {
         assert!(('A'..='H').contains(&shift));
         let shift = shift as i32 - 'A' as i32;
-        if self.rid == 0 && shift >= 4 {
-            // in the first round E, F, G, H are stored in the end of the registers
-            return 28 + shift as usize;
+        // If IV was provided (rs2.is_some()), they are stored in the end registers
+        if self.operand_rs2.is_some()
+            && (self.rid == 0 && shift >= 4
+                || self.rid == 1 && shift >= 5
+                || self.rid == 2 && shift >= 6
+                || self.rid == 3 && shift >= 7)
+        {
+            return self.vr[24 - self.rid as usize + shift as usize];
         }
-        let mut reg = (-self.rid + shift) % 8;
-        if reg < 0 {
-            reg += 8;
-        }
-        self.vr[reg as usize]
+        self.vr[(-self.rid + shift).rem_euclid(8) as usize]
     }
 
     /// Register number containing W_(rid+shift)
     fn w(&self, shift: i32) -> usize {
-        self.vr[((self.rid + shift) % 16 + 8) as usize]
+        self.vr[((self.rid + shift).rem_euclid(16) + 8) as usize]
     }
 
     fn update_w(&mut self, ss: [usize; 2]) {
@@ -231,7 +237,7 @@ impl Sha256SequenceBuilder {
     /// ss is scratch space
     fn sha_ch(&mut self, rs1: Input, rs2: Input, rs3: Input, rd: usize, ss: usize) -> Input {
         let e_and_f = self.and(rs1, rs2, ss);
-        let neg_e = self.xor(rs1, Imm(0xffff_ffff), rd);
+        let neg_e = self.xor(rs1, Imm(0xffff_ffff_ffff_ffff), rd);
         let neg_e_and_g = self.and(neg_e, rs3, rd);
         self.xor(e_and_f, neg_e_and_g, rd)
     }
@@ -300,7 +306,11 @@ impl Sha256SequenceBuilder {
     fn lw(&mut self, rs1: usize, imm: i64, rd: usize) {
         let lw = LW {
             address: self.address,
-            operands: FormatLoad { rd, rs1, imm: imm * 4 },
+            operands: FormatLoad {
+                rd,
+                rs1,
+                imm: imm * 4,
+            },
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(lw.into());
@@ -309,7 +319,11 @@ impl Sha256SequenceBuilder {
     fn sw(&mut self, rs1: usize, rs2: usize, imm: i64) {
         let sw = SW {
             address: self.address,
-            operands: FormatS { rs1, rs2, imm: imm * 4 },
+            operands: FormatS {
+                rs1,
+                rs2,
+                imm: imm * 4,
+            },
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(sw.into());
@@ -337,7 +351,7 @@ impl Sha256SequenceBuilder {
                 Reg(rd)
             }
             (Imm(_), Reg(_)) => self.add(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1.wrapping_add(imm2)),
+            (Imm(imm1), Imm(imm2)) => Imm((imm1 as u32).wrapping_add(imm2 as u32) as u64),
         }
     }
 
@@ -408,20 +422,15 @@ impl Sha256SequenceBuilder {
                 self.sequence.push(rotri.into());
                 Reg(rd)
             }
-            Imm(val) => Imm(val.rotate_right(imm as u32)),
+            Imm(val) => Imm((val as u32).rotate_right(imm as u32) as u64),
         }
     }
 
     fn rotri_xor_rotri(&mut self, rs1: Input, imm1: u32, imm2: u32, rd: usize, ss: usize) -> Input {
-        match rs1 {
-            Reg(_) => {
-                // TODO: Implement actual ROTRI_XOR_ROTRI instruction when available
-                let rotri = self.rotri(rs1, imm1 as u64, ss);
-                let rotri2 = self.rotri(rs1, imm2 as u64, rd);
-                self.xor(rotri, rotri2, rd)
-            }
-            Imm(val) => Imm(val.rotate_right(imm1) ^ val.rotate_right(imm2)),
-        }
+        // TODO: Implement actual ROTRI_XOR_ROTRI instruction when available
+        let rotri = self.rotri(rs1, imm1 as u64, ss);
+        let rotri2 = self.rotri(rs1, imm2 as u64, rd);
+        self.xor(rotri, rotri2, rd)
     }
 }
 
