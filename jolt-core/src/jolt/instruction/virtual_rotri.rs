@@ -1,7 +1,6 @@
 use tracer::instruction::{virtual_rotri::VirtualROTRI, RISCVCycle};
 
 use crate::jolt::lookup_table::{virtual_rotr::VirtualRotrTable, LookupTables};
-use crate::subprotocols::sparse_dense_shout::LookupBits;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
@@ -34,7 +33,13 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRI>
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        (x as u32).rotate_right((y as u32).trailing_zeros()) as u64
+        match WORD_SIZE {
+            #[cfg(test)]
+            8 => (x as u8).rotate_right((y as u8).trailing_zeros()) as u64,
+            32 => (x as u32).rotate_right((y as u32).trailing_zeros()) as u64,
+            64 => x.rotate_right((y as u64).trailing_zeros()),
+            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+        }
     }
 }
 

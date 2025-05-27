@@ -134,7 +134,7 @@ pub unsafe fn sha256_compression(input: *const u32, state: *const u32) {
 }
 
 #[cfg(feature = "host")]
-pub unsafe fn sha256_compression_initial(input: *const u32, _output: *const u32) {
+pub unsafe fn sha256_compression_initial(input: *const u32) {
     // rs1 points to [input: 16 words][output: 8 words] = 24 words total
     // rs2 is not used (immediate version uses built-in initial values)
 
@@ -162,4 +162,3 @@ pub fn sha256_compress(input: &[u32; 16], state: &[u32; 8]) -> [u32; 8] {
 pub fn sha256_compress_initial(input: &[u32; 16]) -> [u32; 8] {
     tracer::instruction::precompile_sha256::execute_sha256_compression_initial(*input)
 }
-
