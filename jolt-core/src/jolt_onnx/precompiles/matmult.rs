@@ -93,7 +93,17 @@ where
 
     #[tracing::instrument(skip_all)]
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
-        todo!()
+        let b_size = self.a.len() / 2;
+        let mut uni_poly_evals = vec![F::zero(); 2];
+        for b in 0..b_size {
+            uni_poly_evals[0] += self.a[b] * self.b[b];
+
+            // eval 2: bound_func is -A(low) + 2*A(high)
+            let poly_A_bound_point = self.a[b + b_size] + self.a[b + b_size] - self.a[b];
+            let poly_B_bound_point = self.b[b + b_size] + self.b[b + b_size] - self.b[b];
+            uni_poly_evals[2] += poly_A_bound_point * poly_B_bound_point;
+        }
+        uni_poly_evals
     }
 
     #[tracing::instrument(skip_all)]
