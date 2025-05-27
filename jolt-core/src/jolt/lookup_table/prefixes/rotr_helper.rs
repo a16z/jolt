@@ -4,7 +4,6 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum RotrHelperPrefix<const WORD_SIZE: usize> {}
 
-// TODO: (0xAndoroid) - This can be optimized quite a bit
 impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RotrHelperPrefix<WORD_SIZE> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],

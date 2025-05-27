@@ -161,6 +161,5 @@ pub fn sha256_compress(input: &[u32; 16], state: &[u32; 8]) -> [u32; 8] {
 #[cfg(feature = "host")]
 pub fn sha256_compress_initial(input: &[u32; 16]) -> [u32; 8] {
     tracer::instruction::precompile_sha256::execute_sha256_compression_initial(*input)
-    // [0; 8]
 }
 

@@ -153,14 +153,6 @@ impl LookupBits {
     pub fn leading_ones(&self) -> u32 {
         self.bits.unbounded_shl(64 - self.len as u32).leading_ones()
     }
-
-    pub fn count_zeros(&self) -> u32 {
-        self.bits.count_zeros()
-    }
-    
-    pub fn count_ones(&self) -> u32 {
-        self.bits.count_ones()
-    }
 }
 
 impl Display for LookupBits {
