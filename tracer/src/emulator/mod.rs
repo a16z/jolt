@@ -102,7 +102,7 @@ impl Emulator {
     pub fn run_test(&mut self) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
-        println!("This elf file seems riscv-tests elf file. Running in test mode.");
+        println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
             self.put_bytes_to_terminal(disas.as_bytes());
@@ -162,7 +162,6 @@ impl Emulator {
         }
 
         let header = analyzer.read_header();
-        //let program_headers = analyzer._read_program_headers(&header);
         let section_headers = analyzer.read_section_headers(&header);
 
         let mut program_data_section_headers = vec![];

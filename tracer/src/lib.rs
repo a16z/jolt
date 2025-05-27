@@ -21,24 +21,23 @@ mod decode;
 mod emulator;
 mod trace;
 
+use crate::decode::decode_raw;
+use common::rv_trace::MemoryConfig;
 pub use common::rv_trace::{
     ELFInstruction, JoltDevice, MemoryState, RVTraceRow, RegisterState, RV32IM,
 };
-
-use crate::decode::decode_raw;
 
 #[tracing::instrument(skip_all)]
 pub fn trace(
     elf_contents: Vec<u8>,
     inputs: &[u8],
-    input_size: u64,
-    output_size: u64,
+    memory_config: &MemoryConfig,
 ) -> (Vec<RVTraceRow>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 
-    let mut jolt_device = JoltDevice::new(input_size, output_size);
+    let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
 

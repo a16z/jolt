@@ -109,12 +109,14 @@ pub enum PrivilegeMode {
     Machine,
 }
 
+#[derive(Debug)]
 pub struct Trap {
     pub trap_type: TrapType,
     pub value: u64, // Trap type specific value
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub enum TrapType {
     InstructionAddressMisaligned,
     InstructionAccessFault,
@@ -2919,7 +2921,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         operation: |cpu, word, _address| {
             let f = parse_format_i(word);
             let tmp = cpu.sign_extend(cpu.pc as i64);
-            cpu.pc = (cpu.x[f.rs1] as u64).wrapping_add(f.imm as u64);
+            cpu.pc = (cpu.x[f.rs1] as u64).wrapping_add(f.imm as u64) & !1;
             cpu.x[f.rd] = tmp;
             Ok(())
         },
@@ -3528,7 +3530,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "SRA",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
-            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1].wrapping_shr(cpu.x[f.rs2] as u32 & 0b11111));
+            cpu.x[f.rd] = cpu.sign_extend(cpu.x[f.rs1] >> (cpu.x[f.rs2] as u32 & 0b11111));
             Ok(())
         },
         disassemble: dump_format_r,
@@ -3570,7 +3572,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "SRAW",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
-            cpu.x[f.rd] = (cpu.x[f.rs1] as i32).wrapping_shr(cpu.x[f.rs2] as u32) as i64;
+            cpu.x[f.rd] = (cpu.x[f.rs1] as i32 >> (cpu.x[f.rs2] as u32)) as i64;
             Ok(())
         },
         disassemble: dump_format_r,
