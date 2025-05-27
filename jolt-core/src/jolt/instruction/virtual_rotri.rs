@@ -34,38 +34,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRI>
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-
-        let mut x_bits = LookupBits::new(x as u64, WORD_SIZE);
-        let mut y_bits = LookupBits::new(y as u64, WORD_SIZE);
-
-        // First collect all bits to determine rotation amount
-        let mut x_arr = [0u8; 32]; // Max WORD_SIZE
-        let mut y_arr = [0u8; 32];
-        for i in 0..WORD_SIZE {
-            x_arr[i] = x_bits.pop_msb();
-            y_arr[i] = y_bits.pop_msb();
-        }
-
-        // Count trailing zeros in y (from LSB side)
-        let mut rotation = 0;
-        for i in (0..WORD_SIZE).rev() {
-            if y_arr[i] == 0 {
-                rotation += 1;
-            } else {
-                break;
-            }
-        }
-
-        // Build rotated result bit by bit from MSB
-        let mut entry = 0;
-        for i in 0..WORD_SIZE {
-            entry <<= 1;
-            // For ROTR by k: bit at position i comes from position (i + k) % WORD_SIZE
-            let src_idx = (i + rotation) % WORD_SIZE;
-            entry |= x_arr[src_idx] as u64;
-        }
-
-        entry
+        (x as u32).rotate_right((y as u32).trailing_zeros()) as u64
     }
 }
 
