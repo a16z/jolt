@@ -214,9 +214,6 @@ mod test {
         fn combine_lookups(
             (instr, inputs) in arb_instruction_and_input::<ParamSet, RefField>(),
         ) {
-            // NOTE: Omitting this causes index OOB errors when converting from `uXX`
-            crate::util::initialize_fields();
-
             prop_assert_eq!(
                 instr.test_combine_lookups::<_, TestField>(&inputs),
                 instr.reference_combine_lookups(&inputs),

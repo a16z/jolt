@@ -175,9 +175,6 @@ mod test {
             subtable in arb_subtable::<RefField, TestField, ParamSet>(),
             inputs in vec(arb_field_elem::<RefField>(), ParamSet::LOG_M),
         ) {
-            // NOTE: Omitting this causes index OOB errors when converting from `uXX`
-            crate::util::initialize_fields();
-
             prop_assert_eq!(
                 subtable.test_evaluate_mle(&inputs),
                 subtable.reference_evaluate_mle(&inputs),
