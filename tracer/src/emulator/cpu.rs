@@ -3572,7 +3572,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "SRAW",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
-            cpu.x[f.rd] = (cpu.x[f.rs1] as i32 >> (cpu.x[f.rs2] as u32)) as i64;
+            cpu.x[f.rd] = (cpu.x[f.rs1] as i32 >> (cpu.x[f.rs2] as u32 & 0b11111)) as i64;
             Ok(())
         },
         disassemble: dump_format_r,
