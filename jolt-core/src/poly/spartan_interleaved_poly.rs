@@ -38,11 +38,10 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
     /// precomputation, and can be computed on the fly in streaming round)
     pub(crate) ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<i128>>>,
 
+    /// The bound coefficients for the Az, Bz, Cz polynomials. Will be populated in the streaming round
     pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
 
     binding_scratch_space: Vec<SparseCoefficient<F>>,
-
-    pub(crate) dense_len: usize,
 }
 
 impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
@@ -440,7 +439,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 ab_unbound_coeffs_shards: final_ab_unbound_coeffs_shards,
                 bound_coeffs: vec![],
                 binding_scratch_space: vec![],
-                dense_len: num_steps * padded_num_constraints,
             },
         )
     }
@@ -514,7 +512,14 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let collected_chunk_outputs: Vec<StreamingTaskOutput<F>> = shards_to_process // Use the taken vec
             .into_par_iter() // Consumes and gives ownership to closures
             .map(|shard_data: Vec<SparseCoefficient<i128>>| { // shard_data is now owned Vec
-                let mut task_bound_coeffs = Vec::new();
+                // Estimate the number of bound coefficients to preallocate
+                // TODO: have a precise estimate. This is a (somewhat conservative) guess based on real workload (i.e. SHA-2 chain)
+                // Quick math: the shard data has Az + Bz unbound coeffs. Worst case is that each such coeff
+                // is in its own `Y_SVO_SPACE_SIZE`-sized block, thus giving a 1-1 correspondence between
+                // unbound and bound coeffs for Az and Bz. We also need to acount for Cz.
+                // So the most conservative estimate is `3 * shard_data.len() / 2`, but in practice we see far fewer bound coeffs.
+                let estimated_num_bound_coeffs = shard_data.len() / 2;
+                let mut task_bound_coeffs = Vec::with_capacity(estimated_num_bound_coeffs);
                 let mut task_sum_contrib_0 = F::zero();
                 let mut task_sum_contrib_infty = F::zero();
 
@@ -773,7 +778,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             });
 
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
-        self.dense_len = eq_poly.len();
     }
 
     /// This function computes the polynomial for each of the remaining rounds, using the
@@ -1000,7 +1004,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             });
 
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
-        self.dense_len /= 2;
     }
 
     /// Computes the number of non-zero coefficients that would result from
