@@ -36,8 +36,9 @@ impl QuantizedLiteTensor {
         }
     }
 
-    /// Matrix multiplication of two quantized tensors
-    pub fn matmul(&self, other: &QuantizedLiteTensor) -> (Vec<i32>, Vec<usize>) {
+    /// Matrix multiplication of two quantized tensors.
+    /// Implicitly transposes the rhs matrix.
+    pub fn matmul_rhs_transposed(&self, other: &QuantizedLiteTensor) -> (Vec<i32>, Vec<usize>) {
         // Ensure the inner dimensions match for matrix multiplication (B is transposed)
         assert_eq!(
             self.shape[1], other.shape[1],
@@ -60,14 +61,36 @@ impl QuantizedLiteTensor {
             for j in 0..n {
                 let mut acc = 0i32;
                 for t in 0..k {
-                    let a_val = self.data[i * k + t] as i32 - a_zp;
-                    let b_val = other.data[j * k + t] as i32 - b_zp;
+                    let a_val = self.data[i * k + t] as i32;
+                    let b_val = other.data[j * k + t] as i32;
                     acc += a_val * b_val;
                 }
                 result[i * n + j] = acc;
             }
         }
         (result, vec![m, n])
+    }
+
+    /// General matrix multiplication algorithm
+    pub fn matmult(&self, rhs: &Self) -> (Vec<i32>, Vec<usize>) {
+        assert_eq!(self.shape[1], rhs.shape[0]);
+        let m = self.shape[0];
+        let n = rhs.shape[1];
+        let k = self.shape[1];
+        let mut c = vec![0i32; m * n];
+        for i in 0..m {
+            for j in 0..n {
+                let mut dot_product = 0i32;
+                for t in 0..k {
+                    let a_val = self.data[i * k + t] as i32;
+                    let b_val = rhs.data[t * n + j] as i32;
+                    dot_product += a_val * b_val;
+                }
+                c[i * n + j] = dot_product;
+            }
+        }
+        let c_shape = vec![m, n];
+        (c, c_shape)
     }
 }
 
