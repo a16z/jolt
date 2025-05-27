@@ -431,7 +431,11 @@ enum Input {
     Reg(usize),
 }
 
-fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32; 8] {
+pub fn execute_sha256_compression_initial(input: [u32; 16]) -> [u32; 8] {
+    execute_sha256_compression(BLOCK.map(|x| x as u32), input)
+}
+
+pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32; 8] {
     let mut a = initial_state[0];
     let mut b = initial_state[1];
     let mut c = initial_state[2];

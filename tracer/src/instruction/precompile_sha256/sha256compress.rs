@@ -54,11 +54,10 @@ impl SHA256COMPRESS {
         });
         let result = execute_sha256_compression(initial_state, input);
         result.into_iter().enumerate().for_each(|(i, r)| {
-            match cpu
-                .mmu
-                // Write after input data
-                .store_word(cpu.x[self.operands.rs2].wrapping_add(((i + 8) * 4) as i64) as u64, r)
-            {
+            match cpu.mmu.store_word(
+                cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                r,
+            ) {
                 Ok(_) => {
                     // *ram_access = memory_write;
                 }

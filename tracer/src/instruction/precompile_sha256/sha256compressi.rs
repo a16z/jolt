@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
 use crate::emulator::cpu::Cpu;
-use crate::instruction::format::format_r::FormatR;
+use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::InstructionFormat;
-use crate::instruction::precompile_sha256::{execute_sha256_compression, Sha256SequenceBuilder, BLOCK, NEEDED_REGISTERS};
+use crate::instruction::precompile_sha256::{
+    execute_sha256_compression_initial, Sha256SequenceBuilder, NEEDED_REGISTERS,
+};
 use crate::instruction::{
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
@@ -14,18 +16,13 @@ declare_riscv_instr!(
     name   = SHA256COMPRESSI,
     mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
     match  = 0x0000100b,  // funct7=0x00, funct3=0x1, opcode=0x0B (custom-0)
-    format = FormatR,
+    format = FormatI,
     ram    = ()
 );
 
 impl SHA256COMPRESSI {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <SHA256COMPRESSI as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SHA256COMPRESSI as RISCVInstruction>::RAMAccess) {
         let mut input = [0u32; 16];
-        let mut initial_state = [0u32; 8];
         (0..16).for_each(|i| {
             input[i] = match cpu
                 .mmu
@@ -38,15 +35,12 @@ impl SHA256COMPRESSI {
                 Err(_) => panic!("MMU load error"),
             };
         });
-        (0..8).for_each(|i| {
-            initial_state[i] = BLOCK[i] as u32;
-        });
-        let result = execute_sha256_compression(initial_state, input);
+        let result = execute_sha256_compression_initial(input);
         result.into_iter().enumerate().for_each(|(i, r)| {
-            match cpu
-                .mmu
-                .store_word(cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64, r)
-            {
+            match cpu.mmu.store_word(
+                cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                r,
+            ) {
                 Ok(_) => {
                     // *ram_access = memory_write;
                 }
