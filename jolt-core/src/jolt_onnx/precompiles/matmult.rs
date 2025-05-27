@@ -18,6 +18,7 @@ where
 {
     a: DensePolynomial<F>,
     b: DensePolynomial<F>,
+    num_vars: usize,
     input_claim: F,
     final_claims: (F, F),
 }
@@ -47,13 +48,13 @@ where
         let mut A_rx = vec![F::zero(); k];
         for i in 0..m {
             for j in 0..k {
-                A_rx[j] += F::from_u8(a.data[i * k + k] as u8) * eq_rx[i];
+                A_rx[j] += F::from_u8(a.data[i * k + j] as u8) * eq_rx[i];
             }
         }
         let mut B_rx = vec![F::zero(); k];
         for i in 0..n {
             for j in 0..k {
-                B_rx[j] += F::from_u8(b.data[i * k + k] as u8) * eq_ry[i];
+                B_rx[j] += F::from_u8(b.data[i * k + j] as u8) * eq_ry[i];
             }
         }
         A_rx.resize(k.next_power_of_two(), F::zero());
@@ -63,7 +64,9 @@ where
         c.resize(c_len.next_power_of_two(), 0);
         let c_poly = DensePolynomial::new(c.iter().map(|v| F::from_u32(*v as u32)).collect());
         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
+        let num_vars = A_rx.len().log_2();
         Self {
+            num_vars,
             a: DensePolynomial::new(A_rx),
             b: DensePolynomial::new(B_rx),
             input_claim,
@@ -84,7 +87,7 @@ where
     }
 
     fn num_rounds(&self) -> usize {
-        self.a.num_vars
+        self.num_vars
     }
 
     fn input_claim(&self) -> F {
@@ -97,11 +100,9 @@ where
         let mut uni_poly_evals = vec![F::zero(); 2];
         for b in 0..b_size {
             uni_poly_evals[0] += self.a[b] * self.b[b];
-
-            // eval 2: bound_func is -A(low) + 2*A(high)
             let poly_A_bound_point = self.a[b + b_size] + self.a[b + b_size] - self.a[b];
             let poly_B_bound_point = self.b[b + b_size] + self.b[b + b_size] - self.b[b];
-            uni_poly_evals[2] += poly_A_bound_point * poly_B_bound_point;
+            uni_poly_evals[1] += poly_A_bound_point * poly_B_bound_point;
         }
         uni_poly_evals
     }
@@ -128,7 +129,12 @@ mod tests {
     use crate::jolt_onnx;
     use crate::jolt_onnx::common::onnx_trace::Operator;
     use crate::jolt_onnx::onnx_host::ONNXProgram;
+    use crate::jolt_onnx::precompiles::matmult::MatMultPrecompile;
+    use crate::jolt_onnx::precompiles::sumcheck_engine::BatchedSumcheck;
     use crate::jolt_onnx::utils::random_floatvec;
+    use crate::utils::math::Math;
+    use crate::utils::transcript::{KeccakTranscript, Transcript};
+    use ark_bn254::Fr;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -154,8 +160,19 @@ mod tests {
             (step_inputs[0].clone(), step_inputs[1].clone())
         };
         println!("A: {A:#?}, B: {B:#?}");
-        let (C, shape) = A.matmul_rhs_transposed(&B);
-        println!("C: {C:#?}");
+        let mut transcript = KeccakTranscript::new(b"test");
+        let mut sc_inst: MatMultPrecompile<Fr> = MatMultPrecompile::new(&A, &B, &mut transcript);
+        let (proof, _rsc) = BatchedSumcheck::prove(vec![&mut sc_inst], &mut transcript);
+
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        let m = A.shape[0];
+        // rhs is transposed
+        let n = B.shape[0];
+        let log_m = m.next_power_of_two().log_2();
+        let log_n = n.next_power_of_two().log_2();
+        let rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
+        let ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        let _ = BatchedSumcheck::verify(&proof, vec![&mut sc_inst], &mut vtranscript).unwrap();
     }
 
     #[test]
