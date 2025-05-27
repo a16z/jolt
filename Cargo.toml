@@ -25,6 +25,7 @@ members = [
     "jolt-core",
     "tracer",
     "common",
+    "crates/dory",
     "jolt-sdk",
     "jolt-sdk/macros",
     "examples/collatz",
