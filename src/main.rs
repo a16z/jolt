@@ -205,9 +205,9 @@ ark-serialize = "0.5.0"
 icicle = ["jolt-sdk/icicle"]
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ff = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
+ark-ec = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
+ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {

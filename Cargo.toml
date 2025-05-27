@@ -97,9 +97,10 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-bn254 = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
+ark-ff = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
+ark-ec = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
+ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "yuvals-mont-mult" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
