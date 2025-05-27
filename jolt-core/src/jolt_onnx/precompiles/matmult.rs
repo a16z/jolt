@@ -1,5 +1,7 @@
 //! This module provides a matmult sum-check precompile.
 
+use itertools::Itertools;
+
 use crate::{
     field::JoltField,
     jolt_onnx::tracer::tensor::QuantizedLiteTensor,
@@ -51,24 +53,29 @@ where
                 A_rx[j] += F::from_u8(a.data[i * k + j] as u8) * eq_rx[i];
             }
         }
-        let mut B_rx = vec![F::zero(); k];
+        let mut B_ry = vec![F::zero(); k];
         for i in 0..n {
             for j in 0..k {
-                B_rx[j] += F::from_u8(b.data[i * k + j] as u8) * eq_ry[i];
+                B_ry[j] += F::from_u8(b.data[i * k + j] as u8) * eq_ry[i];
             }
         }
         A_rx.resize(k.next_power_of_two(), F::zero());
-        B_rx.resize(k.next_power_of_two(), F::zero());
+        B_ry.resize(k.next_power_of_two(), F::zero());
         let (mut c, _) = a.matmul_rhs_transposed(b);
         let c_len = c.len();
         c.resize(c_len.next_power_of_two(), 0);
         let c_poly = DensePolynomial::new(c.iter().map(|v| F::from_u32(*v as u32)).collect());
         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
         let num_vars = A_rx.len().log_2();
+        #[cfg(test)]
+        {
+            let sum: F = A_rx.iter().zip_eq(B_ry.iter()).map(|(a, b)| *a * b).sum();
+            assert_eq!(sum, input_claim)
+        }
         Self {
             num_vars,
             a: DensePolynomial::new(A_rx),
-            b: DensePolynomial::new(B_rx),
+            b: DensePolynomial::new(B_ry),
             input_claim,
             // we will populate this later
             final_claims: (F::zero(), F::zero()),
