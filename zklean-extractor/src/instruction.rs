@@ -110,14 +110,12 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
 
 pub struct ZkLeanInstructions<J> {
     instructions: Vec<ZkLeanInstruction<J>>,
-    phantom: std::marker::PhantomData<J>,
 }
 
 impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     pub fn extract() -> Self {
         Self {
             instructions: ZkLeanInstruction::<J>::iter().collect(),
-            phantom: std::marker::PhantomData,
         }
     }
 

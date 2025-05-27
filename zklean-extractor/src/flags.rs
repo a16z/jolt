@@ -9,7 +9,6 @@ use crate::{r1cs::input_to_field_name, util::indent};
 pub struct ZkLeanInstructionFlags<J> {
     r1cs_input: JoltR1CSInputs,
     instruction: ZkLeanInstruction<J>,
-    phantom: std::marker::PhantomData<J>,
 }
 
 impl<J: JoltParameterSet> ZkLeanInstructionFlags<J> {
@@ -19,7 +18,6 @@ impl<J: JoltParameterSet> ZkLeanInstructionFlags<J> {
         Self {
             r1cs_input: JoltR1CSInputs::InstructionFlags(opcode),
             instruction,
-            phantom: std::marker::PhantomData,
         }
     }
 
