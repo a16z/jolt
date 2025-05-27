@@ -127,12 +127,8 @@ pub enum PrefixCheckpoint<F> {
     Default(PrefixEval<F>),
     Rotr {
         prod_one_plus_y: F,
-        sum_x_y_prod: F,
+        first_sum: F,
         second_sum: F,
-    },
-    RotrHelper {
-        prod_one_minus_y: F,
-        sum_contributions: F,
     },
     None,
 }
@@ -177,13 +173,10 @@ impl<F: JoltField> Into<PrefixEval<F>> for PrefixCheckpoint<F> {
         match self {
             PrefixCheckpoint::Default(e) => e,
             PrefixCheckpoint::Rotr {
-                sum_x_y_prod,
+                first_sum,
                 second_sum,
                 ..
-            } => PrefixEval(sum_x_y_prod + second_sum),
-            PrefixCheckpoint::RotrHelper {
-                sum_contributions, ..
-            } => PrefixEval(sum_contributions),
+            } => PrefixEval(first_sum + second_sum),
             PrefixCheckpoint::None => panic!("invalid prefix checkpoint"),
         }
     }

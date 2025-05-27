@@ -12,13 +12,12 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RotrPrefix<W
         mut b: LookupBits,
         j: usize,
     ) -> F {
-        let (prod_one_plus_y, mut sum_x_y_prod, mut second_sum) = match checkpoints[Prefixes::Rotr]
-        {
+        let (prod_one_plus_y, mut first_sum, mut second_sum) = match checkpoints[Prefixes::Rotr] {
             PrefixCheckpoint::Rotr {
                 prod_one_plus_y,
-                sum_x_y_prod,
+                first_sum,
                 second_sum,
-            } => (prod_one_plus_y, sum_x_y_prod, second_sum),
+            } => (prod_one_plus_y, first_sum, second_sum),
             _ => (F::one(), F::zero(), F::zero()),
         };
 
@@ -31,54 +30,35 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RotrPrefix<W
             (x, y_msb)
         };
 
-        sum_x_y_prod += x * y * prod_one_plus_y;
-        second_sum *= F::one() + y;
-        let power_2 = if j / 2 == 0 {
-            F::one()
-        } else {
-            F::from_u32(1 << ((j / 2) - 1))
-        };
-        second_sum += x * (F::one() - y) * power_2;
+        first_sum *= F::one() + y;
+        first_sum += x * y;
+        second_sum +=
+            x * (F::one() - y) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - j / 2 - 1));
 
-        let (mut x, mut y) = b.uninterleave();
-        let mut prod_one_plus_y_bin = 1;
-        debug_assert_eq!(x.len(), y.len());
-        while x.len() > 0 {
-            let x = x.pop_msb() as u64;
-            let y = y.pop_msb() as u64;
-            sum_x_y_prod += F::from_u64(x * y * prod_one_plus_y_bin) * prod_one_plus_y;
-            prod_one_plus_y_bin *= 1 + y as u64;
-        }
+        // Do the remaining elements of sum
+        let (x_b, y_b) = b.uninterleave();
+        debug_assert_eq!(x_b.len(), y_b.len());
+        let len = x_b.len();
+        // We can remove trailing zeroes of y since they are useless in the formula
+        let trailing_zeroes = y_b.trailing_zeros();
+        let (x, y) = (
+            u32::from(x_b) >> trailing_zeroes,
+            u32::from(y_b) >> trailing_zeroes,
+        );
+        let xy = x & y;
+        // Since we removed all zeroes
+        let remaining_len = len - trailing_zeroes as usize;
+        first_sum *= F::from_u64(1 << remaining_len);
+        first_sum += F::from_u64(xy as u64);
 
-        let (mut x, mut y) = b.uninterleave();
-        // (1 + y_i)
-        // (1 + y_i) * (1 + y_i+1)
-        // (1 + y_i) * (1 + y_i+1) * (1 + y_i+2)
-        // ...
-        let mut one_plus_y = vec![1u64; y.len()];
-        while y.len() > 0 {
-            let i = x.len() - y.len();
-            let y = y.pop_msb() as u64;
-            (i..one_plus_y.len()).for_each(|j| {
-                one_plus_y[j] *= 1 + y;
-            });
-        }
+        // Calculate second sum
+        // remove leading ones of y and the same amount from x
+        let mask = !((1 << remaining_len) - 1);
+        let x = u32::from(x_b) & mask;
+        let remaining_terms = x.unbounded_shl(WORD_SIZE as u32 - trailing_zeroes);
+        second_sum += F::from_u64(remaining_terms as u64);
 
-        if let Some(last) = one_plus_y.last() {
-            second_sum *= F::from_u64(*last);
-        }
-
-        let mut second_sum_bin = 0;
-        let start_len = x.len();
-        while x.len() > 0 {
-            let x_msb = x.pop_msb() as u64;
-            let pow_2 = 1 << (j / 2 + (start_len - x.len()) - 1);
-            second_sum_bin += x_msb * one_plus_y.pop().unwrap() as u64 * pow_2;
-        }
-
-        second_sum += F::from_u64(second_sum_bin);
-
-        sum_x_y_prod + second_sum
+        first_sum + second_sum
     }
 
     fn update_prefix_checkpoint(
@@ -87,26 +67,24 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RotrPrefix<W
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        let (mut prod_one_plus_y, mut sum_x_y_prod, mut second_sum) =
-            match checkpoints[Prefixes::Rotr] {
-                PrefixCheckpoint::Rotr {
-                    prod_one_plus_y,
-                    sum_x_y_prod,
-                    second_sum,
-                } => (prod_one_plus_y, sum_x_y_prod, second_sum),
-                _ => (F::one(), F::zero(), F::zero()),
-            };
-        sum_x_y_prod += r_x * r_y * prod_one_plus_y;
-        let pow_2 = if j / 2 == 0 {
-            F::one()
-        } else {
-            F::from_u32(1 << ((j / 2) - 1))
+        let (mut prod_one_plus_y, mut first_sum, mut second_sum) = match checkpoints[Prefixes::Rotr]
+        {
+            PrefixCheckpoint::Rotr {
+                prod_one_plus_y,
+                first_sum,
+                second_sum,
+            } => (prod_one_plus_y, first_sum, second_sum),
+            _ => (F::one(), F::zero(), F::zero()),
         };
-        second_sum += r_x * (F::one() - r_y) * pow_2;
+
+        first_sum *= F::one() + r_y;
+        first_sum += r_x * r_y;
+        second_sum +=
+            r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - j / 2));
         prod_one_plus_y *= F::one() + r_y;
         PrefixCheckpoint::Rotr {
             prod_one_plus_y,
-            sum_x_y_prod,
+            first_sum,
             second_sum,
         }
     }
