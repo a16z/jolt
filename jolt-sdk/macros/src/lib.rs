@@ -528,7 +528,6 @@ impl MacroBuilder {
                 ProofTranscript,
                 RV32IJoltVM,
                 RV32IJoltProof,
-                BytecodeRow,
                 MemoryConfig,
                 MemoryLayout,
                 tracer,
