@@ -59,7 +59,7 @@ impl Mmu {
     /// * `xlen`
     /// * `terminal`
     /// * `tracer`
-    pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>) -> Self {
+    pub fn new(xlen: Xlen, _terminal: Box<dyn Terminal>) -> Self {
 
         Mmu {
             clock: 0,
