@@ -1,14 +1,21 @@
 #![allow(clippy::useless_format, clippy::type_complexity)]
 
+#[cfg(feature = "std")]
 extern crate fnv;
 
-use std::collections::HashMap;
-use std::convert::TryInto;
+#[cfg(feature = "std")]
+use self::fnv::FnvHashMap;
+#[cfg(not(feature = "std"))]
+use alloc::collections::btree_map::BTreeMap as FnvHashMap;
+use core::convert::TryInto;
 
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 
 const CSR_CAPACITY: usize = 4096;
 
@@ -90,7 +97,7 @@ pub struct Cpu {
     unsigned_data_mask: u64,
     pub trace: Vec<RV32IMCycle>,
     executed_instrs: u64, // “real” RV32IM cycles
-    active_markers: HashMap<u32, ActiveMarker>,
+    active_markers: FnvHashMap<u32, ActiveMarker>,
 }
 
 #[derive(Clone)]
@@ -108,12 +115,14 @@ pub enum PrivilegeMode {
     Machine,
 }
 
+#[derive(Debug)]
 pub struct Trap {
     pub trap_type: TrapType,
     pub value: u64, // Trap type specific value
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub enum TrapType {
     InstructionAddressMisaligned,
     InstructionAccessFault,
@@ -251,7 +260,7 @@ impl Cpu {
             unsigned_data_mask: 0xffffffffffffffff,
             trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
             executed_instrs: 0,
-            active_markers: HashMap::default(),
+            active_markers: FnvHashMap::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -833,6 +842,7 @@ impl Cpu {
                 8 => AddressingMode::SV39,
                 9 => AddressingMode::SV48,
                 _ => {
+                    #[cfg(feature = "std")]
                     println!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
@@ -862,8 +872,8 @@ impl Cpu {
     // @TODO: Rename to better name?
     pub(crate) fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => std::i32::MIN as i64,
-            Xlen::Bit64 => std::i64::MIN,
+            Xlen::Bit32 => core::i32::MIN as i64,
+            Xlen::Bit64 => core::i64::MIN,
         }
     }
 

@@ -7,10 +7,12 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::r1cs::builder::{Constraint, OffsetEqConstraint};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
@@ -424,25 +426,60 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
-    pub fn prove_spartan_cubic(
+    #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
+    pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
-        eq_poly: &mut SplitEqPolynomial<F>,
-        az_bz_cz_poly: &mut SpartanInterleavedPolynomial<F>,
+        padded_num_constraints: usize,
+        uniform_constraints: &[Constraint],
+        cross_step_constraints: &[OffsetEqConstraint],
+        flattened_polys: &[MultilinearPolynomial<F>],
+        tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, [F; 3]) {
-        let mut r: Vec<F> = Vec::new();
-        let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut r = Vec::new();
+        let mut polys = Vec::new();
         let mut claim = F::zero();
 
-        for round in 0..num_rounds {
-            if round == 0 {
-                az_bz_cz_poly
-                    .first_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
-            } else {
-                az_bz_cz_poly
-                    .subsequent_sumcheck_round(eq_poly, transcript, &mut r, &mut polys, &mut claim);
-            }
+        // First, precompute the accumulators and also the `SpartanInterleavedPolynomial`
+        let (accums_zero, accums_infty, mut az_bz_cz_poly) =
+            SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
+                padded_num_constraints,
+                uniform_constraints,
+                cross_step_constraints,
+                flattened_polys,
+                tau,
+            );
+
+        let mut eq_poly = GruenSplitEqPolynomial::new(tau);
+
+        process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
+            &accums_zero,
+            &accums_infty,
+            &mut r,
+            &mut polys,
+            &mut claim,
+            transcript,
+            &mut eq_poly,
+        );
+
+        // Round NUM_SVO_ROUNDS : do the streaming sumcheck to compute cached values
+        az_bz_cz_poly.streaming_sumcheck_round(
+            &mut eq_poly,
+            transcript,
+            &mut r,
+            &mut polys,
+            &mut claim,
+        );
+
+        // Round (NUM_SVO_ROUNDS + 1)..num_rounds : do the linear time sumcheck
+        for _ in (NUM_SVO_ROUNDS + 1)..num_rounds {
+            az_bz_cz_poly.remaining_sumcheck_round(
+                &mut eq_poly,
+                transcript,
+                &mut r,
+                &mut polys,
+                &mut claim,
+            );
         }
 
         (
@@ -691,4 +728,54 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         Ok((e, r))
     }
+}
+
+/// Helper function to encapsulate the common subroutine for sumcheck with eq poly factor:
+/// - Compute the linear factor E_i(X) from the current eq-poly
+/// - Reconstruct the cubic polynomial s_i(X) = E_i(X) * t_i(X) for the i-th round
+/// - Compress the cubic polynomial
+/// - Append the compressed polynomial to the transcript
+/// - Derive the challenge for the next round
+/// - Bind the cubic polynomial to the challenge
+/// - Update the claim as the evaluation of the cubic polynomial at the challenge
+///
+/// Returns the derived challenge
+#[inline]
+pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
+    quadratic_evals: (F, F), // (t_i(0), t_i(infty))
+    eq_poly: &mut GruenSplitEqPolynomial<F>,
+    polys: &mut Vec<CompressedUniPoly<F>>,
+    r: &mut Vec<F>,
+    claim: &mut F,
+    transcript: &mut ProofTranscript,
+) -> F {
+    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+
+    let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
+        // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
+        [
+            eq_poly.current_scalar - scalar_times_w_i,
+            scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+        ],
+        quadratic_evals.0,
+        quadratic_evals.1,
+        *claim,
+    );
+
+    // Compress and add to transcript
+    let compressed_poly = cubic_poly.compress();
+    compressed_poly.append_to_transcript(transcript);
+
+    // Derive challenge
+    let r_i: F = transcript.challenge_scalar();
+    r.push(r_i);
+    polys.push(compressed_poly);
+
+    // Evaluate for next round's claim
+    *claim = cubic_poly.evaluate(&r_i);
+
+    // Bind eq_poly for next round
+    eq_poly.bind(r_i);
+
+    r_i
 }

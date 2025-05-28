@@ -1,5 +1,8 @@
 use crate::emulator::terminal::Terminal;
 
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+
 const IER_RXINT_BIT: u8 = 0x1;
 const IER_THREINT_BIT: u8 = 0x2;
 

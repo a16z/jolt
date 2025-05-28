@@ -83,23 +83,15 @@ pub fn total_memory_bits() -> usize {
     #[cfg(feature = "icicle")]
     if let Ok((total_bytes, _)) = icicle_runtime::get_available_memory() {
         // If icicle is enabled and memory is available, return the total memory in bits.
-        return total_bytes.checked_mul(BITS_PER_BYTE).unwrap_or(usize::MAX);
+        return total_bytes.saturating_mul(BITS_PER_BYTE);
     }
 
     // Fallback to system memory if icicle is unavailable or not enabled.
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(mem_info) = sys_info::mem_info() {
-        return (mem_info.total as usize * BYTES_PER_KB)
-            .checked_mul(BITS_PER_BYTE)
-            .unwrap_or(usize::MAX);
+        return (mem_info.total as usize * BYTES_PER_KB).saturating_mul(BITS_PER_BYTE);
     }
 
     // Fallback to "default" memory if system memory retrieval fails.
-    DEFAULT_MEM_GB
-        .checked_mul(
-            BYTES_PER_GB
-                .checked_mul(BITS_PER_BYTE)
-                .unwrap_or(usize::MAX),
-        )
-        .unwrap_or(usize::MAX)
+    DEFAULT_MEM_GB.saturating_mul(BYTES_PER_GB.saturating_mul(BITS_PER_BYTE))
 }

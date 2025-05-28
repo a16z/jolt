@@ -99,7 +99,7 @@ Jolt uses [tracing_chrome](https://crates.io/crates/tracing-chrome) for performa
 
 To generate a trace, run:
 
-```cargo run --release -p jolt-core trace --name sha3 --format chrome --pcs hyper-kzg```
+```cargo run --release -p jolt-core profile --name sha3 --format chrome --pcs hyper-kzg```
 
 Where `--name` can be `sha2`, `sha3`, `sha2-chain`, or `fibonacci`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
 

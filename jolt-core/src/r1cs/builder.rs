@@ -4,7 +4,6 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    poly::spartan_interleaved_poly::SpartanInterleavedPolynomial,
     r1cs::key::{SparseConstraints, UniformR1CS},
 };
 use crate::{poly::multilinear_polynomial::MultilinearPolynomial, r1cs::inputs::JoltR1CSInputs};
@@ -13,14 +12,14 @@ use std::marker::PhantomData;
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone)]
 pub struct Constraint {
-    pub(crate) a: LC,
-    pub(crate) b: LC,
-    pub(crate) c: LC,
+    pub a: LC,
+    pub b: LC,
+    pub c: LC,
 }
 
 impl Constraint {
     #[cfg(test)]
-    pub(crate) fn pretty_fmt<F: JoltField>(
+    pub(crate) fn _pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
         flattened_polynomials: &[MultilinearPolynomial<F>],
@@ -70,7 +69,7 @@ impl Constraint {
 
 #[derive(Default)]
 pub struct R1CSBuilder {
-    constraints: Vec<Constraint>,
+    pub(crate) constraints: Vec<Constraint>,
 }
 
 impl R1CSBuilder {
@@ -250,6 +249,10 @@ impl R1CSBuilder {
             num_rows: self.constraints.len(),
         }
     }
+
+    pub fn get_constraints(&self) -> Vec<Constraint> {
+        self.constraints.clone()
+    }
 }
 
 /// An Offset Linear Combination. If OffsetLC.0 is true, then the OffsetLC.1 refers to the next step in a uniform
@@ -260,9 +263,9 @@ pub type OffsetLC = (bool, LC);
 /// uniform constraint system.
 #[derive(Debug)]
 pub struct OffsetEqConstraint {
-    pub(crate) cond: OffsetLC,
-    pub(crate) a: OffsetLC,
-    pub(crate) b: OffsetLC,
+    pub cond: OffsetLC,
+    pub a: OffsetLC,
+    pub b: OffsetLC,
 }
 
 impl OffsetEqConstraint {
@@ -306,12 +309,12 @@ pub(crate) fn eval_offset_lc<F: JoltField>(
 // TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<F: JoltField> {
     _field: PhantomData<F>,
-    uniform_builder: R1CSBuilder,
+    pub(crate) uniform_builder: R1CSBuilder,
 
     /// Padded to the nearest power of 2
-    uniform_repeat: usize, // TODO(JP): Remove padding of steps
+    pub(crate) uniform_repeat: usize, // TODO(JP): Remove padding of steps
 
-    offset_equality_constraints: Vec<OffsetEqConstraint>,
+    pub(crate) offset_equality_constraints: Vec<OffsetEqConstraint>,
 }
 
 impl<F: JoltField> CombinedUniformBuilder<F> {
@@ -413,18 +416,5 @@ impl<F: JoltField> CombinedUniformBuilder<F> {
         }
 
         CrossStepR1CS { constraints }
-    }
-
-    #[tracing::instrument(skip_all)]
-    pub fn compute_spartan_Az_Bz_Cz(
-        &self,
-        flattened_polynomials: &[MultilinearPolynomial<F>], // N variables of (S steps)
-    ) -> SpartanInterleavedPolynomial<F> {
-        SpartanInterleavedPolynomial::new(
-            &self.uniform_builder.constraints,
-            &self.offset_equality_constraints,
-            flattened_polynomials,
-            self.padded_rows_per_step(),
-        )
     }
 }
