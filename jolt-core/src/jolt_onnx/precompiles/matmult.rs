@@ -194,7 +194,7 @@ mod tests {
         }
 
         // prover
-        let mut trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+        let trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
             precompiles
                 .iter_mut()
                 .map(|p| p as &mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
