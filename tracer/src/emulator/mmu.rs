@@ -60,7 +60,6 @@ impl Mmu {
     /// * `terminal`
     /// * `tracer`
     pub fn new(xlen: Xlen, _terminal: Box<dyn Terminal>) -> Self {
-
         Mmu {
             clock: 0,
             xlen,
@@ -790,16 +789,13 @@ impl Mmu {
                     _ => match (self.mstatus >> 17) & 1 {
                         0 => Ok(address),
                         _ => {
-                            let privilege_mode =
-                                get_privilege_mode((self.mstatus >> 9) & 3);
+                            let privilege_mode = get_privilege_mode((self.mstatus >> 9) & 3);
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
-                                    let current_privilege_mode =
-                                        self.privilege_mode.clone();
+                                    let current_privilege_mode = self.privilege_mode.clone();
                                     self.update_privilege_mode(privilege_mode);
-                                    let result =
-                                        self.translate_address(v_address, access_type);
+                                    let result = self.translate_address(v_address, access_type);
                                     self.update_privilege_mode(current_privilege_mode);
                                     result
                                 }
@@ -822,16 +818,13 @@ impl Mmu {
                     _ => match (self.mstatus >> 17) & 1 {
                         0 => Ok(address),
                         _ => {
-                            let privilege_mode =
-                                get_privilege_mode((self.mstatus >> 9) & 3);
+                            let privilege_mode = get_privilege_mode((self.mstatus >> 9) & 3);
                             match privilege_mode {
                                 PrivilegeMode::Machine => Ok(address),
                                 _ => {
-                                    let current_privilege_mode =
-                                        self.privilege_mode.clone();
+                                    let current_privilege_mode = self.privilege_mode.clone();
                                     self.update_privilege_mode(privilege_mode);
-                                    let result =
-                                        self.translate_address(v_address, access_type);
+                                    let result = self.translate_address(v_address, access_type);
                                     self.update_privilege_mode(current_privilege_mode);
                                     result
                                 }
@@ -983,7 +976,6 @@ impl Mmu {
         // println!("PA:{:X}", p_address);
         Ok(p_address)
     }
-
 }
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory

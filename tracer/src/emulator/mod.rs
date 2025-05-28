@@ -154,9 +154,9 @@ impl Emulator {
             .find_tohost_addr(&program_data_section_headers, &string_table_section_headers)
             .unwrap_or(0);
 
-        // AZ: It seems that string and symbol tables are not being used. I expected them to be loaded 
+        // AZ: It seems that string and symbol tables are not being used. I expected them to be loaded
         // in the CPU memory just like the program data sections.
-        
+
         // Creates symbol - virtual address mapping
         if !string_table_section_headers.is_empty() {
             let entries = analyzer.read_symbol_entries(&header, &symbol_table_section_headers);
