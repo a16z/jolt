@@ -229,11 +229,13 @@ mod tests {
     #[test]
     fn test_matmult() {
         let mut rng = test_rng();
-        let m = 1 << 3;
-        let n = 1 << 4;
-        let k = 1 << 3;
-        let a = Matrix::<Fr>::random(&mut rng, m, k);
-        let b = Matrix::<Fr>::random(&mut rng, k, n);
+        let m = 10;
+        let n = 20;
+        let k = 30;
+        let a = Matrix::<Fr>::random(&mut rng, m, k).pad();
+        let b = Matrix::<Fr>::random(&mut rng, k, n).pad();
+        let m = a.m;
+        let n = b.n;
 
         let mut transcript = KeccakTranscript::new(b"test");
         let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
