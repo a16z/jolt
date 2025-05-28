@@ -50,20 +50,20 @@ where
         let mut A_rx = vec![F::zero(); k];
         for i in 0..m {
             for j in 0..k {
-                A_rx[j] += F::from_u8(a.entries[i * k + j] as u8) * eq_rx[i];
+                A_rx[j] += F::from_i64(a.entries[i * k + j] as i64) * eq_rx[i];
             }
         }
         let mut B_ry = vec![F::zero(); k];
         for i in 0..n {
             for j in 0..k {
-                B_ry[j] += F::from_u8(b.entries[i * k + j] as u8) * eq_ry[i]
+                B_ry[j] += F::from_i64(b.entries[i * k + j] as i64) * eq_ry[i]
             }
         }
         let c = Matrix::<i8>::matmult_transposed(a, b);
         let c_poly = DensePolynomial::new(
             c.entries
                 .iter()
-                .map(|&x| F::from_u32(x as u32))
+                .map(|&x| F::from_i64(x as i64))
                 .collect_vec(),
         );
         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
