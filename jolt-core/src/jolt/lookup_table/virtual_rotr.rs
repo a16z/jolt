@@ -62,13 +62,26 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
 
 impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRotrTable<WORD_SIZE> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::RightShiftHelper, Suffixes::Rotr]
+        vec![
+            Suffixes::RightShiftHelper,
+            Suffixes::RightShift,
+            Suffixes::LeftShift,
+            Suffixes::One,
+        ]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [helper, rotr] = suffixes.try_into().unwrap();
-        prefixes[Prefixes::Rotr] * helper + prefixes[Prefixes::RotrHelper] * rotr
+        let [right_shift_helper, right_shift, left_shift, one] = suffixes.try_into().unwrap();
+        prefixes[Prefixes::RightShift] * right_shift_helper
+            + right_shift
+            + prefixes[Prefixes::LeftShiftHelper] * left_shift
+            + prefixes[Prefixes::LeftShift] * one
+    }
+
+    #[cfg(test)]
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+        super::test::gen_bitmask_lookup_index(rng)
     }
 }
 
@@ -92,7 +105,6 @@ mod test {
     }
 
     #[test]
-    #[ignore = "Cannot generate lookup_index at random"]
     fn prefix_suffix() {
         prefix_suffix_test::<Fr, VirtualRotrTable<32>>();
     }

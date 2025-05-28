@@ -49,6 +49,10 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
 pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {
     fn suffixes(&self) -> Vec<Suffixes>;
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
+    #[cfg(test)]
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+        rand::RngCore::next_u64(rng)
+    }
 }
 
 pub mod prefixes;
