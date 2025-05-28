@@ -24,6 +24,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use super::common::onnx_trace::JoltONNXDevice;
 
 pub mod onnx_vm;
+pub mod precompiles;
 
 /// A SNARK for correct execution of an ONNX model on a given input.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
