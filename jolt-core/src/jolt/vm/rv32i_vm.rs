@@ -19,7 +19,7 @@ use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 
 use super::{Jolt, JoltCommitments, JoltProof};
 use crate::jolt::instruction::{
@@ -48,7 +48,7 @@ macro_rules! instruction_set {
         paste! {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
-            #[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumCountMacro, Serialize, Deserialize)]
+            #[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumCountMacro, IntoStaticStr, Serialize, Deserialize)]
             #[enum_dispatch(JoltInstruction)]
             pub enum $enum_name {
                 $([<$alias>]($struct)),+
@@ -84,7 +84,7 @@ macro_rules! subtable_enum {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
             #[enum_dispatch(LassoSubtable<F>)]
-            #[derive(EnumCountMacro, EnumIter)]
+            #[derive(Debug, EnumCountMacro, EnumIter, IntoStaticStr)]
             pub enum $enum_name<F: JoltField> { $([<$alias>]($struct)),+ }
         }
         impl<F: JoltField> From<SubtableId> for $enum_name<F> {

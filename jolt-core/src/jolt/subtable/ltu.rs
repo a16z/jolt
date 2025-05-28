@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use super::LassoSubtable;
 use crate::utils::split_bits;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LtuSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }

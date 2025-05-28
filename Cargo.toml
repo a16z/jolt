@@ -25,6 +25,7 @@ members = [
     "jolt-core",
     "tracer",
     "common",
+    "zklean-extractor",
     "jolt-sdk",
     "jolt-sdk/macros",
     "examples/collatz",
