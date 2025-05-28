@@ -9,3 +9,4 @@
 # Formal verification efforts
   - Carl Kwan
   - Quang Dao
+  - Galois Team

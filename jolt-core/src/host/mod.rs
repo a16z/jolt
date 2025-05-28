@@ -12,7 +12,7 @@ use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    jolt_device::JoltDevice,
+    jolt_device::{JoltDevice, MemoryConfig},
 };
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence};
@@ -193,9 +193,18 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<RV32IMCycle>) {
         self.build(DEFAULT_TARGET_DIR);
-        let elf = self.elf.clone().unwrap();
-        let (trace, io_device) =
-            tracer::trace(&elf, inputs, self.max_input_size, self.max_output_size);
+        let elf = self.elf.as_ref().unwrap();
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let memory_config = MemoryConfig {
+            memory_size: self.memory_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_output_size: self.max_output_size,
+        };
+        let (trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
         (io_device, trace)
     }
 

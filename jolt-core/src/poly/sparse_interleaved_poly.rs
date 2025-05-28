@@ -31,17 +31,23 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
 ///
 /// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
 /// order in the visual representation of the circuit:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      /  \
-///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///      /\        /\        /\        /\
+///     /  \      /  \      /  \      /  \
+///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
 ///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
+///
+/// The "interleaved" order is the natural order in the visual representation of the circuit,
+/// where the left and right polynomials are interleaved.
+///
+/// The "interleaved" order is the natural order in the visual representation of the circuit,
+/// where the left and right polynomials are interleaved.
 ///
 /// Where SparseInterleavedPolynomial differs from DenseInterleavedPolynomial
 /// is that many of the coefficients are expected to be 1s, so the circuit may
 /// look something like this:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      /  \
-///    1   R0   1   1   L2   1    1    1
+///      /\        /\        /\        /\
+///     /  \      /  \      /  \      /  \
+///    1   R0    1   1     L2   1    1    1
 ///
 /// Instead of materializing all the 1s, we use a sparse vector to represent the layer,
 /// where each element of the vector contains the index and value of a non-one coefficient.
@@ -197,10 +203,10 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
     }
 
     /// Computes the grand product layer output by this one.
-    ///     L0'      R0'      L1'      R1'     <- Output layer
-    ///      Λ        Λ        Λ        Λ
-    ///     / \      / \      / \      /  \
-    ///   L0   R0  L1   R1  L2   R2  L3   R3   <- This layer
+    ///      L0'       R0'       L1'       R1'     <- Output layer
+    ///      /\        /\        /\        /\
+    ///     /  \      /  \      /  \      /  \
+    ///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::layer_output")]
     pub fn layer_output(&self) -> Self {
         if let Some(coalesced) = &self.coalesced {
@@ -428,7 +434,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
-    ///     Σ eq(r, x) * left(x) * right(x)
+    ///     \sum_{x} eq(r, x) * left(x) * right(x)
     /// where the inner summation is over all but the "least significant bit" of the multilinear
     /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
     ///
@@ -472,7 +478,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // This is what Σ eq(r, x) * left(x) * right(x) would be if
+            // This is what \sum_{x} eq(r, x) * left(x) * right(x) would be if
             // `left` and `right` were both all ones.
             let eq_eval_sums: (F, F, F) = eq_evals
                 .par_iter()
@@ -547,7 +553,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            // Now compute \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1])
+            // Now compute \sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1])
             let E1_eval_sums: (F, F, F) = E1_evals
                 .par_iter()
                 .fold(
@@ -627,14 +633,14 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
             //
             // As a refresher, the cubic evals we're computing are:
             //
-            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            // \sum_{x2} E2[x2] * (\sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
             let evals_assuming_all_ones = if self.dense_len.is_power_of_two() {
                 // If `dense_len` is a power of 2, there is no 0-padding.
                 //
                 // So we have:
-                // \sum_x2 (E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
-                //   = \sum_x2 (E2[x2] * \sum_x1 E1_evals[x1])
-                //   = (\sum_x2 E2[x2]) * (\sum_x1 E1_evals[x1])
+                // \sum_{x2} (E2[x2] * (\sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
+                //   = \sum_{x2} (E2[x2] * \sum_{x1} E1_evals[x1])
+                //   = (\sum_{x2} E2[x2]) * (\sum_{x1} E1_evals[x1])
                 //   = 1 * E1_eval_sums
                 E1_eval_sums
             } else {

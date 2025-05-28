@@ -16,9 +16,9 @@ use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 ///
 /// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
 /// order in the visual representation of the circuit:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      /  \
-///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///      /\        /\        /\        /\
+///     /  \      /  \      /  \      /  \
+///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
 ///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
 #[derive(Default, Debug, Clone)]
 pub struct DenseInterleavedPolynomial<F: JoltField> {
@@ -196,7 +196,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
 
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
-    ///     Σ eq(r, x) * left(x) * right(x)
+    ///     \sum_{x} eq(r, x) * left(x) * right(x)
     /// where the inner summation is over all but the "least significant bit" of the multilinear
     /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
     ///

@@ -4,7 +4,19 @@ const PROGRAM_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128; // big enough to run Lin
 
 extern crate fnv;
 
+#[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
+#[cfg(not(feature = "std"))]
+use alloc::collections::btree_map::BTreeMap as FnvHashMap;
+
+#[cfg(not(feature = "std"))]
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 pub mod cpu;
 pub mod default_terminal;
@@ -88,7 +100,8 @@ impl Emulator {
     /// * Displays the result message (pass/fail) to terminal
     pub fn run_test(&mut self) {
         // @TODO: Send this message to terminal?
-        println!("This elf file seems riscv-tests elf file. Running in test mode.");
+        #[cfg(feature = "std")]
+        println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
             println!("{}", disas);
@@ -133,7 +146,6 @@ impl Emulator {
         }
 
         let header = analyzer.read_header();
-        //let program_headers = analyzer._read_program_headers(&header);
         let section_headers = analyzer.read_section_headers(&header);
 
         let mut program_data_section_headers = vec![];
