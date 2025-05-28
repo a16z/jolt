@@ -2,15 +2,11 @@ use crate::{
     field::JoltField,
     jolt_onnx::tracer::tensor::QuantizedLiteTensor,
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder,
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{math::Math, transcript::Transcript},
 };
 use itertools::Itertools;
-use rand_core::RngCore;
 
 use super::sumcheck_engine::BatchableSumcheckInstance;
 
@@ -132,17 +128,17 @@ where
 mod tests {
     use crate::{
         jolt_onnx::{
-            precompiles::sumcheck_engine::BatchedSumcheck, tracer::tensor::QuantizedLiteTensor,
+            precompiles::sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
+            tracer::tensor::QuantizedLiteTensor,
         },
-        subprotocols::sumcheck::SumcheckInstanceProof,
         utils::{
             math::Math,
             transcript::{KeccakTranscript, Transcript},
         },
     };
     use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use rand::{rngs::StdRng, SeedableRng};
+    use ark_std::{rand::Rng, test_rng};
+    use itertools::Itertools;
 
     use super::MatMultPrecompile;
 
@@ -164,8 +160,52 @@ mod tests {
         let mut vtranscript = KeccakTranscript::new(b"test");
         let log_m = m.log_2();
         let log_n = n.log_2();
-        let rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
-        let ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
+        let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
         let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript).unwrap();
+    }
+
+    #[test]
+    fn test_matmult_batch() {
+        let execution_trace_length = 20;
+        let mut rng = test_rng();
+        let mut transcript = KeccakTranscript::new(b"test");
+        let mut vtranscript = KeccakTranscript::new(b"test");
+
+        let mut precompiles = Vec::with_capacity(execution_trace_length);
+        for _ in 0..execution_trace_length {
+            let m = rng.gen_range(1..=100);
+            let n = rng.gen_range(1..=100);
+            let k = rng.gen_range(1..=100);
+            let a = QuantizedLiteTensor::random(&mut rng, m, k).pad();
+            let b = QuantizedLiteTensor::random(&mut rng, n, k).pad();
+            // Get new padded m & n values
+            let m = a.m();
+            // b is implicitly transposed
+            let n = b.m();
+            let precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+            precompiles.push(precompile);
+
+            // Update verifier transcript
+            let log_m = m.log_2();
+            let log_n = n.log_2();
+            let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
+            let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        }
+
+        // prover
+        let mut trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            precompiles
+                .iter_mut()
+                .map(|p| p as &mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let (proof, _rsc) = BatchedSumcheck::prove(trait_objects, &mut transcript);
+
+        // verifier
+        let trait_objects: Vec<&dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> = precompiles
+            .iter_mut()
+            .map(|p| p as &dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+            .collect();
+        let _ = BatchedSumcheck::verify(&proof, trait_objects, &mut vtranscript).unwrap();
     }
 }
