@@ -2,7 +2,6 @@
 
 // TODO: Refactor duplicate code
 
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::*;
 
@@ -37,9 +36,9 @@ impl QuantizedLiteTensor {
         }
     }
 
-    pub fn random(mut rng: impl RngCore, m: usize, n: usize) -> Self {
+    pub fn random(mut rng: impl rand_core::RngCore, m: usize, n: usize) -> Self {
         let shape = vec![m, n];
-        let data: Vec<i8> = (0..m * n).map(|_| rng.next_u32() as i8).collect();
+        let data: Vec<i8> = (0..m * n).map(|_| (rng.next_u32() % 256) as i8).collect();
         let scale = 1.0; // Default scale
         let zero_point = 0; // Default zero point
         Self {
@@ -64,9 +63,6 @@ impl QuantizedLiteTensor {
         let k = self.shape[1];
         // rows in B == output cols
         let n = other.shape[0];
-
-        let a_zp = self.zero_point as i32;
-        let b_zp = other.zero_point as i32;
 
         // Output shape is [M, N]
         let mut result = vec![0i32; m * n];
@@ -137,6 +133,14 @@ impl QuantizedLiteTensor {
             scale: self.scale,
             zero_point: self.zero_point,
         }
+    }
+
+    pub fn m(&self) -> usize {
+        self.shape[0]
+    }
+
+    pub fn n(&self) -> usize {
+        self.shape[1]
     }
 }
 

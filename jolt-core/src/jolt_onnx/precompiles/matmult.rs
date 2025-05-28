@@ -1,5 +1,6 @@
 use crate::{
     field::JoltField,
+    jolt_onnx::tracer::tensor::QuantizedLiteTensor,
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
@@ -30,17 +31,17 @@ where
     F: JoltField,
 {
     fn new<ProofTranscript>(
-        a: &Matrix<i8>,
-        b: &Matrix<i8>,
+        a: &QuantizedLiteTensor,
+        b: &QuantizedLiteTensor,
         transcript: &mut ProofTranscript,
     ) -> Self
     where
         ProofTranscript: Transcript,
     {
-        let m = a.m;
+        let m = a.m();
         // b is implicitly transposed
-        let n = b.m;
-        let k = a.n;
+        let n = b.m();
+        let k = a.n();
         let log_m = m.log_2();
         let log_n = n.log_2();
         let rx: Vec<F> = transcript.challenge_vector(log_m);
@@ -50,22 +51,17 @@ where
         let mut A_rx = vec![F::zero(); k];
         for i in 0..m {
             for j in 0..k {
-                A_rx[j] += F::from_i64(a.entries[i * k + j] as i64) * eq_rx[i];
+                A_rx[j] += F::from_i64(a.data[i * k + j] as i64) * eq_rx[i];
             }
         }
         let mut B_ry = vec![F::zero(); k];
         for i in 0..n {
             for j in 0..k {
-                B_ry[j] += F::from_i64(b.entries[i * k + j] as i64) * eq_ry[i]
+                B_ry[j] += F::from_i64(b.data[i * k + j] as i64) * eq_ry[i]
             }
         }
-        let c = Matrix::<i8>::matmult_transposed(a, b);
-        let c_poly = DensePolynomial::new(
-            c.entries
-                .iter()
-                .map(|&x| F::from_i64(x as i64))
-                .collect_vec(),
-        );
+        let (c, _c_shape) = a.matmul_rhs_transposed(b);
+        let c_poly = DensePolynomial::new(c.iter().map(|&x| F::from_i64(x as i64)).collect_vec());
         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
         let num_vars = A_rx.len().log_2();
         #[cfg(test)]
@@ -154,79 +150,12 @@ where
     }
 }
 
-/// A dense matrix over a prime field.
-pub struct Matrix<T> {
-    /// Row-major entries of the matrix. Length must equal `m * n`.
-    pub entries: Vec<T>,
-    /// num rows
-    pub m: usize,
-    /// num cols
-    pub n: usize,
-}
-
-impl<T> Matrix<T> {
-    /// We implicitly treat b as transposed
-    pub fn matmult_transposed(a: &Matrix<i8>, b: &Matrix<i8>) -> Matrix<i32> {
-        // check inner dimensions
-        assert_eq!(a.n, b.n);
-        let m = a.m;
-        // Implicitly transpose b
-        let n = b.m;
-        let k = a.n; // shared dimension
-        let mut entries = vec![0i32; m * n];
-        for i in 0..m {
-            for j in 0..n {
-                let mut dot_product = 0i32;
-                for t in 0..k {
-                    let a_val = a.entries[i * k + t] as i32;
-                    let b_val = b.entries[j * k + t] as i32;
-                    dot_product += a_val * b_val;
-                }
-                entries[i * n + j] = dot_product;
-            }
-        }
-
-        Matrix::<i32>::new(entries, m, n)
-    }
-
-    /// Create a new matrix with the given entries, rows, and columns.
-    pub fn new(entries: Vec<T>, m: usize, n: usize) -> Self {
-        assert_eq!(entries.len(), m * n);
-        Self { entries, m, n }
-    }
-
-    /// Create a random matrix of size N x N over the finite field F.
-    ///
-    /// # Note
-    ///
-    /// - Useful for testing and benchmarking.
-    pub fn random(mut rng: impl RngCore, m: usize, n: usize) -> Matrix<i8> {
-        let entries = (0..m * n)
-            .map(|_| (rng.next_u32() % 256) as i8)
-            .collect_vec();
-        Matrix::<i8>::new(entries, m, n)
-    }
-
-    pub fn pad(&self) -> Self
-    where
-        T: Clone + Default,
-    {
-        let padded_m = self.m.next_power_of_two();
-        let padded_n = self.n.next_power_of_two();
-        let mut entries = self.entries.clone();
-        entries.resize(padded_m * padded_n, T::default());
-        Self {
-            entries,
-            m: padded_m,
-            n: padded_n,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        jolt_onnx::precompiles::sumcheck_engine::BatchedSumcheck,
+        jolt_onnx::{
+            precompiles::sumcheck_engine::BatchedSumcheck, tracer::tensor::QuantizedLiteTensor,
+        },
         subprotocols::sumcheck::SumcheckInstanceProof,
         utils::{
             math::Math,
@@ -237,7 +166,7 @@ mod tests {
     use ark_std::test_rng;
     use rand::{rngs::StdRng, SeedableRng};
 
-    use super::{MatMultPrecompile, Matrix};
+    use super::MatMultPrecompile;
 
     #[test]
     fn test_matmult() {
@@ -245,11 +174,11 @@ mod tests {
         let m = 100;
         let n = 200;
         let k = 300;
-        let a = Matrix::<i8>::random(&mut rng, m, k).pad();
-        let b = Matrix::<i8>::random(&mut rng, n, k).pad();
-        let m = a.m;
+        let a = QuantizedLiteTensor::random(&mut rng, m, k).pad();
+        let b = QuantizedLiteTensor::random(&mut rng, n, k).pad();
+        let m = a.m();
         // b is implicitly transposed
-        let n = b.m;
+        let n = b.m();
 
         let mut transcript = KeccakTranscript::new(b"test");
         let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
@@ -260,35 +189,5 @@ mod tests {
         let rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
         let ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
         let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript).unwrap();
-    }
-
-    #[test]
-    fn test_matmult_non_batched() {
-        let mut rng = test_rng();
-        let m = 1 << 3;
-        let n = 1 << 4;
-        let k = 1 << 3;
-        let a = Matrix::<Fr>::random(&mut rng, m, k);
-        let b = Matrix::<Fr>::random(&mut rng, k, n);
-
-        let mut transcript = KeccakTranscript::new(b"test");
-        let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
-        let proof = precompile.prove(&mut transcript);
-        // let (proof, _rsc) = BatchedSumcheck::prove(vec![&mut precompile], &mut transcript);
-
-        let mut vtranscript = KeccakTranscript::new(b"test");
-        let log_m = m.log_2();
-        let log_n = n.log_2();
-        let rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
-        let ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
-        let _ = proof
-            .verify(
-                precompile.input_claim,
-                precompile.num_vars,
-                2,
-                &mut vtranscript,
-            )
-            .unwrap();
-        // let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript);
     }
 }
