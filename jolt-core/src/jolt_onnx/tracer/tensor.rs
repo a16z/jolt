@@ -2,6 +2,7 @@
 
 // TODO: Refactor duplicate code
 
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::*;
 
@@ -33,6 +34,19 @@ impl QuantizedLiteTensor {
         LiteTensor {
             shape: self.shape.clone(),
             data: dequantized_data,
+        }
+    }
+
+    pub fn random(mut rng: impl RngCore, m: usize, n: usize) -> Self {
+        let shape = vec![m, n];
+        let data: Vec<i8> = (0..m * n).map(|_| rng.next_u32() as i8).collect();
+        let scale = 1.0; // Default scale
+        let zero_point = 0; // Default zero point
+        Self {
+            shape,
+            data,
+            scale,
+            zero_point,
         }
     }
 
@@ -91,6 +105,38 @@ impl QuantizedLiteTensor {
         }
         let c_shape = vec![m, n];
         (c, c_shape)
+    }
+
+    pub fn pad(&self) -> QuantizedLiteTensor {
+        let m = self.shape[0].next_power_of_two();
+        let n = self.shape[1].next_power_of_two();
+        let mut data = self.data.clone();
+        data.resize(m * n, 0);
+        Self {
+            data,
+            shape: vec![m, n],
+            scale: self.scale,
+            zero_point: self.zero_point,
+        }
+    }
+
+    pub fn transpose(&self) -> QuantizedLiteTensor {
+        let tensor_data = &self.data;
+        let (m, n) = (self.shape[0], self.shape[1]);
+        let mut output = vec![0; m * n]; // transposed will have n rows, m cols
+        for i in 0..m {
+            for j in 0..n {
+                output[j * m + i] = tensor_data[i * n + j];
+            }
+        }
+        let mut tensor_shape = self.shape.clone();
+        tensor_shape.reverse();
+        Self {
+            shape: tensor_shape,
+            data: output,
+            scale: self.scale,
+            zero_point: self.zero_point,
+        }
     }
 }
 
