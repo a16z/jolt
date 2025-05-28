@@ -162,8 +162,8 @@ where
     #[tracing::instrument(skip_all)]
     fn bind(&mut self, r_j: F, _: usize) {
         rayon::join(
-            || self.a.bind(r_j, BindingOrder::LowToHigh),
-            || self.b.bind(r_j, BindingOrder::LowToHigh),
+            || self.a.bind(r_j, BindingOrder::HighToLow),
+            || self.b.bind(r_j, BindingOrder::HighToLow),
         );
     }
 
