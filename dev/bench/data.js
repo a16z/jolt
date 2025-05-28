@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748394735019,
+  "lastUpdate": 1748404004021,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -5410,6 +5410,138 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 7027808,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4633847+protoben@users.noreply.github.com",
+            "name": "Ben Hamlin",
+            "username": "protoben"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2d8ba50ea8c4e8d64038b119e3029c205a9ca751",
+          "message": "Add a tool for Lean frontend extraction (#684)\n\n* Extract ASTs for each subtable MLE and output a representation compatible with the ZkLean library.\n\nWe do this by implementing `JoltField` using a type, `MleAst`, that constructs an AST of the computation computed. We then run the `evaluate_mle` function for each implementor of `LassoSubtable`. We print the results as a Lean4 file.\n\nWe test that the ASTs are generated correctly by creating an evaluate function for the AST, then writing property tests that compare the result of extracting and evaluating the AST against running `evaluate_mle` on an existing `JoltField` directly.\n\n* Update subtable output to accommodate new ZkLean API\n\n* Resolve \"Extract ASTs for combining tables\"\n\n* Resolve \"Extract R1CS constraints\"\n\n* Confirmed that we can treat auxiliaries the same as inputs for R1CS\n\n* Resolve \"Extract virtual instructions\"\n\n* Fix lookup_step with latest zkLean\n\nThe changes are:\n- composed tables needed _32 at the end\n- comma interspersed in the array of pair instruction_flags,composed_tables\n- add a constrainEq between result of mux_lookup and witness LookupOutput\n\n* Generate Witnessable instance for JoltR1CSInputs\n\n* Resolve \"Split extraction up into multiple modules\"\n\n* Add derive(Debug) to LassoSubtable impls\n\n* Bump ark package versions\n\n* Migrates most of the extraction to using JoltInstruction and LassoSubtable\n\nThis commit gets us most of the way to extracting via JoltInstruction and\nLassoSubtable. However, pretty-printing valid Lean4 identifiers for the\nnames is still todo.\n\n* Remove binius dependency from zklean-extractor\n\n* Add static string conversions for JoltInstruction and LassoSubtable\n\n* Make extracted subtable and instruction names into valid Lean identifiers\n\n* Eliminate proc_macro stuff from zklean-extractor and bump Cargo.lock\n\n* Extract constants from Jolt codebase\n\nJolt uses certain constants for a given instruction set / decomposition\nstrategy / memory layout. Currently, only one set of constants is supported,\nbut there may be more sets in the future (e.g., for 64-bit risc-v). This adds\nthe ability to generalize over those constants and pulls them from the Jolt\ncodebase, rather than hard-coding them in the extractor.\n\n* Add the jolt step function\n\n* Refactor and add docs\n\n* One more clarifying comment\n\n* Rename JoltField to ZKField for zkLean\n\n* Resolve \"Integration tests\"\n\n* Fix clippy errors\n\n* Fix some errors caught by graphite\n\n* Run cargo fmt\n\n* Update Cargo.lock\n\n* Fix some typos and linter errors\n\n* Update zklean-extractor README\n\n* Remove unnecessary phantoms\n\n* Remove ark field initialization from tests\n\nThe lazy_static library is now being used to intialize the small-value lookup\ntables for ark_bn254::Fr, so we don't need to call the initialization function\nmanually in our tests.\n\n---------\n\nCo-authored-by: Benoit Razet <benoit.razet@galois.com>\nCo-authored-by: James Parker <james@galois.com>",
+          "timestamp": "2025-05-27T23:09:10-04:00",
+          "tree_id": "b357c109fcfc24596bf0f7f299e7b929af9fb83f",
+          "url": "https://github.com/a16z/jolt/commit/2d8ba50ea8c4e8d64038b119e3029c205a9ca751"
+        },
+        "date": 1748404003381,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.6955,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 4595340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.625,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 4587776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5876,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 4588056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.5646,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 4587988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.5463,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 6973420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 44.6532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9313320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 2.1972,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 4589740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.847,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 4588424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 1.8805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 7038056,
             "unit": "KB",
             "extra": ""
           }
