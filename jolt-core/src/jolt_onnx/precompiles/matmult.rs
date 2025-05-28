@@ -78,28 +78,6 @@ where
             final_claims: (F::zero(), F::zero()),
         }
     }
-
-    pub fn prove<ProofTranscript>(
-        &self,
-        transcript: &mut ProofTranscript,
-    ) -> SumcheckInstanceProof<F, ProofTranscript>
-    where
-        ProofTranscript: Transcript,
-    {
-        let mut polys = vec![
-            MultilinearPolynomial::LargeScalars(self.a.clone()),
-            MultilinearPolynomial::LargeScalars(self.b.clone()),
-        ];
-        let (proof, _, _) = SumcheckInstanceProof::prove_arbitrary(
-            &self.input_claim,
-            self.num_vars,
-            &mut polys,
-            |v| v[0] * v[1],
-            2,
-            transcript,
-        );
-        proof
-    }
 }
 
 impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for MatMultPrecompile<F>
