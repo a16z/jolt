@@ -2,13 +2,11 @@
 //! It includes functionality to parse ONNX models, quantize them, and generate execution traces.
 //! The ONNX program can be used to run inference on ONNX models and verify the results using Jolt's proof system.
 
-use crate::jolt::vm::JoltTraceStep;
-
 use super::{
     common::onnx_trace::JoltONNXDevice,
     trace::onnx::onnxrow_to_lookup,
     tracer::{self, model::QuantizedONNXModel},
-    vm::onnx_vm::ONNXInstructionSet,
+    vm::{onnx_vm::ONNXInstructionSet, JoltONNXTraceStep},
 };
 use std::path::PathBuf;
 
@@ -39,7 +37,7 @@ impl ONNXProgram {
 
     #[tracing::instrument(skip_all, name = "ONNXProgram::trace")]
     /// Parse the ONNX model, quantize it & get the execution trace
-    pub fn trace(&self) -> (JoltONNXDevice, Vec<JoltTraceStep<ONNXInstructionSet>>) {
+    pub fn trace(&self) -> (JoltONNXDevice, Vec<JoltONNXTraceStep<ONNXInstructionSet>>) {
         let (raw_trace, io_device) = tracer::trace(&self.model, &self.input);
         let trace = raw_trace
             .iter()
@@ -49,13 +47,13 @@ impl ONNXProgram {
                     lookups
                         .into_iter()
                         .map(|lookup| {
-                            let mut step = JoltTraceStep::no_op();
+                            let mut step = JoltONNXTraceStep::no_op();
                             step.instruction_lookup = Some(lookup);
                             step
                         })
                         .collect::<Vec<_>>()
                 } else {
-                    vec![JoltTraceStep::no_op()]
+                    vec![JoltONNXTraceStep::no_op()]
                 }
             })
             .collect::<Vec<_>>();

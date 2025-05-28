@@ -4,10 +4,10 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::subtable::JoltSubtableSet;
-use crate::jolt::vm::bytecode::BytecodeStuff;
+use crate::jolt::vm::bytecode::{BytecodeRow, BytecodeStuff};
 use crate::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use crate::jolt::vm::timestamp_range_check::TimestampRangeCheckStuff;
-use crate::jolt::vm::{JoltTraceStep, ProverDebugInfo};
+use crate::jolt::vm::ProverDebugInfo;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -15,9 +15,12 @@ use crate::r1cs::inputs::R1CSStuff;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use common::rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS};
 use instruction_lookups::{
     InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
+use serde::{Deserialize, Serialize};
 
 use super::common::onnx_trace::JoltONNXDevice;
 use super::memory_checking::{Initializable, StructuredPolynomialData};
@@ -170,7 +173,7 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     pub fn prove(
         program_io: JoltONNXDevice,
-        trace: Vec<JoltTraceStep<InstructionSet>>,
+        trace: Vec<JoltONNXTraceStep<InstructionSet>>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
@@ -405,5 +408,35 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default + Sync> JoltStuff<T>
             timestamp_range_check: TimestampRangeCheckStuff::default(),
             r1cs: R1CSStuff::default(),
         }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct JoltONNXTraceStep<InstructionSet: JoltInstructionSet> {
+    pub instruction_lookup: Option<InstructionSet>,
+    pub bytecode_row: BytecodeRow,
+    pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
+    pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
+}
+
+impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
+    pub fn no_op() -> Self {
+        JoltONNXTraceStep {
+            instruction_lookup: None,
+            bytecode_row: BytecodeRow::no_op(0),
+            memory_ops: [
+                MemoryOp::noop_read(),  // rs1
+                MemoryOp::noop_read(),  // rs2
+                MemoryOp::noop_write(), // rd is write-only
+                MemoryOp::noop_read(),  // RAM
+            ],
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
+        }
+    }
+
+    fn pad(trace: &mut Vec<Self>) {
+        let unpadded_length = trace.len();
+        let padded_length = unpadded_length.next_power_of_two();
+        trace.resize(padded_length, Self::no_op());
     }
 }

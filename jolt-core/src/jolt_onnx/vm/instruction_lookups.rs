@@ -36,7 +36,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, transcript::AppendToTranscript},
 };
 
-use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
+use super::{JoltCommitments, JoltONNXTraceStep, JoltPolynomials};
 
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
@@ -859,7 +859,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness")]
     pub fn generate_witness(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        ops: &Vec<JoltTraceStep<InstructionSet>>,
+        ops: &Vec<JoltONNXTraceStep<InstructionSet>>,
     ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
 
@@ -1219,7 +1219,7 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<u16>> {
+    fn subtable_lookup_indices(ops: &[JoltONNXTraceStep<InstructionSet>]) -> Vec<Vec<u16>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<u16>> = ops
@@ -1248,7 +1248,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<u32> {
+    fn compute_lookup_outputs(instructions: &Vec<JoltONNXTraceStep<InstructionSet>>) -> Vec<u32> {
         instructions
             .par_iter()
             .map(|op| {

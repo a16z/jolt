@@ -4,8 +4,11 @@
 //! These precompile proofs are sum-check based.
 
 use crate::{
-    field::JoltField, subprotocols::sumcheck::SumcheckInstanceProof, utils::transcript::Transcript,
+    field::JoltField, jolt::instruction::JoltInstructionSet,
+    subprotocols::sumcheck::SumcheckInstanceProof, utils::transcript::Transcript,
 };
+
+use super::JoltONNXTraceStep;
 
 /// A special-purpose SNARK designed for specific functionality, such as ONNX operators that are too expensive to prove using [`InstructionLookupProof`].
 /// This is a sum-check-based precompile proof tailored for ONNX runtime.
@@ -24,5 +27,9 @@ where
     ProofTranscript: Transcript,
 {
     /// Given the execution trace, constructs the polynomials used in the batched sum-check proof.
-    pub fn generate_witness() {}
+    pub fn generate_witness<InstructionSet>(ops: &Vec<JoltONNXTraceStep<InstructionSet>>)
+    where
+        InstructionSet: JoltInstructionSet,
+    {
+    }
 }
