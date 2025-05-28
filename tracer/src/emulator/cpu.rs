@@ -317,7 +317,7 @@ impl Cpu {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
-        self.mmu.tick(&mut self.csr[CSR_MIP_ADDRESS as usize]);
+        self.mmu.tick();
         self.handle_interrupt(self.pc);
         self.clock = self.clock.wrapping_add(1);
 
@@ -765,7 +765,7 @@ impl Cpu {
             CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
             CSR_SIE_ADDRESS => self.csr[CSR_MIE_ADDRESS as usize] & 0x222,
             CSR_SIP_ADDRESS => self.csr[CSR_MIP_ADDRESS as usize] & 0x222,
-            CSR_TIME_ADDRESS => self.mmu.get_clint().read_mtime(),
+            CSR_TIME_ADDRESS => panic!("CLINT is unsupported."),
             _ => self.csr[address as usize],
         }
     }
@@ -803,7 +803,7 @@ impl Cpu {
                     .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
             }
             CSR_TIME_ADDRESS => {
-                self.mmu.get_mut_clint().write_mtime(value);
+                panic!("CLINT is unsupported.")
             }
             _ => {
                 self.csr[address as usize] = value;
@@ -1445,11 +1445,6 @@ impl Cpu {
     /// Returns mutable `Mmu`
     pub fn get_mut_mmu(&mut self) -> &mut Mmu {
         &mut self.mmu
-    }
-
-    /// Returns mutable `Terminal`
-    pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
-        self.mmu.get_mut_uart().get_mut_terminal()
     }
 
     fn handle_jolt_cycle_marker(&mut self, ptr: u32, event: u32) -> Result<(), Trap> {

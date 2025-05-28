@@ -20,7 +20,6 @@ use alloc::{
 
 pub mod cpu;
 pub mod default_terminal;
-pub mod device;
 pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
@@ -105,8 +104,7 @@ impl Emulator {
         println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
-            self.put_bytes_to_terminal(disas.as_bytes());
-            self.put_bytes_to_terminal(&[10]); // new line
+            println!("{}", disas);
 
             self.tick();
 
@@ -119,25 +117,11 @@ impl Emulator {
             let endcode = self.cpu.get_mut_mmu().load_word_raw(self.tohost_addr);
             if endcode != 0 {
                 match endcode {
-                    1 => self.put_bytes_to_terminal(
-                        format!("Test Passed with {endcode:X}\n").as_bytes(),
-                    ),
-                    _ => self.put_bytes_to_terminal(
-                        format!("Test Failed with {endcode:X}\n").as_bytes(),
-                    ),
+                    1 => println!("Test Passed with {:X}\n", endcode),
+                    _ => println!("Test Failed with {:X}\n", endcode),
                 };
                 break;
             }
-        }
-    }
-
-    /// Helper method. Sends ascii code bytes to terminal.
-    ///
-    /// # Arguments
-    /// * `bytes`
-    fn put_bytes_to_terminal(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.cpu.get_mut_terminal().put_byte(*byte);
         }
     }
 
@@ -181,6 +165,9 @@ impl Emulator {
         self.tohost_addr = analyzer
             .find_tohost_addr(&program_data_section_headers, &string_table_section_headers)
             .unwrap_or(0);
+
+        // AZ: It seems that string and symbol tables are not being used. I expected them to be loaded
+        // in the CPU memory just like the program data sections.
 
         // Creates symbol - virtual address mapping
         if !string_table_section_headers.is_empty() {
@@ -227,86 +214,12 @@ impl Emulator {
         self.cpu.update_pc(header.e_entry);
     }
 
-    /// Loads symbols of program and adds them to `symbol_map`.
-    ///
-    /// # Arguments
-    /// * `content` Program binary
-    pub fn load_program_for_symbols(&mut self, content: Vec<u8>) {
-        let analyzer = ElfAnalyzer::new(content);
-
-        if !analyzer.validate() {
-            panic!("This file does not seem ELF file");
-        }
-
-        let header = analyzer.read_header();
-        let section_headers = analyzer.read_section_headers(&header);
-
-        let mut program_data_section_headers = vec![];
-        let mut symbol_table_section_headers = vec![];
-        let mut string_table_section_headers = vec![];
-
-        for header in &section_headers {
-            match header.sh_type {
-                1 => program_data_section_headers.push(header),
-                2 => symbol_table_section_headers.push(header),
-                3 => string_table_section_headers.push(header),
-                _ => {}
-            };
-        }
-
-        // Creates symbol - virtual address mapping
-        if !string_table_section_headers.is_empty() {
-            let entries = analyzer.read_symbol_entries(&header, &symbol_table_section_headers);
-            // Assuming symbols are in the first string table section.
-            // @TODO: What if symbol can be in the second or later string table sections?
-            let map = analyzer.create_symbol_map(&entries, string_table_section_headers[0]);
-            for key in map.keys() {
-                self.symbol_map
-                    .insert(key.to_string(), *map.get(key).unwrap());
-            }
-        }
-    }
-
-    /// Sets up filesystem. Use this method if program (e.g. Linux) uses
-    /// filesystem. This method is expected to be called up to only once.
-    ///
-    /// # Arguments
-    /// * `content` File system content binary
-    pub fn setup_filesystem(&mut self, content: Vec<u8>) {
-        self.cpu.get_mut_mmu().init_disk(content);
-    }
-
-    /// Sets up device tree. The emulator has default device tree configuration.
-    /// If you want to override it, use this method. This method is expected to
-    /// to be called up to only once.
-    ///
-    /// # Arguments
-    /// * `content` DTB content binary
-    pub fn setup_dtb(&mut self, content: Vec<u8>) {
-        self.cpu.get_mut_mmu().init_dtb(content);
-    }
-
     /// Updates XLEN (the width of an integer register in bits) in CPU.
     ///
     /// # Arguments
     /// * `xlen`
     pub fn update_xlen(&mut self, xlen: Xlen) {
         self.cpu.update_xlen(xlen);
-    }
-
-    /// Enables or disables page cache optimization.
-    /// Page cache optimization is experimental feature.
-    /// See [`Mmu`](./mmu/struct.Mmu.html) for the detail.
-    ///
-    /// # Arguments
-    /// * `enabled`
-    pub fn enable_page_cache(&mut self, enabled: bool) {
-        self.cpu.get_mut_mmu().enable_page_cache(enabled);
-    }
-
-    /// Returns mutable reference to `Terminal`.
-    pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
-        self.cpu.get_mut_terminal()
     }
 
     /// Returns immutable reference to `Cpu`.
