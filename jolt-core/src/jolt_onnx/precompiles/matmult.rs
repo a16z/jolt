@@ -236,10 +236,10 @@ mod tests {
             precompiles.push(precompile);
 
             // Update verifier transcript
-            let log_m = m.log_2();
-            let log_n = n.log_2();
-            let _rx: Vec<Fr> = vtranscript.challenge_scalar_powers(log_m);
-            let _ry: Vec<Fr> = vtranscript.challenge_scalar_powers(log_n);
+            let _log_m = m.log_2();
+            let _log_n = n.log_2();
+            let _rx: Fr = vtranscript.challenge_scalar(); // HACK: Allow verifier to know matrix dimensions.
+            let _ry: Fr = vtranscript.challenge_scalar();
         }
 
         // prover
