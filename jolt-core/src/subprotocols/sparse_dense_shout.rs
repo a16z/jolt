@@ -522,7 +522,7 @@ pub fn prove_sparse_dense_shout<
 
     let prefixes: Vec<PrefixEval<F>> = prefix_checkpoints
         .into_iter()
-        .map(|checkpoint| checkpoint.into())
+        .map(|checkpoint| checkpoint.unwrap())
         .collect();
 
     let mut combined_instruction_val_poly: Vec<F> = unsafe_allocate_zero_vec(T);

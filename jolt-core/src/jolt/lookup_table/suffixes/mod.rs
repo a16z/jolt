@@ -1,3 +1,4 @@
+use crate::jolt::lookup_table::suffixes::left_shift::LeftShiftSuffix;
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
@@ -12,7 +13,6 @@ use right_is_zero::RightOperandIsZeroSuffix;
 use right_shift::RightShiftSuffix;
 use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
-use rotr::RotrSuffix;
 use sign_extension::SignExtensionSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
@@ -27,6 +27,7 @@ pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
 pub mod left_is_zero;
+pub mod left_shift;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
@@ -37,7 +38,6 @@ pub mod right_is_zero;
 pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
-pub mod rotr;
 pub mod sign_extension;
 pub mod upper_word;
 pub mod xor;
@@ -70,7 +70,7 @@ pub enum Suffixes {
     RightShift,
     RightShiftHelper,
     SignExtension,
-    Rotr,
+    LeftShift,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -98,7 +98,7 @@ impl Suffixes {
             Suffixes::RightShift => RightShiftSuffix::suffix_mle(b),
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
             Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
-            Suffixes::Rotr => RotrSuffix::<WORD_SIZE>::suffix_mle(b),
+            Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
         }
     }
 }

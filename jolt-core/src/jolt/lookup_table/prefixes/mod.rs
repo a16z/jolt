@@ -1,3 +1,5 @@
+use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
+use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
@@ -25,8 +27,6 @@ use num::FromPrimitive;
 use or::OrPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
-use rotr::RotrPrefix;
-use rotr_helper::RotrHelperPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
@@ -35,6 +35,8 @@ pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
 pub mod left_msb;
+pub mod left_shift;
+pub mod left_shift_helper;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
@@ -48,8 +50,6 @@ pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_shift;
-pub mod rotr;
-pub mod rotr_helper;
 pub mod sign_extension;
 pub mod upper_word;
 pub mod xor;
@@ -116,22 +116,13 @@ pub enum Prefixes {
     Pow2,
     RightShift,
     SignExtension,
-    Rotr,
-    RotrHelper,
+    LeftShift,
+    LeftShiftHelper,
 }
 
 #[derive(Clone, Copy)]
 pub struct PrefixEval<F>(F);
-#[derive(Clone, Copy)]
-pub enum PrefixCheckpoint<F> {
-    Default(PrefixEval<F>),
-    Rotr {
-        prod_one_plus_y: F,
-        first_sum: F,
-        second_sum: F,
-    },
-    None,
-}
+pub type PrefixCheckpoint<F: JoltField> = PrefixEval<Option<F>>;
 
 impl<F: Display> Display for PrefixEval<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -139,55 +130,15 @@ impl<F: Display> Display for PrefixEval<F> {
     }
 }
 
+impl<F> From<F> for PrefixEval<F> {
+    fn from(value: F) -> Self {
+        Self(value)
+    }
+}
+
 impl<F> PrefixCheckpoint<F> {
-    /// Returns the field element if this is a default checkpoint.
-    /// Panics otherwise
-    pub fn unwrap(self) -> F {
-        match self {
-            PrefixCheckpoint::Default(e) => e.0,
-            _ => panic!("invalid prefix checkpoint"),
-        }
-    }
-
-    /// Returns the field element if this is a default checkpoint.
-    /// Returns `default` otherwise
-    pub fn unwrap_or(self, default: F) -> F {
-        match self {
-            PrefixCheckpoint::Default(e) => e.0,
-            _ => default,
-        }
-    }
-}
-
-impl<F> From<Option<F>> for PrefixCheckpoint<F> {
-    fn from(value: Option<F>) -> Self {
-        match value {
-            Some(value) => PrefixCheckpoint::Default(PrefixEval(value)),
-            None => PrefixCheckpoint::None,
-        }
-    }
-}
-
-impl<F: JoltField> Into<PrefixEval<F>> for PrefixCheckpoint<F> {
-    fn into(self) -> PrefixEval<F> {
-        match self {
-            PrefixCheckpoint::Default(e) => e,
-            PrefixCheckpoint::Rotr {
-                first_sum,
-                second_sum,
-                ..
-            } => PrefixEval(first_sum + second_sum),
-            PrefixCheckpoint::None => panic!("invalid prefix checkpoint"),
-        }
-    }
-}
-
-impl<F> Index<Prefixes> for &[PrefixCheckpoint<F>] {
-    type Output = PrefixCheckpoint<F>;
-
-    fn index(&self, prefix: Prefixes) -> &Self::Output {
-        let index = prefix as usize;
-        self.get(index).unwrap()
+    pub fn unwrap(self) -> PrefixEval<F> {
+        self.0.unwrap().into()
     }
 }
 
@@ -265,9 +216,11 @@ impl Prefixes {
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::Rotr => RotrPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::RotrHelper => {
-                RotrHelperPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            Prefixes::LeftShift => {
+                LeftShiftPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShiftHelper => {
+                LeftShiftHelperPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -400,11 +353,11 @@ impl Prefixes {
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
-            Prefixes::Rotr => {
-                RotrPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            Prefixes::LeftShift => {
+                LeftShiftPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
-            Prefixes::RotrHelper => {
-                RotrHelperPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            Prefixes::LeftShiftHelper => {
+                LeftShiftHelperPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
