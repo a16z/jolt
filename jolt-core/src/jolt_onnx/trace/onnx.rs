@@ -3,29 +3,70 @@
 use crate::jolt_onnx::{
     common::onnx_trace::{ONNXTraceRow, Operator},
     instruction::relu::ReLUInstruction,
-    vm::onnx_vm::ONNXInstructionSet,
+    precompiles::{matmult::MatMultPrecompile, PrecompileOperators},
+    vm::{onnx_vm::ONNXInstructionSet, JoltONNXTraceStep},
 };
 
 use tracer::ELFInstruction;
 
-/// Convert [`ONNXTraceRow`] to [`ONNXInstructionSet`]
-pub fn onnxrow_to_lookup(row: &ONNXTraceRow) -> Option<Vec<ONNXInstructionSet>> {
-    match row.instruction.opcode {
-        // TODO: clean this up to make it extensible for other operators
-        Operator::Relu => row
-            .layer_state
-            .input_vals
-            .as_ref()
-            .and_then(|inputs| inputs.first())
-            .map(|tensor| {
-                let lookups = tensor
-                    .data
-                    .iter()
-                    .map(|value| ReLUInstruction(*value as u8 as u32 as u64).into())
-                    .collect::<Vec<ONNXInstructionSet>>();
-                lookups
-            }),
-        _ => None,
+impl ONNXTraceRow {
+    pub fn to_trace_step(&self) -> Vec<JoltONNXTraceStep<ONNXInstructionSet>> {
+        if let Some(lookups) = self.to_lookup() {
+            return lookups
+                .into_iter()
+                .map(|lookup| {
+                    let mut step = JoltONNXTraceStep::no_op();
+                    step.instruction_lookup = Some(lookup);
+                    step
+                })
+                .collect::<Vec<_>>();
+        }
+
+        if let Some(precompile) = self.to_precompile() {
+            let mut step = JoltONNXTraceStep::no_op();
+            step.precompile = Some(precompile);
+            return vec![step];
+        }
+
+        vec![JoltONNXTraceStep::no_op()]
+    }
+
+    /// Convert [`ONNXTraceRow`] to [`ONNXInstructionSet`]
+    pub fn to_lookup(&self) -> Option<Vec<ONNXInstructionSet>> {
+        match self.instruction.opcode {
+            // TODO: clean this up to make it extensible for other operators
+            Operator::Relu => self
+                .layer_state
+                .input_vals
+                .as_ref()
+                .and_then(|inputs| inputs.first())
+                .map(|tensor| {
+                    let lookups = tensor
+                        .data
+                        .iter()
+                        .map(|value| ReLUInstruction(*value as u64).into())
+                        .collect::<Vec<ONNXInstructionSet>>();
+                    lookups
+                }),
+            _ => None,
+        }
+    }
+
+    /// Convert [`ONNXTraceRow`] to [`PrecompileOperators`]
+    pub fn to_precompile(&self) -> Option<PrecompileOperators> {
+        match self.instruction.opcode {
+            Operator::MatMul => {
+                let inputs = self
+                    .layer_state
+                    .input_vals
+                    .as_ref()
+                    .expect("input values should be present");
+                let a = inputs[0].clone().pad();
+                let b = inputs[1].clone().pad();
+                Some(PrecompileOperators::MatMult(MatMultPrecompile::new(a, b)))
+            }
+            _ => None,
+        }
     }
 }
 

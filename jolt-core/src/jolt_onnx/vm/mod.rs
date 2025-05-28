@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common::onnx_trace::JoltONNXDevice;
 use super::memory_checking::{Initializable, StructuredPolynomialData};
+use super::precompiles::PrecompileOperators;
 
 pub mod instruction_lookups;
 pub mod onnx_vm;
@@ -417,6 +418,7 @@ pub struct JoltONNXTraceStep<InstructionSet: JoltInstructionSet> {
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
+    pub precompile: Option<PrecompileOperators>,
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
@@ -431,6 +433,7 @@ impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
                 MemoryOp::noop_read(),  // RAM
             ],
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
+            precompile: None,
         }
     }
 

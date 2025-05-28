@@ -4,7 +4,6 @@
 
 use super::{
     common::onnx_trace::JoltONNXDevice,
-    trace::onnx::onnxrow_to_lookup,
     tracer::{self, model::QuantizedONNXModel},
     vm::{onnx_vm::ONNXInstructionSet, JoltONNXTraceStep},
 };
@@ -41,22 +40,8 @@ impl ONNXProgram {
         let (raw_trace, io_device) = tracer::trace(&self.model, &self.input);
         let trace = raw_trace
             .iter()
-            .flat_map(|row| {
-                let lookups = onnxrow_to_lookup(row);
-                if let Some(lookups) = lookups {
-                    lookups
-                        .into_iter()
-                        .map(|lookup| {
-                            let mut step = JoltONNXTraceStep::no_op();
-                            step.instruction_lookup = Some(lookup);
-                            step
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![JoltONNXTraceStep::no_op()]
-                }
-            })
-            .collect::<Vec<_>>();
+            .flat_map(|row| row.to_trace_step())
+            .collect();
         (io_device, trace)
     }
 }

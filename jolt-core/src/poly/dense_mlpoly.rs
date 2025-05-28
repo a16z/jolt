@@ -9,10 +9,13 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::multilinear_polynomial::BindingOrder;
 
-#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize,
+)]
 pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial
     pub len: usize,

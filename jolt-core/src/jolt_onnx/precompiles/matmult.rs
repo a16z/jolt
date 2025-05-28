@@ -6,12 +6,34 @@ use crate::{
     },
     utils::{math::Math, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 use super::sumcheck_engine::BatchableSumcheckInstance;
 
-#[derive(Clone, Debug)]
-pub struct MatMultPrecompile<F>
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct MatMultPrecompile {
+    a: QuantizedLiteTensor,
+    b: QuantizedLiteTensor,
+}
+
+impl MatMultPrecompile {
+    pub fn new(a: QuantizedLiteTensor, b: QuantizedLiteTensor) -> Self {
+        Self { a, b }
+    }
+
+    pub fn a(&self) -> &QuantizedLiteTensor {
+        &self.a
+    }
+
+    pub fn b(&self) -> &QuantizedLiteTensor {
+        &self.b
+    }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct MatMultSumcheck<F>
 where
     F: JoltField,
 {
@@ -22,7 +44,7 @@ where
     num_vars: usize,
 }
 
-impl<F> MatMultPrecompile<F>
+impl<F> MatMultSumcheck<F>
 where
     F: JoltField,
 {
@@ -76,7 +98,7 @@ where
     }
 }
 
-impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for MatMultPrecompile<F>
+impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for MatMultSumcheck<F>
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -143,7 +165,7 @@ mod tests {
     use ark_bn254::Fr;
     use ark_std::{rand::Rng, test_rng};
 
-    use super::MatMultPrecompile;
+    use super::MatMultSumcheck;
 
     #[test]
     fn test_perceptron_2() {
@@ -170,7 +192,7 @@ mod tests {
             let m = a.m();
             // b is implicitly transposed
             let n = b.m();
-            let precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+            let precompile = MatMultSumcheck::<Fr>::new(&a, &b, &mut transcript);
             precompiles.push(precompile);
 
             // Update verifier transcript
@@ -209,7 +231,7 @@ mod tests {
         let n = b.m();
 
         let mut transcript = KeccakTranscript::new(b"test");
-        let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+        let mut precompile = MatMultSumcheck::<Fr>::new(&a, &b, &mut transcript);
         let (proof, _rsc) = BatchedSumcheck::prove(vec![&mut precompile], &mut transcript);
         let mut vtranscript = KeccakTranscript::new(b"test");
         let log_m = m.log_2();
@@ -248,7 +270,7 @@ mod tests {
         let n = b.m();
 
         let mut transcript = KeccakTranscript::new(b"test");
-        let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+        let mut precompile = MatMultSumcheck::<Fr>::new(&a, &b, &mut transcript);
         let (proof, _rsc) = BatchedSumcheck::prove(vec![&mut precompile], &mut transcript);
         let mut vtranscript = KeccakTranscript::new(b"test");
         let log_m = m.log_2();
@@ -276,7 +298,7 @@ mod tests {
             let m = a.m();
             // b is implicitly transposed
             let n = b.m();
-            let precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+            let precompile = MatMultSumcheck::<Fr>::new(&a, &b, &mut transcript);
             precompiles.push(precompile);
 
             // Update verifier transcript
