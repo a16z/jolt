@@ -16,9 +16,9 @@ use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 ///
 /// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
 /// order in the visual representation of the circuit:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      /  \
-///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///      /\        /\        /\        /\
+///     /  \      /  \      /  \      /  \
+///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
 ///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
 #[derive(Default, Debug, Clone)]
 pub struct DenseInterleavedPolynomial<F: JoltField> {

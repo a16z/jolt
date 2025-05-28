@@ -31,17 +31,23 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
 ///
 /// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
 /// order in the visual representation of the circuit:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      /  \
-///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///      /\        /\        /\        /\
+///     /  \      /  \      /  \      /  \
+///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
 ///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
+///
+/// The "interleaved" order is the natural order in the visual representation of the circuit,
+/// where the left and right polynomials are interleaved.
+///
+/// The "interleaved" order is the natural order in the visual representation of the circuit,
+/// where the left and right polynomials are interleaved.
 ///
 /// Where SparseInterleavedPolynomial differs from DenseInterleavedPolynomial
 /// is that many of the coefficients are expected to be 1s, so the circuit may
 /// look something like this:
-///      Λ        Λ        Λ        Λ
-///     / \      / \      / \      /  \
-///    1   R0   1   1   L2   1    1    1
+///      /\        /\        /\        /\
+///     /  \      /  \      /  \      /  \
+///    1   R0    1   1     L2   1    1    1
 ///
 /// Instead of materializing all the 1s, we use a sparse vector to represent the layer,
 /// where each element of the vector contains the index and value of a non-one coefficient.
@@ -197,10 +203,10 @@ impl<F: JoltField> SparseInterleavedPolynomial<F> {
     }
 
     /// Computes the grand product layer output by this one.
-    ///     L0'      R0'      L1'      R1'     <- Output layer
-    ///      Λ        Λ        Λ        Λ
-    ///     / \      / \      / \      /  \
-    ///   L0   R0  L1   R1  L2   R2  L3   R3   <- This layer
+    ///      L0'       R0'       L1'       R1'     <- Output layer
+    ///      /\        /\        /\        /\
+    ///     /  \      /  \      /  \      /  \
+    ///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::layer_output")]
     pub fn layer_output(&self) -> Self {
         if let Some(coalesced) = &self.coalesced {

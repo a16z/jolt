@@ -516,7 +516,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 // TODO: have a precise estimate. This is a (somewhat conservative) guess based on real workload (i.e. SHA-2 chain)
                 // Quick math: the shard data has Az + Bz unbound coeffs. Worst case is that each such coeff
                 // is in its own `Y_SVO_SPACE_SIZE`-sized block, thus giving a 1-1 correspondence between
-                // unbound and bound coeffs for Az and Bz. We also need to acount for Cz.
+                // unbound and bound coeffs for Az and Bz. We also need to account for the same number of Cz coeffs.
                 // So the most conservative estimate is `3 * shard_data.len() / 2`, but in practice we see fewer bound coeffs.
                 let estimated_num_bound_coeffs = shard_data.len();
                 let mut task_bound_coeffs = Vec::with_capacity(estimated_num_bound_coeffs);
