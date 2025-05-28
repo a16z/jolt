@@ -114,8 +114,6 @@ mod tests {
     use crate::{field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme};
     use ark_bn254::{Bn254, Fr};
     use ark_std::test_rng;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
 
     fn test_e2e_with<F, PCS, ProofTranscript>(onnx_program: &ONNXProgram)
     where

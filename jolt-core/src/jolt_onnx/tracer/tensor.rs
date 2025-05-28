@@ -1,6 +1,6 @@
 //! This module provides the tensor types used by the ONNX runtime in Jolt.
 
-// TODO: Refactor duplicate code
+// TODO: Refactor duplicate code (but first figure out a better quantization strategy)
 
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::*;

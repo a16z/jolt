@@ -1,5 +1,5 @@
 //! This module provides utility functions for working with ONNX models and tensors in Jolt.
-use rand::Rng;
+
 use tract_onnx::prelude::*;
 
 /// Given serialized data and its tract DatumType, build a tract tensor.
