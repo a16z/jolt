@@ -138,7 +138,6 @@ mod tests {
     };
     use ark_bn254::Fr;
     use ark_std::{rand::Rng, test_rng};
-    use itertools::Itertools;
 
     use super::MatMultPrecompile;
 
