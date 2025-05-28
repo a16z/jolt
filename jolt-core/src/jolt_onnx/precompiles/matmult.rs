@@ -40,8 +40,8 @@ where
         let k = a.n();
         let log_m = m.log_2();
         let log_n = n.log_2();
-        let rx: Vec<F> = transcript.challenge_vector(log_m);
-        let ry: Vec<F> = transcript.challenge_vector(log_n);
+        let rx: Vec<F> = transcript.challenge_scalar_powers(log_m);
+        let ry: Vec<F> = transcript.challenge_scalar_powers(log_n);
         let eq_rx = EqPolynomial::evals(&rx);
         let eq_ry = EqPolynomial::evals(&ry);
         let mut A_rx = vec![F::zero(); k];
@@ -163,8 +163,8 @@ mod tests {
         let mut vtranscript = KeccakTranscript::new(b"test");
         let log_m = m.log_2();
         let log_n = n.log_2();
-        let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
-        let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        let _rx: Vec<Fr> = vtranscript.challenge_scalar_powers(log_m);
+        let _ry: Vec<Fr> = vtranscript.challenge_scalar_powers(log_n);
         let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript).unwrap();
     }
 
@@ -202,8 +202,8 @@ mod tests {
         let mut vtranscript = KeccakTranscript::new(b"test");
         let log_m = m.log_2();
         let log_n = n.log_2();
-        let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
-        let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        let _rx: Vec<Fr> = vtranscript.challenge_scalar_powers(log_m);
+        let _ry: Vec<Fr> = vtranscript.challenge_scalar_powers(log_n);
         let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript).unwrap();
     }
 
@@ -238,8 +238,8 @@ mod tests {
             // Update verifier transcript
             let log_m = m.log_2();
             let log_n = n.log_2();
-            let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
-            let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+            let _rx: Vec<Fr> = vtranscript.challenge_scalar_powers(log_m);
+            let _ry: Vec<Fr> = vtranscript.challenge_scalar_powers(log_n);
         }
 
         // prover
@@ -282,8 +282,8 @@ mod tests {
             // Update verifier transcript
             let log_m = m.log_2();
             let log_n = n.log_2();
-            let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
-            let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+            let _rx: Vec<Fr> = vtranscript.challenge_scalar_powers(log_m);
+            let _ry: Vec<Fr> = vtranscript.challenge_scalar_powers(log_n);
         }
 
         // prover
