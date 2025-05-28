@@ -374,7 +374,16 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     );
     let _guard = span.enter();
 
-    // Data structure described in Equation (72)
+    // The table I is used to update the Val table efficiently when we compute the univariate polynomial
+    // that the prover sends to the verifier in each round. Specifically, I stores data of
+    // the form (j, k, INC * LT, INC), where j indexes the instruction cycle, k is the
+    // the memory location written, and INC * LT represents the sum of elements
+    // Inc(k, j, j') * Lt(j', r) as j' ranges over {0, 1}^(log(chunk_size) - i).
+    // for round i, where r = (r_1, ..., r_i) is the vector of committed cycle variables in F.
+    // Similarly, INC represents the sum of Inc(k, j, j') over the same range of j'.
+    // Table I in round i has size T / 2^i.
+
+    // Note this I differs from the data structure described in Equation (72)
     let mut I: Vec<Vec<(usize, usize, F, F)>> = write_addresses
         .par_chunks(chunk_size)
         .zip(write_increments.par_chunks(chunk_size))
@@ -438,30 +447,33 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
     /// A collection of vectors that are used in each of the first log(T / num_chunks)
     /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused
-    /// across all log(T / num_chunks) rounds.
+    /// across all log(T / num_chunks) rounds. Each vector has length K.
+    /// In the documentation below, by we (j'', j', r_i, ..., r_1) we mean the the
+    /// concatenation of the vectors j'', j', (r_i, ..., r_1), where the (r_j)s
+    /// correspond to the i least significant bits. Notice this is different from
+    /// the endianness used in the paper.
     struct DataBuffers<F: JoltField> {
         /// Contains
-        ///     Val(k, j', 0, ..., 0)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
+        ///     Val(k, j'', j', 0, ..., 0)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i).
         val_j_0: Vec<F>,
         /// `val_j_r[0]` contains
-        ///     Val(k, j'', 0, r_i, ..., r_1)
+        ///     Val(k, j'', j', 0, r_i, ..., r_1)
         /// `val_j_r[1]` contains
-        ///     Val(k, j'', 1, r_i, ..., r_1)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
+        ///     Val(k, j'', j', 1, r_i, ..., r_1)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1)
         val_j_r: [Vec<F>; 2],
         /// `ra[0]` contains
-        ///     ra(k, j'', 0, r_i, ..., r_1)
+        ///     ra(k, j'', j', 0, r_i, ..., r_1)
         /// `ra[1]` contains
-        ///     ra(k, j'', 1, r_i, ..., r_1)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
+        ///     ra(k, j'', j', 1, r_i, ..., r_1)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1),
         ra: [Vec<F>; 2],
         /// `wa[0]` contains
-        ///     wa(k, j'', 0, r_i, ..., r_1)
+        ///     wa(k, j'', j', 0, r_i, ..., r_1)
         /// `wa[1]` contains
-        ///     wa(k, j'', 1, r_i, ..., r_1)
-        /// as we iterate over rows j' \in {0, 1}^(log(T) - i),
-        /// where j'' are the higher (log(T) - i - 1) bits of j'
+        ///     wa(k, j'', j', 1, r_i, ..., r_1)
+        /// as we iterate over rows j' \in {0, 1}^(log(chunk_size) - i - 1),
         wa: [Vec<F>; 2],
         dirty_indices: Vec<usize>,
     }
@@ -480,6 +492,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
     for round in 0..chunk_size.log_2() {
         #[cfg(test)]
         {
+            // Sanity check the write-checking sum-check that commits Inc(r, r') on figure 9 of p46.
             let mut expected_claim = F::zero();
             for j in 0..(T >> round) {
                 let mut inner_sum = F::zero();
@@ -508,6 +521,8 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
             .zip(data_buffers.par_iter_mut())
             .zip(val_checkpoints.par_chunks(K))
             .map(|((I_chunk, buffers), checkpoint)| {
+                // There are num_chunks many chunks in the loop.
+
                 let mut evals = [F::zero(), F::zero(), F::zero()];
 
                 let DataBuffers {
@@ -524,42 +539,55 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 I_chunk
                     .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
                     .for_each(|inc_chunk| {
+                        // Iterate over chunks that get mapped to the same address. This corresponds
+                        // to incrementing j' in the description of the DataBuffer struct.
                         let j_prime = inc_chunk[0].0; // row index
 
-                        for j in j_prime << round..(j_prime + 1) << round {
-                            let j_bound = j % (1 << round);
-                            let k = read_addresses[j];
-                            if ra[0][k].is_zero() && wa[0][k].is_zero() {
-                                dirty_indices.push(k);
-                            }
-                            ra[0][k] += A[j_bound];
-                            let k = write_addresses[j];
-                            if ra[0][k].is_zero() && wa[0][k].is_zero() {
-                                dirty_indices.push(k);
-                            }
-                            wa[0][k] += A[j_bound];
-                        }
+                        // We have
+                        // j_prime = (y_1, y_2, ... y_i, x_{i+1}, ..., x_n)
+                        // j runs from (x_{i+1}, ..., x_n, 0, ..., 0) to (x_{i+1}, ..., x_n, 1, ..., 1)
+                        // j_bound runs from (0, ..., 0) to (1, ..., 1)
 
-                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                            let j_bound = j % (1 << round);
-                            let k = read_addresses[j];
-                            if ra[0][k].is_zero()
-                                && wa[0][k].is_zero()
-                                && ra[1][k].is_zero()
-                                && wa[1][k].is_zero()
-                            {
-                                dirty_indices.push(k);
+                        {
+                            // Update the arrays in ra and wa and the dirty indices.
+
+                            for j in j_prime << round..(j_prime + 1) << round {
+                                let j_bound = j % (1 << round);
+                                let k = read_addresses[j];
+                                if ra[0][k].is_zero() && wa[0][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                ra[0][k] += A[j_bound];
+
+                                let k = write_addresses[j];
+                                if ra[0][k].is_zero() && wa[0][k].is_zero() {
+                                    dirty_indices.push(k);
+                                }
+                                wa[0][k] += A[j_bound];
                             }
-                            ra[1][k] += A[j_bound];
-                            let k = write_addresses[j];
-                            if ra[0][k].is_zero()
-                                && wa[0][k].is_zero()
-                                && ra[1][k].is_zero()
-                                && wa[1][k].is_zero()
-                            {
-                                dirty_indices.push(k);
+
+                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                                let j_bound = j % (1 << round);
+                                let k = read_addresses[j];
+                                if ra[0][k].is_zero()
+                                    && wa[0][k].is_zero()
+                                    && ra[1][k].is_zero()
+                                    && wa[1][k].is_zero()
+                                {
+                                    dirty_indices.push(k);
+                                }
+                                ra[1][k] += A[j_bound];
+
+                                let k = write_addresses[j];
+                                if ra[0][k].is_zero()
+                                    && wa[0][k].is_zero()
+                                    && ra[1][k].is_zero()
+                                    && wa[1][k].is_zero()
+                                {
+                                    dirty_indices.push(k);
+                                }
+                                wa[1][k] += A[j_bound];
                             }
-                            wa[1][k] += A[j_bound];
                         }
 
                         for &k in dirty_indices.iter() {
@@ -691,6 +719,15 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         let _inner_guard = inner_span.enter();
 
         // Bind I
+
+        // Update I according to the recursive formula
+        // INC * TL(I(j, k))
+        // = sum Inc(k, j, (j', b)) * Lt((j', b), (r_1, ..., r_i, r_{i+1}))
+        // by (73) where (j', b) is a bounded cycle vector in the hypercube that we are summing over
+        // = sum Inc(k, j, (j', b)) * (eq(b), r_{i+1}) * Lt(j', (r_1, ..., r_i)) + (1 - b) * r_{i+1})
+        // Expand b \in {0, 1} and use that eq(b, r) = rb + (1 - b) * (1 - r)
+        // = (1 - r_{i+1}) * INC_TL(k, (j', 0)) + r_{i+1} * INC(k, (j',0)) + r_{i+1} * INC_TL(k, (j', 1))
+        // where by INC_TL and INC we mean the corresponding sums
         I.par_iter_mut().for_each(|I_chunk| {
             // Note: A given row in an I_chunk may not be ordered by k after binding
             let mut next_bound_index = 0;
@@ -698,6 +735,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
 
             for i in 0..I_chunk.len() {
                 let (j_prime, k, inc_lt, inc) = I_chunk[i];
+
                 if let Some(bound_index) = bound_indices[k] {
                     if I_chunk[bound_index].0 == j_prime / 2 {
                         // Neighbor was already processed
@@ -707,7 +745,9 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                         continue;
                     }
                 }
+
                 // First time this k has been encountered
+
                 let bound_value = if j_prime % 2 == 0 {
                     // (1 - r_j) * inc_lt + r_j * inc
                     inc_lt + r_j * (inc - inc_lt)
@@ -718,6 +758,7 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
                 bound_indices[k] = Some(next_bound_index);
                 next_bound_index += 1;
             }
+
             I_chunk.truncate(next_bound_index);
         });
 
@@ -751,6 +792,26 @@ fn prove_read_write_checking_local<F: JoltField, ProofTranscript: Transcript>(
         let _inner_guard = inner_span.enter();
 
         // Update A for this round (see Equation 55)
+        // Recall that A has capacity 2 ^ chunk_size and at this point has size 2 ^ round and contains A_left the values of
+        // eq(k_1, ..., k_{round}, r_1, ..., r_{round}) for all 2 ^ round values of
+        // k = (k_1, ..., k_{round}) \in {0, 1}^(round).
+        //
+        // Update A by the rule
+        // eq(k_1, ..., k_m, k_{m+1}, r_1, ..., r_m, r_{m+1})
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * eq(k_{m+1}, r_{m+1})
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * (r_{m+1} * k_{m+1} + (1 - r_{m+1}) * (1 - k_{m+1}))
+        //
+        // so in particular
+        //
+        // eq(k_1, ..., k_m, 1, r_1, ..., r_m, r_{m+1}) = q(k_1, ..., k_m, r_1, ..., r_m) * r_{m+1}
+        //
+        // and
+        //
+        // eq(k_1, ..., k_m, 0, r_1, ..., r_m, r_{m+1})
+        //  = q(k_1, ..., k_m, r_1, ..., r_m) * r_{m+1}
+        //  = eq(k_1, ..., k_m, r_1, ..., r_m) * (1 - r_{m+1})
+        //  = eq(k_1, ..., k_m, r_2, ..., r_m, r_{m+1}) - eq(k_1, ..., k_m, 1, r_1, ..., r_m, r_{m+1})
+
         let (A_left, A_right) = A.split_at_mut(1 << round);
         A_left
             .par_iter_mut()
