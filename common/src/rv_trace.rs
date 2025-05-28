@@ -1,12 +1,14 @@
+use crate::constants::{
+    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
+};
 #[cfg(not(feature = "std"))]
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::str::FromStr;
-
-use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use core::str::FromStr;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -553,12 +555,12 @@ pub struct JoltDevice {
 }
 
 impl JoltDevice {
-    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
+    pub fn new(memory_config: &MemoryConfig) -> Self {
         Self {
             inputs: Vec::new(),
             outputs: Vec::new(),
             panic: false,
-            memory_layout: MemoryLayout::new(max_input_size, max_output_size),
+            memory_layout: MemoryLayout::new(memory_config),
         }
     }
 
@@ -635,9 +637,26 @@ impl JoltDevice {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
-)]
+#[derive(Debug, Copy, Clone)]
+pub struct MemoryConfig {
+    pub max_input_size: u64,
+    pub max_output_size: u64,
+    pub stack_size: u64,
+    pub memory_size: u64,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            max_input_size: DEFAULT_MAX_INPUT_SIZE,
+            max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
+            stack_size: DEFAULT_STACK_SIZE,
+            memory_size: DEFAULT_MEMORY_SIZE,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryLayout {
     pub max_input_size: u64,
     pub max_output_size: u64,
@@ -645,30 +664,98 @@ pub struct MemoryLayout {
     pub input_end: u64,
     pub output_start: u64,
     pub output_end: u64,
+    pub stack_size: u64,
+    /// Stack starts at the IO inputs and goes "down" from there by `stack_size` bytes.
+    pub stack_end: u64,
+    pub memory_size: u64,
+    /// Heap starts at RAM_START_ADDRESS and is `memory_size` bytes.
+    pub memory_end: u64,
     pub panic: u64,
     pub termination: u64,
 }
 
+impl core::fmt::Debug for MemoryLayout {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MemoryLayout")
+            .field("max_input_size", &self.max_input_size)
+            .field("max_output_size", &self.max_output_size)
+            .field("input_start", &format_args!("{:#X}", self.input_start))
+            .field("input_end", &format_args!("{:#X}", self.input_end))
+            .field("output_start", &format_args!("{:#X}", self.output_start))
+            .field("output_end", &format_args!("{:#X}", self.output_end))
+            .field("stack_size", &format_args!("{:#X}", self.stack_size))
+            .field("stack_end", &format_args!("{:#X}", self.stack_end))
+            .field("memory_size", &format_args!("{:#X}", self.memory_size))
+            .field("memory_end", &format_args!("{:#X}", self.memory_end))
+            .field("panic", &format_args!("{:#X}", self.panic))
+            .field("termination", &format_args!("{:#X}", self.termination))
+            .finish()
+    }
+}
+
 impl MemoryLayout {
-    pub fn new(mut max_input_size: u64, mut max_output_size: u64) -> Self {
+    pub fn new(config: &MemoryConfig) -> Self {
+        // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
+        #[inline]
+        fn align_up(val: u64, align: u64) -> u64 {
+            if align == 0 {
+                val
+            } else {
+                match val % align {
+                    0 => val,
+                    rem => {
+                        // panics if val + (align - rem) overflows
+                        val.checked_add(align - rem).expect("alignment overflow")
+                    }
+                }
+            }
+        }
+
         // Must be word-aligned
-        max_input_size = max_input_size.next_multiple_of(4);
-        max_output_size = max_output_size.next_multiple_of(4);
+        let max_input_size = align_up(config.max_input_size, 4);
+        let max_output_size = align_up(config.max_output_size, 4);
+        let stack_size = align_up(config.stack_size, 4);
+        let memory_size = align_up(config.memory_size, 4);
 
         // Adds 8 to account for panic bit and termination bit
         // (they each occupy one full 4-byte word)
-        let io_region_num_bytes = max_input_size + max_output_size + 8;
+        let io_region_bytes = max_input_size
+            .checked_add(max_output_size)
+            .and_then(|s| s.checked_add(8))
+            .expect("I/O region size overflow");
 
         // Padded so that the witness index corresponding to `RAM_START_ADDRESS`
         // is a power of 2
-        let io_region_num_words =
-            (REGISTER_COUNT + io_region_num_bytes / 4).next_power_of_two() - REGISTER_COUNT;
-        let input_start = RAM_START_ADDRESS - io_region_num_words * 4;
-        let input_end = input_start + max_input_size;
+        let io_region_words = (REGISTER_COUNT + io_region_bytes / 4)
+            .next_power_of_two()
+            .checked_sub(REGISTER_COUNT)
+            .expect("I/O region words underflow");
+
+        let io_bytes = io_region_words
+            .checked_mul(4)
+            .expect("I/O region byte count overflow");
+        let input_start = RAM_START_ADDRESS
+            .checked_sub(io_bytes)
+            .expect("I/O region exceeds RAM_START_ADDRESS");
+        let input_end = input_start
+            .checked_add(max_input_size)
+            .expect("input_end overflow");
         let output_start = input_end;
-        let output_end = output_start + max_output_size;
+        let output_end = output_start
+            .checked_add(max_output_size)
+            .expect("output_end overflow");
         let panic = output_end;
-        let termination = panic + 4;
+        let termination = panic.checked_add(4).expect("termination overflow");
+
+        // stack grows *down* from input_start
+        let stack_end = input_start
+            .checked_sub(stack_size)
+            .expect("stack region exceeds I/O region");
+
+        // heap grows *up* from RAM_START_ADDRESS
+        let memory_end = RAM_START_ADDRESS
+            .checked_add(memory_size)
+            .expect("memory_end overflow");
 
         Self {
             max_input_size,
@@ -677,6 +764,10 @@ impl MemoryLayout {
             input_end,
             output_start,
             output_end,
+            stack_size,
+            stack_end,
+            memory_size,
+            memory_end,
             panic,
             termination,
         }

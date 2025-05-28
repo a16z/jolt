@@ -4,7 +4,7 @@ pub use jolt_core::{field::JoltField, poly::commitment::hyperkzg::HyperKZG};
 
 pub use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{MemoryLayout, MemoryOp, RV32IM},
+    rv_trace::{MemoryConfig, MemoryLayout, MemoryOp, RV32IM},
 };
 pub use jolt_core::host;
 pub use jolt_core::jolt::instruction;
