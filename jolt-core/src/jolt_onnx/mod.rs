@@ -6,6 +6,7 @@
 
 pub mod common;
 pub mod instruction;
+mod memory_checking;
 pub mod onnx_host;
 pub mod precompiles;
 pub mod subtable;

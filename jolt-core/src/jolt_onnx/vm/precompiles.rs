@@ -17,3 +17,12 @@ where
 {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
 }
+
+impl<F, ProofTranscript> PrecompileProof<F, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    /// Given the execution trace, constructs the polynomials used in the batched sum-check proof.
+    pub fn generate_witness() {}
+}

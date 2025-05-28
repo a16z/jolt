@@ -5,26 +5,101 @@ use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::jolt::vm::bytecode::BytecodeStuff;
-use crate::jolt::vm::instruction_lookups::{
-    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
-};
 use crate::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use crate::jolt::vm::timestamp_range_check::TimestampRangeCheckStuff;
-use crate::jolt::vm::{
-    JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep, ProverDebugInfo,
-};
-use crate::lasso::memory_checking::{Initializable, StructuredPolynomialData};
+use crate::jolt::vm::{JoltTraceStep, ProverDebugInfo};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::r1cs::inputs::R1CSStuff;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use instruction_lookups::{
+    InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
+};
 
 use super::common::onnx_trace::JoltONNXDevice;
+use super::memory_checking::{Initializable, StructuredPolynomialData};
 
+pub mod instruction_lookups;
 pub mod onnx_vm;
 pub mod precompiles;
+
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
+    pub(crate) bytecode: BytecodeStuff<T>,
+    pub(crate) read_write_memory: ReadWriteMemoryStuff<T>,
+    pub(crate) instruction_lookups: InstructionLookupStuff<T>,
+    pub(crate) timestamp_range_check: TimestampRangeCheckStuff<T>,
+    pub(crate) r1cs: R1CSStuff<T>,
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
+    for JoltStuff<T>
+{
+    fn read_write_values(&self) -> Vec<&T> {
+        // self.bytecode
+        //     .read_write_values()
+        //     .into_iter()
+        //     .chain(self.read_write_memory.read_write_values())
+        //     .chain(self.instruction_lookups.read_write_values())
+        //     .chain(self.timestamp_range_check.read_write_values())
+        //     .chain(self.r1cs.read_write_values())
+        //     .collect()
+        self.instruction_lookups.read_write_values()
+    }
+
+    fn init_final_values(&self) -> Vec<&T> {
+        // self.bytecode
+        //     .init_final_values()
+        //     .into_iter()
+        //     .chain(self.read_write_memory.init_final_values())
+        //     .chain(self.instruction_lookups.init_final_values())
+        //     .chain(self.timestamp_range_check.init_final_values())
+        //     .chain(self.r1cs.init_final_values())
+        //     .collect()
+        self.instruction_lookups.init_final_values()
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        // self.bytecode
+        //     .read_write_values_mut()
+        //     .into_iter()
+        //     .chain(self.read_write_memory.read_write_values_mut())
+        //     .chain(self.instruction_lookups.read_write_values_mut())
+        //     .chain(self.timestamp_range_check.read_write_values_mut())
+        //     .chain(self.r1cs.read_write_values_mut())
+        //     .collect()
+        self.instruction_lookups.read_write_values_mut()
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        // self.bytecode
+        //     .init_final_values_mut()
+        //     .into_iter()
+        //     .chain(self.read_write_memory.init_final_values_mut())
+        //     .chain(self.instruction_lookups.init_final_values_mut())
+        //     .chain(self.timestamp_range_check.init_final_values_mut())
+        //     .chain(self.r1cs.init_final_values_mut())
+        //     .collect()
+        self.instruction_lookups.init_final_values_mut()
+    }
+}
+
+/// Note –– F: JoltField bound is not enforced.
+///
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
+/// Note –– PCS: CommitmentScheme bound is not enforced.
+///
+/// See issue #112792 <https://github.com/rust-lang/rust/issues/112792>.
+/// Adding #![feature(lazy_type_alias)] to the crate attributes seem to break
+/// `alloy_sol_types`.
+pub type JoltCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    JoltStuff<PCS::Commitment>;
 
 /// A SNARK for correct execution of an ONNX model on a given input.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -328,7 +403,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default + Sync> JoltStuff<T>
                 &preprocessing.instruction_lookups,
             ),
             timestamp_range_check: TimestampRangeCheckStuff::default(),
-            r1cs: R1CSStuff::initialize(&C),
+            r1cs: R1CSStuff::default(),
         }
     }
 }
