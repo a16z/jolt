@@ -113,6 +113,7 @@ mod tests {
     use crate::utils::transcript::{KeccakTranscript, Transcript};
     use crate::{field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme};
     use ark_bn254::{Bn254, Fr};
+    use ark_std::test_rng;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -140,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_perceptron() {
-        let mut rng = StdRng::from_seed([0; 32]);
+        let mut rng = test_rng();
         let input = random_floatvec(&mut rng, 10);
         let program = ONNXProgram::new("onnx/perceptron.onnx", &input);
         test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&program)
@@ -148,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_perceptron_2() {
-        let mut rng = StdRng::from_seed([0; 32]);
+        let mut rng = test_rng();
         let input = random_floatvec(&mut rng, 4);
         let program = ONNXProgram::new("onnx/perceptron_2.onnx", &input);
         test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&program)

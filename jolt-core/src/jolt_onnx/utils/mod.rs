@@ -1,6 +1,5 @@
 //! This module provides utility functions for working with ONNX models and tensors in Jolt.
 use rand::Rng;
-use rand::RngCore;
 use tract_onnx::prelude::*;
 
 /// Given serialized data and its tract DatumType, build a tract tensor.
@@ -28,6 +27,6 @@ pub fn create_tensor(shape: Vec<usize>, dt: DatumType, data: &[u8]) -> TractResu
 }
 
 /// Testing utility function to generate a random vector of floats.
-pub fn random_floatvec(mut rng: impl RngCore, size: usize) -> Vec<f32> {
-    (0..size).map(|_| rng.gen::<f32>()).collect()
+pub fn random_floatvec(mut rng: impl rand_core::RngCore, size: usize) -> Vec<f32> {
+    (0..size).map(|_| rng.next_u32() as f32).collect()
 }

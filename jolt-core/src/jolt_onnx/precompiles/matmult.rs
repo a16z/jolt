@@ -128,8 +128,12 @@ where
 mod tests {
     use crate::{
         jolt_onnx::{
+            self,
+            common::onnx_trace::Operator,
+            onnx_host::ONNXProgram,
             precompiles::sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
             tracer::tensor::QuantizedLiteTensor,
+            utils::random_floatvec,
         },
         utils::{
             math::Math,
@@ -162,6 +166,96 @@ mod tests {
         let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
         let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
         let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript).unwrap();
+    }
+
+    #[test]
+    fn test_perceptron() {
+        let mut rng = test_rng();
+        let input = random_floatvec(&mut rng, 10);
+        let program = ONNXProgram::new("onnx/perceptron.onnx", &input);
+        let (trace, _io) = jolt_onnx::tracer::trace(&program.model, &program.input);
+        let (a, b) = {
+            let filter_trace = trace
+                .iter()
+                .filter(|row| matches!(row.instruction.opcode, Operator::MatMul))
+                .collect::<Vec<_>>();
+            let step = filter_trace
+                .first()
+                .expect("execution trace should have at least one row");
+            let step_inputs = step
+                .layer_state
+                .input_vals
+                .as_ref()
+                .expect("input values should be present");
+            (step_inputs[0].clone(), step_inputs[1].clone())
+        };
+        let a = a.pad();
+        let b = b.pad();
+        // Get new padded m & n values
+        let m = a.m();
+        // b is implicitly transposed
+        let n = b.m();
+
+        let mut transcript = KeccakTranscript::new(b"test");
+        let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+        let (proof, _rsc) = BatchedSumcheck::prove(vec![&mut precompile], &mut transcript);
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        let log_m = m.log_2();
+        let log_n = n.log_2();
+        let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
+        let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        let _ = BatchedSumcheck::verify(&proof, vec![&mut precompile], &mut vtranscript).unwrap();
+    }
+
+    #[test]
+    fn test_perceptron_2() {
+        let mut rng = test_rng();
+        let input = random_floatvec(&mut rng, 4);
+        let program = ONNXProgram::new("onnx/perceptron_2.onnx", &input);
+        let (trace, _io) = jolt_onnx::tracer::trace(&program.model, &program.input);
+        let mut transcript = KeccakTranscript::new(b"test");
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        let mut precompiles = Vec::new();
+        let filter_trace = trace
+            .iter()
+            .filter(|row| matches!(row.instruction.opcode, Operator::MatMul))
+            .collect::<Vec<_>>();
+        for step in filter_trace.iter() {
+            let step_inputs = step
+                .layer_state
+                .input_vals
+                .as_ref()
+                .expect("input values should be present");
+            let a = step_inputs[0].clone().pad();
+            let b = step_inputs[1].clone().pad();
+            // Get new padded m & n values
+            let m = a.m();
+            // b is implicitly transposed
+            let n = b.m();
+            let precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
+            precompiles.push(precompile);
+
+            // Update verifier transcript
+            let log_m = m.log_2();
+            let log_n = n.log_2();
+            let _rx: Vec<Fr> = vtranscript.challenge_vector(log_m);
+            let _ry: Vec<Fr> = vtranscript.challenge_vector(log_n);
+        }
+
+        // prover
+        let trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            precompiles
+                .iter_mut()
+                .map(|p| p as &mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let (proof, _rsc) = BatchedSumcheck::prove(trait_objects, &mut transcript);
+
+        // verifier
+        let trait_objects: Vec<&dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> = precompiles
+            .iter_mut()
+            .map(|p| p as &dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+            .collect();
+        let _ = BatchedSumcheck::verify(&proof, trait_objects, &mut vtranscript).unwrap();
     }
 
     #[test]

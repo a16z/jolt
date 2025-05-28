@@ -1,13 +1,14 @@
 use crate::jolt_onnx::tracer::model::QuantizedONNXModel;
 use crate::jolt_onnx::tracer::trace;
 use crate::jolt_onnx::utils::random_floatvec;
+use ark_std::test_rng;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::{Path, PathBuf};
 use tract_onnx::prelude::*;
 
 fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
-    let rng = StdRng::from_seed(seed);
+    let rng = test_rng();
 
     // Build the ONNX model using tract
     let model = tract_onnx::onnx()
