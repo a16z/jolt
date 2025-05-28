@@ -34,7 +34,8 @@ where
         ProofTranscript: Transcript,
     {
         let m = a.m;
-        let n = b.n;
+        // b is implicitly transposed
+        let n = b.m;
         let k = a.n;
         let log_m = m.log_2();
         let log_n = n.log_2();
@@ -49,12 +50,12 @@ where
             }
         }
         let mut B_ry = vec![F::zero(); k];
-        for i in 0..k {
-            for j in 0..n {
-                B_ry[i] += b.entries[i * n + j] * eq_ry[j]
+        for i in 0..n {
+            for j in 0..k {
+                B_ry[j] += b.entries[i * k + j] * eq_ry[i]
             }
         }
-        let c = Matrix::matmult(a, b);
+        let c = Matrix::matmult_transposed(a, b);
         let c_poly = DensePolynomial::new(c.entries);
         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
         let num_vars = A_rx.len().log_2();
@@ -187,6 +188,29 @@ where
         Self { entries, m, n }
     }
 
+    /// We implicitly treat b as transposed
+    pub fn matmult_transposed(a: &Self, b: &Self) -> Self {
+        // check inner dimensions
+        assert_eq!(a.n, b.n);
+        let m = a.m;
+        // Implicitly transpose b
+        let n = b.m;
+        let k = a.n; // shared dimension
+        let mut entries = vec![F::zero(); m * n];
+        for i in 0..m {
+            for j in 0..n {
+                let mut dot_product = F::zero();
+                for t in 0..k {
+                    let a_val = a.entries[i * k + t];
+                    let b_val = b.entries[j * k + t];
+                    dot_product += a_val * b_val;
+                }
+                entries[i * n + j] = dot_product;
+            }
+        }
+        Self { entries, m, n }
+    }
+
     /// Create a random matrix of size N x N over the finite field F.
     ///
     /// # Note
@@ -229,13 +253,14 @@ mod tests {
     #[test]
     fn test_matmult() {
         let mut rng = test_rng();
-        let m = 10;
-        let n = 20;
-        let k = 30;
+        let m = 100;
+        let n = 200;
+        let k = 300;
         let a = Matrix::<Fr>::random(&mut rng, m, k).pad();
-        let b = Matrix::<Fr>::random(&mut rng, k, n).pad();
+        let b = Matrix::<Fr>::random(&mut rng, n, k).pad();
         let m = a.m;
-        let n = b.n;
+        // b is implicitly transposed
+        let n = b.m;
 
         let mut transcript = KeccakTranscript::new(b"test");
         let mut precompile = MatMultPrecompile::<Fr>::new(&a, &b, &mut transcript);
