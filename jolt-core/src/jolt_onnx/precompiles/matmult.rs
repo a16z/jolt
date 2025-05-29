@@ -43,13 +43,22 @@ impl MatMultPrecompile {
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct MatMultVerifierState<F>
+where
+    F: JoltField,
+{
+    _field: PhantomData<F>,
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultProverState<F>
 where
     F: JoltField,
 {
-    a: MultilinearPolynomial<F>,
-    b: MultilinearPolynomial<F>,
+    a: DensePolynomial<F>,
+    b: DensePolynomial<F>,
     input_claim: F,
+    num_rounds: usize,
 }
 
 impl<F> MatMultProverState<F>
@@ -97,12 +106,23 @@ where
             let sum: F = A_rx.iter().zip_eq(B_ry.iter()).map(|(a, b)| *a * b).sum();
             assert_eq!(sum, input_claim)
         }
+        let num_rounds = A_rx.len().log_2();
         Self {
-            a: MultilinearPolynomial::from(A_rx),
-            b: MultilinearPolynomial::from(B_ry),
+            a: DensePolynomial::new(A_rx),
+            b: DensePolynomial::new(B_ry),
             input_claim,
+            num_rounds,
         }
     }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct MatMultClaims<F>
+where
+    F: JoltField,
+{
+    a: F,
+    b: F,
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
@@ -111,6 +131,8 @@ where
     F: JoltField,
 {
     prover_state: Option<MatMultProverState<F>>,
+    verifier_state: Option<MatMultVerifierState<F>>,
+    claims: Option<MatMultClaims<F>>,
 }
 
 impl<F> MatMultSumcheck<F>
@@ -118,124 +140,82 @@ where
     F: JoltField,
 {
     /// Create a new instance of [`MatMultSumcheck`]
-    pub fn new(prover_state: Option<MatMultProverState<F>>) -> Self {
-        Self { prover_state }
+    pub fn new(
+        prover_state: Option<MatMultProverState<F>>,
+        verifier_state: Option<MatMultVerifierState<F>>,
+    ) -> Self {
+        Self {
+            prover_state,
+            verifier_state,
+            claims: None,
+        }
     }
 }
 
-// #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
-// pub struct MatMultSumcheck<F>
-// where
-//     F: JoltField,
-// {
-//     a: DensePolynomial<F>,
-//     b: DensePolynomial<F>,
-//     input_claim: F,
-//     final_claims: (F, F),
-//     num_vars: usize,
-// }
+impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for MatMultSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    #[inline(always)]
+    fn degree(&self) -> usize {
+        2
+    }
 
-// impl<F> MatMultSumcheck<F>
-// where
-//     F: JoltField,
-// {
-//     fn new<ProofTranscript>(
-//         a: &QuantizedLiteTensor,
-//         b: &QuantizedLiteTensor,
-//         transcript: &mut ProofTranscript,
-//     ) -> Self
-//     where
-//         ProofTranscript: Transcript,
-//     {
-//         let m = a.m();
-//         // b is implicitly transposed
-//         let n = b.m();
-//         let k = a.n();
-//         let log_m = m.log_2();
-//         let log_n = n.log_2();
-//         let rx: Vec<F> = transcript.challenge_scalar_powers(log_m);
-//         let ry: Vec<F> = transcript.challenge_scalar_powers(log_n);
-//         let eq_rx = EqPolynomial::evals(&rx);
-//         let eq_ry = EqPolynomial::evals(&ry);
-//         let mut A_rx = vec![F::zero(); k];
-//         for i in 0..m {
-//             for j in 0..k {
-//                 A_rx[j] += F::from_i64(a.data[i * k + j] as i64) * eq_rx[i];
-//             }
-//         }
-//         let mut B_ry = vec![F::zero(); k];
-//         for i in 0..n {
-//             for j in 0..k {
-//                 B_ry[j] += F::from_i64(b.data[i * k + j] as i64) * eq_ry[i]
-//             }
-//         }
-//         let (c, _c_shape) = a.matmul_rhs_transposed(b);
-//         let c_poly = DensePolynomial::new(c.iter().map(|&x| F::from_i64(x as i64)).collect_vec());
-//         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
-//         let num_vars = A_rx.len().log_2();
-//         #[cfg(test)]
-//         {
-//             let sum: F = A_rx.iter().zip_eq(B_ry.iter()).map(|(a, b)| *a * b).sum();
-//             assert_eq!(sum, input_claim)
-//         }
-//         Self {
-//             a: DensePolynomial::new(A_rx),
-//             b: DensePolynomial::new(B_ry),
-//             input_claim,
-//             num_vars,
-//             // we will populate this later
-//             final_claims: (F::zero(), F::zero()),
-//         }
-//     }
-// }
+    fn num_rounds(&self) -> usize {
+        if self.prover_state.is_some() {
+            self.prover_state.as_ref().unwrap().num_rounds
+        } else if self.verifier_state.is_some() {
+            todo!()
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
 
-// impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for MatMultSumcheck<F>
-// where
-//     F: JoltField,
-//     ProofTranscript: Transcript,
-// {
-//     #[inline(always)]
-//     fn degree(&self) -> usize {
-//         2
-//     }
+    fn input_claim(&self) -> F {
+        if self.prover_state.is_some() {
+            self.prover_state.as_ref().unwrap().input_claim
+        } else if self.verifier_state.is_some() {
+            todo!()
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
 
-//     fn num_rounds(&self) -> usize {
-//         self.num_vars
-//     }
+    #[tracing::instrument(skip_all)]
+    fn compute_prover_message(&self, _: usize) -> Vec<F> {
+        let MatMultProverState { a, b, .. } = self.prover_state.as_ref().unwrap();
+        let len = a.len() / 2;
+        let mut uni_poly_evals = vec![F::zero(); 2];
+        for i in 0..len {
+            uni_poly_evals[0] += a[i] * b[i];
+            let poly_A_bound_point = a[i + len] + a[i + len] - a[i];
+            let poly_B_bound_point = b[i + len] + b[i + len] - b[i];
+            uni_poly_evals[1] += poly_A_bound_point * poly_B_bound_point;
+        }
+        uni_poly_evals
+    }
 
-//     fn input_claim(&self) -> F {
-//         self.input_claim
-//     }
+    #[tracing::instrument(skip_all)]
+    fn bind(&mut self, r_j: F, _: usize) {
+        let MatMultProverState { a, b, .. } = self.prover_state.as_mut().unwrap();
+        rayon::join(
+            || a.bind(r_j, BindingOrder::HighToLow),
+            || b.bind(r_j, BindingOrder::HighToLow),
+        );
+    }
 
-//     #[tracing::instrument(skip_all)]
-//     fn compute_prover_message(&self, _: usize) -> Vec<F> {
-//         let b_size = self.a.len() / 2;
-//         let mut uni_poly_evals = vec![F::zero(); 2];
-//         for b in 0..b_size {
-//             uni_poly_evals[0] += self.a[b] * self.b[b];
-//             let poly_A_bound_point = self.a[b + b_size] + self.a[b + b_size] - self.a[b];
-//             let poly_B_bound_point = self.b[b + b_size] + self.b[b + b_size] - self.b[b];
-//             uni_poly_evals[1] += poly_A_bound_point * poly_B_bound_point;
-//         }
-//         uni_poly_evals
-//     }
+    fn cache_openings(&mut self) {
+        debug_assert!(self.claims.is_none());
+        let MatMultProverState { a, b, .. } = self.prover_state.as_ref().unwrap();
+        self.claims = Some(MatMultClaims { a: a[0], b: b[0] });
+    }
 
-//     #[tracing::instrument(skip_all)]
-//     fn bind(&mut self, r_j: F, _: usize) {
-//         rayon::join(
-//             || self.a.bind(r_j, BindingOrder::HighToLow),
-//             || self.b.bind(r_j, BindingOrder::HighToLow),
-//         );
-//     }
-
-//     fn cache_openings(&mut self) {
-//         self.final_claims = (self.a[0], self.b[0])
-//     }
-
-//     fn expected_output_claim(&self, _: &[F]) -> F {
-//         self.final_claims.0 * self.final_claims.1
-//     }
-// }
+    fn expected_output_claim(&self, _: &[F]) -> F {
+        // self.final_claims.0 * self.final_claims.1
+        todo!()
+    }
+}
 
 // #[cfg(test)]
 // mod tests {

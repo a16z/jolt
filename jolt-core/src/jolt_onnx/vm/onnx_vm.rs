@@ -141,7 +141,7 @@ mod tests {
     fn test_perceptron() {
         let mut rng = test_rng();
         let input = random_floatvec(&mut rng, 10);
-        let program = ONNXProgram::new("onnx/perceptron.onnx", &input);
+        let program = ONNXProgram::new("onnx/perceptron.onnx", Some(input));
         test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&program)
     }
 
@@ -149,7 +149,7 @@ mod tests {
     fn test_perceptron_2() {
         let mut rng = test_rng();
         let input = random_floatvec(&mut rng, 4);
-        let program = ONNXProgram::new("onnx/perceptron_2.onnx", &input);
+        let program = ONNXProgram::new("onnx/perceptron_2.onnx", Some(input));
         test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&program)
     }
 }

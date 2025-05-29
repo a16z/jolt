@@ -14,16 +14,21 @@ pub struct ONNXProgram {
     /// The path to the ONNX model file
     pub model: PathBuf,
     /// The input to the ONNX model
-    pub input: Vec<f32>,
+    pub input: Option<Vec<f32>>,
 }
 
 impl ONNXProgram {
     /// Create a new instance of [`ONNXProgram`]
-    pub fn new(model: &str, input: &[f32]) -> Self {
+    pub fn new(model: &str, input: Option<Vec<f32>>) -> Self {
         Self {
             model: PathBuf::from(model),
-            input: input.to_vec(),
+            input,
         }
+    }
+
+    /// Set the input for the ONNX model
+    pub fn set_input(&mut self, input: Vec<f32>) {
+        self.input = Some(input);
     }
 }
 
@@ -37,7 +42,7 @@ impl ONNXProgram {
     #[tracing::instrument(skip_all, name = "ONNXProgram::trace")]
     /// Parse the ONNX model, quantize it & get the execution trace
     pub fn trace(&self) -> (JoltONNXDevice, Vec<JoltONNXTraceStep<ONNXInstructionSet>>) {
-        let (raw_trace, io_device) = tracer::trace(&self.model, &self.input);
+        let (raw_trace, io_device) = tracer::trace(&self.model, self.input.as_ref().unwrap());
         let trace = raw_trace
             .iter()
             .flat_map(|row| row.to_trace_step())
