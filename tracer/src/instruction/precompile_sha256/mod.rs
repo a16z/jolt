@@ -237,7 +237,7 @@ impl Sha256SequenceBuilder {
     /// ss is scratch space
     fn sha_ch(&mut self, rs1: Input, rs2: Input, rs3: Input, rd: usize, ss: usize) -> Input {
         let e_and_f = self.and(rs1, rs2, ss);
-        let neg_e = self.xor(rs1, Imm(0xffff_ffff_ffff_ffff), rd);
+        let neg_e = self.xor(rs1, Imm(u32::MAX as u64), rd);
         let neg_e_and_g = self.and(neg_e, rs3, rd);
         self.xor(e_and_f, neg_e_and_g, rd)
     }
