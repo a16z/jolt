@@ -2,9 +2,12 @@ use std::marker::PhantomData;
 
 use crate::{
     field::JoltField,
+    jolt::vm::rv32i_vm::ProofTranscript,
     jolt_onnx::tracer::tensor::QuantizedLiteTensor,
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder,
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial},
     },
     utils::{math::Math, transcript::Transcript},
 };
@@ -44,27 +47,60 @@ pub struct MatMultProverState<F>
 where
     F: JoltField,
 {
-    _field: PhantomData<F>,
-    //     a: DensePolynomial<F>,
-    //     b: DensePolynomial<F>,
-    //     input_claim: F,
-    //     final_claims: (F, F),
-    //     num_vars: usize,
+    a: MultilinearPolynomial<F>,
+    b: MultilinearPolynomial<F>,
+    input_claim: F,
 }
 
 impl<F> MatMultProverState<F>
 where
     F: JoltField,
 {
+    #[tracing::instrument(skip_all)]
     /// Create a new instance of [`MatMultProverState`]
-    pub fn initialize() -> Self {
+    pub fn initialize<ProofTranscript>(
+        input: &MatMultPrecompile,
+        transcript: &mut ProofTranscript,
+    ) -> Self
+    where
+        ProofTranscript: Transcript,
+    {
+        let a = input.a();
+        let b = input.b();
+        let m = a.m();
+        // b is implicitly transposed
+        let n = b.m();
+        let k = a.n();
+        let log_m = m.log_2();
+        let log_n = n.log_2();
+        let rx: Vec<F> = transcript.challenge_scalar_powers(log_m);
+        let ry: Vec<F> = transcript.challenge_scalar_powers(log_n);
+        let eq_rx = EqPolynomial::evals(&rx);
+        let eq_ry = EqPolynomial::evals(&ry);
+        let mut A_rx = vec![F::zero(); k];
+        for i in 0..m {
+            for j in 0..k {
+                A_rx[j] += F::from_i64(a.data[i * k + j] as i64) * eq_rx[i];
+            }
+        }
+        let mut B_ry = vec![F::zero(); k];
+        for i in 0..n {
+            for j in 0..k {
+                B_ry[j] += F::from_i64(b.data[i * k + j] as i64) * eq_ry[i]
+            }
+        }
+        let (c, _c_shape) = a.matmul_rhs_transposed(b);
+        let c_poly = DensePolynomial::new(c.iter().map(|&x| F::from_i64(x as i64)).collect_vec());
+        let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
+        #[cfg(test)]
+        {
+            let sum: F = A_rx.iter().zip_eq(B_ry.iter()).map(|(a, b)| *a * b).sum();
+            assert_eq!(sum, input_claim)
+        }
         Self {
-            _field: PhantomData,
-            // a: DensePolynomial::new(vec![]),
-            // b: DensePolynomial::new(vec![]),
-            // input_claim: F::zero(),
-            // final_claims: (F::zero(), F::zero()),
-            // num_vars: 0,
+            a: MultilinearPolynomial::from(A_rx),
+            b: MultilinearPolynomial::from(B_ry),
+            input_claim,
         }
     }
 }
@@ -75,6 +111,16 @@ where
     F: JoltField,
 {
     prover_state: Option<MatMultProverState<F>>,
+}
+
+impl<F> MatMultSumcheck<F>
+where
+    F: JoltField,
+{
+    /// Create a new instance of [`MatMultSumcheck`]
+    pub fn new(prover_state: Option<MatMultProverState<F>>) -> Self {
+        Self { prover_state }
+    }
 }
 
 // #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]

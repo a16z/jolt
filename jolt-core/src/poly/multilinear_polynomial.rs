@@ -3,6 +3,7 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
 use super::{
@@ -17,7 +18,7 @@ use crate::{
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
-#[derive(Clone, Debug, EnumIter, PartialEq)]
+#[derive(Clone, Debug, EnumIter, PartialEq, Serialize, Deserialize)]
 pub enum MultilinearPolynomial<F: JoltField> {
     LargeScalars(DensePolynomial<F>),
     U8Scalars(CompactPolynomial<u8, F>),
