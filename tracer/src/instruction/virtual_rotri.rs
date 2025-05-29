@@ -16,6 +16,7 @@ declare_riscv_instr!(
 
 impl VirtualROTRI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRI as RISCVInstruction>::RAMAccess) {
+        // Extract rotation amount from bitmask: trailing zeros = rotation amount
         let shift = self.operands.imm.trailing_zeros();
         // Extract 32-bit value and rotate only within 32 bits
         let val_32 = cpu.x[self.operands.rs1] as u32;

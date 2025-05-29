@@ -22,31 +22,26 @@ declare_riscv_instr!(
 
 impl SHA256COMPRESSI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SHA256COMPRESSI as RISCVInstruction>::RAMAccess) {
+        // Load 16 input words from memory at rs1
         let mut input = [0u32; 16];
-        (0..16).for_each(|i| {
-            input[i] = match cpu
+        for (i, word) in input.iter_mut().enumerate() {
+            *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
-            {
-                Ok((word, _memory_read)) => {
-                    // *ram_access = memory_read;
-                    word as u32
-                }
-                Err(_) => panic!("MMU load error"),
-            };
-        });
+                .expect("SHA256COMPRESSI: Failed to load input word")
+                .0 as u32;
+        }
+
+        // Execute compression with default initial state and store result
         let result = execute_sha256_compression_initial(input);
-        result.into_iter().enumerate().for_each(|(i, r)| {
-            match cpu.mmu.store_word(
-                cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
-                r,
-            ) {
-                Ok(_) => {
-                    // *ram_access = memory_write;
-                }
-                Err(_) => panic!("MMU store error"),
-            }
-        })
+        for (i, &word) in result.iter().enumerate() {
+            cpu.mmu
+                .store_word(
+                    cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                    word,
+                )
+                .expect("SHA256COMPRESSI: Failed to store result");
+        }
     }
 }
 
@@ -71,3 +66,4 @@ impl VirtualInstructionSequence for SHA256COMPRESSI {
         builder.build()
     }
 }
+

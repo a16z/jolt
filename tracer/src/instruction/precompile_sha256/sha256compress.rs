@@ -26,44 +26,36 @@ impl SHA256COMPRESS {
         cpu: &mut Cpu,
         _ram_access: &mut <SHA256COMPRESS as RISCVInstruction>::RAMAccess,
     ) {
+        // Load 16 input words from memory at rs1
         let mut input = [0u32; 16];
-        let mut initial_state = [0u32; 8];
-        (0..16).for_each(|i| {
-            input[i] = match cpu
+        for (i, word) in input.iter_mut().enumerate() {
+            *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
-            {
-                Ok((word, _memory_read)) => {
-                    // *ram_access = memory_read;
-                    word as u32
-                }
-                Err(_) => panic!("MMU load error"),
-            };
-        });
-        (0..8).for_each(|i| {
-            initial_state[i] = match cpu
+                .expect("SHA256COMPRESS: Failed to load input word")
+                .0 as u32;
+        }
+
+        // Load 8 initial state words from memory at rs2
+        let mut initial_state = [0u32; 8];
+        for (i, word) in initial_state.iter_mut().enumerate() {
+            *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64)
-            {
-                Ok((word, _memory_read)) => {
-                    // *ram_access = memory_read;
-                    word as u32
-                }
-                Err(_) => panic!("MMU load error"),
-            };
-        });
+                .expect("SHA256COMPRESS: Failed to load initial state")
+                .0 as u32;
+        }
+
+        // Execute compression and store result after input words
         let result = execute_sha256_compression(initial_state, input);
-        result.into_iter().enumerate().for_each(|(i, r)| {
-            match cpu.mmu.store_word(
-                cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
-                r,
-            ) {
-                Ok(_) => {
-                    // *ram_access = memory_write;
-                }
-                Err(_) => panic!("MMU store error"),
-            }
-        })
+        for (i, &word) in result.iter().enumerate() {
+            cpu.mmu
+                .store_word(
+                    cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                    word,
+                )
+                .expect("SHA256COMPRESS: Failed to store result");
+        }
     }
 }
 
@@ -93,3 +85,4 @@ impl VirtualInstructionSequence for SHA256COMPRESS {
         builder.build()
     }
 }
+
