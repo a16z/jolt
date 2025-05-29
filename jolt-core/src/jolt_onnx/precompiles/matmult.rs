@@ -47,7 +47,37 @@ pub struct MatMultVerifierState<F>
 where
     F: JoltField,
 {
-    _field: PhantomData<F>,
+    num_rounds: usize,
+    input_claim: F,
+}
+
+impl<F> MatMultVerifierState<F>
+where
+    F: JoltField,
+{
+    #[tracing::instrument(skip_all)]
+    /// Create a new instance of [`MatMultVerifierState`]
+    pub fn initialize<ProofTranscript>(
+        m: usize,
+        n: usize,
+        k: usize,
+        input_claim: F,
+        transcript: &mut ProofTranscript,
+    ) -> Self
+    where
+        ProofTranscript: Transcript,
+    {
+        let num_rounds = k.log_2();
+        let log_m = m.log_2();
+        let log_n = n.log_2();
+        let _rx: Vec<F> = transcript.challenge_scalar_powers(log_m);
+        let _ry: Vec<F> = transcript.challenge_scalar_powers(log_n);
+        transcript.append_scalar(&input_claim);
+        Self {
+            num_rounds,
+            input_claim,
+        }
+    }
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
@@ -101,17 +131,17 @@ where
         let (c, _c_shape) = a.matmul_rhs_transposed(b);
         let c_poly = DensePolynomial::new(c.iter().map(|&x| F::from_i64(x as i64)).collect_vec());
         let input_claim = c_poly.evaluate(&[rx.clone(), ry.clone()].concat());
+        transcript.append_scalar(&input_claim);
         #[cfg(test)]
         {
             let sum: F = A_rx.iter().zip_eq(B_ry.iter()).map(|(a, b)| *a * b).sum();
             assert_eq!(sum, input_claim)
         }
-        let num_rounds = A_rx.len().log_2();
         Self {
             a: DensePolynomial::new(A_rx),
             b: DensePolynomial::new(B_ry),
             input_claim,
-            num_rounds,
+            num_rounds: k.log_2(),
         }
     }
 }
@@ -131,8 +161,8 @@ where
     F: JoltField,
 {
     pub prover_state: Option<MatMultProverState<F>>,
-    verifier_state: Option<MatMultVerifierState<F>>,
-    claims: Option<MatMultClaims<F>>,
+    pub verifier_state: Option<MatMultVerifierState<F>>,
+    pub claims: Option<MatMultClaims<F>>,
 }
 
 impl<F> MatMultSumcheck<F>
@@ -143,11 +173,12 @@ where
     pub fn new(
         prover_state: Option<MatMultProverState<F>>,
         verifier_state: Option<MatMultVerifierState<F>>,
+        claims: Option<MatMultClaims<F>>,
     ) -> Self {
         Self {
             prover_state,
             verifier_state,
-            claims: None,
+            claims,
         }
     }
 }
@@ -166,7 +197,7 @@ where
         if self.prover_state.is_some() {
             self.prover_state.as_ref().unwrap().num_rounds
         } else if self.verifier_state.is_some() {
-            todo!()
+            self.verifier_state.as_ref().unwrap().num_rounds
         } else {
             panic!("Neither prover state nor verifier state is initialized");
         }
@@ -176,7 +207,7 @@ where
         if self.prover_state.is_some() {
             self.prover_state.as_ref().unwrap().input_claim
         } else if self.verifier_state.is_some() {
-            todo!()
+            self.verifier_state.as_ref().unwrap().input_claim
         } else {
             panic!("Neither prover state nor verifier state is initialized");
         }
@@ -212,8 +243,8 @@ where
     }
 
     fn expected_output_claim(&self, _: &[F]) -> F {
-        // self.final_claims.0 * self.final_claims.1
-        todo!()
+        let MatMultClaims { a, b } = self.claims.as_ref().unwrap();
+        *a * b
     }
 }
 

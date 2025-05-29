@@ -24,8 +24,9 @@ use tract_onnx::{
 /// Represents a topologically-sorted ONNX model
 #[derive(Debug)]
 pub struct QuantizedONNXModel {
-    instrs: Vec<ONNXInstruction>,
+    pub instrs: Vec<ONNXInstruction>,
     initializer_map: ONNXInitializerMap,
+    input_shape: Vec<usize>,
     /// A tracer that captures the execution trace of the model
     pub tracer: Tracer,
 }
@@ -49,7 +50,38 @@ impl QuantizedONNXModel {
             instruction.decorate(node);
             instrs.push(instruction);
         }
-        Self::new(initializer_map, instrs)
+        Self::new(initializer_map, instrs, input_shape(&graph))
+    }
+
+    /// Track the i/o shapes of the model layers
+    pub fn track_io_shapes(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
+        let mut io_shapes = Vec::new();
+        let mut input_shape = self.input_shape.clone();
+        for instr in self.instrs.iter() {
+            let layer_input_shape = input_shape.clone();
+            let output_shape = match instr.opcode {
+                Operator::MatMul => {
+                    // MatMul: Y = alpha * A * B^T + beta * C
+                    // A: [M, K], B: [N, K], C: [N]
+                    let a_shape = input_shape.clone();
+                    let b_shape = self
+                        .initializer_map
+                        .get(&instr.inputs[1])
+                        .unwrap()
+                        .shape
+                        .clone();
+                    vec![a_shape[0], b_shape[0]] // Output shape is [M, N]
+                }
+                Operator::Relu => {
+                    // Relu: Y = max(0, X)
+                    input_shape.clone() // Output shape is same as input shape
+                }
+            };
+            io_shapes.push((layer_input_shape, output_shape.clone()));
+            // Update input shape for the next layer
+            input_shape = output_shape.clone();
+        }
+        io_shapes
     }
 
     /// Execute the model on a given input
@@ -240,10 +272,15 @@ impl QuantizedONNXModel {
     }
 
     /// Create a new instance of [`QuantizedONNXModel`]
-    pub fn new(initializer_map: ONNXInitializerMap, instrs: Vec<ONNXInstruction>) -> Self {
+    pub fn new(
+        initializer_map: ONNXInitializerMap,
+        instrs: Vec<ONNXInstruction>,
+        input_shape: Vec<usize>,
+    ) -> Self {
         Self {
             initializer_map,
             instrs,
+            input_shape,
             tracer: Tracer::default(),
         }
     }
@@ -321,10 +358,9 @@ fn computational_graph(model_path: &PathBuf) -> GraphProto {
     model.graph.unwrap()
 }
 
-#[allow(dead_code)]
 /// Get the input shape from a graph.
 /// We restrict batch size to 1 for now. (TODO: we can change this in the future)
-fn input_shape(graph: &GraphProto) -> (usize, usize) {
+fn input_shape(graph: &GraphProto) -> Vec<usize> {
     // TODO: Allow for multiple inputs
     assert!(
         graph.input.len() == 1,
@@ -351,5 +387,5 @@ fn input_shape(graph: &GraphProto) -> (usize, usize) {
         DimValue(size) => *size,
         DimParam(_) => panic!("Dynamic input shape is not supported"),
     };
-    (1, size as usize)
+    vec![1, size as usize]
 }

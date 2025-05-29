@@ -59,6 +59,7 @@ impl ONNXTraceRow {
     pub fn to_precompile(&self) -> Option<PrecompileOperators> {
         match self.instruction.opcode {
             Operator::MatMul => {
+                // # Note: We pad the tensor dimensions to the next power of two
                 let inputs = self
                     .layer_state
                     .input_vals
