@@ -2,12 +2,29 @@
 //!
 //! This module provides an API similar to the `sha2` crate.
 
+use core::mem::MaybeUninit;
+
 /// SHA-256 hasher state.
 pub struct Sha256 {
     /// Current hash state (8 x 32-bit words)
-    state: [u32; 8],
+    /// 
+    /// # Safety invariants
+    /// - Uninitialized until first compression function call
+    /// - After first `sha256_compression_initial` call, all 8 words are initialized
+    /// - Remains initialized for the lifetime of the hasher
+    state: [MaybeUninit<u32>; 8],
     /// Buffer for incomplete blocks - aligned for u32 access
-    buffer: [u32; 16],
+    /// 
+    /// # Safety invariants  
+    /// - Elements 0..(`buffer_len`/4) contain valid data when `buffer_len` > 0
+    /// - During block processing, all 16 words (64 bytes) are initialized before compression
+    /// - After compression, `buffer_len` is reset to 0 (buffer contents are don't-care)
+    /// - Padding operations must ensure all 16 words are initialized before final compression
+    /// 
+    /// # Memory layout
+    /// - Can be safely cast to `*mut u8` for byte-level operations
+    /// - Must maintain u32 alignment for word-level access
+    buffer: [MaybeUninit<u32>; 16],
     /// Number of bytes in the buffer
     buffer_len: usize,
     /// Total number of bytes processed
@@ -22,12 +39,22 @@ impl Sha256 {
     #[inline(always)]
     pub fn new() -> Self {
         Self {
-            state: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
-            buffer: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
+            state: unsafe { MaybeUninit::uninit().assume_init() },
+            buffer: unsafe { MaybeUninit::uninit().assume_init() },
             buffer_len: 0,
             total_len: 0,
             initial: true,
         }
+    }
+
+    #[inline(always)]
+    unsafe fn buffer_as_u32_mut(&mut self) -> &mut [u32] {
+        core::slice::from_raw_parts_mut(self.buffer.as_mut_ptr() as *mut u32, 16)
+    }
+
+    #[inline(always)]
+    unsafe fn state_as_u32(&self) -> &[u32] {
+        core::slice::from_raw_parts(self.state.as_ptr() as *const u32, 8)
     }
 
     /// Writes data to the hasher.
@@ -64,31 +91,38 @@ impl Sha256 {
             if self.buffer_len == 64 {
                 #[cfg(target_endian = "little")]
                 {
+                    let buf = unsafe { self.buffer_as_u32_mut() };
                     // Swap bytes in-place - unrolled
-                    self.buffer[0] = self.buffer[0].swap_bytes();
-                    self.buffer[1] = self.buffer[1].swap_bytes();
-                    self.buffer[2] = self.buffer[2].swap_bytes();
-                    self.buffer[3] = self.buffer[3].swap_bytes();
-                    self.buffer[4] = self.buffer[4].swap_bytes();
-                    self.buffer[5] = self.buffer[5].swap_bytes();
-                    self.buffer[6] = self.buffer[6].swap_bytes();
-                    self.buffer[7] = self.buffer[7].swap_bytes();
-                    self.buffer[8] = self.buffer[8].swap_bytes();
-                    self.buffer[9] = self.buffer[9].swap_bytes();
-                    self.buffer[10] = self.buffer[10].swap_bytes();
-                    self.buffer[11] = self.buffer[11].swap_bytes();
-                    self.buffer[12] = self.buffer[12].swap_bytes();
-                    self.buffer[13] = self.buffer[13].swap_bytes();
-                    self.buffer[14] = self.buffer[14].swap_bytes();
-                    self.buffer[15] = self.buffer[15].swap_bytes();
+                    buf[0] = buf[0].swap_bytes();
+                    buf[1] = buf[1].swap_bytes();
+                    buf[2] = buf[2].swap_bytes();
+                    buf[3] = buf[3].swap_bytes();
+                    buf[4] = buf[4].swap_bytes();
+                    buf[5] = buf[5].swap_bytes();
+                    buf[6] = buf[6].swap_bytes();
+                    buf[7] = buf[7].swap_bytes();
+                    buf[8] = buf[8].swap_bytes();
+                    buf[9] = buf[9].swap_bytes();
+                    buf[10] = buf[10].swap_bytes();
+                    buf[11] = buf[11].swap_bytes();
+                    buf[12] = buf[12].swap_bytes();
+                    buf[13] = buf[13].swap_bytes();
+                    buf[14] = buf[14].swap_bytes();
+                    buf[15] = buf[15].swap_bytes();
                 }
 
                 unsafe {
                     if self.initial {
-                        sha256_compression_initial(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                        sha256_compression_initial(
+                            self.buffer.as_ptr() as *const u32,
+                            self.state.as_mut_ptr() as *mut u32,
+                        );
                         self.initial = false;
                     } else {
-                        sha256_compression(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                        sha256_compression(
+                            self.buffer.as_ptr() as *const u32,
+                            self.state.as_mut_ptr() as *mut u32,
+                        );
                     }
                 }
 
@@ -113,31 +147,38 @@ impl Sha256 {
 
             #[cfg(target_endian = "little")]
             {
+                let buf = unsafe { self.buffer_as_u32_mut() };
                 // Unroll swap loop for better performance
-                self.buffer[0] = self.buffer[0].swap_bytes();
-                self.buffer[1] = self.buffer[1].swap_bytes();
-                self.buffer[2] = self.buffer[2].swap_bytes();
-                self.buffer[3] = self.buffer[3].swap_bytes();
-                self.buffer[4] = self.buffer[4].swap_bytes();
-                self.buffer[5] = self.buffer[5].swap_bytes();
-                self.buffer[6] = self.buffer[6].swap_bytes();
-                self.buffer[7] = self.buffer[7].swap_bytes();
-                self.buffer[8] = self.buffer[8].swap_bytes();
-                self.buffer[9] = self.buffer[9].swap_bytes();
-                self.buffer[10] = self.buffer[10].swap_bytes();
-                self.buffer[11] = self.buffer[11].swap_bytes();
-                self.buffer[12] = self.buffer[12].swap_bytes();
-                self.buffer[13] = self.buffer[13].swap_bytes();
-                self.buffer[14] = self.buffer[14].swap_bytes();
-                self.buffer[15] = self.buffer[15].swap_bytes();
+                buf[0] = buf[0].swap_bytes();
+                buf[1] = buf[1].swap_bytes();
+                buf[2] = buf[2].swap_bytes();
+                buf[3] = buf[3].swap_bytes();
+                buf[4] = buf[4].swap_bytes();
+                buf[5] = buf[5].swap_bytes();
+                buf[6] = buf[6].swap_bytes();
+                buf[7] = buf[7].swap_bytes();
+                buf[8] = buf[8].swap_bytes();
+                buf[9] = buf[9].swap_bytes();
+                buf[10] = buf[10].swap_bytes();
+                buf[11] = buf[11].swap_bytes();
+                buf[12] = buf[12].swap_bytes();
+                buf[13] = buf[13].swap_bytes();
+                buf[14] = buf[14].swap_bytes();
+                buf[15] = buf[15].swap_bytes();
             }
 
             unsafe {
                 if self.initial {
-                    sha256_compression_initial(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                    sha256_compression_initial(
+                        self.buffer.as_ptr() as *const u32,
+                        self.state.as_mut_ptr() as *mut u32,
+                    );
                     self.initial = false;
                 } else {
-                    sha256_compression(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                    sha256_compression(
+                        self.buffer.as_ptr() as *const u32,
+                        self.state.as_mut_ptr() as *mut u32,
+                    );
                 }
             }
 
@@ -188,30 +229,37 @@ impl Sha256 {
 
             #[cfg(target_endian = "little")]
             {
+                let buf = unsafe { self.buffer_as_u32_mut() };
                 // Swap all 16 words
-                self.buffer[0] = self.buffer[0].swap_bytes();
-                self.buffer[1] = self.buffer[1].swap_bytes();
-                self.buffer[2] = self.buffer[2].swap_bytes();
-                self.buffer[3] = self.buffer[3].swap_bytes();
-                self.buffer[4] = self.buffer[4].swap_bytes();
-                self.buffer[5] = self.buffer[5].swap_bytes();
-                self.buffer[6] = self.buffer[6].swap_bytes();
-                self.buffer[7] = self.buffer[7].swap_bytes();
-                self.buffer[8] = self.buffer[8].swap_bytes();
-                self.buffer[9] = self.buffer[9].swap_bytes();
-                self.buffer[10] = self.buffer[10].swap_bytes();
-                self.buffer[11] = self.buffer[11].swap_bytes();
-                self.buffer[12] = self.buffer[12].swap_bytes();
-                self.buffer[13] = self.buffer[13].swap_bytes();
-                self.buffer[14] = self.buffer[14].swap_bytes();
-                self.buffer[15] = self.buffer[15].swap_bytes();
+                buf[0] = buf[0].swap_bytes();
+                buf[1] = buf[1].swap_bytes();
+                buf[2] = buf[2].swap_bytes();
+                buf[3] = buf[3].swap_bytes();
+                buf[4] = buf[4].swap_bytes();
+                buf[5] = buf[5].swap_bytes();
+                buf[6] = buf[6].swap_bytes();
+                buf[7] = buf[7].swap_bytes();
+                buf[8] = buf[8].swap_bytes();
+                buf[9] = buf[9].swap_bytes();
+                buf[10] = buf[10].swap_bytes();
+                buf[11] = buf[11].swap_bytes();
+                buf[12] = buf[12].swap_bytes();
+                buf[13] = buf[13].swap_bytes();
+                buf[14] = buf[14].swap_bytes();
+                buf[15] = buf[15].swap_bytes();
             }
 
             unsafe {
                 if self.initial {
-                    sha256_compression_initial(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                    sha256_compression_initial(
+                        self.buffer.as_ptr() as *const u32,
+                        self.state.as_mut_ptr() as *mut u32,
+                    );
                 } else {
-                    sha256_compression(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                    sha256_compression(
+                        self.buffer.as_ptr() as *const u32,
+                        self.state.as_mut_ptr() as *mut u32,
+                    );
                 }
             }
         } else {
@@ -227,65 +275,74 @@ impl Sha256 {
 
             #[cfg(target_endian = "little")]
             {
-                self.buffer[0] = self.buffer[0].swap_bytes();
-                self.buffer[1] = self.buffer[1].swap_bytes();
-                self.buffer[2] = self.buffer[2].swap_bytes();
-                self.buffer[3] = self.buffer[3].swap_bytes();
-                self.buffer[4] = self.buffer[4].swap_bytes();
-                self.buffer[5] = self.buffer[5].swap_bytes();
-                self.buffer[6] = self.buffer[6].swap_bytes();
-                self.buffer[7] = self.buffer[7].swap_bytes();
-                self.buffer[8] = self.buffer[8].swap_bytes();
-                self.buffer[9] = self.buffer[9].swap_bytes();
-                self.buffer[10] = self.buffer[10].swap_bytes();
-                self.buffer[11] = self.buffer[11].swap_bytes();
-                self.buffer[12] = self.buffer[12].swap_bytes();
-                self.buffer[13] = self.buffer[13].swap_bytes();
-                self.buffer[14] = self.buffer[14].swap_bytes();
-                self.buffer[15] = self.buffer[15].swap_bytes();
+                let buf = unsafe { self.buffer_as_u32_mut() };
+                // Swap all 16 words
+                buf[0] = buf[0].swap_bytes();
+                buf[1] = buf[1].swap_bytes();
+                buf[2] = buf[2].swap_bytes();
+                buf[3] = buf[3].swap_bytes();
+                buf[4] = buf[4].swap_bytes();
+                buf[5] = buf[5].swap_bytes();
+                buf[6] = buf[6].swap_bytes();
+                buf[7] = buf[7].swap_bytes();
+                buf[8] = buf[8].swap_bytes();
+                buf[9] = buf[9].swap_bytes();
+                buf[10] = buf[10].swap_bytes();
+                buf[11] = buf[11].swap_bytes();
+                buf[12] = buf[12].swap_bytes();
+                buf[13] = buf[13].swap_bytes();
+                buf[14] = buf[14].swap_bytes();
+                buf[15] = buf[15].swap_bytes();
             }
 
             unsafe {
                 if self.initial {
-                    sha256_compression_initial(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                    sha256_compression_initial(
+                        self.buffer.as_ptr() as *const u32,
+                        self.state.as_mut_ptr() as *mut u32,
+                    );
                     self.initial = false;
                 } else {
-                    sha256_compression(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                    sha256_compression(
+                        self.buffer.as_ptr() as *const u32,
+                        self.state.as_mut_ptr() as *mut u32,
+                    );
                 }
             }
 
             // Second block: all zeros except length at the end
-            self.buffer[0] = 0;
-            self.buffer[1] = 0;
-            self.buffer[2] = 0;
-            self.buffer[3] = 0;
-            self.buffer[4] = 0;
-            self.buffer[5] = 0;
-            self.buffer[6] = 0;
-            self.buffer[7] = 0;
-            self.buffer[8] = 0;
-            self.buffer[9] = 0;
-            self.buffer[10] = 0;
-            self.buffer[11] = 0;
-            self.buffer[12] = 0;
-            self.buffer[13] = 0;
+            self.buffer[0].write(0);
+            self.buffer[1].write(0);
+            self.buffer[2].write(0);
+            self.buffer[3].write(0);
+            self.buffer[4].write(0);
+            self.buffer[5].write(0);
+            self.buffer[6].write(0);
+            self.buffer[7].write(0);
+            self.buffer[8].write(0);
+            self.buffer[9].write(0);
+            self.buffer[10].write(0);
+            self.buffer[11].write(0);
+            self.buffer[12].write(0);
+            self.buffer[13].write(0);
 
             // Write length in last 8 bytes
             #[cfg(target_endian = "little")]
             {
-                self.buffer[14] = (bit_len >> 32) as u32;
-                self.buffer[15] = bit_len as u32;
-                self.buffer[14] = self.buffer[14].swap_bytes();
-                self.buffer[15] = self.buffer[15].swap_bytes();
+                self.buffer[14].write(((bit_len >> 32) as u32).swap_bytes());
+                self.buffer[15].write((bit_len as u32).swap_bytes());
             }
             #[cfg(target_endian = "big")]
             {
-                self.buffer[14] = (bit_len >> 32) as u32;
-                self.buffer[15] = bit_len as u32;
+                self.buffer[14].write((bit_len >> 32) as u32);
+                self.buffer[15].write(bit_len as u32);
             }
 
             unsafe {
-                sha256_compression(self.buffer.as_ptr(), self.state.as_mut_ptr());
+                sha256_compression(
+                    self.buffer.as_ptr() as *const u32,
+                    self.state.as_mut_ptr() as *mut u32,
+                );
             }
         }
 
@@ -293,21 +350,22 @@ impl Sha256 {
         let mut result = [0u8; 32];
         unsafe {
             let result_u32 = core::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u32, 8);
+            let state = self.state_as_u32();
 
             #[cfg(target_endian = "little")]
             {
-                result_u32[0] = self.state[0].swap_bytes();
-                result_u32[1] = self.state[1].swap_bytes();
-                result_u32[2] = self.state[2].swap_bytes();
-                result_u32[3] = self.state[3].swap_bytes();
-                result_u32[4] = self.state[4].swap_bytes();
-                result_u32[5] = self.state[5].swap_bytes();
-                result_u32[6] = self.state[6].swap_bytes();
-                result_u32[7] = self.state[7].swap_bytes();
+                result_u32[0] = state[0].swap_bytes();
+                result_u32[1] = state[1].swap_bytes();
+                result_u32[2] = state[2].swap_bytes();
+                result_u32[3] = state[3].swap_bytes();
+                result_u32[4] = state[4].swap_bytes();
+                result_u32[5] = state[5].swap_bytes();
+                result_u32[6] = state[6].swap_bytes();
+                result_u32[7] = state[7].swap_bytes();
             }
             #[cfg(target_endian = "big")]
             {
-                core::ptr::copy_nonoverlapping(self.state.as_ptr(), result_u32.as_mut_ptr(), 8);
+                core::ptr::copy_nonoverlapping(state.as_ptr(), result_u32.as_mut_ptr(), 8);
             }
         }
 
