@@ -26,6 +26,7 @@ where
     ProofTranscript: Transcript,
 {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    init_claims: Vec<F>,
 }
 
 impl<F, ProofTranscript> PrecompileProof<F, ProofTranscript>
@@ -62,12 +63,19 @@ where
 
     #[tracing::instrument(skip_all, name = "PrecompileProof::prove")]
     pub fn prove(witness: &mut [MatMultSumcheck<F>], transcript: &mut ProofTranscript) -> Self {
+        let init_claims = witness
+            .iter()
+            .map(|p| p.prover_state.as_ref().unwrap().input_claim.clone())
+            .collect_vec();
         let trait_objects: Vec<&mut dyn BatchableSumcheckInstance<F, ProofTranscript>> = witness
             .iter_mut()
             .map(|p| p as &mut dyn BatchableSumcheckInstance<F, ProofTranscript>)
             .collect();
         let (sumcheck_proof, _rsc) = BatchedSumcheck::prove(trait_objects, transcript);
-        Self { sumcheck_proof }
+        Self {
+            sumcheck_proof,
+            init_claims,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "PrecompileProof::prove")]

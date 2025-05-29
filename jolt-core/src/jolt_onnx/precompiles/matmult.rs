@@ -57,7 +57,7 @@ where
 {
     a: DensePolynomial<F>,
     b: DensePolynomial<F>,
-    input_claim: F,
+    pub input_claim: F,
     num_rounds: usize,
 }
 
@@ -130,7 +130,7 @@ pub struct MatMultSumcheck<F>
 where
     F: JoltField,
 {
-    prover_state: Option<MatMultProverState<F>>,
+    pub prover_state: Option<MatMultProverState<F>>,
     verifier_state: Option<MatMultVerifierState<F>>,
     claims: Option<MatMultClaims<F>>,
 }
