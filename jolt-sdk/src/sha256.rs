@@ -7,20 +7,20 @@ use core::mem::MaybeUninit;
 /// SHA-256 hasher state.
 pub struct Sha256 {
     /// Current hash state (8 x 32-bit words)
-    /// 
+    ///
     /// # Safety invariants
     /// - Uninitialized until first compression function call
     /// - After first `sha256_compression_initial` call, all 8 words are initialized
     /// - Remains initialized for the lifetime of the hasher
     state: [MaybeUninit<u32>; 8],
     /// Buffer for incomplete blocks - aligned for u32 access
-    /// 
+    ///
     /// # Safety invariants  
     /// - Elements 0..(`buffer_len`/4) contain valid data when `buffer_len` > 0
     /// - During block processing, all 16 words (64 bytes) are initialized before compression
     /// - After compression, `buffer_len` is reset to 0 (buffer contents are don't-care)
     /// - Padding operations must ensure all 16 words are initialized before final compression
-    /// 
+    ///
     /// # Memory layout
     /// - Can be safely cast to `*mut u8` for byte-level operations
     /// - Must maintain u32 alignment for word-level access
