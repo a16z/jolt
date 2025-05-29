@@ -1033,12 +1033,12 @@ mod tests {
             Default::default(),
         )));
     }
-    
+
     #[test]
     fn test_virtualrotri() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualROTRI(Default::default())));
     }
-    
+
     #[test]
     fn test_virtualsra() {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualSRA(Default::default())));

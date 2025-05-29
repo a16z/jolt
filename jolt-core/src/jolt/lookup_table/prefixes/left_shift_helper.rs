@@ -4,9 +4,7 @@ use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 /// Computes 2^(y.leading_ones())
 pub enum LeftShiftHelperPrefix {}
 
-impl<F: JoltField> SparseDensePrefix<F>
-    for LeftShiftHelperPrefix
-{
+impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -22,7 +20,6 @@ impl<F: JoltField> SparseDensePrefix<F>
             let y_msb = b.pop_msb();
             result *= F::from_u8(1 + y_msb);
         }
-
 
         let (_, y) = b.uninterleave();
         result *= F::from_u32(1 << y.leading_ones());

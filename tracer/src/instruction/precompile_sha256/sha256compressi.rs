@@ -29,7 +29,7 @@ impl SHA256COMPRESSI {
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
                 .expect("SHA256COMPRESSI: Failed to load input word")
-                .0 as u32;
+                .0;
         }
 
         // Execute compression with default initial state and store result
@@ -67,9 +67,8 @@ impl VirtualInstructionSequence for SHA256COMPRESSI {
             vr,
             self.operands.rs1,
             self.operands.rs2,
-            true,  // initial - uses BLOCK constants
+            true, // initial - uses BLOCK constants
         );
         builder.build()
     }
 }
-

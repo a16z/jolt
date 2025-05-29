@@ -81,9 +81,8 @@ impl VirtualInstructionSequence for SHA256COMPRESS {
             vr,
             self.operands.rs1,
             self.operands.rs2,
-            false,  // not initial - uses custom IV from rs2
+            false, // not initial - uses custom IV from rs2
         );
         builder.build()
     }
 }
-

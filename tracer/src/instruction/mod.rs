@@ -561,9 +561,9 @@ impl RV32IMInstruction {
             0b1110011 => {
                 // For now this only (potentially) maps to ECALL.
                 if instr == ECALL::MATCH {
-                    return Ok(ECALL::new(instr, address, true).into());
+                    Ok(ECALL::new(instr, address, true).into())
                 } else {
-                    return Err("Unsupported SYSTEM instruction");
+                    Err("Unsupported SYSTEM instruction")
                 }
             }
             0b0001011 => {
