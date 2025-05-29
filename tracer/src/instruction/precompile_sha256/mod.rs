@@ -46,9 +46,8 @@ pub const NEEDED_REGISTERS: usize = 32;
 
 /// Builds assembly sequence for SHA256 compression
 /// Expects input words to be in RAM at location rs1..rs1+16
-/// Expects optionally A..H to be in RAM at location rs2..rs2+8
-/// Output will be written to rs1+16..rs1+24
-/// 24 words have to be preallocated in RAM at rs1 location
+/// Expects A..H to be in RAM at location rs2..rs2+8
+/// Output will be written to rs2..rs2+8
 struct Sha256SequenceBuilder {
     address: u64,
     sequence: Vec<RV32IMInstruction>,
@@ -57,11 +56,11 @@ struct Sha256SequenceBuilder {
     /// Virtual registers used by the sequence
     vr: [usize; NEEDED_REGISTERS],
     /// Location input words to the hash function in 16 memory slots
-    /// Output will be written after those input words
     operand_rs1: usize,
-    /// Optionally, previous hash values A..H
-    /// If None, `BLOCK` constants are used
-    operand_rs2: Option<usize>,
+    /// Location of previous hash values A..H (also where output is written)
+    operand_rs2: usize,
+    /// Whether this is the initial compression (use BLOCK constants)
+    initial: bool,
 }
 
 impl Sha256SequenceBuilder {
@@ -69,7 +68,8 @@ impl Sha256SequenceBuilder {
         address: u64,
         vr: [usize; NEEDED_REGISTERS],
         operand_rs1: usize,
-        operand_rs2: Option<usize>,
+        operand_rs2: usize,
+        initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
             address,
@@ -78,26 +78,26 @@ impl Sha256SequenceBuilder {
             vr,
             operand_rs1,
             operand_rs2,
+            initial,
         }
     }
 
     /// Loads and runs all SHA256 rounds
     fn build(mut self) -> Vec<RV32IMInstruction> {
-        if let Some(rs2) = self.operand_rs2 {
+        if !self.initial {
             // Load initial hash values from memory when using custom IV
             // A..D loaded into registers 0..3 (will be used immediately)
             // E..H loaded into registers 28..31 (preserved until needed)
-            (0..4).for_each(|i| self.lw(rs2, i, self.vr[i as usize]));
-            (0..4).for_each(|i| self.lw(rs2, i + 4, self.vr[(i + 28) as usize]));
+            (0..4).for_each(|i| self.lw(self.operand_rs2, i, self.vr[i as usize]));
+            (0..4).for_each(|i| self.lw(self.operand_rs2, i + 4, self.vr[(i + 28) as usize]));
         }
         // Load input words into registers 8..23
         (0..16).for_each(|i| self.lw(self.operand_rs1, i, self.vr[(i + 8) as usize]));
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
-        // We are doing 64 rounds, so we can just call straight into vr since all values
-        // should be in order. Store values after rs1 input in memory
-        (0..8).for_each(|i| self.sw(self.operand_rs1, self.vr[i as usize], i + 16));
+        // Store output values to rs2 location
+        (0..8).for_each(|i| self.sw(self.operand_rs2, self.vr[i as usize], i));
         self.enumerate_sequence();
         self.sequence
     }
@@ -115,12 +115,12 @@ impl Sha256SequenceBuilder {
 
     /// Adds IV to the final hash value to produce output
     fn final_add_iv(&mut self) {
-        if let Some(rs2) = self.operand_rs2 {
+        if !self.initial {
             // We have initial values E, F, G, H stored in the end registers, but we didn't have
             // enough space for A, B, C, D, so we need to load them from memory. We can load them
             // into space that was used for t1, t2, ss, ss2. (technically there's no preference,
             // but it just keeps those in order).
-            (0..4).for_each(|i| self.lw(rs2, i, self.vr[24 + i as usize]));
+            (0..4).for_each(|i| self.lw(self.operand_rs2, i, self.vr[24 + i as usize]));
             self.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
             self.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
             self.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
@@ -183,15 +183,15 @@ impl Sha256SequenceBuilder {
     }
 
     /// Returns either Register or Immediate input for a working variable (A-H)
-    /// When no custom IV is provided (operand_rs2 is None), uses BLOCK constants
-    /// for the first few rounds until all values have been computed
+    /// When initial is true, uses BLOCK constants for the first few rounds
+    /// until all values have been computed
     fn vri(&self, shift: char) -> Value {
         // For initial rounds without custom IV, some values haven't been computed yet
         // Round 0: Only A,E are computed (from initial values)
         // Round 1: A,B,E,F are available
         // Round 2: A,B,C,E,F,G are available
         // Round 3+: All values are in registers
-        if self.operand_rs2.is_none()
+        if self.initial
             && (self.rid == 0
                 || (self.rid == 1 && !['A', 'E'].contains(&shift))
                 || (self.rid == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
@@ -206,14 +206,14 @@ impl Sha256SequenceBuilder {
 
     /// Maps working variable (A-H) to its current register location
     /// Variables rotate through registers 0-7 as rounds progress
-    /// When custom IV is used, E-H start in registers 28-31
+    /// When not initial, E-H start in registers 28-31
     fn vr(&self, shift: char) -> usize {
         assert!(('A'..='H').contains(&shift));
         let shift = shift as i32 - 'A' as i32;
 
         // Special handling for custom IV: E-H values start in registers 28-31
         // and gradually move into the main rotation (registers 0-7)
-        if self.operand_rs2.is_some()
+        if !self.initial
             && (self.rid == 0 && shift >= 4
                 || self.rid == 1 && shift >= 5
                 || self.rid == 2 && shift >= 6

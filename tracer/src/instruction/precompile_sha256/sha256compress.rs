@@ -46,12 +46,12 @@ impl SHA256COMPRESS {
                 .0 as u32;
         }
 
-        // Execute compression and store result after input words
+        // Execute compression and store result at rs2
         let result = execute_sha256_compression(initial_state, input);
         for (i, &word) in result.iter().enumerate() {
             cpu.mmu
                 .store_word(
-                    cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                    cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64,
                     word,
                 )
                 .expect("SHA256COMPRESS: Failed to store result");
@@ -80,7 +80,8 @@ impl VirtualInstructionSequence for SHA256COMPRESS {
             self.address,
             vr,
             self.operands.rs1,
-            Some(self.operands.rs2),
+            self.operands.rs2,
+            false,  // not initial - uses custom IV from rs2
         );
         builder.build()
     }

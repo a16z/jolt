@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
 use crate::emulator::cpu::Cpu;
-use crate::instruction::format::format_i::FormatI;
+use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::InstructionFormat;
 use crate::instruction::precompile_sha256::{
     execute_sha256_compression_initial, Sha256SequenceBuilder, NEEDED_REGISTERS,
@@ -16,7 +16,7 @@ declare_riscv_instr!(
     name   = SHA256COMPRESSI,
     mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
     match  = 0x0000100b,  // funct7=0x00, funct3=0x1, opcode=0x0B (custom-0)
-    format = FormatI,
+    format = FormatR,
     ram    = ()
 );
 
@@ -62,7 +62,13 @@ impl VirtualInstructionSequence for SHA256COMPRESSI {
         (0..NEEDED_REGISTERS).for_each(|i| {
             vr[i] = virtual_register_index(i as u64) as usize;
         });
-        let builder = Sha256SequenceBuilder::new(self.address, vr, self.operands.rs1, None);
+        let builder = Sha256SequenceBuilder::new(
+            self.address,
+            vr,
+            self.operands.rs1,
+            self.operands.rs2,
+            true,  // initial - uses BLOCK constants
+        );
         builder.build()
     }
 }
