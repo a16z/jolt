@@ -6,11 +6,12 @@ use crate::jolt_onnx::{
     precompiles::{matmult::MatMultPrecompile, PrecompileOperators},
     vm::{onnx_vm::ONNXInstructionSet, JoltONNXTraceStep},
 };
-
 use tracer::ELFInstruction;
 
 impl ONNXTraceRow {
+    /// Convert [`ONNXTraceRow`] to a vector of [`JoltONNXTraceStep<ONNXInstructionSet>`]
     pub fn to_trace_step(&self) -> Vec<JoltONNXTraceStep<ONNXInstructionSet>> {
+        // Check if jolt vm will perfrom an instruction lookup
         if let Some(lookups) = self.to_lookup() {
             return lookups
                 .into_iter()
@@ -22,12 +23,14 @@ impl ONNXTraceRow {
                 .collect::<Vec<_>>();
         }
 
+        // Check if jolt vm will perform a precompile operation
         if let Some(precompile) = self.to_precompile() {
             let mut step = JoltONNXTraceStep::no_op();
             step.precompile = Some(precompile);
             return vec![step];
         }
 
+        // If no lookup or precompile is needed, return a no-op step
         vec![JoltONNXTraceStep::no_op()]
     }
 

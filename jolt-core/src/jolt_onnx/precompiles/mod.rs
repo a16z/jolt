@@ -1,4 +1,5 @@
-//! This module implements the sum-check precompiles for ONNX operators.
+//! This module provides the specialized sum-check precompile operators for Jolt's ONNX execution.
+
 pub mod matmult;
 pub mod sumcheck_engine;
 use matmult::MatMultPrecompile;

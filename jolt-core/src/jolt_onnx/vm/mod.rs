@@ -412,6 +412,7 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default + Sync> JoltStuff<T>
     }
 }
 
+/// Execution trace step for the Jolt ONNX VM.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltONNXTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
@@ -422,6 +423,7 @@ pub struct JoltONNXTraceStep<InstructionSet: JoltInstructionSet> {
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
+    /// Create a new [`JoltONNXTraceStep`] with default values.
     pub fn no_op() -> Self {
         JoltONNXTraceStep {
             instruction_lookup: None,
@@ -437,6 +439,7 @@ impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
         }
     }
 
+    /// Pad the trace to the next power of two length.
     fn pad(trace: &mut Vec<Self>) {
         let unpadded_length = trace.len();
         let padded_length = unpadded_length.next_power_of_two();

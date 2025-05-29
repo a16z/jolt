@@ -6,6 +6,8 @@
 //
 //       * Refactor duplicated code in `execute` and `execute_quantized`
 
+use super::tensor::{LiteTensor, QuantizedLiteTensor};
+use super::trace::Tracer;
 use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
 use crate::jolt_onnx::utils::create_tensor;
 use itertools::Itertools;
@@ -18,9 +20,6 @@ use tract_onnx::{
     pb::{type_proto::Value, GraphProto},
     prelude::*,
 };
-
-use super::tensor::{LiteTensor, QuantizedLiteTensor};
-use super::trace::Tracer;
 
 /// Represents a topologically-sorted ONNX model
 #[derive(Debug)]
