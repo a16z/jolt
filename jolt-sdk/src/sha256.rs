@@ -97,6 +97,7 @@ impl Sha256 {
         unsafe {
             if self.initial {
                 sha256_compression_initial(w.as_ptr(), self.state.as_mut_ptr());
+                self.initial = false;
             } else {
                 sha256_compression(w.as_ptr(), self.state.as_mut_ptr());
             };
@@ -115,6 +116,7 @@ impl Sha256 {
         unsafe {
             if self.initial {
                 sha256_compression_initial(w.as_ptr(), self.state.as_mut_ptr());
+                self.initial = false;
             } else {
                 sha256_compression(w.as_ptr(), self.state.as_mut_ptr());
             };

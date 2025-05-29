@@ -3381,7 +3381,6 @@ name = "sha2-chain-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
- "sha2",
 ]
 
 [[package]]
