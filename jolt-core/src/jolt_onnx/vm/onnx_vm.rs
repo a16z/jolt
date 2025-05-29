@@ -122,12 +122,13 @@ mod tests {
         ProofTranscript: Transcript,
     {
         // Setup model and get trace (input for proving)
-        let (io, trace) = onnx_program.trace();
+        let model = onnx_program.decode();
 
         // Generate preprocessing
-        let pp = ONNXJoltVM::<F, PCS, ProofTranscript>::prover_preprocess(1 << 20);
+        let pp = ONNXJoltVM::<F, PCS, ProofTranscript>::prover_preprocess(&model, 1 << 20);
 
         // Prove
+        let (io, trace) = onnx_program.trace();
         let (snark, commitments, verifier_io, _) =
             ONNXJoltVM::<F, PCS, ProofTranscript>::prove(io, trace, pp.clone());
 

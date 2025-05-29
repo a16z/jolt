@@ -41,7 +41,7 @@ pub struct PrecompilePreprocessing {
 
 impl PrecompilePreprocessing {
     #[tracing::instrument(skip_all, name = "PrecompilePreprocessing::preprocess")]
-    fn preprocess(model: &QuantizedONNXModel) -> Self {
+    pub fn preprocess(model: &QuantizedONNXModel) -> Self {
         let io_shapes = model.track_io_shapes();
         let mut mat_mult_precompile_dims = Vec::new();
         for (instr, io_shape) in model.instrs.iter().zip_eq(io_shapes.iter()) {
@@ -66,6 +66,7 @@ impl PrecompilePreprocessing {
 /// A special-purpose SNARK designed for specific functionality, such as ONNX operators that are too expensive to prove using [`InstructionLookupProof`].
 /// This is a sum-check-based precompile proof tailored for ONNX runtime.
 /// It is used to prove the correctness of certain ONNX operators via a custom sum-check precompile instead of a lookup-based approach.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrecompileProof<F, ProofTranscript>
 where
     F: JoltField,

@@ -20,11 +20,14 @@ use common::rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS};
 use instruction_lookups::{
     InstructionLookupStuff, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
+use precompiles::{PrecompilePreprocessing, PrecompileProof};
 use serde::{Deserialize, Serialize};
+use tract_onnx::model;
 
 use super::common::onnx_trace::JoltONNXDevice;
 use super::memory_checking::{Initializable, StructuredPolynomialData};
 use super::precompiles::PrecompileOperators;
+use super::tracer::model::QuantizedONNXModel;
 
 pub mod instruction_lookups;
 pub mod onnx_vm;
@@ -127,6 +130,8 @@ pub struct JoltProof<
     /// Instruction lookups proof.
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
+    /// Precompile operators proof.
+    pub precompiles: PrecompileProof<F, ProofTranscript>,
 }
 
 impl<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables, ProofTranscript>
@@ -141,10 +146,12 @@ where
     /// Preprocessing step for the verifier.
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     pub fn verifier_preprocess(
+        model: &QuantizedONNXModel,
         max_trace_length: usize,
     ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         let instruction_lookups_preprocessing =
             InstructionLookupsPreprocessing::preprocess::<M, InstructionSet, Subtables>();
+        let precompiles_preprocessing = PrecompilePreprocessing::preprocess(model);
         let max_poly_len: usize = [max_trace_length.next_power_of_two(), M]
             .into_iter()
             .max()
@@ -153,17 +160,19 @@ where
         JoltVerifierPreprocessing {
             generators,
             instruction_lookups: instruction_lookups_preprocessing,
+            precompiles: precompiles_preprocessing,
         }
     }
 
     /// Preprocessing step for the prover.
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     pub fn prover_preprocess(
+        model: &QuantizedONNXModel,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
-        let shared = Self::verifier_preprocess(max_trace_length);
+        let shared = Self::verifier_preprocess(model, max_trace_length);
         JoltProverPreprocessing {
             shared,
             field: small_value_lookup_tables,
@@ -226,6 +235,15 @@ where
             &mut transcript,
         );
 
+        // We have to generate witness after instruction proof to keep the transcript in sync.
+        let mut precompile_polynomials =
+            PrecompileProof::<F, ProofTranscript>::generate_witness(&trace, &mut transcript);
+        let precompiles_proof = PrecompileProof::prove(
+            &preprocessing.shared.precompiles,
+            &mut precompile_polynomials,
+            &mut transcript,
+        );
+
         // TODO: Memory proof
 
         // TODO: Spartan proof
@@ -233,6 +251,7 @@ where
         let jolt_proof = JoltProof {
             trace_length,
             instruction_lookups: instruction_proof,
+            precompiles: precompiles_proof,
         };
 
         // TODO: Batch prove openings
@@ -281,6 +300,11 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )?;
+        Self::verify_precompiles(
+            &preprocessing.precompiles,
+            self.precompiles,
+            &mut transcript,
+        )?;
         Ok(())
     }
 
@@ -302,6 +326,15 @@ where
             transcript,
         )
     }
+
+    #[tracing::instrument(skip_all)]
+    fn verify_precompiles(
+        preprocessing: &PrecompilePreprocessing,
+        proof: PrecompileProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        PrecompileProof::verify(preprocessing, &proof, transcript)
+    }
 }
 
 /// Preprocessing for the verifier and prover
@@ -316,6 +349,8 @@ where
     pub generators: PCS::Setup,
     /// Preprocessing for instruction lookups
     pub instruction_lookups: InstructionLookupsPreprocessing<C, F>,
+    /// Preprocessing for the precompile operators
+    pub precompiles: PrecompilePreprocessing,
 }
 
 /// Preprocessing for the prover
