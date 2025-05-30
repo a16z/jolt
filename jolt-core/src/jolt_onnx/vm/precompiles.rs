@@ -23,10 +23,14 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 
 /// The dimensions of the matrix multiplication precompile.
+///
 /// mat_mult_precompile_dims = (m, n, k) where
 /// - `m` is the number of rows in the resulting matrix,
 /// - `n` is the number of columns in the resulting matrix,
 /// - `k` is the number of columns in the lhs matrix
+///
+/// We use m, and n to get the required length of the challenge vectors in the sum-check matrix-multiplication precompile.
+/// And k is used to determine the number of sum-check rounds
 ///
 /// # Note: We pad the dimensions to the next power of two.
 pub type MatMultPrecompileDims = (usize, usize, usize);
@@ -44,20 +48,24 @@ impl PrecompilePreprocessing {
     #[tracing::instrument(skip_all, name = "PrecompilePreprocessing::preprocess")]
     pub fn preprocess(model: &QuantizedONNXModel) -> Self {
         let io_shapes = model.layers_io_shapes();
-        let mut mat_mult_precompile_dims = Vec::new();
-        for (instr, io_shape) in model.instrs.iter().zip_eq(io_shapes.iter()) {
-            match instr.opcode {
+
+        // For each matmult instruction store the [`MatMultPrecompileDims`]
+        // We pad the dimensions to the next power of two.
+        let mat_mult_precompile_dims = model
+            .instrs
+            .iter()
+            .zip_eq(io_shapes.iter())
+            .filter_map(|(instr, (input_shape, output_shape))| match instr.opcode {
                 Operator::MatMul => {
-                    let input_shape = io_shape.0.clone();
-                    let output_shape = io_shape.1.clone();
                     let m = output_shape[0].next_power_of_two();
                     let n = output_shape[1].next_power_of_two();
                     let k = input_shape[1].next_power_of_two();
-                    mat_mult_precompile_dims.push((m, n, k));
+                    Some((m, n, k))
                 }
-                _ => continue,
-            }
-        }
+                _ => None,
+            })
+            .collect_vec();
+
         Self {
             mat_mult_precompile_dims,
         }
@@ -83,7 +91,11 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    /// Given the execution trace, constructs the polynomials used in the batched sum-check proof.
+    /// Given the execution trace, construct the polynomials used in the batched sum-check proof.
+    /// The witness polynomials are abstracted as `MatMultSumcheck` instances, which hold a MatMultProverState which contains the witness polynomials `a` & `b` for the matrix multiplication precompile.
+    ///
+    /// # Note
+    /// - We require the `transcript` to generate the challenges for the matrix multiplication precompile.
     pub fn generate_witness<InstructionSet>(
         ops: &[JoltONNXTraceStep<InstructionSet>],
         transcript: &mut ProofTranscript,
@@ -91,21 +103,21 @@ where
     where
         InstructionSet: JoltInstructionSet,
     {
-        let filter_ops = ops
-            .iter()
-            .filter(|ops| ops.precompile.is_some())
-            .collect_vec();
-        filter_ops
-            .iter()
-            .map(|op| {
-                let precompile = op.precompile.as_ref().unwrap();
-                match precompile {
-                    PrecompileOperators::MatMult(mat_mult) => {
-                        let prover_state: MatMultProverState<F> =
-                            MatMultProverState::initialize(mat_mult, transcript);
-                        MatMultSumcheck::new(Some(prover_state), None, None)
-                    }
+        // Filter the operations to only include those that are proven with precompiles.
+        // For each precompile operator, initialize the prover state and create a new `MatMultSumcheck`.
+        ops.iter()
+            .filter_map(|op| match &op.precompile {
+                Some(PrecompileOperators::MatMult(mat_mult)) => {
+                    // Initialize the prover state for the matrix multiplication precompile.
+                    // `MatMultProverState::initialize` constructs the witness polynomials `a` & `b` for the matrix multiplication precompile.
+                    // It takes the `transcript` as an argument to generate the challenges, rx & ry to compute the evaluation for Sum_k A(rx, k) & B(ry, k)
+                    let prover_state: MatMultProverState<F> =
+                        MatMultProverState::initialize(mat_mult, transcript);
+
+                    // Create a new `MatMultSumcheck` instance with the prover state.
+                    Some(MatMultSumcheck::new(Some(prover_state), None, None))
                 }
+                _ => None,
             })
             .collect_vec()
     }
@@ -191,13 +203,14 @@ mod tests {
         program.set_input(input);
 
         // Prover
-        let (io, trace) = program.trace();
+        let (_io, trace) = program.trace();
         let mut ptranscript = KeccakTranscript::new(b"test");
         let mut witness = PrecompileProof::<Fr, _>::generate_witness(&trace, &mut ptranscript);
+        assert!(!witness.is_empty());
         let proof = PrecompileProof::<Fr, _>::prove(&pp, &mut witness, &mut ptranscript);
 
         // Verifier
         let mut vtranscript = KeccakTranscript::new(b"test");
-        let _ = PrecompileProof::<Fr, _>::verify(&pp, &proof, &mut vtranscript).unwrap();
+        PrecompileProof::<Fr, _>::verify(&pp, &proof, &mut vtranscript).unwrap();
     }
 }

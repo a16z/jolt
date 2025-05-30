@@ -2,12 +2,10 @@ use crate::jolt_onnx::tracer::model::QuantizedONNXModel;
 use crate::jolt_onnx::tracer::trace;
 use crate::jolt_onnx::utils::random_floatvec;
 use ark_std::test_rng;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tract_onnx::prelude::*;
 
-fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
+fn run_perceptron_test(path: &str, size: usize) {
     let rng = test_rng();
 
     // Build the ONNX model using tract
@@ -41,10 +39,10 @@ fn run_perceptron_test(path: &str, size: usize, seed: [u8; 32]) {
 
 #[test]
 fn test_perceptron() {
-    run_perceptron_test("onnx/perceptron.onnx", 10, [0; 32]);
+    run_perceptron_test("onnx/perceptron.onnx", 10);
 }
 
 #[test]
 fn test_perceptron_2() {
-    run_perceptron_test("onnx/perceptron_2.onnx", 4, [0; 32]);
+    run_perceptron_test("onnx/perceptron_2.onnx", 4);
 }

@@ -1,4 +1,7 @@
-//! This module provides a [`Tracer`] for the ONNX runtime.
+//! This module provides a [`Tracer`] for the ONNX runtime, that captures the pre-execution and
+//! post-execution state of each layer in the model.
+//!
+//! The ONNX runtime will use this to construct an execution trace.
 
 use super::tensor::QuantizedLiteTensor;
 use crate::jolt_onnx::common::onnx_trace::{LayerState, ONNXInstruction, ONNXTraceRow};
@@ -7,7 +10,7 @@ use std::collections::HashMap;
 /// A tracer for ONNX models that captures the execution trace
 #[derive(Default, Debug)]
 pub struct Tracer {
-    /// Execution trace of the ONNX model
+    /// Execution trace of the ONNX model.
     pub rows: Vec<ONNXTraceRow>,
 }
 

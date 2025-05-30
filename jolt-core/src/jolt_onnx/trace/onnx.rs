@@ -16,7 +16,7 @@ impl ONNXTraceRow {
             return lookups
                 .into_iter()
                 .map(|lookup| {
-                    let mut step = JoltONNXTraceStep::no_op();
+                    let mut step = JoltONNXTraceStep::no_op(); // TODO: change this from no-op when bytecodeproof and mcc are fully-fleshed out
                     step.instruction_lookup = Some(lookup);
                     step
                 })
@@ -37,7 +37,6 @@ impl ONNXTraceRow {
     /// Convert [`ONNXTraceRow`] to [`ONNXInstructionSet`]
     pub fn to_lookup(&self) -> Option<Vec<ONNXInstructionSet>> {
         match self.instruction.opcode {
-            // TODO: clean this up to make it extensible for other operators
             Operator::Relu => self
                 .layer_state
                 .input_vals
