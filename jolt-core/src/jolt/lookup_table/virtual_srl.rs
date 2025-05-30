@@ -51,6 +51,11 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualSRL
         let [right_shift, right_shift_helper] = suffixes.try_into().unwrap();
         prefixes[Prefixes::RightShift] * right_shift_helper + right_shift
     }
+
+    #[cfg(test)]
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+        super::test::gen_bitmask_lookup_index(rng)
+    }
 }
 
 #[cfg(test)]
@@ -73,7 +78,6 @@ mod test {
     }
 
     #[test]
-    #[ignore = "Cannot generate lookup_index at random"]
     fn prefix_suffix() {
         prefix_suffix_test::<Fr, VirtualSRLTable<32>>();
     }

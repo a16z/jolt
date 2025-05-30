@@ -4,7 +4,7 @@ use crate::{
     jolt::{
         instruction::{InstructionLookup, LookupQuery},
         lookup_table::{
-            prefixes::{PrefixCheckpoint, Prefixes},
+            prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,
         },
     },
@@ -520,7 +520,7 @@ pub fn prove_sparse_dense_shout<
     );
     let _guard = span.enter();
 
-    let prefixes: Vec<_> = prefix_checkpoints
+    let prefixes: Vec<PrefixEval<F>> = prefix_checkpoints
         .into_iter()
         .map(|checkpoint| checkpoint.unwrap())
         .collect();
@@ -1032,6 +1032,11 @@ mod tests {
         test_sparse_dense_shout(Some(RV32IMCycle::VirtualShiftRightBitmaskI(
             Default::default(),
         )));
+    }
+
+    #[test]
+    fn test_virtualrotri() {
+        test_sparse_dense_shout(Some(RV32IMCycle::VirtualROTRI(Default::default())));
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use crate::jolt::lookup_table::prefixes::left_shift::LeftShiftPrefix;
+use crate::jolt::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
 use crate::{field::JoltField, subprotocols::sparse_dense_shout::LookupBits};
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
@@ -33,6 +35,8 @@ pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
 pub mod left_msb;
+pub mod left_shift;
+pub mod left_shift_helper;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
@@ -112,6 +116,8 @@ pub enum Prefixes {
     Pow2,
     RightShift,
     SignExtension,
+    LeftShift,
+    LeftShiftHelper,
 }
 
 #[derive(Clone, Copy)]
@@ -209,6 +215,12 @@ impl Prefixes {
             Prefixes::RightShift => RightShiftPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShift => {
+                LeftShiftPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShiftHelper => {
+                LeftShiftHelperPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -340,6 +352,12 @@ impl Prefixes {
             }
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::LeftShift => {
+                LeftShiftPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::LeftShiftHelper => {
+                LeftShiftHelperPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
