@@ -22,7 +22,6 @@ use instruction_lookups::{
 };
 use precompiles::{PrecompilePreprocessing, PrecompileProof};
 use serde::{Deserialize, Serialize};
-use tract_onnx::model;
 
 use super::common::onnx_trace::JoltONNXDevice;
 use super::memory_checking::{Initializable, StructuredPolynomialData};

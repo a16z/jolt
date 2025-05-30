@@ -16,7 +16,7 @@ impl ONNXTraceRow {
             return lookups
                 .into_iter()
                 .map(|lookup| {
-                    let mut step = JoltONNXTraceStep::no_op(); // TODO: change this from no-op when bytecodeproof and mcc are fully-fleshed out
+                    let mut step = JoltONNXTraceStep::no_op(); // TODO: We will change this from no-op when bytecodeproof and mcc are fully-fleshed out
                     step.instruction_lookup = Some(lookup);
                     step
                 })
