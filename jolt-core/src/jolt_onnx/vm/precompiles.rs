@@ -168,6 +168,9 @@ where
 
     /// Initialize the verifier states for the precompile sum-check instances.
     /// Updates the transcript to be in sync with the prover's transcript.
+    ///
+    /// # Panics
+    /// Panics if the length of `init_claims` and `final_claims` does not match the number of matrix multiplication precompile's
     pub fn initialize_verifier(
         pp: &PrecompilePreprocessing,
         init_claims: &[F],
@@ -179,8 +182,12 @@ where
             .zip_eq(init_claims.iter())
             .zip_eq(final_claims.iter())
             .map(|((dim, init_claim), final_claim)| {
+                // Initialize verifier state. We update transcript state as well, generating the challenges rx & ry & appending init_claim
+                // for the matmult sum-check precompile proof.
                 let verifier_state =
                     MatMultVerifierState::initialize(dim.0, dim.1, dim.2, *init_claim, transcript);
+
+                // Create a new `MatMultSumcheck` instance with the verifier state and final claims.
                 MatMultSumcheck::new(None, Some(verifier_state), Some(final_claim.clone()))
             })
             .collect_vec()
