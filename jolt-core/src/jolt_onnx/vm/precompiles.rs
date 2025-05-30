@@ -65,7 +65,6 @@ impl PrecompilePreprocessing {
                 _ => None,
             })
             .collect_vec();
-
         Self {
             mat_mult_precompile_dims,
         }
@@ -122,6 +121,7 @@ where
             .collect_vec()
     }
 
+    /// Run the precompile sum-check instances through [`BatchedSumcheck::prove`] protcol.
     #[tracing::instrument(skip_all, name = "PrecompileProof::prove")]
     pub fn prove(
         _pp: &PrecompilePreprocessing,
@@ -148,6 +148,7 @@ where
         }
     }
 
+    /// Verify the sum-check precompile instances via [`BatchedSumcheck::verify`].
     #[tracing::instrument(skip_all, name = "PrecompileProof::prove")]
     pub fn verify(
         pp: &PrecompilePreprocessing,
@@ -165,6 +166,8 @@ where
         Ok(())
     }
 
+    /// Initialize the verifier states for the precompile sum-check instances.
+    /// Updates the transcript to be in sync with the prover's transcript.
     pub fn initialize_verifier(
         pp: &PrecompilePreprocessing,
         init_claims: &[F],
