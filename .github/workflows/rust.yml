@@ -122,3 +122,27 @@ jobs:
       - name: Make sure the generated code runs
         working-directory: ./sample_project
         run: cargo run --release
+
+  zklean-extractor-tests:
+    name: ZkLean extractor tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run extractor tests
+        working-directory: ./zklean-extractor
+        run: cargo test
+
+  compile-extracted-lean:
+    name: Compile extracted Lean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Jolt ZkLean package
+        working-directory: ./zklean-extractor
+        run: cargo run --release -- -o -p jolt-zklean
+
+      - name: Run lake build on the extracted model
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: ./zklean-extractor/jolt-zklean/src
+          build: true

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SignExtendSubtable<F: JoltField, const WIDTH: usize> {
     _field: PhantomData<F>,
 }

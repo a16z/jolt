@@ -6,12 +6,20 @@ const DTB_SIZE: usize = 0xfe0;
 
 extern crate fnv;
 
+use crate::trace::Tracer;
+#[cfg(not(feature = "std"))]
+use alloc::rc::Rc;
+use common::rv_trace::{JoltDevice, MemoryConfig, MemoryState};
+#[cfg(feature = "std")]
 use std::rc::Rc;
 
-use crate::trace::Tracer;
-use common::rv_trace::{JoltDevice, MemoryState};
-
+#[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
+#[cfg(not(feature = "std"))]
+use alloc::collections::btree_map::BTreeMap as FnvHashMap;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec, vec::Vec};
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
 use super::device::clint::Clint;
@@ -112,7 +120,7 @@ impl Mmu {
             plic: Plic::new(),
             clint: Clint::new(),
             uart: Uart::new(terminal),
-            jolt_device: JoltDevice::new(0, 0),
+            jolt_device: JoltDevice::new(&MemoryConfig::default()),
             tracer,
             mstatus: 0,
             page_cache_enabled: false,
@@ -230,31 +238,66 @@ impl Mmu {
         }
     }
 
+    #[inline]
+    fn assert_effective_store_address(&self, effective_address: u64) {
+        self.assert_effective_address(effective_address, true)
+    }
+
+    #[inline]
+    fn assert_effective_load_address(&self, effective_address: u64) {
+        self.assert_effective_address(effective_address, false)
+    }
+
     /// Asserts the validity of an effective memory address.
     /// Panics if the address is invalid.
     ///
     /// # Arguments
     /// * `effective_address` Effective memory address to validate
     #[inline]
-    fn assert_effective_address(&self, effective_address: u64) {
-        if effective_address < DRAM_BASE {
-            // less then DRAM_BASE and greater then panic => zero_padding region
+    fn assert_effective_address(&self, ea: u64, is_write: bool) {
+        let layout = &self.jolt_device.memory_layout;
+        // helper strings
+        let (action, verb) = if is_write {
+            ("Store", "write to")
+        } else {
+            ("Load", "access")
+        };
+
+        if ea < DRAM_BASE {
+            // below DRAM_BASE is stack or I/O
+            // bounds‐check against the termination (top) of the stack or I/O region
             assert!(
-                effective_address <= self.jolt_device.memory_layout.termination,
-                "Stack overflow: Attempted to write to 0x{effective_address:X}"
+                ea <= layout.termination,
+                "Stack underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
-            // less then panic => jolt_device region (i.e. input/output)
+            // bounds-check against the bottom of the stack
             assert!(
-                self.jolt_device.is_output(effective_address)
-                    || self.jolt_device.is_panic(effective_address)
-                    || self.jolt_device.is_termination(effective_address),
-                "Unknown memory mapping: 0x{effective_address:X}"
+                ea >= layout.stack_end,
+                "Stack overflow: Attempted to {verb} 0x{ea:X}. Stack too small.\n{layout:#?}",
+            );
+            // then check for device I/O pages
+            let ok = if is_write {
+                // stores only to output/panic/termination
+                self.jolt_device.is_output(ea)
+                    || self.jolt_device.is_panic(ea)
+                    || self.jolt_device.is_termination(ea)
+            } else {
+                // loads also from input
+                self.jolt_device.is_input(ea)
+                    || self.jolt_device.is_output(ea)
+                    || self.jolt_device.is_panic(ea)
+                    || self.jolt_device.is_termination(ea)
+            };
+            assert!(
+                ok,
+                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
+                action.to_lowercase(),
             );
         } else {
-            // greater then memory capacity
+            // 2) above DRAM_BASE ⇒ heap
             assert!(
-                self.memory.validate_address(effective_address),
-                "Heap overflow: Attempted to write to 0x{effective_address:X}"
+                self.memory.validate_address(ea),
+                "Heap overflow: Attempted to {verb} 0x{ea:X}",
             );
         }
     }
@@ -307,7 +350,7 @@ impl Mmu {
         }
     }
 
-    /// Loads an byte. This method takes virtual address and translates
+    /// Loads a byte. This method takes virtual address and translates
     /// into physical address inside.
     ///
     /// # Arguments
@@ -388,7 +431,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_word(&mut self, v_address: u64) -> Result<u32, Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address % 4 == 0, "Unaligned load_word");
+        assert_eq!(effective_address % 4, 0, "Unaligned load_word");
         self.trace_load(effective_address);
         match self.load_bytes(v_address, 4) {
             Ok(data) => Ok(data as u32),
@@ -403,7 +446,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address % 8 == 0, "Unaligned load_doubleword");
+        assert_eq!(effective_address % 8, 0, "Unaligned load_doubleword");
         self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
             Ok(data) => Ok(data),
@@ -483,7 +526,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address % 2 == 0, "Unaligned store_halfword");
+        assert_eq!(effective_address % 2, 0, "Unaligned store_halfword");
         self.trace_store_halfword(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 2)
     }
@@ -496,7 +539,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address % 4 == 0, "Unaligned store_word");
+        assert_eq!(effective_address % 4, 0, "Unaligned store_word");
         self.trace_store(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 4)
     }
@@ -509,7 +552,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert!(effective_address % 8 == 0, "Unaligned store_doubleword");
+        assert_eq!(effective_address % 8, 0, "Unaligned store_doubleword");
         self.trace_store(effective_address, value);
         self.store_bytes(v_address, value, 8)
     }
@@ -521,6 +564,7 @@ impl Mmu {
     /// * `p_address` Physical address
     fn load_raw(&mut self, p_address: u64) -> u8 {
         let effective_address = self.get_effective_address(p_address);
+        self.assert_effective_load_address(effective_address);
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => self.memory.read_byte(effective_address),
@@ -537,7 +581,7 @@ impl Mmu {
                     if self.jolt_device.is_input(effective_address) {
                         self.jolt_device.load(effective_address)
                     } else {
-                        panic!("Unknown memory mapping {effective_address:X}.");
+                        panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
                     }
                 }
             },
@@ -583,7 +627,7 @@ impl Mmu {
     /// before and after the store instruction. The memory state is used in Jolt to
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_byte(&mut self, effective_address: u64, value: u64) {
-        self.assert_effective_address(effective_address);
+        self.assert_effective_store_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
             Xlen::Bit64 => 8,
@@ -624,7 +668,7 @@ impl Mmu {
     /// before and after the store instruction. The memory state is used in Jolt to
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_halfword(&mut self, effective_address: u64, value: u64) {
-        self.assert_effective_address(effective_address);
+        self.assert_effective_store_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
             Xlen::Bit64 => 8,
@@ -665,7 +709,7 @@ impl Mmu {
     /// instruction. The memory state is used in Jolt to construct the witnesses
     /// in `read_write_memory.rs`.
     fn trace_store(&mut self, effective_address: u64, value: u64) {
-        self.assert_effective_address(effective_address);
+        self.assert_effective_store_address(effective_address);
         let bytes = match self.xlen {
             Xlen::Bit32 => 4,
             Xlen::Bit64 => 8,
@@ -708,7 +752,10 @@ impl Mmu {
             && effective_address.wrapping_add(1) > effective_address
         {
             // Fast path. Directly load main memory at a time.
-            true => self.memory.read_halfword(effective_address),
+            true => {
+                self.assert_effective_load_address(effective_address);
+                self.memory.read_halfword(effective_address)
+            }
             false => {
                 let mut data = 0_u16;
                 for i in 0..2 {
@@ -730,7 +777,10 @@ impl Mmu {
             && effective_address.wrapping_add(3) > effective_address
         {
             // Fast path. Directly load main memory at a time.
-            true => self.memory.read_word(effective_address),
+            true => {
+                self.assert_effective_load_address(effective_address);
+                self.memory.read_word(effective_address)
+            }
             false => {
                 let mut data = 0_u32;
                 for i in 0..4 {
@@ -752,7 +802,10 @@ impl Mmu {
             && effective_address.wrapping_add(7) > effective_address
         {
             // Fast path. Directly load main memory at a time.
-            true => self.memory.read_doubleword(effective_address),
+            true => {
+                self.assert_effective_load_address(effective_address);
+                self.memory.read_doubleword(effective_address)
+            }
             false => {
                 let mut data = 0_u64;
                 for i in 0..8 {
@@ -773,14 +826,17 @@ impl Mmu {
         let effective_address = self.get_effective_address(p_address);
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
-            true => self.memory.write_byte(effective_address, value),
+            true => {
+                self.assert_effective_store_address(effective_address);
+                self.memory.write_byte(effective_address, value)
+            }
             false => match effective_address {
                 0x02000000..=0x0200ffff => self.clint.store(effective_address, value),
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
                 _ => {
-                    self.assert_effective_address(effective_address);
+                    self.assert_effective_store_address(effective_address);
                     self.jolt_device.store(effective_address, value);
                 }
             },
@@ -799,7 +855,10 @@ impl Mmu {
             && effective_address.wrapping_add(1) > effective_address
         {
             // Fast path. Directly store to main memory at a time.
-            true => self.memory.write_halfword(effective_address, value),
+            true => {
+                self.assert_effective_store_address(effective_address);
+                self.memory.write_halfword(effective_address, value)
+            }
             false => {
                 for i in 0..2 {
                     self.store_raw(
@@ -823,7 +882,10 @@ impl Mmu {
             && effective_address.wrapping_add(3) > effective_address
         {
             // Fast path. Directly store to main memory at a time.
-            true => self.memory.write_word(effective_address, value),
+            true => {
+                self.assert_effective_store_address(effective_address);
+                self.memory.write_word(effective_address, value)
+            }
             false => {
                 for i in 0..4 {
                     self.store_raw(
@@ -847,7 +909,10 @@ impl Mmu {
             && effective_address.wrapping_add(7) > effective_address
         {
             // Fast path. Directly store to main memory at a time.
-            true => self.memory.write_doubleword(effective_address, value),
+            true => {
+                self.assert_effective_store_address(effective_address);
+                self.memory.write_doubleword(effective_address, value)
+            }
             false => {
                 for i in 0..8 {
                     self.store_raw(
@@ -1272,8 +1337,8 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "Stack overflow")]
-    fn test_stack_overflow() {
+    #[should_panic(expected = "Stack underflow")]
+    fn test_stack_underflow() {
         let mut mmu = setup_mmu(MEM_CAPACITY);
 
         // Try to write to an address below DRAM_BASE
@@ -1282,11 +1347,32 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "Unknown memory mapping")]
-    fn test_unknown_memory_mapping() {
+    #[should_panic(expected = "Stack overflow")]
+    fn test_stack_overflow() {
         let mut mmu = setup_mmu(MEM_CAPACITY);
 
         let invalid_address = 1234;
         mmu.trace_store(invalid_address, 0xc50513);
+    }
+
+    #[test]
+    #[should_panic(expected = "Heap overflow: Attempted to write to")]
+    fn test_out_of_bounds_write_not_caught() {
+        let mut mmu = setup_mmu(MEM_CAPACITY);
+        let heap_capacity = 1024 * 1024;
+        mmu.init_memory(heap_capacity);
+
+        let aligned_invalid_address = DRAM_BASE + heap_capacity + 8;
+        mmu.store_bytes(aligned_invalid_address, 0xdeadbeef, 2)
+            .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown memory mapping")]
+    fn test_unknown_memory_mapping() {
+        let mut mmu = setup_mmu(MEM_CAPACITY);
+        let over_stack_addr = mmu.jolt_device.memory_layout.input_start + 5;
+        // illegal write to inputs
+        mmu.store_bytes(over_stack_addr, 0xc50513, 2).unwrap();
     }
 }

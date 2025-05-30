@@ -177,9 +177,18 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build(DEFAULT_TARGET_DIR);
-        let elf = self.elf.clone().unwrap();
-        let (raw_trace, io_device) =
-            tracer::trace(&elf, inputs, self.max_input_size, self.max_output_size);
+        let elf = self.elf.as_ref().unwrap();
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let memory_config = common::rv_trace::MemoryConfig {
+            memory_size: self.memory_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_output_size: self.max_output_size,
+        };
+        let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
 
         let trace: Vec<_> = raw_trace
             .into_par_iter()
@@ -216,7 +225,17 @@ impl Program {
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) = tracer::trace(elf, inputs, self.max_input_size, self.max_output_size);
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let memory_config = common::rv_trace::MemoryConfig {
+            memory_size: self.memory_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_output_size: self.max_output_size,
+        };
+        let (raw_trace, _) = tracer::trace(elf_contents, inputs, &memory_config);
 
         let (bytecode, memory_init) = self.decode();
         let (io_device, processed_trace) = self.trace(inputs);
