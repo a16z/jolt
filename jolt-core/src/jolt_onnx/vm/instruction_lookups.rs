@@ -593,6 +593,7 @@ pub struct InstructionLookupsProof<
     >,
 }
 
+/// Proof of the primary sumcheck for instruction lookups.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
     sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -602,6 +603,7 @@ pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
+/// Preprocessing data for instruction lookups.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
@@ -614,6 +616,7 @@ pub struct InstructionLookupsPreprocessing<const C: usize, F: JoltField> {
 }
 
 impl<const C: usize, F: JoltField> InstructionLookupsPreprocessing<C, F> {
+    /// Preprocesses the instruction lookups for a given instruction set and subtable set.
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
     pub fn preprocess<const M: usize, InstructionSet, Subtables>() -> Self
     where

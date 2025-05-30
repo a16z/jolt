@@ -32,7 +32,8 @@ pub struct QuantizedONNXModel {
 }
 
 impl QuantizedONNXModel {
-    /// Parse the ONNX model & quantize it from `model_path`
+    /// Parse the ONNX model & quantize it from `model_path`.
+    /// Given a path output a [`QuantizedONNXModel`] type.
     pub fn parse(model_path: &PathBuf) -> Self {
         let graph = computational_graph(model_path);
 
@@ -53,7 +54,7 @@ impl QuantizedONNXModel {
         Self::new(initializer_map, instrs, input_shape(&graph))
     }
 
-    /// Track the i/o shapes of the model layers
+    /// Track the i/o shapes of the model layers. Useful for preprocessing, i.e. get the public parameters of the model.
     pub fn track_io_shapes(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
         let mut io_shapes = Vec::new();
         let mut input_shape = self.input_shape.clone();
@@ -323,7 +324,7 @@ impl Deref for ONNXInitializerMap {
 }
 
 impl ONNXInitializerMap {
-    /// Create a new instance of [`ONNXInitializer`]
+    /// Create a new instance of [`ONNXInitializerMap`]
     pub fn new(initializers: &[TensorProto]) -> Self {
         let mut initializers_map = HashMap::new();
         for initializer in initializers.iter() {

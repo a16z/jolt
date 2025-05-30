@@ -3,12 +3,10 @@
 //! This module provides a custom SNARK for precompiles in the [`ONNXJoltVM`].
 //! These precompile proofs are sum-check based.
 
-use std::marker::PhantomData;
-
 use super::JoltONNXTraceStep;
 use crate::{
     field::JoltField,
-    jolt::{instruction::JoltInstructionSet, vm::rv32i_vm::ProofTranscript},
+    jolt::instruction::JoltInstructionSet,
     jolt_onnx::{
         common::onnx_trace::Operator,
         precompiles::{
@@ -33,6 +31,8 @@ use itertools::Itertools;
 /// # Note: We pad the dimensions to the next power of two.
 pub type MatMultPrecompileDims = (usize, usize, usize);
 
+/// Preprocessing of the models matrices for the precompile proof.
+/// Store the dimensions of the matrix multiplication precompile.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrecompilePreprocessing {
     /// The dimensions of the matrix multiplication precompile.
@@ -40,6 +40,7 @@ pub struct PrecompilePreprocessing {
 }
 
 impl PrecompilePreprocessing {
+    /// Preprocess the ONNX model to extract the dimensions of the matrix multiplication precompile.
     #[tracing::instrument(skip_all, name = "PrecompilePreprocessing::preprocess")]
     pub fn preprocess(model: &QuantizedONNXModel) -> Self {
         let io_shapes = model.track_io_shapes();
@@ -173,15 +174,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-
+    use super::{PrecompilePreprocessing, PrecompileProof};
     use crate::{
         jolt_onnx::{onnx_host::ONNXProgram, utils::random_floatvec},
         utils::transcript::{KeccakTranscript, Transcript},
     };
-
-    use super::{PrecompilePreprocessing, PrecompileProof};
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
 
     #[test]
     fn test_precompile_proof() {

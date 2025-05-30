@@ -206,6 +206,7 @@ pub trait Initializable<T, Preprocessing>: StructuredPolynomialData<T> + Default
     }
 }
 
+#[allow(dead_code)]
 /// Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
