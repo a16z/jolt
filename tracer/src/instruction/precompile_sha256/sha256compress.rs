@@ -33,21 +33,21 @@ impl SHA256COMPRESS {
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
                 .expect("SHA256COMPRESS: Failed to load input word")
-                .0 as u32;
+                .0;
         }
 
         // Load 8 initial state words from memory at rs2
-        let mut initial_state = [0u32; 8];
-        for (i, word) in initial_state.iter_mut().enumerate() {
+        let mut iv = [0u32; 8];
+        for (i, word) in iv.iter_mut().enumerate() {
             *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64)
                 .expect("SHA256COMPRESS: Failed to load initial state")
-                .0 as u32;
+                .0;
         }
 
         // Execute compression and store result at rs2
-        let result = execute_sha256_compression(initial_state, input);
+        let result = execute_sha256_compression(iv, input);
         for (i, &word) in result.iter().enumerate() {
             cpu.mmu
                 .store_word(

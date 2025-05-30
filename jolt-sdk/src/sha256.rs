@@ -16,10 +16,10 @@ pub struct Sha256 {
     /// Buffer for incomplete blocks - aligned for u32 access
     ///
     /// # Safety invariants  
-    /// - Elements 0..(`buffer_len`/4) contain valid data when `buffer_len` > 0
+    /// - First `buffer_len` bytes contain valid data when viewed as `*mut u8`
+    /// - Only elements 0..(buffer_len / 4) are fully initialized u32 values
     /// - During block processing, all 16 words (64 bytes) are initialized before compression
     /// - After compression, `buffer_len` is reset to 0 (buffer contents are don't-care)
-    /// - Padding operations must ensure all 16 words are initialized before final compression
     ///
     /// # Memory layout
     /// - Can be safely cast to `*mut u8` for byte-level operations
@@ -35,12 +35,11 @@ pub struct Sha256 {
 
 impl Sha256 {
     /// Creates a new SHA-256 hasher.
-    #[allow(clippy::uninit_assumed_init, invalid_value)]
     #[inline(always)]
     pub fn new() -> Self {
         Self {
-            state: unsafe { MaybeUninit::uninit().assume_init() },
-            buffer: unsafe { MaybeUninit::uninit().assume_init() },
+            state: [MaybeUninit::uninit(); 8],
+            buffer: [MaybeUninit::uninit(); 16],
             buffer_len: 0,
             total_len: 0,
             initial: true,
@@ -92,38 +91,11 @@ impl Sha256 {
                 #[cfg(target_endian = "little")]
                 {
                     let buf = unsafe { self.buffer_as_u32_mut() };
-                    // Swap bytes in-place - unrolled
-                    buf[0] = buf[0].swap_bytes();
-                    buf[1] = buf[1].swap_bytes();
-                    buf[2] = buf[2].swap_bytes();
-                    buf[3] = buf[3].swap_bytes();
-                    buf[4] = buf[4].swap_bytes();
-                    buf[5] = buf[5].swap_bytes();
-                    buf[6] = buf[6].swap_bytes();
-                    buf[7] = buf[7].swap_bytes();
-                    buf[8] = buf[8].swap_bytes();
-                    buf[9] = buf[9].swap_bytes();
-                    buf[10] = buf[10].swap_bytes();
-                    buf[11] = buf[11].swap_bytes();
-                    buf[12] = buf[12].swap_bytes();
-                    buf[13] = buf[13].swap_bytes();
-                    buf[14] = buf[14].swap_bytes();
-                    buf[15] = buf[15].swap_bytes();
+                    Sha256::swap_bytes(buf);
                 }
 
                 unsafe {
-                    if self.initial {
-                        sha256_compression_initial(
-                            self.buffer.as_ptr() as *const u32,
-                            self.state.as_mut_ptr() as *mut u32,
-                        );
-                        self.initial = false;
-                    } else {
-                        sha256_compression(
-                            self.buffer.as_ptr() as *const u32,
-                            self.state.as_mut_ptr() as *mut u32,
-                        );
-                    }
+                    self.sha256_compress();
                 }
 
                 self.buffer_len = 0;
@@ -148,38 +120,11 @@ impl Sha256 {
             #[cfg(target_endian = "little")]
             {
                 let buf = unsafe { self.buffer_as_u32_mut() };
-                // Unroll swap loop for better performance
-                buf[0] = buf[0].swap_bytes();
-                buf[1] = buf[1].swap_bytes();
-                buf[2] = buf[2].swap_bytes();
-                buf[3] = buf[3].swap_bytes();
-                buf[4] = buf[4].swap_bytes();
-                buf[5] = buf[5].swap_bytes();
-                buf[6] = buf[6].swap_bytes();
-                buf[7] = buf[7].swap_bytes();
-                buf[8] = buf[8].swap_bytes();
-                buf[9] = buf[9].swap_bytes();
-                buf[10] = buf[10].swap_bytes();
-                buf[11] = buf[11].swap_bytes();
-                buf[12] = buf[12].swap_bytes();
-                buf[13] = buf[13].swap_bytes();
-                buf[14] = buf[14].swap_bytes();
-                buf[15] = buf[15].swap_bytes();
+                Sha256::swap_bytes(buf);
             }
 
             unsafe {
-                if self.initial {
-                    sha256_compression_initial(
-                        self.buffer.as_ptr() as *const u32,
-                        self.state.as_mut_ptr() as *mut u32,
-                    );
-                    self.initial = false;
-                } else {
-                    sha256_compression(
-                        self.buffer.as_ptr() as *const u32,
-                        self.state.as_mut_ptr() as *mut u32,
-                    );
-                }
+                self.sha256_compress();
             }
 
             offset += 64;
@@ -230,37 +175,11 @@ impl Sha256 {
             #[cfg(target_endian = "little")]
             {
                 let buf = unsafe { self.buffer_as_u32_mut() };
-                // Swap all 16 words
-                buf[0] = buf[0].swap_bytes();
-                buf[1] = buf[1].swap_bytes();
-                buf[2] = buf[2].swap_bytes();
-                buf[3] = buf[3].swap_bytes();
-                buf[4] = buf[4].swap_bytes();
-                buf[5] = buf[5].swap_bytes();
-                buf[6] = buf[6].swap_bytes();
-                buf[7] = buf[7].swap_bytes();
-                buf[8] = buf[8].swap_bytes();
-                buf[9] = buf[9].swap_bytes();
-                buf[10] = buf[10].swap_bytes();
-                buf[11] = buf[11].swap_bytes();
-                buf[12] = buf[12].swap_bytes();
-                buf[13] = buf[13].swap_bytes();
-                buf[14] = buf[14].swap_bytes();
-                buf[15] = buf[15].swap_bytes();
+                Sha256::swap_bytes(buf);
             }
 
             unsafe {
-                if self.initial {
-                    sha256_compression_initial(
-                        self.buffer.as_ptr() as *const u32,
-                        self.state.as_mut_ptr() as *mut u32,
-                    );
-                } else {
-                    sha256_compression(
-                        self.buffer.as_ptr() as *const u32,
-                        self.state.as_mut_ptr() as *mut u32,
-                    );
-                }
+                self.sha256_compress();
             }
         } else {
             // Two block case
@@ -276,38 +195,11 @@ impl Sha256 {
             #[cfg(target_endian = "little")]
             {
                 let buf = unsafe { self.buffer_as_u32_mut() };
-                // Swap all 16 words
-                buf[0] = buf[0].swap_bytes();
-                buf[1] = buf[1].swap_bytes();
-                buf[2] = buf[2].swap_bytes();
-                buf[3] = buf[3].swap_bytes();
-                buf[4] = buf[4].swap_bytes();
-                buf[5] = buf[5].swap_bytes();
-                buf[6] = buf[6].swap_bytes();
-                buf[7] = buf[7].swap_bytes();
-                buf[8] = buf[8].swap_bytes();
-                buf[9] = buf[9].swap_bytes();
-                buf[10] = buf[10].swap_bytes();
-                buf[11] = buf[11].swap_bytes();
-                buf[12] = buf[12].swap_bytes();
-                buf[13] = buf[13].swap_bytes();
-                buf[14] = buf[14].swap_bytes();
-                buf[15] = buf[15].swap_bytes();
+                Sha256::swap_bytes(buf);
             }
 
             unsafe {
-                if self.initial {
-                    sha256_compression_initial(
-                        self.buffer.as_ptr() as *const u32,
-                        self.state.as_mut_ptr() as *mut u32,
-                    );
-                    self.initial = false;
-                } else {
-                    sha256_compression(
-                        self.buffer.as_ptr() as *const u32,
-                        self.state.as_mut_ptr() as *mut u32,
-                    );
-                }
+                self.sha256_compress();
             }
 
             // Second block: all zeros except length at the end
@@ -378,6 +270,43 @@ impl Sha256 {
         let mut hasher = Self::new();
         hasher.update(input);
         hasher.finalize()
+    }
+
+    #[inline(always)]
+    unsafe fn sha256_compress(&mut self) {
+        if self.initial {
+            sha256_compression_initial(
+                self.buffer.as_ptr() as *const u32,
+                self.state.as_mut_ptr() as *mut u32,
+            );
+            self.initial = false;
+        } else {
+            sha256_compression(
+                self.buffer.as_ptr() as *const u32,
+                self.state.as_mut_ptr() as *mut u32,
+            );
+        }
+    }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn swap_bytes(buf: &mut [u32]) {
+        buf[0] = buf[0].swap_bytes();
+        buf[1] = buf[1].swap_bytes();
+        buf[2] = buf[2].swap_bytes();
+        buf[3] = buf[3].swap_bytes();
+        buf[4] = buf[4].swap_bytes();
+        buf[5] = buf[5].swap_bytes();
+        buf[6] = buf[6].swap_bytes();
+        buf[7] = buf[7].swap_bytes();
+        buf[8] = buf[8].swap_bytes();
+        buf[9] = buf[9].swap_bytes();
+        buf[10] = buf[10].swap_bytes();
+        buf[11] = buf[11].swap_bytes();
+        buf[12] = buf[12].swap_bytes();
+        buf[13] = buf[13].swap_bytes();
+        buf[14] = buf[14].swap_bytes();
+        buf[15] = buf[15].swap_bytes();
     }
 }
 
@@ -452,6 +381,7 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
         options(nostack)
     );
 }
+
 /// Calls the SHA256 compression custom instruction with initial block
 ///
 /// # Arguments
