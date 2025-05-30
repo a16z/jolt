@@ -54,12 +54,21 @@ impl QuantizedONNXModel {
         Self::new(initializer_map, instrs, input_shape(&graph))
     }
 
+    /// Given the parsed ONNX model, store the input and output shapes of the model at each layer.
     /// Track the i/o shapes of the model layers. Useful for preprocessing, i.e. get the public parameters of the model.
-    pub fn track_io_shapes(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
+    pub fn layers_io_shapes(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
         let mut io_shapes = Vec::new();
+
+        // Use the initial input shape to determine the i/o shapes of the model layers down the graph.
         let mut input_shape = self.input_shape.clone();
+
+        // Iterate through the layers of the model and compute the input and output shapes
+        // based on the operator type.
         for instr in self.instrs.iter() {
+            // Store input shape for the current layer
             let layer_input_shape = input_shape.clone();
+
+            // Determine the output shape based on the operator type
             let output_shape = match instr.opcode {
                 Operator::MatMul => {
                     // MatMul: Y = alpha * A * B^T + beta * C
@@ -78,7 +87,10 @@ impl QuantizedONNXModel {
                     input_shape.clone() // Output shape is same as input shape
                 }
             };
+
+            // Store the input and output shapes for the current layer
             io_shapes.push((layer_input_shape, output_shape.clone()));
+
             // Update input shape for the next layer
             input_shape = output_shape.clone();
         }

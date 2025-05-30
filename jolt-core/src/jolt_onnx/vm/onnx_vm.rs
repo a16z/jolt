@@ -86,7 +86,7 @@ macro_rules! subtable_enum {
 pub const C_ONNX: usize = 4;
 /// Size of subtable entries
 pub const M_ONNX: usize = 1 << 16;
-const WORD_SIZE: usize = 32; // 64 bits
+const WORD_SIZE: usize = 32;
 
 instruction_set!(
   ONNXInstructionSet,

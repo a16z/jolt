@@ -35,7 +35,7 @@ pub type MatMultPrecompileDims = (usize, usize, usize);
 /// Store the dimensions of the matrix multiplication precompile.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrecompilePreprocessing {
-    /// The dimensions of the matrix multiplication precompile.
+    /// The dimensions used in the matrix multiplication precompile's.
     pub mat_mult_precompile_dims: Vec<MatMultPrecompileDims>,
 }
 
@@ -43,7 +43,7 @@ impl PrecompilePreprocessing {
     /// Preprocess the ONNX model to extract the dimensions of the matrix multiplication precompile.
     #[tracing::instrument(skip_all, name = "PrecompilePreprocessing::preprocess")]
     pub fn preprocess(model: &QuantizedONNXModel) -> Self {
-        let io_shapes = model.track_io_shapes();
+        let io_shapes = model.layers_io_shapes();
         let mut mat_mult_precompile_dims = Vec::new();
         for (instr, io_shape) in model.instrs.iter().zip_eq(io_shapes.iter()) {
             match instr.opcode {
