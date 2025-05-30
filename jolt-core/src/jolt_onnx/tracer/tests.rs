@@ -29,11 +29,9 @@ fn run_perceptron_test(path: &str, size: usize) {
     // Check output with tracer
     let path = PathBuf::from(path);
     let (_trace, io) = trace(&path, &data);
-    println!("Trace: {_trace:#?}",);
-    println!("Expected: {expected:?}",);
-    println!("Result: {:?}", io.outputs); // TODO: Add tracing::info! for this and add tracing logs in general
-    let res = QuantizedONNXModel::parse(&path).execute(&data);
-    println!("Result: {res:?}",);
+    let mut model = QuantizedONNXModel::parse(&path);
+    println!("model: {:#?}", model.instrs);
+    let res = model.execute(&data);
     //   assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
 }
 

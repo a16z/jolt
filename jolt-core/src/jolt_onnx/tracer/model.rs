@@ -1,8 +1,6 @@
 //! This module provides a way to parse and execute ONNX models.
 
 // TODO:
-//       * Still need to decide on panic strategy — this module is unwrap/expect-heavy.
-//       Plan is to keep unwraps/expects where panics help catch dev bugs, and switch to proper error handling for actual runtime errors.
 //
 //       * Refactor duplicated code in `execute` and `execute_quantized`
 
@@ -21,13 +19,17 @@ use tract_onnx::{
     prelude::*,
 };
 
-/// Represents a topologically-sorted ONNX model
+/// Represents a topologically-sorted ONNX model, i.e. we store the operators in the order they are executed.
+/// We also store the initializers of the model, which are the constant values used in the model.
 #[derive(Debug)]
 pub struct QuantizedONNXModel {
+    /// Stores the instructions of the model, i.e. the operators and their attributes.
     pub instrs: Vec<ONNXInstruction>,
+    /// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
     initializer_map: ONNXInitializerMap,
+    /// Helps track the i/o shapes of the model layers.
     input_shape: Vec<usize>,
-    /// A tracer that captures the execution trace of the model
+    /// Captures the execution trace of the model
     pub tracer: Tracer,
 }
 
@@ -35,22 +37,28 @@ impl QuantizedONNXModel {
     /// Parse the ONNX model & quantize it from `model_path`.
     /// Given a path output a [`QuantizedONNXModel`] type.
     pub fn parse(model_path: &PathBuf) -> Self {
+        // Use tract to parse the ONNX model and a [`GraphProto`] type.
+        // This is the raw ONNX model type, i.e. it is not optimized.
+        // We will use this raw tract ONNX model type to help parse the model own model type.
         let graph = computational_graph(model_path);
 
-        // Get constant-inputs of the graph.
+        // Get constant-values of the graph.
         let initializer_map = ONNXInitializerMap::new(&graph.initializer);
-        let mut instrs = Vec::new();
-        for node in graph.node.iter() {
-            let mut instruction =
-                ONNXInstruction::new(Operator::from_str(node.op_type.as_str()).unwrap());
 
-            // Decorate the instruction with its attributes. For example, the MatMul operator has
-            // attributes for alpha and beta, which are used to scale the input tensors.
-            // The attributes are stored in the ONNX model's initializers, so we need to get the
-            // serialized data for the attributes.
-            instruction.decorate(node);
-            instrs.push(instruction);
-        }
+        // --- Build the CodeMap ---
+        // Map the `node.op_type: string` to the ONNXOperator enum.
+        let instrs = graph
+            .node
+            .iter()
+            .map(|node| {
+                let mut instruction =
+                    ONNXInstruction::new(Operator::from_str(node.op_type.as_str()).unwrap());
+                // Update the instructions expected input and output names and
+                // decorate the instruction with attributes if applicable.
+                instruction.decorate(node);
+                instruction
+            })
+            .collect_vec();
         Self::new(initializer_map, instrs, input_shape(&graph))
     }
 
@@ -315,17 +323,6 @@ impl FromStr for Operator {
 
 #[derive(Debug, Clone)]
 /// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
-pub struct QuantONNXInitializerMap(HashMap<String, QuantizedLiteTensor>);
-
-impl Deref for QuantONNXInitializerMap {
-    type Target = HashMap<String, QuantizedLiteTensor>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone)]
-/// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
 pub struct ONNXInitializerMap(HashMap<String, LiteTensor>);
 
 impl Deref for ONNXInitializerMap {
@@ -351,19 +348,9 @@ impl ONNXInitializerMap {
         }
         Self(initializers_map)
     }
-
-    /// Quantize the initializers
-    pub fn quantize(&self) -> QuantONNXInitializerMap {
-        let mut initializers_map: HashMap<String, QuantizedLiteTensor> = HashMap::new();
-        for (key, value) in self.0.iter() {
-            let quantized = value.quantize();
-            initializers_map.insert(key.clone(), quantized);
-        }
-        QuantONNXInitializerMap(initializers_map)
-    }
 }
 
-/// Get a computational graph from a path.
+/// Get the computational graph from a path.
 fn computational_graph(model_path: &PathBuf) -> GraphProto {
     // Load the ONNX model using tract — we use proto to get the raw model,
     // i.e., the model without any optimizations — this makes the parsing more predictable. (TODO: we can change this in the future)
@@ -372,9 +359,9 @@ fn computational_graph(model_path: &PathBuf) -> GraphProto {
 }
 
 /// Get the input shape from a graph.
-/// We restrict batch size to 1 for now. (TODO: we can change this in the future)
+/// We restrict batch size to 1 for now.
 fn input_shape(graph: &GraphProto) -> Vec<usize> {
-    // TODO: Allow for multiple inputs
+    // TODO: Allow for multiple inputs? (Batch inference)
     assert!(
         graph.input.len() == 1,
         "Graph should have exactly one input"

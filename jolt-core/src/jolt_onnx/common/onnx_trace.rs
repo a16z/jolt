@@ -48,8 +48,8 @@ impl ONNXInstruction {
         }
     }
 
-    /// Decorate opcode with their attributes - uses the ONNX model's initializers
-    /// to get the serialized data for the attributes.
+    /// Decorate the instruction with inputs and outputs from the ONNX node
+    /// Additionally, it handles specific operators like MatMul to extract attributes such as alpha and beta.
     pub fn decorate(&mut self, node_proto: &NodeProto) {
         self.inputs = node_proto.input.clone();
         self.outputs = node_proto.output.clone();
