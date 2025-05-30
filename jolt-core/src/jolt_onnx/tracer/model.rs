@@ -59,7 +59,11 @@ impl QuantizedONNXModel {
                 instruction
             })
             .collect_vec();
-        Self::new(initializer_map, instrs, input_shape(&graph))
+        Self::new(
+            initializer_map,
+            instrs,
+            input_shape(&graph).expect("ONNX model should have a valid input shape"),
+        )
     }
 
     /// Given the parsed ONNX model, store the input and output shapes of the model at each layer.
@@ -358,34 +362,25 @@ fn computational_graph(model_path: &PathBuf) -> GraphProto {
     model.graph.unwrap()
 }
 
-/// Get the input shape from a graph.
-/// We restrict batch size to 1 for now.
-fn input_shape(graph: &GraphProto) -> Vec<usize> {
-    // TODO: Allow for multiple inputs? (Batch inference)
-    assert!(
-        graph.input.len() == 1,
-        "Graph should have exactly one input"
-    );
-    let input = graph.input.first().unwrap();
-    let tensor_type = input
-        .r#type
-        .as_ref()
-        .and_then(|t| t.value.as_ref())
-        .map(|v| match v {
-            Value::TensorType(tensor) => tensor,
-        })
-        .expect("Input should have tensor type");
-    let shape = tensor_type
-        .shape
-        .as_ref()
-        .expect("Tensor type should have a shape");
-    let dim = shape
-        .dim
-        .get(1)
-        .expect("Shape should have at least two dimensions");
-    let size = match dim.value.as_ref().expect("Dimension should have a value") {
-        DimValue(size) => *size,
-        DimParam(_) => panic!("Dynamic input shape is not supported"),
+// TODO: Allow for dynamic batch sizes
+
+/// Get the input shape from a graph, or None if anything is missing/unsupported.
+/// We still only support batch-size=1 and a static 2nd dim.
+fn input_shape(graph: &GraphProto) -> Option<Vec<usize>> {
+    // 1) get the sole input
+    let input = graph.input.first()?;
+
+    // 2) drill into its TypeProto → Value → TensorType
+    let ty = input.r#type.as_ref()?.value.as_ref()?;
+    let Value::TensorType(tensor) = ty;
+
+    // 3) get the shape and its 2nd dimension
+    let dim = tensor.shape.as_ref()?.dim.get(1)?;
+
+    // 4) extract a concrete usize from DimValue, bail on DimParam
+    let size = match dim.value.as_ref()? {
+        DimValue(n) => *n as usize,
+        DimParam(_) => return None,
     };
-    vec![1, size as usize]
+    Some(vec![1, size])
 }
