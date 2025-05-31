@@ -382,5 +382,6 @@ fn input_shape(graph: &GraphProto) -> Option<Vec<usize>> {
         DimValue(n) => *n as usize,
         DimParam(_) => return None,
     };
-    Some(vec![1, size])
+    let batch_size = 1; // We only support batch size of 1 for now
+    Some(vec![batch_size, size])
 }
