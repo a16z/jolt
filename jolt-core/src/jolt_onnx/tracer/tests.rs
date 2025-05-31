@@ -24,15 +24,15 @@ fn run_perceptron_test(path: &str, size: usize) {
     // Get expected output from the ONNX model
     let output = model.run(tvec!(input.into_tvalue())).unwrap();
     let output = output[0].to_array_view::<f32>().unwrap();
-    let expected = output.as_slice().unwrap();
+    let _expected = output.as_slice().unwrap();
 
     // Check output with tracer
     let path = PathBuf::from(path);
-    let (_trace, io) = trace(&path, &data);
+    let (_trace, _io) = trace(&path, &data);
     let mut model = QuantizedONNXModel::parse(&path);
     println!("model: {:#?}", model.instrs);
-    let res = model.execute(&data);
-    //   assert_eq!(res.data, expected.to_vec()); // TODO: Figure out where some data is lost
+    let res = model.execute_quantized(&data);
+    println!("res: {:#?}", res.dequantized_data());
 }
 
 #[test]

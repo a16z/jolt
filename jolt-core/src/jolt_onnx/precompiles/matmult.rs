@@ -1,6 +1,6 @@
 use crate::{
     field::JoltField,
-    jolt_onnx::tracer::tensor::QuantizedLiteTensor,
+    jolt_onnx::tracer::tensor::QuantizedTensor,
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder,
     },
@@ -16,23 +16,23 @@ use super::sumcheck_engine::BatchableSumcheckInstance;
 /// Used to generate the witness for matrix multiplication in Jolt's ONNX execution.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MatMultPrecompile {
-    a: QuantizedLiteTensor,
-    b: QuantizedLiteTensor,
+    a: QuantizedTensor,
+    b: QuantizedTensor,
 }
 
 impl MatMultPrecompile {
     /// Create a new instance of [`MatMultPrecompile`]
-    pub fn new(a: QuantizedLiteTensor, b: QuantizedLiteTensor) -> Self {
+    pub fn new(a: QuantizedTensor, b: QuantizedTensor) -> Self {
         Self { a, b }
     }
 
     /// Return the lhs matrix of the multiplication
-    pub fn a(&self) -> &QuantizedLiteTensor {
+    pub fn a(&self) -> &QuantizedTensor {
         &self.a
     }
 
     /// Return the rhs matrix of the multiplication
-    pub fn b(&self) -> &QuantizedLiteTensor {
+    pub fn b(&self) -> &QuantizedTensor {
         &self.b
     }
 }
