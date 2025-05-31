@@ -337,18 +337,18 @@ impl Deref for ONNXInitializerMap {
 }
 
 impl ONNXInitializerMap {
-    /// Create a new instance of [`ONNXInitializerMap`]
+    /// Create a new instance of [`ONNXInitializerMap`].
+    /// We convert the raw data from the initializers into `QuantizedTensor` types.
     pub fn new(initializers: &[TensorProto]) -> Self {
         let mut initializers_map = HashMap::new();
         for initializer in initializers.iter() {
             let dt = tract_onnx::pb::tensor_proto::DataType::from_i32(initializer.data_type)
-                .unwrap()
-                .try_into()
-                .unwrap();
+                .and_then(|dt| dt.try_into().ok())
+                .expect("Unsupported data type in ONNX initializer");
             let shape: Vec<usize> = initializer.dims.iter().map(|&i| i as usize).collect();
-            let value = create_tensor(shape, dt, &initializer.raw_data).unwrap();
+            let tensor = create_tensor(shape, dt, &initializer.raw_data).unwrap();
             let key = initializer.name.to_string();
-            initializers_map.insert(key, value.into());
+            initializers_map.insert(key, tensor.into());
         }
         Self(initializers_map)
     }
