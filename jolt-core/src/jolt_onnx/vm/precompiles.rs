@@ -71,7 +71,7 @@ impl PrecompilePreprocessing {
     }
 }
 
-/// A special-purpose SNARK designed for specific functionality, such as ONNX operators that are too expensive to prove using [`InstructionLookupProof`].
+/// A special-purpose SNARK designed for specific functionality, such as ONNX operators that are more efficient to prove using a sum-check precompile than an [`InstructionLookupProof`].
 /// This is a sum-check-based precompile proof tailored for ONNX runtime.
 /// It is used to prove the correctness of certain ONNX operators via a custom sum-check precompile instead of a lookup-based approach.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -140,7 +140,7 @@ where
         let final_claims = witness
             .iter()
             .map(|p| p.claims.as_ref().unwrap().clone())
-            .collect_vec();
+            .collect_vec(); // TODO: Append these claims to opening accumulator
         Self {
             sumcheck_proof,
             init_claims,

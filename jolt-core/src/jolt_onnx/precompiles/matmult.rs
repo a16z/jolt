@@ -1,3 +1,6 @@
+//! A sum-check precompile for matrix multiplication.
+//! Used when proving correctness of ONNX operators that do matrix multiplication.
+
 use crate::{
     field::JoltField,
     jolt_onnx::tracer::tensor::QuantizedTensor,
@@ -8,6 +11,7 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::sumcheck_engine::BatchableSumcheckInstance;
@@ -37,6 +41,7 @@ impl MatMultPrecompile {
     }
 }
 
+/// Handles the verifier state for the matrix multiplication sum-check precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultVerifierState<F>
 where
@@ -75,15 +80,20 @@ where
     }
 }
 
+/// Handles the prover state for the matrix multiplication sum-check precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultProverState<F>
 where
     F: JoltField,
 {
-    a: DensePolynomial<F>,
-    b: DensePolynomial<F>,
+    /// A(rx, k) evaluations over the boolean hypercube
+    pub a: DensePolynomial<F>,
+    /// B(ry, k) evaluations over the boolean hypercube
+    pub b: DensePolynomial<F>,
+    /// C(rx, ry)
     pub input_claim: F,
-    num_rounds: usize,
+    /// Number of rounds in the sum-check precompile
+    pub num_rounds: usize,
 }
 
 impl<F> MatMultProverState<F>
@@ -141,6 +151,7 @@ where
     }
 }
 
+/// The final claims for the matrix multiplication sum-check precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultClaims<F>
 where
@@ -150,13 +161,17 @@ where
     b: F,
 }
 
+/// Batchable sum-check instance for matrix multiplication precompile.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultSumcheck<F>
 where
     F: JoltField,
 {
+    /// Handles state for prover portion of the sum-check protocol.
     pub prover_state: Option<MatMultProverState<F>>,
+    /// Handles state for verifier portion of the sum-check protocol.
     pub verifier_state: Option<MatMultVerifierState<F>>,
+    /// Holds the final claims for the matrix multiplication sum-check precompile.
     pub claims: Option<MatMultClaims<F>>,
 }
 
@@ -212,14 +227,18 @@ where
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
         let MatMultProverState { a, b, .. } = self.prover_state.as_ref().unwrap();
         let len = a.len() / 2;
-        let mut uni_poly_evals = vec![F::zero(); 2];
-        for i in 0..len {
-            uni_poly_evals[0] += a[i] * b[i];
-            let poly_A_bound_point = a[i + len] + a[i + len] - a[i];
-            let poly_B_bound_point = b[i + len] + b[i + len] - b[i];
-            uni_poly_evals[1] += poly_A_bound_point * poly_B_bound_point;
-        }
-        uni_poly_evals
+        let univariate_poly_evals: [F; 2] = (0..len / 2)
+            .into_par_iter()
+            .map(|i| {
+                let poly_A_bound_point = a[i + len] + a[i + len] - a[i];
+                let poly_B_bound_point = b[i + len] + b[i + len] - b[i];
+                [a[i] * b[i], poly_A_bound_point * poly_B_bound_point]
+            })
+            .reduce(
+                || [F::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
+        univariate_poly_evals.to_vec()
     }
 
     #[tracing::instrument(skip_all)]
