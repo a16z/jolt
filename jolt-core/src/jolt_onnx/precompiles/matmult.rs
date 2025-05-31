@@ -56,7 +56,9 @@ where
     F: JoltField,
 {
     #[tracing::instrument(skip_all)]
-    /// Create a new instance of [`MatMultVerifierState`]
+    /// Create a new instance of [`MatMultVerifierState`].
+    /// # Note: we mainly update the state by computing the necessary challenges used in the sum-check matmult protocol.
+    ///         We also append the input claim to the transcript.
     pub fn initialize<ProofTranscript>(
         m: usize,
         n: usize,
@@ -101,7 +103,11 @@ where
     F: JoltField,
 {
     #[tracing::instrument(skip_all)]
-    /// Create a new instance of [`MatMultProverState`]
+    /// Create a new instance of [`MatMultProverState`].
+    /// We compute the evaluations of the polynomials A(rx, k) and B(ry, k) over the boolean hypercube,
+    /// and also compute the input claim C(rx, ry) = A(rx, k) * B(ry, k).
+    ///
+    /// These A(rx, k) and B(ry, k) evaluations serve as the witness for the matrix multiplication precompile.
     pub fn initialize<ProofTranscript>(
         input: &MatMultPrecompile,
         transcript: &mut ProofTranscript,
@@ -152,6 +158,9 @@ where
 }
 
 /// The final claims for the matrix multiplication sum-check precompile.
+///
+/// a = A(rx, r_sc)
+/// b = B(ry, r_sc)
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultClaims<F>
 where
@@ -162,6 +171,7 @@ where
 }
 
 /// Batchable sum-check instance for matrix multiplication precompile.
+/// Used to construct the [`PrecompileProof`] by passing in these instrances into [`BatchedSumcheck`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultSumcheck<F>
 where

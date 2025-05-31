@@ -80,7 +80,8 @@ pub enum Operator {
     Relu,
 }
 
-/// Parse the alpha and beta values from the node attributes
+/// Used to decorate the matmul operator with its attributes.
+/// Give [`NodeProto`] parse the alpha and beta values from the node attributes
 fn alpha_beta(node_proto: &NodeProto) -> (f32, f32) {
     let attribute = |name: &str| {
         node_proto

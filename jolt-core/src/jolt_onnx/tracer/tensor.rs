@@ -25,6 +25,9 @@ impl QuantizedTensor {
 
     /// Matrix multiplication of two quantized tensors.
     /// Implicitly transposes the rhs matrix.
+    ///
+    /// # Note:
+    /// - Intermediate results are stored as i32 to prevent overflow.
     pub fn matmul_rhs_transposed(&self, other: &QuantizedTensor) -> (Vec<i32>, Vec<usize>) {
         // Ensure the inner dimensions match for matrix multiplication (B is transposed)
         assert_eq!(

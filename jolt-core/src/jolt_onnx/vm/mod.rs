@@ -42,6 +42,7 @@ pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) r1cs: R1CSStuff<T>,
 }
 
+// TODO: Uncomment this when we have a full implementation of the Jolt ONNX zkVM (i.e. bytecode proof, memory proof, etc.)
 impl<T: CanonicalSerialize + CanonicalDeserialize + Sync> StructuredPolynomialData<T>
     for JoltStuff<T>
 {
