@@ -1,3 +1,5 @@
+//! Implements the Jolt paradigm of Just One Lookup Table (JOLT) for ONNX instruction lookups.
+
 use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -38,6 +40,7 @@ use crate::{
 
 use super::{JoltCommitments, JoltONNXTraceStep, JoltPolynomials};
 
+/// Generic struct for instruction lookup stuff.
 #[derive(Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     /// `C`-sized vector of polynomials/commitments/openings corresponding to the
@@ -700,6 +703,7 @@ where
     const NUM_SUBTABLES: usize = Subtables::COUNT;
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
 
+    /// Prove the instruction lookups.
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
     pub fn prove<'a>(
         generators: &PCS::Setup,
@@ -786,6 +790,7 @@ where
         }
     }
 
+    /// Verifies the instruction lookups proof.
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         pcs_setup: &PCS::Setup,

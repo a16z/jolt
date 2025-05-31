@@ -32,6 +32,7 @@ pub mod instruction_lookups;
 pub mod onnx_vm;
 pub mod precompiles;
 
+/// Generic type for Jolt ONNX zkVM stuff.
 #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltStuff<T: CanonicalSerialize + CanonicalDeserialize + Sync> {
     pub(crate) bytecode: BytecodeStuff<T>,
@@ -449,11 +450,11 @@ impl<T: CanonicalSerialize + CanonicalDeserialize + Default + Sync> JoltStuff<T>
 /// Execution trace step for the Jolt ONNX VM.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltONNXTraceStep<InstructionSet: JoltInstructionSet> {
-    pub instruction_lookup: Option<InstructionSet>,
-    pub bytecode_row: BytecodeRow,
-    pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
-    pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
-    pub precompile: Option<PrecompileOperators>,
+    pub(crate) instruction_lookup: Option<InstructionSet>,
+    pub(crate) bytecode_row: BytecodeRow,
+    pub(crate) memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
+    pub(crate) circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
+    pub(crate) precompile: Option<PrecompileOperators>,
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
@@ -473,6 +474,7 @@ impl<InstructionSet: JoltInstructionSet> JoltONNXTraceStep<InstructionSet> {
         }
     }
 
+    #[allow(dead_code)]
     /// Pad the trace to the next power of two length.
     fn pad(trace: &mut Vec<Self>) {
         let unpadded_length = trace.len();

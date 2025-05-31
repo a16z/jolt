@@ -226,8 +226,8 @@ where
     fn bind(&mut self, r_j: F, _: usize) {
         let MatMultProverState { a, b, .. } = self.prover_state.as_mut().unwrap();
         rayon::join(
-            || a.bind(r_j, BindingOrder::HighToLow),
-            || b.bind(r_j, BindingOrder::HighToLow),
+            || a.bind_parallel(r_j, BindingOrder::HighToLow),
+            || b.bind_parallel(r_j, BindingOrder::HighToLow),
         );
     }
 
