@@ -59,6 +59,9 @@ pub struct Emulator {
     tohost_addr: u64,
 }
 
+// type alias EmulatorState to Emulator for now
+pub type EmulatorState = Emulator;
+
 impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
@@ -75,6 +78,15 @@ impl Emulator {
             is_test: false,
             tohost_addr: 0, // assuming tohost_addr is non-zero if exists
         }
+    }
+
+    // Create a new Emulator from a saved state.
+    pub fn from_state(state: &EmulatorState) -> Self {
+        state.clone()
+    }
+
+    pub fn save_state(&self) -> EmulatorState {
+        self.clone()
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.

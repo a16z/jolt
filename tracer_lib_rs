@@ -1,0 +1,339 @@
+#![allow(dead_code)]
+#![allow(clippy::legacy_numeric_constants)]
+
+use mem_dbg::*;
+
+use std::{fs::File, io::Read, path::PathBuf};
+
+use common::{self, constants::RAM_START_ADDRESS, jolt_device};
+use emulator::{
+    cpu::{self, Xlen},
+    default_terminal::DefaultTerminal,
+    Emulator,
+};
+
+use instruction::{RV32IMCycle, RV32IMInstruction};
+use object::{Object, ObjectSection, SectionKind};
+
+mod emulator;
+pub mod instruction;
+
+pub use common::jolt_device::JoltDevice;
+
+//##########################################################################
+use serde::{Serialize, Deserialize};
+use flate2::{write::GzEncoder, read::GzDecoder, Compression};
+use std::io::Write;
+use std::time::{Duration, Instant};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct MyData {
+    id: u32,
+    name: String,
+    values: Vec<f64>,
+}
+
+fn compress_struct<T: serde::Serialize>(data: &T) -> Vec<u8> {
+    let json = serde_json::to_vec(data).expect("Serialization failed");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&json).expect("Compression write failed"); 
+    encoder.finish().expect("Compression finish failed")
+}
+
+fn decompress_struct<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
+    let mut decoder = GzDecoder::new(bytes);
+    let mut json = Vec::new();
+    decoder.read_to_end(&mut json).expect("Decompression failed");
+    serde_json::from_slice(&json).expect("Deserialization failed")
+}
+
+fn mainx() {
+    let original = MyData {
+        id: 42,
+        name: "Test".to_string(),
+        values: vec![1.1, 2.2, 3.3],
+    };
+
+    let compressed = compress_struct(&original);
+    println!("Compressed size: {}", compressed.len());
+
+    // let decompressed: MyData = decompress_struct(&compressed);
+    let decompressed = decompress_struct::<MyData>(&compressed);
+    println!("Decompressed: {:?}", decompressed);
+}
+//##########################################################################
+
+#[tracing::instrument(skip_all)]
+pub fn run(emulator: &mut Emulator) {
+    let mut prev_pc: u64 = 0;
+    let mut count = 0;
+    loop {
+        let pc = emulator.get_cpu().read_pc();
+        emulator.tick();
+        count += 1;
+
+        // This is a trick to see if the program has terminated by throwing itself
+        // into an infinite loop. It seems to be a good heuristic for now but we
+        // should eventually migrate to an explicit shutdown signal.
+        if prev_pc == pc {
+            break;
+        }
+
+        prev_pc = pc;
+    }
+    println!("Execution finished after {} cycles", count);
+    // return emulator;
+    // println!("execution trace: {:?}", execution_trace);
+    // (execution_trace, device)
+}
+
+/*
+Function to generate an incremental trace. It is an alternative to the trace function but instead of generating the
+entire trace at once, it return a checkpoint of the trace at a given interval.
+*/
+pub fn run_and_get_checkpoints(
+    emulator: &mut Emulator,
+    checkpoint_interval: usize,
+) -> Vec<Emulator>
+// ) -> (Vec<RV32IMCycle>, JoltDevice, Vec<Emulator>)
+// ) -> (Vec<RVTraceRow>, JoltDevice, Option<Vec<TraceCheckpoints>>)
+{
+    //loop to collect the trace of length checkpoint_interval, or stop when the program terminates. Whichever comes
+    // first.
+    let mut prev_pc = 0;
+    let mut count = 0;
+    let mut checkpoints = Vec::new();
+
+    loop {
+        if count == checkpoint_interval {
+            let checkpoint = emulator.clone();
+            let start = Instant::now();
+            let compressed_checkpoint = compress_struct(&emulator.get_cpu());
+            let duration = start.elapsed();
+            println!("Compressed Checkpoint size (in bytes): {:?}. Time taken: {:?}", compressed_checkpoint.len(), duration);
+            println!("Uncompressed Checkpoint size (in bytes): {:?}", checkpoint.get_cpu().mem_size(SizeFlags::default()));
+            checkpoints.push(checkpoint);
+            count = 0;
+        } else {
+            count += 1;
+        }
+        let pc: u64 = emulator.get_cpu().read_pc();
+        emulator.tick();
+
+        // This is a trick to see if the program has terminated by throwing itself
+        // into an infinite loop. It seems to be a good heuristic for now but we
+        // should eventually migrate to an explicit shutdown signal.
+        if prev_pc == pc {
+            break;
+        }
+
+        prev_pc = pc;
+    }
+
+    // let execution_trace = std::mem::take(&mut emulator.get_mut_cpu().trace);
+    // let device = std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
+    // (execution_trace, device, checkpoints)
+    return checkpoints;
+}
+
+// pub fn trace(
+//     elf: &PathBuf,
+//     inputs: &[u8],
+//     input_size: u64,
+//     output_size: u64,
+// ) -> (Vec<RV32IMCycle>, JoltDevice) {
+//     let mut emulator = setup_incr(elf, inputs, input_size, output_size);
+//     let t1 = trace_incr(&mut emulator, Some(4));
+//     println!("execution trace t1: {:?}", t1.0);
+//     let t2 = trace_incr(&mut emulator, Some(14));
+//     let mut t2_emulator_state = emulator.clone();
+//     println!("execution trace t2: {:?}", t2.0);
+//     let t3 = trace_incr(&mut emulator, Some(4));
+//     println!("execution trace t3: {:?}", t3.0);
+//     // concatenate the traces t1, t2, t3
+//     // let execution_trace
+//     let t3_ = trace_incr(&mut t2_emulator_state, Some(4));
+//     println!("execution trace t3_: {:?}", t3_.0);
+//     println!("t2_emulator_state size: {:?}", t2_emulator_state.get_cpu().mem_size(SizeFlags::default()));
+//     println!("t2_emulator_state size: {:?}", t2_emulator_state.get_cpu().mem_size(SizeFlags::default() | SizeFlags::FOLLOW_REFS));
+//     println!("t2_emulator_state size: {:?}", t2_emulator_state.get_cpu().mem_size(SizeFlags::default() | SizeFlags::FOLLOW_REFS | SizeFlags::CAPACITY));
+//     unimplemented!()
+// }
+
+// pub fn trace(
+//     elf: &PathBuf,
+//     inputs: &[u8],
+//     input_size: u64,
+//     output_size: u64,
+// ) -> (Vec<RV32IMCycle>, JoltDevice)
+// {
+//     let (trace, device, _) = trace_replace(elf, inputs, input_size, output_size, None);
+//     return (trace, device);
+// }
+
+// fn test_checkpoints(
+pub fn trace(
+    elf: &PathBuf,
+    inputs: &[u8],
+    input_size: u64,
+    output_size: u64,
+) -> (Vec<RV32IMCycle>, JoltDevice) {
+    let checkpoint_interval = Some(20);
+    let (trace, device, checkpoints) =
+        trace_replace(elf, inputs, input_size, output_size, checkpoint_interval);
+    match checkpoints {
+        Some(mut ckps) => {
+            for mut checkpoint in ckps.iter_mut() {
+                println!("@@@@@@@@@@ Before Trace Purge @@@@@@@@@@");
+                println!("emulator_state size before trace purge: {:?}", checkpoint.get_cpu().mem_size(SizeFlags::default()));
+                println!("mmu size before trace purge: {:?}", checkpoint.get_cpu().mmu.mem_size(SizeFlags::default()));
+                println!("mmu.memory size before trace purge: {:?}", checkpoint.get_cpu().mmu.memory.mem_size(SizeFlags::default()));
+                println!("trace size before trace purge: {:?}", checkpoint.get_cpu().trace.mem_size(SizeFlags::default()));
+                println!("jolt_device size before trace purge: {:?}", checkpoint.get_cpu().mmu.jolt_device.mem_size(SizeFlags::default()));
+                println!("jd memory_layout size before trace purge: {:?}", checkpoint.get_cpu().mmu.jolt_device.memory_layout.mem_size(SizeFlags::default()));
+                // println!("emulator_state size before trace purge: {:?}", checkpoint.get_cpu().mem_size(SizeFlags::default()));
+                println!("@@@@@@@@@@ END @@@@@@@@@@");
+                checkpoint.purge_cpu_trace();
+                let checkpoint_trace = trace_from_checkpoint(&mut checkpoint).collect::<Vec<_>>();
+                println!("************* Begin Diagnostic *************");
+                println!("Checkpoint trace length: {:?}", checkpoint_trace.len());
+                println!(
+                    "The first four elements of the checkpoint trace: {:?}",
+                    checkpoint_trace
+                        .iter()
+                        .take(4)
+                        .map(Into::into)
+                        .collect::<Vec<&'static str>>()
+                ); //print only the enum name
+                println!(
+                    "The last four elements of the checkpoint trace: {:?}",
+                    checkpoint_trace
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .map(Into::into)
+                        .collect::<Vec<&'static str>>()
+                );
+                println!("************* End Diagnostic *************");
+            }
+        }
+        None => {
+            println!("No checkpoints collected");
+        }
+    }
+
+    return (trace, device);
+}
+
+pub fn trace_replace(
+    elf: &PathBuf,
+    inputs: &[u8],
+    input_size: u64,
+    output_size: u64,
+    checkpoint_interval: Option<usize>,
+) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<Emulator>>) {
+    let mut emulator = setup_emulator(elf, inputs, input_size, output_size);
+    let checkpoints = {
+        if let Some(interval) = checkpoint_interval {
+            let checkpoints = run_and_get_checkpoints(&mut emulator, interval);
+            println!("Number of checkpoints collected: {:?}", checkpoints.len());
+            Some(checkpoints)
+        } else {
+            run(&mut emulator);
+            None
+        }
+    };
+    let execution_trace = std::mem::take(&mut emulator.get_mut_cpu().trace);
+    println!("Full execution trace length: {:?}", execution_trace.len());
+    let device = std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
+    return (execution_trace, device, checkpoints);
+}
+
+pub fn trace_from_checkpoint(checkpoint: &mut Emulator) -> impl Iterator<Item = RV32IMCycle> {
+    run(checkpoint);
+    let execution_trace = std::mem::take(&mut checkpoint.get_mut_cpu().trace);
+    execution_trace.into_iter()
+}
+
+fn setup_emulator(elf: &PathBuf, inputs: &[u8], input_size: u64, output_size: u64) -> Emulator {
+    let term = DefaultTerminal::new();
+    let mut emulator = Emulator::new(Box::new(term));
+    emulator.update_xlen(get_xlen());
+
+    let mut jolt_device = JoltDevice::new(input_size, output_size);
+    jolt_device.inputs = inputs.to_vec();
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
+
+    let mut elf_file = File::open(elf).unwrap();
+
+    let mut elf_contents = Vec::new();
+    elf_file.read_to_end(&mut elf_contents).unwrap();
+
+    emulator.setup_program(elf_contents);
+    return emulator;
+}
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+
+//     #[test]
+//     //write a test to check if the functions trace() and trance_incr() are equivalent
+//     fn test_trace_equivalence() {
+//         let elf_path = PathBuf::from("tests/test_programs/hello_world.elf");
+//         let inputs = vec![0x01, 0x02, 0x03, 0x04];
+//         let input_size = 4;
+//         let output_size = 4;
+
+//         let (trace1, device1) = trace(&elf_path, &inputs, input_size, output_size);
+//         let (trace2, device2) = trace_incr(&elf_path, &inputs, input_size, output_size, None);
+
+//         assert_eq!(trace1.len(), trace2.len());
+//         assert_eq!(device1.inputs, device2.inputs);
+//     }
+// }
+
+#[tracing::instrument(skip_all)]
+pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
+    let obj = object::File::parse(elf).unwrap();
+
+    let sections = obj
+        .sections()
+        .filter(|s| s.address() >= RAM_START_ADDRESS)
+        .collect::<Vec<_>>();
+
+    let mut instructions = Vec::new();
+    let mut data = Vec::new();
+
+    for section in sections {
+        let raw_data = section.data().unwrap();
+
+        if let SectionKind::Text = section.kind() {
+            for (chunk, word) in raw_data.chunks(4).enumerate() {
+                let word = u32::from_le_bytes(word.try_into().unwrap());
+                let address = chunk as u64 * 4 + section.address();
+
+                if let Ok(inst) = RV32IMInstruction::decode(word, address) {
+                    instructions.push(inst);
+                    continue;
+                }
+                // Unrecognized instruction, or from a ReadOnlyData section
+                instructions.push(RV32IMInstruction::UNIMPL);
+            }
+        }
+        let address = section.address();
+        for (offset, byte) in raw_data.iter().enumerate() {
+            data.push((address + offset as u64, *byte));
+        }
+    }
+
+    (instructions, data)
+}
+
+fn get_xlen() -> Xlen {
+    match common::constants::XLEN {
+        32 => cpu::Xlen::Bit32,
+        64 => cpu::Xlen::Bit64,
+        _ => panic!("Emulator only supports 32 / 64 bit registers."),
+    }
+}
