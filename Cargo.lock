@@ -1091,6 +1091,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory.git?branch=feat%2Fimpl#b8633bf8f591623956d5b3eeb4b6383036788fdd"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2001,12 +2002,14 @@ dependencies = [
  "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
  "bincode",
+ "blake2",
  "bytemuck",
  "clap",
  "common",
  "criterion",
  "derive_more 2.0.1",
  "dirs",
+ "dory",
  "enum_dispatch",
  "eyre",
  "fixedbitset",
