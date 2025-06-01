@@ -148,13 +148,13 @@ pub mod xori;
 #[cfg(test)]
 pub mod test;
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RAMRead {
     pub address: u64,
     pub value: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RAMWrite {
     pub address: u64,
     pub pre_value: u64,
@@ -255,7 +255,7 @@ macro_rules! define_rv32im_enums {
         }
 
         #[derive(
-            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro,
+            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
         )]
         pub enum RV32IMCycle {
             NoOp,
@@ -554,7 +554,7 @@ impl RV32IMInstruction {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,

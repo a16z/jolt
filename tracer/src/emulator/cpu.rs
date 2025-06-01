@@ -79,6 +79,7 @@ struct ActiveMarker {
 }
 
 /// Emulates a RISC-V CPU core
+#[derive(Clone)]
 pub struct Cpu {
     clock: u64,
     pub(crate) xlen: Xlen,
@@ -311,9 +312,9 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, tracing: bool) {
         let instruction_address = self.pc;
-        match self.tick_operate() {
+        match self.tick_operate(tracing) {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
@@ -328,7 +329,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self) -> Result<(), Trap> {
+    fn tick_operate(&mut self, tracing: bool) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -352,7 +353,9 @@ impl Cpu {
         let instr = RV32IMInstruction::decode(word, instruction_address)
             .ok()
             .unwrap();
-        instr.trace(self);
+        if tracing {
+            instr.trace(self);
+        }
 
         // check if current instruction is real or not for cycle profiling
         if instr.is_real() {
