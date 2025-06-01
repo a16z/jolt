@@ -90,6 +90,8 @@ rand_distr = "0.4.3"
 anyhow = "1.0.97"
 derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory.git", branch = "feat/impl" }
+blake2 = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

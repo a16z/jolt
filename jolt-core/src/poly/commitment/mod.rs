@@ -4,6 +4,7 @@ pub mod hyrax;
 pub mod kzg;
 pub mod pedersen;
 pub mod zeromorph;
+pub mod dory;
 
 pub mod bmmtv;
 #[cfg(test)]
