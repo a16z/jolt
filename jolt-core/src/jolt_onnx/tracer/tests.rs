@@ -5,6 +5,8 @@ use ark_std::test_rng;
 use std::path::PathBuf;
 use tract_onnx::prelude::*;
 
+// TODO: Improve these tests, for now they just check if the model can be parsed and executed
+
 fn run_perceptron_test(path: &str, size: usize) {
     let rng = test_rng();
 

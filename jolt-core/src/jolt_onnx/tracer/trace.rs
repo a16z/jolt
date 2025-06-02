@@ -23,7 +23,9 @@ impl Tracer {
         });
     }
 
-    /// Capture the input values of a layer
+    /// Capture the input values of a layer.
+    /// Each node/layer in the ONNX model takes in a string of input names, which map to tensors in the `io_map`.
+    /// We capture these input tensors before the layer is executed.
     pub fn capture_pre_state(&mut self, io_map: &HashMap<String, QuantizedTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut input_vals = Vec::new();
@@ -34,7 +36,9 @@ impl Tracer {
         row.layer_state.input_vals = Some(input_vals);
     }
 
-    /// Capture the output values of a layer
+    /// Capture the output values of a layer.
+    /// Each node/layer in the ONNX model produces a string of output names, which map to tensors in the `io_map`.
+    /// After the layer is executed, we capture the output tensors values.
     pub fn capture_post_state(&mut self, io_map: &HashMap<String, QuantizedTensor>) {
         let row = self.rows.last_mut().unwrap();
         let mut output_vals = Vec::new();

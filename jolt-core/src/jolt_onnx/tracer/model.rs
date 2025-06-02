@@ -196,7 +196,10 @@ impl QuantizedONNXModel {
         }
 
         // Get the output tensor
-        // TODO: Make this more robust
+        // TODO: Make this more robust, i.e. it is not guaranteed that the last instruction will have a single output
+        // and that the output will be the first output.
+        // For now, we assume that the last instruction has a single output and that it is the first output.
+        // This is a hacky way to get the output tensor, we should improve this in the future.
         let output_tensor = io_map.get(&self.instrs.last().unwrap().outputs[0]).unwrap();
         output_tensor.clone()
     }
