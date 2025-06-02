@@ -149,7 +149,7 @@ where
     }
 
     /// Verify the sum-check precompile instances via [`BatchedSumcheck::verify`].
-    #[tracing::instrument(skip_all, name = "PrecompileProof::prove")]
+    #[tracing::instrument(skip_all, name = "PrecompileProof::verify")]
     pub fn verify(
         pp: &PrecompilePreprocessing,
         proof: &Self,
@@ -171,7 +171,7 @@ where
     ///
     /// # Panics
     /// Panics if the length of `init_claims` and `final_claims` does not match the number of matrix multiplication precompile's
-    pub fn initialize_verifier(
+    fn initialize_verifier(
         pp: &PrecompilePreprocessing,
         init_claims: &[F],
         final_claims: &[MatMultClaims<F>],
@@ -198,11 +198,18 @@ where
 mod tests {
     use super::{PrecompilePreprocessing, PrecompileProof};
     use crate::{
-        jolt_onnx::{onnx_host::ONNXProgram, utils::random_floatvec},
+        jolt_onnx::{
+            onnx_host::ONNXProgram,
+            precompiles::matmult::{MatMultPrecompile, MatMultProverState, MatMultSumcheck},
+            tracer::tensor::QuantizedTensor,
+            utils::random_floatvec,
+            vm::precompiles::MatMultPrecompileDims,
+        },
         utils::transcript::{KeccakTranscript, Transcript},
     };
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use rand_core::RngCore;
 
     #[test]
     fn test_precompile_proof() {
@@ -222,5 +229,39 @@ mod tests {
         // Verifier
         let mut vtranscript = KeccakTranscript::new(b"test");
         PrecompileProof::<Fr, _>::verify(&pp, &proof, &mut vtranscript).unwrap();
+    }
+
+    #[test]
+    fn test_random_execution_trace() {
+        let mut rng = test_rng();
+        let trace_length = 100;
+        let mut pp: Vec<MatMultPrecompileDims> = Vec::with_capacity(trace_length);
+        let mut ptranscript = KeccakTranscript::new(b"test");
+        let mut sumcheck_instances = Vec::with_capacity(trace_length);
+        for _ in 0..trace_length {
+            let m = (rng.next_u32() as usize % 100 + 1).next_power_of_two();
+            let n = (rng.next_u32() as usize % 100 + 1).next_power_of_two();
+            let k = (rng.next_u32() as usize % 100 + 1).next_power_of_two();
+            pp.push((m, n, k));
+            let a = QuantizedTensor::random(&mut rng, m, k);
+            let b = QuantizedTensor::random(&mut rng, n, k);
+            let precompile = MatMultPrecompile::new(a, b);
+            let prover_state = MatMultProverState::<Fr>::initialize(&precompile, &mut ptranscript);
+            let sumcheck_instance = MatMultSumcheck::new(Some(prover_state), None, None);
+            sumcheck_instances.push(sumcheck_instance);
+        }
+
+        // Preprocessing
+        let pp = PrecompilePreprocessing {
+            mat_mult_precompile_dims: pp,
+        };
+
+        // Prover
+        let proof = PrecompileProof::<Fr, _>::prove(&pp, &mut sumcheck_instances, &mut ptranscript);
+
+        // Verifier
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        PrecompileProof::<Fr, _>::verify(&pp, &proof, &mut vtranscript)
+            .expect("Verification failed");
     }
 }

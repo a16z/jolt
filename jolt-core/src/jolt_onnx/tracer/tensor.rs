@@ -80,6 +80,18 @@ impl QuantizedTensor {
     pub fn n(&self) -> usize {
         self.shape[1]
     }
+
+    /// Return an randomly initialized quantized tensor with the given shape.
+    pub fn random(mut rng: impl rand_core::RngCore, m: usize, n: usize) -> Self {
+        // Generate random f32 data for the tensor.
+        let size = m * n;
+        let data: Vec<i8> = (0..size).map(|_| rng.next_u32() as i8).collect();
+        Self {
+            shape: vec![m, n],
+            data,
+            scale: 1.0, // Default scale, will be adjusted later
+        }
+    }
 }
 
 /// Quantize a slice of f32 data to i8

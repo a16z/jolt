@@ -42,6 +42,7 @@ impl MatMultPrecompile {
 }
 
 /// Handles the verifier state for the matrix multiplication sum-check precompile.
+/// Used to create the sum-check verifier instance to input into [`BatchedSumcheck::verify`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultVerifierState<F>
 where
@@ -83,6 +84,7 @@ where
 }
 
 /// Handles the prover state for the matrix multiplication sum-check precompile.
+/// Used to create the sum-check prover instance to input into [`BatchedSumcheck::prove`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultProverState<F>
 where
@@ -237,7 +239,7 @@ where
     fn compute_prover_message(&self, _: usize) -> Vec<F> {
         let MatMultProverState { a, b, .. } = self.prover_state.as_ref().unwrap();
         let len = a.len() / 2;
-        let univariate_poly_evals: [F; 2] = (0..len / 2)
+        let univariate_poly_evals: [F; 2] = (0..len)
             .into_par_iter()
             .map(|i| {
                 let poly_A_bound_point = a[i + len] + a[i + len] - a[i];
@@ -269,5 +271,83 @@ where
     fn expected_output_claim(&self, _: &[F]) -> F {
         let MatMultClaims { a, b } = self.claims.as_ref().unwrap();
         *a * b
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        jolt_onnx::{
+            precompiles::{
+                matmult::{
+                    MatMultPrecompile, MatMultProverState, MatMultSumcheck, MatMultVerifierState,
+                },
+                sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
+            },
+            tracer::tensor::QuantizedTensor,
+            vm::precompiles::MatMultPrecompileDims,
+        },
+        utils::transcript::{KeccakTranscript, Transcript},
+    };
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use itertools::Itertools;
+    use rand_core::RngCore;
+
+    #[test]
+    fn test_random_execution_trace() {
+        let mut rng = test_rng();
+        let trace_length = 10;
+        let mut pp: Vec<MatMultPrecompileDims> = Vec::with_capacity(trace_length);
+        let mut ptranscript = KeccakTranscript::new(b"test");
+        let mut sumcheck_instances = Vec::with_capacity(trace_length);
+        for _ in 0..trace_length {
+            let m = (rng.next_u32() as usize % 10 + 1).next_power_of_two();
+            let n = (rng.next_u32() as usize % 10 + 1).next_power_of_two();
+            let k = (rng.next_u32() as usize % 10 + 1).next_power_of_two();
+            pp.push((m, n, k));
+            let a = QuantizedTensor::random(&mut rng, m, k);
+            let b = QuantizedTensor::random(&mut rng, n, k);
+            let precompile = MatMultPrecompile::new(a, b);
+            let prover_state = MatMultProverState::<Fr>::initialize(&precompile, &mut ptranscript);
+            let sumcheck_instance = MatMultSumcheck::new(Some(prover_state), None, None);
+            sumcheck_instances.push(sumcheck_instance);
+        }
+        let init_claims = sumcheck_instances
+            .iter()
+            .map(|p| p.prover_state.as_ref().unwrap().input_claim)
+            .collect_vec();
+        let trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            sumcheck_instances
+                .iter_mut()
+                .map(|p| p as &mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let (sumcheck_proof, _rsc) = BatchedSumcheck::prove(trait_objects, &mut ptranscript);
+        let final_claims = sumcheck_instances
+            .iter()
+            .map(|p| p.claims.as_ref().unwrap().clone())
+            .collect_vec();
+
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        let mut vsumcheck_instances = Vec::with_capacity(trace_length);
+        for (((m, n, k), init_claim), final_claim) in pp
+            .iter()
+            .zip_eq(init_claims.iter())
+            .zip_eq(final_claims.iter())
+        {
+            let verifier_state =
+                MatMultVerifierState::<Fr>::initialize(*m, *n, *k, *init_claim, &mut vtranscript);
+            vsumcheck_instances.push(MatMultSumcheck::new(
+                None,
+                Some(verifier_state),
+                Some(final_claim.clone()),
+            ))
+        }
+        let trait_objects: Vec<&dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            vsumcheck_instances
+                .iter()
+                .map(|p| p as &dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let _r = BatchedSumcheck::verify(&sumcheck_proof, trait_objects, &mut vtranscript).unwrap();
     }
 }
