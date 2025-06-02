@@ -1,149 +1,141 @@
+//! Implements the Jolt CommitmentScheme trait for Dory as a light wrapper
+//! This is (currently) coupled to the use of arkworks bn254
+//! That is, the underlying wrappers expect Fr, G1, G2 from arkworks -- Undefined Behavior otherwise.
+//! This can be changed in the future with some NewType refactoring.
+//!
+//! TODOs:
+//! 1. think about  Fr <> poly coefficient optimizations
+//! 2. batching (batching here means multiple poly evals over single point)
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
-// Import Dory types and traits
-use dory::{
-    arithmetic::{Field as DoryField, Group as DoryGroup},
-    transcript::Transcript as DoryTranscript,
-    ProverSetup, VerifierSetup, DoryProofBuilder,
-    setup, commit, evaluate, verify,
-    curve::{ArkBn254Pairing, OptimizedMsmG1, OptimizedMsmG2, DummyMsm},
-    toy_transcript::ToyTranscript,
-};
 use ark_bn254::{Fq12, Fr};
 use ark_std::rand::thread_rng;
-use blake2::Blake2s256;
+use dory::{
+    commit,
+    curve::{ArkBn254Pairing, DummyMsm, OptimizedMsmG1, OptimizedMsmG2},
+    evaluate, setup,
+    transcript::Transcript as DoryTranscript,
+    verify, DoryProof as DoryProofData, DoryProofBuilder, ProverSetup, VerifierSetup,
+};
 
-// Bridge types to convert between Jolt and Dory traits
+/// Newtype wrapper adapting Jolt Transcript to Dory Transcript
+///
+/// # Safety Requirements
+///
+/// This implementation uses unsafe transmutes to convert `&[u8]` to `&'static [u8]`.
+/// @TODO(markosg04): better solution than unsafe usage?
+/// @TODO(markosg04): We also don't need labels appended, but for now it doesn't hurt.
+/// This is only safe if:
+/// 1. All labels passed to this transcript outlive the transcript itself
+/// 2. The transcript is not used after the labels are deallocated
+/// 3. The labels are typically string literals or other actually-static data
+///
+/// Using this with dynamically allocated labels is UNDEFINED BEHAVIOR.
 
-// Blanket implementation of Dory Field trait for JoltField
-// Note: This only works if F is actually Fr (BN254 scalar field)
-// We use a newtype wrapper to avoid orphan rule issues
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryFieldWrapper<F: JoltField>(pub F);
-
-impl<F: JoltField> DoryField for DoryFieldWrapper<F> {
-    fn zero() -> Self {
-        DoryFieldWrapper(F::zero())
-    }
-    
-    fn one() -> Self {
-        DoryFieldWrapper(F::one())
-    }
-    
-    fn add(&self, rhs: &Self) -> Self {
-        DoryFieldWrapper(self.0 + rhs.0)
-    }
-    
-    fn sub(&self, rhs: &Self) -> Self {
-        DoryFieldWrapper(self.0 - rhs.0)
-    }
-    
-    fn mul(&self, rhs: &Self) -> Self {
-        DoryFieldWrapper(self.0 * rhs.0)
-    }
-    
-    fn inv(&self) -> Option<Self> {
-        self.0.inverse().map(DoryFieldWrapper)
-    }
-    
-    fn random<R: ark_std::rand::RngCore>(rng: &mut R) -> Self {
-        DoryFieldWrapper(F::random(rng))
-    }
-}
-
-// Wrapper to adapt Jolt transcript to Dory transcript
-pub struct JoltToDoryTranscript<T: Transcript> {
-    inner: T,
-}
+#[derive(Clone)]
+pub struct JoltToDoryTranscript<T: Transcript>(pub T);
 
 impl<T: Transcript> JoltToDoryTranscript<T> {
     pub fn new(transcript: T) -> Self {
-        Self { inner: transcript }
+        Self(transcript)
+    }
+
+    /// # Safety
+    /// The caller must ensure that `label` outlives this transcript
+    unsafe fn transmute_label(label: &[u8]) -> &'static [u8] {
+        std::mem::transmute(label)
     }
 }
 
 impl<T: Transcript> DoryTranscript for JoltToDoryTranscript<T> {
-    type Scalar = Fr; // Use BN254 scalar field
-    
+    type Scalar = Fr;
+
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-        // Convert label to static str - this is unsafe but necessary for API compatibility
-        let label_str: &'static [u8] = unsafe { std::mem::transmute(label) };
-        self.inner.append_message(label_str);
-        self.inner.append_bytes(bytes);
+        let label_str = unsafe { Self::transmute_label(label) };
+        self.0.append_message(label_str);
+        self.0.append_bytes(bytes);
     }
-    
+
     fn append_field(&mut self, label: &[u8], x: &Self::Scalar) {
-        let label_str: &'static [u8] = unsafe { std::mem::transmute(label) };
-        self.inner.append_message(label_str);
-        self.inner.append_serializable(x);
+        let label_str = unsafe { Self::transmute_label(label) };
+        self.0.append_message(label_str);
+        self.0.append_serializable(x);
     }
-    
+
     fn append_group<G: CanonicalSerialize>(&mut self, label: &[u8], g: &G) {
-        let label_str: &'static [u8] = unsafe { std::mem::transmute(label) };
-        self.inner.append_message(label_str);
-        self.inner.append_serializable(g);
+        let label_str = unsafe { Self::transmute_label(label) };
+        self.0.append_message(label_str);
+        self.0.append_serializable(g);
     }
-    
+
     fn append_serde<S: serde::Serialize>(&mut self, label: &[u8], s: &S) {
-        let label_str: &'static [u8] = unsafe { std::mem::transmute(label) };
-        self.inner.append_message(label_str);
-        // For serde, we serialize to bytes first
+        let label_str = unsafe { Self::transmute_label(label) };
+        self.0.append_message(label_str);
         let bytes = postcard::to_allocvec(s).unwrap_or_default();
-        self.inner.append_bytes(&bytes);
+        self.0.append_bytes(&bytes);
     }
-    
-    fn challenge_scalar(&mut self, _label: &[u8]) -> Self::Scalar {
-        self.inner.challenge_scalar::<Fr>()
+
+    fn challenge_scalar(&mut self, label: &[u8]) -> Self::Scalar {
+        let label_str = unsafe { Self::transmute_label(label) };
+        self.0.append_message(label_str);
+        self.0.challenge_scalar::<Fr>()
     }
-    
+
     fn reset(&mut self, domain_label: &[u8]) {
-        // Reset by creating a new transcript with the domain label
-        let label_str: &'static [u8] = unsafe { std::mem::transmute(domain_label) };
-        self.inner = T::new(label_str);
+        let label_str = unsafe { Self::transmute_label(domain_label) };
+        self.0 = T::new(label_str);
     }
 }
 
 // Helper function to convert multilinear polynomial to field coefficients
+// This can be non-zero cost for large polys so will want a better solution, eventually
+// For now this is needed since we want arkworks Fr
 fn extract_field_coefficients<F: JoltField>(poly: &MultilinearPolynomial<F>) -> Vec<F> {
     match poly {
-        MultilinearPolynomial::LargeScalars(dense_poly) => {
-            // Access the Z field directly from DensePolynomial
-            dense_poly.Z.clone()
-        }
+        MultilinearPolynomial::LargeScalars(dense_poly) => dense_poly.Z.clone(),
         MultilinearPolynomial::U8Scalars(compact_poly) => {
             compact_poly.coeffs.iter().map(|&c| F::from_u8(c)).collect()
         }
-        MultilinearPolynomial::U16Scalars(compact_poly) => {
-            compact_poly.coeffs.iter().map(|&c| F::from_u16(c)).collect()
-        }
-        MultilinearPolynomial::U32Scalars(compact_poly) => {
-            compact_poly.coeffs.iter().map(|&c| F::from_u32(c)).collect()
-        }
-        MultilinearPolynomial::U64Scalars(compact_poly) => {
-            compact_poly.coeffs.iter().map(|&c| F::from_u64(c)).collect()
-        }
-        MultilinearPolynomial::I64Scalars(compact_poly) => {
-            compact_poly.coeffs.iter().map(|&c| F::from_i64(c)).collect()
-        }
+        MultilinearPolynomial::U16Scalars(compact_poly) => compact_poly
+            .coeffs
+            .iter()
+            .map(|&c| F::from_u16(c))
+            .collect(),
+        MultilinearPolynomial::U32Scalars(compact_poly) => compact_poly
+            .coeffs
+            .iter()
+            .map(|&c| F::from_u32(c))
+            .collect(),
+        MultilinearPolynomial::U64Scalars(compact_poly) => compact_poly
+            .coeffs
+            .iter()
+            .map(|&c| F::from_u64(c))
+            .collect(),
+        MultilinearPolynomial::I64Scalars(compact_poly) => compact_poly
+            .coeffs
+            .iter()
+            .map(|&c| F::from_i64(c))
+            .collect(),
     }
 }
 
-// Dory commitment scheme implementation
+/// Dory commitment scheme implementation
 #[derive(Clone, Debug)]
 pub struct DoryCommitmentScheme<F: JoltField, ProofTranscript: Transcript> {
     _phantom_field: PhantomData<F>,
     _phantom_transcript: PhantomData<ProofTranscript>,
 }
 
-// Setup structure containing both prover and verifier parameters
+/// Setup structure containing both prover and verifier parameters.
+/// Dory API exposes an SRS to disk option, but is not (yet) utilized here.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DorySetup {
     pub prover_setup: ProverSetup<ArkBn254Pairing>,
@@ -151,139 +143,32 @@ pub struct DorySetup {
     pub max_log_n: usize,
 }
 
-// Commitment structure
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+/// Commitment structure
+#[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryCommitment {
-    pub commitment: Fq12, // GT element for BN254
+    pub commitment: Fq12, // this is GT
 }
 
-impl Default for DoryCommitment {
-    fn default() -> Self {
-        use ark_std::One;
-        Self {
-            commitment: Fq12::one(),
-        }
-    }
-}
-
-// Proof structure using DoryProofBuilder
-// Note: We need to store the proof builder for verification
+/// Proof structure storing the serializable DoryProof data and other data
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryProof<F: JoltField> {
     pub evaluation: Fr,
-    pub proof_builder: DoryProofBuilder<
-        ark_bn254::G1Affine,
-        dory::curve::G2AffineWrapper,
-        Fq12,
-        Fr,
-        ToyTranscript<Fr, Blake2s256>
-    >,
     pub opening_point: Vec<Fr>,
     pub sigma: usize,
+    // Store the serializable DoryProof from the DoryProofBuilder
+    pub dory_proof_data: DoryProofData<ark_bn254::G1Affine, dory::curve::G2AffineWrapper, Fq12>,
     _phantom: PhantomData<F>,
 }
 
-// Note: DoryProofBuilder doesn't implement Clone by default, so we'll need to handle this carefully
-impl<F: JoltField> Clone for DoryProof<F> {
-    fn clone(&self) -> Self {
-        // For now, we'll create a new default proof builder
-        // In a production implementation, you'd want to properly serialize/deserialize the proof
-        let transcript = ToyTranscript::<Fr, Blake2s256>::new(b"dory_evaluation");
-        let proof_builder = DoryProofBuilder::new(transcript);
-        
-        Self {
-            evaluation: self.evaluation,
-            proof_builder,
-            opening_point: self.opening_point.clone(),
-            sigma: self.sigma,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-// We'll need to implement serialization manually since DoryProofBuilder may not be serializable
-impl<F: JoltField> CanonicalSerialize for DoryProof<F> {
-    fn serialize_with_mode<W: ark_serialize::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        self.evaluation.serialize_with_mode(&mut writer, compress)?;
-        self.opening_point.serialize_with_mode(&mut writer, compress)?;
-        self.sigma.serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.evaluation.serialized_size(compress) +
-        self.opening_point.serialized_size(compress) +
-        self.sigma.serialized_size(compress)
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for DoryProof<F> {
-    fn deserialize_with_mode<R: ark_serialize::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let evaluation = Fr::deserialize_with_mode(&mut reader, compress, validate)?;
-        let opening_point = Vec::<Fr>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let sigma = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        
-        let transcript = ToyTranscript::<Fr, Blake2s256>::new(b"dory_evaluation");
-        let proof_builder = DoryProofBuilder::new(transcript);
-        
-        Ok(Self {
-            evaluation,
-            proof_builder,
-            opening_point,
-            sigma,
-            _phantom: PhantomData,
-        })
-    }
-}
-
-impl<F: JoltField> std::fmt::Debug for DoryProof<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DoryProof")
-            .field("evaluation", &self.evaluation)
-            .field("opening_point", &self.opening_point)
-            .field("sigma", &self.sigma)
-            .finish()
-    }
-}
-
-impl<F: JoltField> Valid for DoryProof<F> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.evaluation.check()?;
-        self.opening_point.check()?;
-        self.sigma.check()?;
-        Ok(())
-    }
-}
-
-impl<F: JoltField> Default for DoryProof<F> {
-    fn default() -> Self {
-        let transcript = ToyTranscript::<Fr, Blake2s256>::new(b"dory_evaluation");
-        let proof_builder = DoryProofBuilder::new(transcript);
-        
-        Self {
-            evaluation: <Fr as ark_std::Zero>::zero(),
-            proof_builder,
-            opening_point: Vec::new(),
-            sigma: 0,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-// Batched proof structure
+/// Batched proof structure
+/// @TODO: this is not yet fully implemented.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryBatchedProof<F: JoltField> {
     proofs: Vec<DoryProof<F>>,
 }
 
-impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for DoryCommitmentScheme<F, ProofTranscript>
+impl<F, ProofTranscript> CommitmentScheme<ProofTranscript>
+    for DoryCommitmentScheme<F, ProofTranscript>
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -294,10 +179,9 @@ where
     type Proof = DoryProof<F>;
     type BatchedProof = DoryBatchedProof<F>;
 
-    fn setup(max_len: usize) -> Self::Setup {
-        let max_log_n = (max_len as f64).log2().ceil() as usize;
+    fn setup(max_log_n: usize) -> Self::Setup {
         let (prover_setup, verifier_setup) = setup::<ArkBn254Pairing, _>(thread_rng(), max_log_n);
-        
+
         DorySetup {
             prover_setup,
             verifier_setup,
@@ -308,72 +192,76 @@ where
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         // Extract polynomial coefficients
         let field_coeffs = extract_field_coefficients(poly);
-        
+
         // Convert JoltField coefficients to Fr
         // This assumes F is Fr or can be safely transmuted to Fr
-        let coeffs: Vec<Fr> = field_coeffs.iter()
-            .map(|&coeff| {
-                unsafe { std::mem::transmute_copy(&coeff) }
-            })
+        let coeffs: Vec<Fr> = field_coeffs
+            .iter()
+            .map(|&coeff| unsafe { std::mem::transmute_copy(&coeff) })
             .collect();
-        
-        let sigma = poly.get_num_vars();
-        let commitment = commit::<ArkBn254Pairing, OptimizedMsmG1>(
-            &coeffs,
-            0,
-            sigma,
-            &setup.prover_setup
-        );
-        
+
+        // For Dory, sigma is the number of columns in the matrix representation
+        // we use sigma = ceil(num_vars / 2) so we have a nice square matrix.
+        let num_vars = poly.get_num_vars();
+        let sigma = (num_vars + 1) / 2;
+        let commitment =
+            commit::<ArkBn254Pairing, OptimizedMsmG1>(&coeffs, 0, sigma, &setup.prover_setup);
+
         DoryCommitment { commitment }
     }
 
+    // @TODO: Implement linear combination batching
     fn batch_commit<U>(polys: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        polys.iter()
-            .map(|poly| Self::commit(poly.borrow(), setup))
-            .collect()
+        todo!()
     }
 
+    // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
-        _transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        // Extract polynomial coefficients
+        // extract as JoltField transmutable to arkworks Fr
         let field_coeffs = extract_field_coefficients(poly);
-        
-        // Convert polynomial coefficients to Fr
-        let coeffs: Vec<Fr> = field_coeffs.iter()
+
+        // Convert to arkworks Fr
+        let coeffs: Vec<Fr> = field_coeffs
+            .iter()
             .map(|&coeff| unsafe { std::mem::transmute_copy(&coeff) })
             .collect();
-        
-        // Convert opening point to Fr
-        let point: Vec<Fr> = opening_point.iter()
+
+        // Convert opening point to arkworks Fr
+        let point: Vec<Fr> = opening_point
+            .iter()
             .map(|&p| unsafe { std::mem::transmute_copy(&p) })
             .collect();
-        
-        let sigma = poly.get_num_vars();
-        
-        // Create Dory transcript
-        let dory_transcript = ToyTranscript::<Fr, Blake2s256>::new(b"dory_evaluation");
-        
-        let (evaluation, proof_builder) = evaluate::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2>(
-            &coeffs,
-            &point,
-            sigma,
-            &setup.prover_setup,
-            dory_transcript
-        );
-        
+
+        let num_vars = poly.get_num_vars();
+        let sigma = (num_vars + 1) / 2;
+
+        let dory_transcript_prover = JoltToDoryTranscript::new(transcript.clone());
+
+        let (evaluation, proof_builder) =
+            evaluate::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2>(
+                &coeffs,
+                &point,
+                sigma,
+                &setup.prover_setup,
+                dory_transcript_prover,
+            );
+
+        // Extract from the builder into a serializable form
+        let dory_proof = proof_builder.build();
+
         DoryProof {
             evaluation,
-            proof_builder,
             opening_point: point,
             sigma,
+            dory_proof_data: dory_proof,
             _phantom: PhantomData,
         }
     }
@@ -381,35 +269,37 @@ where
     fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
-        _transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
-        opening: &Self::Field,
+        _opening: &Self::Field, // we use the opening directly from Dory's Proof object.
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        // Convert expected opening to Fr
-        let expected_opening: Fr = unsafe { std::mem::transmute_copy(opening) };
         
-        // Convert opening point to Fr
-        let point: Vec<Fr> = opening_point.iter()
+        // Convert opening point to arkworks Fr
+        let point: Vec<Fr> = opening_point
+            .iter()
             .map(|&p| unsafe { std::mem::transmute_copy(&p) })
             .collect();
-        
-        // Verify that the proof evaluation matches expected
-        if proof.evaluation != expected_opening {
-            return Err(ProofVerifyError::InternalError);
-        }
-        
-        // Use Dory's verify function
-        let verify_result = verify::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2, DummyMsm<Fq12>>(
-            commitment.commitment,
-            proof.evaluation,
-            &point,
-            proof.proof_builder.clone(),
-            proof.sigma,
-            &setup.verifier_setup,
-            b"dory_evaluation"
-        );
-        
+
+        // Create JoltToDoryTranscript wrapper around the provided transcript
+        let dory_transcript = JoltToDoryTranscript::new(transcript.clone());
+
+        // Create a proof builder from the DoryProof
+        let verifier_builder =
+            DoryProofBuilder::from_proof(proof.dory_proof_data.clone(), dory_transcript.clone());
+
+        // Use Dory's verify function with the proof builder
+        let verify_result =
+            verify::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2, DummyMsm<Fq12>>(
+                commitment.commitment,
+                proof.evaluation,
+                &point,
+                verifier_builder,
+                proof.sigma,
+                &setup.verifier_setup,
+                dory_transcript,
+            );
+
         match verify_result {
             Ok(()) => Ok(()),
             Err(_) => Err(ProofVerifyError::InternalError),
@@ -431,60 +321,67 @@ impl crate::utils::transcript::AppendToTranscript for DoryCommitment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::utils::transcript::KeccakTranscript;
+    use ark_bn254::Fr;
     use ark_std::rand::thread_rng;
-    
+
     #[test]
     fn test_dory_commitment_scheme() {
-        // Create a random polynomial with 2^10 coefficients
-        let num_vars = 10;
-        let num_coeffs = 1 << num_vars; // 2^10 = 1024
-        
-        let mut rng = thread_rng();
-        let coeffs: Vec<Fr> = (0..num_coeffs)
-            .map(|_| <Fr as crate::field::JoltField>::random(&mut rng))
-            .collect();
-        
-        // Create a multilinear polynomial
-        let poly = MultilinearPolynomial::LargeScalars(
-            DensePolynomial::new(coeffs)
+        use ark_std::UniformRand;
+        use std::time::Instant;
+
+        // Create a random polynomial and other related preliminaries
+        let max_log_n = 22; // This will support polynomials up to 2^22 coefficients
+        let num_vars = 22;
+        let num_coeffs = 1 << num_vars;
+        let sigma = (num_vars + 1) / 2;
+
+        println!(
+            "Testing Dory PCS with {} variables, {} coefficients, sigma = {}",
+            num_vars, num_coeffs, sigma
         );
-        
+
+        let mut rng = thread_rng();
+        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+
         // Generate random opening point
-        let opening_point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as crate::field::JoltField>::random(&mut rng))
-            .collect();
-        
-        // Setup the commitment scheme
-        let setup = DoryCommitmentScheme::<Fr, KeccakTranscript>::setup(num_vars);
-        
-        // Commit to the polynomial
+        let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+
+        // Setup timing
+        let setup_start = Instant::now();
+
+        // the commitment key is actually size sqrt(max_log_n) = 11 here
+        let setup = DoryCommitmentScheme::<Fr, KeccakTranscript>::setup(max_log_n);
+        let setup_time = setup_start.elapsed();
+        println!("Setup time: {:?}", setup_time);
+
+        // Commit timing
+        let commit_start = Instant::now();
         let commitment = DoryCommitmentScheme::<Fr, KeccakTranscript>::commit(&poly, &setup);
-        
-        // Evaluate the polynomial at the opening point
-        use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-        // let expected_evaluation = poly.evaluate(&opening_point);
-        
-        // Create transcript for proving
+        let commit_time = commit_start.elapsed();
+        println!("Commit time: {:?}", commit_time);
+
+        // Note that domains initially need to be the same for transcripts.
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
-        
-        // Generate the proof
+
+        // Prove timing
+        let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::<Fr, KeccakTranscript>::prove(
             &setup,
             &poly,
             &opening_point,
             &mut prove_transcript,
         );
-        
-        // Verify that the proof evaluation matches expected
-        // assert_eq!(expected_evaluation, proof.evaluation);
-        
-        // Create transcript for verification (should be fresh)
+        let prove_time = prove_start.elapsed();
+        println!("Prove time: {:?}", prove_time);
+
         let mut verify_transcript = KeccakTranscript::new(b"dory_test");
-        
-        // Verify the proof
+
+        // Verify timing
+        let verify_start = Instant::now();
         let verification_result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
             &proof,
             &setup,
@@ -493,14 +390,179 @@ mod tests {
             &proof.evaluation,
             &commitment,
         );
-        
+        let verify_time = verify_start.elapsed();
+        println!("Verify time: {:?}", verify_time);
+
+        let total_time = setup_time + commit_time + prove_time + verify_time;
+        println!("Total time: {:?}", total_time);
+
         // The verification should succeed
-        assert!(verification_result.is_ok(), "Dory verification failed: {:?}", verification_result);
-        
+        assert!(
+            verification_result.is_ok(),
+            "Dory verification failed: {:?}",
+            verification_result
+        );
+
         println!("✅ Dory commitment scheme test passed!");
-        println!("   - Polynomial size: 2^{} = {} coefficients", num_vars, num_coeffs);
+        println!(
+            "   - Polynomial size: 2^{} = {} coefficients",
+            num_vars, num_coeffs
+        );
         println!("   - Commitment: {:?}", commitment.commitment);
         println!("   - Evaluation: {:?}", proof.evaluation);
     }
-    
+
+    #[test]
+    fn test_dory_soundness() {
+        use ark_std::UniformRand;
+
+        // Test setup
+        let num_vars = 10;
+        let max_log_n = 10;
+        let num_coeffs = 1 << num_vars;
+
+        let mut rng = thread_rng();
+        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+
+        let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+
+        let setup = DoryCommitmentScheme::<Fr, KeccakTranscript>::setup(max_log_n);
+
+        // Commit to the polynomial
+        let commitment = DoryCommitmentScheme::<Fr, KeccakTranscript>::commit(&poly, &setup);
+
+        let mut prove_transcript =
+            KeccakTranscript::new(DoryCommitmentScheme::<Fr, KeccakTranscript>::protocol_name());
+
+        // Generate the proof
+        let proof = DoryCommitmentScheme::<Fr, KeccakTranscript>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            &mut prove_transcript,
+        );
+
+        // Now we consider 4 cases of tampering, which Dory should reject.
+
+        // Test 1: Tamper with the evaluation
+        {
+            let mut tampered_proof = proof.clone();
+            tampered_proof.evaluation = Fr::rand(&mut rng); // Random wrong evaluation
+
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
+                Fr,
+                KeccakTranscript,
+            >::protocol_name());
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+                &tampered_proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation, // Use original evaluation as expected
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with tampered evaluation"
+            );
+            println!("✅ Test 1 passed: Tampered evaluation correctly rejected");
+        }
+
+        // Test 2: Tamper with the opening point
+        {
+            let tampered_opening_point: Vec<Fr> =
+                (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
+                Fr,
+                KeccakTranscript,
+            >::protocol_name());
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &tampered_opening_point, // Wrong opening point
+                &proof.evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with tampered opening point"
+            );
+            println!("✅ Test 2 passed: Tampered opening point correctly rejected");
+        }
+
+        // Test 3: Use wrong commitment
+        {
+            // Create a different polynomial and its commitment
+            let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+            let wrong_poly =
+                MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
+            let wrong_commitment =
+                DoryCommitmentScheme::<Fr, KeccakTranscript>::commit(&wrong_poly, &setup);
+
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
+                Fr,
+                KeccakTranscript,
+            >::protocol_name());
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation,
+                &wrong_commitment, // Wrong commitment
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with wrong commitment"
+            );
+            println!("✅ Test 3 passed: Wrong commitment correctly rejected");
+        }
+
+        // Test 4: Use wrong domain in transcript
+        {
+            let mut verify_transcript = KeccakTranscript::new(b"wrong_domain");
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with wrong transcript domain"
+            );
+            println!("✅ Test 4 passed: Wrong transcript domain correctly rejected");
+        }
+
+        // Test 5: Verify that correct proof still passes
+        {
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
+                Fr,
+                KeccakTranscript,
+            >::protocol_name());
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_ok(),
+                "Verification should succeed with correct proof"
+            );
+            println!("✅ Test 5 passed: Correct proof indeed verifies successfully");
+        }
+    }
 }
