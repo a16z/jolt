@@ -22,7 +22,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 
-/// The dimensions of the matrix multiplication precompile.
+/// The dimensions used in the matrix multiplication precompile protocol.
 ///
 /// mat_mult_precompile_dims = (m, n, k) where
 /// - `m` is the number of rows in the resulting matrix,
