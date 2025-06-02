@@ -52,7 +52,7 @@ struct Sha256SequenceBuilder {
     address: u64,
     sequence: Vec<RV32IMInstruction>,
     /// Round id
-    rid: i32,
+    round: i32,
     /// Virtual registers used by the sequence
     vr: [usize; NEEDED_REGISTERS],
     /// Location input words to the hash function in 16 memory slots
@@ -74,7 +74,7 @@ impl Sha256SequenceBuilder {
         Sha256SequenceBuilder {
             address,
             sequence: vec![],
-            rid: 0,
+            round: 0,
             vr,
             operand_rs1,
             operand_rs2,
@@ -145,7 +145,7 @@ impl Sha256SequenceBuilder {
     /// Assumes for words A-H to be loaded in registers 0..7
     /// Assumes for words W_0..W_15 to be loaded in registers 8..24
     fn round(&mut self) {
-        assert!(self.rid < 64);
+        assert!(self.round < 64);
         let t1 = self.vr[24];
         let t2 = self.vr[25];
         // scratch space
@@ -154,7 +154,7 @@ impl Sha256SequenceBuilder {
         // Put T_1 into register t1
         // Put H + K
         // We do this first because H is going to be Imm the longest of all inputs
-        let h_add_k = self.add(Imm(K[self.rid as usize]), self.vri('H'), t1);
+        let h_add_k = self.add(Imm(K[self.round as usize]), self.vri('H'), t1);
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
         let add_sigma_1 = self.add(h_add_k, sigma_1, t1);
         // Put Ch(E_0, F_0, G_0) into register t2
@@ -175,7 +175,7 @@ impl Sha256SequenceBuilder {
         // Done with T_2
 
         let old_d = self.vri('D');
-        self.rid += 1;
+        self.round += 1;
         // Overwrite new A with T_1 + T_2
         self.add(t1, t2, self.vr('A'));
         // Overwrite D_0 with D_0 + T_1
@@ -192,15 +192,15 @@ impl Sha256SequenceBuilder {
         // Round 2: A,B,C,E,F,G are available
         // Round 3+: All values are in registers
         if self.initial
-            && (self.rid == 0
-                || (self.rid == 1 && !['A', 'E'].contains(&shift))
-                || (self.rid == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
-                || (self.rid == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
+            && (self.round == 0
+                || (self.round == 1 && !['A', 'E'].contains(&shift))
+                || (self.round == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
+                || (self.round == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
         {
             // Our values are getting shifted each round, so we substract round_id
             // for exaple in round 1 we have B equal to A from round 0.
             let shift = shift as i32 - 'A' as i32;
-            return Imm(BLOCK[(shift - self.rid).rem_euclid(8) as usize]);
+            return Imm(BLOCK[(shift - self.round).rem_euclid(8) as usize]);
         }
         Reg(self.vr(shift))
     }
@@ -215,27 +215,27 @@ impl Sha256SequenceBuilder {
         // Special handling for custom IV: E-H values start in registers 28-31
         // and gradually move into the main rotation (registers 0-7)
         if !self.initial
-            && (self.rid == 0 && shift >= 4
-                || self.rid == 1 && shift >= 5
-                || self.rid == 2 && shift >= 6
-                || self.rid == 3 && shift >= 7)
+            && (self.round == 0 && shift >= 4
+                || self.round == 1 && shift >= 5
+                || self.round == 2 && shift >= 6
+                || self.round == 3 && shift >= 7)
         {
-            return self.vr[24 - self.rid as usize + shift as usize];
+            return self.vr[24 - self.round as usize + shift as usize];
         }
 
         // Standard rotation: each round shifts all variables by -1
-        self.vr[(-self.rid + shift).rem_euclid(8) as usize]
+        self.vr[(-self.round + shift).rem_euclid(8) as usize]
     }
 
     /// Register number containing W_(rid+shift)
     fn w(&self, shift: i32) -> usize {
-        self.vr[((self.rid + shift).rem_euclid(16) + 8) as usize]
+        self.vr[((self.round + shift).rem_euclid(16) + 8) as usize]
     }
 
     /// Updates message schedule for rounds 16-63
     /// W[t] = σ₁(W[t-2]) + W[t-7] + σ₀(W[t-15]) + W[t-16]
     fn update_w(&mut self, ss: [usize; 2]) {
-        if self.rid < 16 {
+        if self.round < 16 {
             return;
         }
         // Calculate σ₀(W[t-15])
