@@ -566,6 +566,12 @@ impl RV32IMInstruction {
                     Err("Unsupported SYSTEM instruction")
                 }
             }
+            // 0x0B is reserved for RISC-V extension
+            // In attempt to standardize this space for precompiles and inlines,
+            // each new type of operation should be placed under different funct7,
+            // while funct3 should hold all necessary instructions for that operation.
+            // funct7:
+            // - 0x00: SHA256
             0b0001011 => {
                 // Custom-0 opcode: SHA256 compression instructions
                 let funct3 = (instr >> 12) & 0x7;

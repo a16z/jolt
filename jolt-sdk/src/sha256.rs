@@ -38,6 +38,7 @@ impl Sha256 {
     #[inline(always)]
     pub fn new() -> Self {
         Self {
+            // We these uninitialized as a cycle optimization
             state: [MaybeUninit::uninit(); 8],
             buffer: [MaybeUninit::uninit(); 16],
             buffer_len: 0,
@@ -203,6 +204,7 @@ impl Sha256 {
             }
 
             // Second block: all zeros except length at the end
+            // Unroll the loop for cycle optimization
             self.buffer[0].write(0);
             self.buffer[1].write(0);
             self.buffer[2].write(0);
@@ -246,6 +248,7 @@ impl Sha256 {
 
             #[cfg(target_endian = "little")]
             {
+                // Unroll the loop for cycle optimization
                 result_u32[0] = state[0].swap_bytes();
                 result_u32[1] = state[1].swap_bytes();
                 result_u32[2] = state[2].swap_bytes();
@@ -291,6 +294,7 @@ impl Sha256 {
     #[cfg(target_endian = "little")]
     #[inline(always)]
     fn swap_bytes(buf: &mut [u32]) {
+        // Unroll the loop for cycle optimization
         buf[0] = buf[0].swap_bytes();
         buf[1] = buf[1].swap_bytes();
         buf[2] = buf[2].swap_bytes();

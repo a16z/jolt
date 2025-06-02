@@ -197,9 +197,10 @@ impl Sha256SequenceBuilder {
                 || (self.rid == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
                 || (self.rid == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
         {
-            return Imm(
-                BLOCK[((shift as usize - 'A' as usize) as i32 - self.rid).rem_euclid(8) as usize]
-            );
+            // Our values are getting shifted each round, so we substract round_id
+            // for exaple in round 1 we have B equal to A from round 0.
+            let shift = shift as i32 - 'A' as i32;
+            return Imm(BLOCK[(shift - self.rid).rem_euclid(8) as usize]);
         }
         Reg(self.vr(shift))
     }
@@ -465,6 +466,7 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
 
     w[..16].copy_from_slice(&input);
 
+    // Calculate word schedule
     for i in 16..64 {
         // σ₁(w[i-2]) + w[i-7] + σ₀(w[i-15]) + w[i-16]
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -475,6 +477,7 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
             .wrapping_add(s1);
     }
 
+    // Perform 64 rounds
     for i in 0..64 {
         let ch = (e & f) ^ ((!e) & g);
         let maj = (a & b) ^ (a & c) ^ (b & c);
@@ -499,6 +502,7 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
         a = t1.wrapping_add(t2);
     }
 
+    // Final IV addition
     [
         initial_state[0].wrapping_add(a),
         initial_state[1].wrapping_add(b),
