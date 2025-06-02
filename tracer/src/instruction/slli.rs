@@ -44,7 +44,7 @@ impl VirtualInstructionSequence for SLLI {
         let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
         let mut sequence = vec![];
 
-        let mul = RV32IMInstruction::MULI(VirtualMULI {
+        let mul = RV32IMInstruction::VirtualMULI(VirtualMULI {
             address: self.address,
             operands: FormatI {
                 rd: self.operands.rd,

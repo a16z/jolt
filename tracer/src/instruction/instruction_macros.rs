@@ -1,5 +1,3 @@
-use super::format;
-
 #[macro_export]
 macro_rules! declare_riscv_instr {
     (

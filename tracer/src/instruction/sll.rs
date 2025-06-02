@@ -50,7 +50,7 @@ impl VirtualInstructionSequence for SLL {
         let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
         let mut sequence = vec![];
 
-        let pow2 = RV32IMInstruction::Pow2(VirtualPow2 {
+        let pow2 = RV32IMInstruction::VirtualPow2(VirtualPow2 {
             address: self.address,
             operands: FormatI {
                 rd: v_pow2,

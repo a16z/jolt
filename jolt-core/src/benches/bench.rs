@@ -295,8 +295,8 @@ where
     let inputs = postcard::to_stdvec(input).unwrap();
 
     let task = move || {
-        let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace(&inputs);
+        let (bytecode, memory_init) = program.decode();
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(
@@ -357,8 +357,8 @@ where
     inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
 
     let task = move || {
-        let (bytecode, memory_init) = program.decode();
         let (io_device, trace) = program.trace(&inputs);
+        let (bytecode, memory_init) = program.decode();
 
         let preprocessing: JoltProverPreprocessing<F, PCS, ProofTranscript> =
             RV32IJoltVM::prover_preprocess(

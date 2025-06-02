@@ -1,9 +1,14 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
 #![allow(clippy::legacy_numeric_constants)]
 
-use std::{fs::File, io::Read, path::PathBuf};
+#[cfg(not(feature = "std"))]
+extern crate alloc;
 
-use common::{self, constants::RAM_START_ADDRESS};
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
+
+use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
@@ -20,23 +25,17 @@ pub use common::jolt_device::JoltDevice;
 
 #[tracing::instrument(skip_all)]
 pub fn trace(
-    elf: &PathBuf,
+    elf_contents: Vec<u8>,
     inputs: &[u8],
-    input_size: u64,
-    output_size: u64,
+    memory_config: &MemoryConfig,
 ) -> (Vec<RV32IMCycle>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
 
-    let mut jolt_device = JoltDevice::new(input_size, output_size);
+    let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
-
-    let mut elf_file = File::open(elf).unwrap();
-
-    let mut elf_contents = Vec::new();
-    elf_file.read_to_end(&mut elf_contents).unwrap();
 
     emulator.setup_program(elf_contents);
 

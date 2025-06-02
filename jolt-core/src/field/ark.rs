@@ -9,7 +9,9 @@ impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
-static mut SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = [vec![], vec![]];
+lazy_static::lazy_static! {
+    static ref SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = ark_bn254::Fr::compute_lookup_tables();
+}
 
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
@@ -38,53 +40,23 @@ impl JoltField for ark_bn254::Fr {
         lookup_tables
     }
 
-    fn initialize_lookup_tables(init: Self::SmallValueLookupTables) {
-        unsafe {
-            SMALL_VALUE_LOOKUP_TABLES = init;
-        }
+    fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
+        // no-op
     }
 
     #[inline]
     fn from_u8(n: u8) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            unsafe { SMALL_VALUE_LOOKUP_TABLES[0][n as usize] }
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }
 
     #[inline]
     fn from_u16(n: u16) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            unsafe { SMALL_VALUE_LOOKUP_TABLES[0][n as usize] }
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }
 
     #[inline]
     fn from_u32(n: u32) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            const BITMASK: u32 = (1 << 16) - 1;
-            unsafe {
-                SMALL_VALUE_LOOKUP_TABLES[0][(n & BITMASK) as usize]
-                    + SMALL_VALUE_LOOKUP_TABLES[1][((n >> 16) & BITMASK) as usize]
-            }
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }
 
     #[inline]

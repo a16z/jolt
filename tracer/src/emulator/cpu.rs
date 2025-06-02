@@ -1,14 +1,21 @@
 #![allow(clippy::useless_format, clippy::type_complexity)]
 
+#[cfg(feature = "std")]
 extern crate fnv;
 
-use std::collections::HashMap;
-use std::convert::TryInto;
+#[cfg(feature = "std")]
+use self::fnv::FnvHashMap;
+#[cfg(not(feature = "std"))]
+use alloc::collections::btree_map::BTreeMap as FnvHashMap;
+use core::convert::TryInto;
 
 use crate::instruction::{RV32IMCycle, RV32IMInstruction};
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
+
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 
 const CSR_CAPACITY: usize = 4096;
 
@@ -90,7 +97,7 @@ pub struct Cpu {
     unsigned_data_mask: u64,
     pub trace: Vec<RV32IMCycle>,
     executed_instrs: u64, // “real” RV32IM cycles
-    active_markers: HashMap<u32, ActiveMarker>,
+    active_markers: FnvHashMap<u32, ActiveMarker>,
 }
 
 #[derive(Clone)]
@@ -108,12 +115,14 @@ pub enum PrivilegeMode {
     Machine,
 }
 
+#[derive(Debug)]
 pub struct Trap {
     pub trap_type: TrapType,
     pub value: u64, // Trap type specific value
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub enum TrapType {
     InstructionAddressMisaligned,
     InstructionAccessFault,
@@ -251,7 +260,7 @@ impl Cpu {
             unsigned_data_mask: 0xffffffffffffffff,
             trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
             executed_instrs: 0,
-            active_markers: HashMap::default(),
+            active_markers: FnvHashMap::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -308,7 +317,7 @@ impl Cpu {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
-        self.mmu.tick(&mut self.csr[CSR_MIP_ADDRESS as usize]);
+        self.mmu.tick();
         self.handle_interrupt(self.pc);
         self.clock = self.clock.wrapping_add(1);
 
@@ -756,7 +765,7 @@ impl Cpu {
             CSR_SSTATUS_ADDRESS => self.csr[CSR_MSTATUS_ADDRESS as usize] & 0x80000003000de162,
             CSR_SIE_ADDRESS => self.csr[CSR_MIE_ADDRESS as usize] & 0x222,
             CSR_SIP_ADDRESS => self.csr[CSR_MIP_ADDRESS as usize] & 0x222,
-            CSR_TIME_ADDRESS => self.mmu.get_clint().read_mtime(),
+            CSR_TIME_ADDRESS => panic!("CLINT is unsupported."),
             _ => self.csr[address as usize],
         }
     }
@@ -794,7 +803,7 @@ impl Cpu {
                     .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
             }
             CSR_TIME_ADDRESS => {
-                self.mmu.get_mut_clint().write_mtime(value);
+                panic!("CLINT is unsupported.")
             }
             _ => {
                 self.csr[address as usize] = value;
@@ -833,6 +842,7 @@ impl Cpu {
                 8 => AddressingMode::SV39,
                 9 => AddressingMode::SV48,
                 _ => {
+                    #[cfg(feature = "std")]
                     println!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
@@ -862,8 +872,8 @@ impl Cpu {
     // @TODO: Rename to better name?
     pub(crate) fn most_negative(&self) -> i64 {
         match self.xlen {
-            Xlen::Bit32 => std::i32::MIN as i64,
-            Xlen::Bit64 => std::i64::MIN,
+            Xlen::Bit32 => core::i32::MIN as i64,
+            Xlen::Bit64 => core::i64::MIN,
         }
     }
 
@@ -1435,11 +1445,6 @@ impl Cpu {
     /// Returns mutable `Mmu`
     pub fn get_mut_mmu(&mut self) -> &mut Mmu {
         &mut self.mmu
-    }
-
-    /// Returns mutable `Terminal`
-    pub fn get_mut_terminal(&mut self) -> &mut Box<dyn Terminal> {
-        self.mmu.get_mut_uart().get_mut_terminal()
     }
 
     fn handle_jolt_cycle_marker(&mut self, ptr: u32, event: u32) -> Result<(), Trap> {
