@@ -12,8 +12,7 @@ use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
-    Emulator,
-    EmulatorState,
+    Emulator, EmulatorState,
 };
 
 use instruction::{RV32IMCycle, RV32IMInstruction};
@@ -154,8 +153,8 @@ fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryCo
 ///
 /// This iterator produces instruction traces one at a time, executing the emulator
 /// as needed rather than generating the entire trace upfront. It buffers traces
-/// in `current_traces` since some instructions generate multiple trace entries. 
-/// When the `current_traces` buffer is exhausted, it executes another emulator tick 
+/// in `current_traces` since some instructions generate multiple trace entries.
+/// When the `current_traces` buffer is exhausted, it executes another emulator tick
 /// to generate more.
 ///
 /// # Fields
@@ -179,7 +178,7 @@ impl Iterator for LazyTraceIterator {
     /// * `None` - If program execution has completed.
     ///
     /// # Details
-    /// 
+    ///
     /// The function follows this sequence:
     /// 1. Returns any remaining traces from the previous emulator tick
     /// 2. If buffer `current_traces` is empty, executes another emulator tick
