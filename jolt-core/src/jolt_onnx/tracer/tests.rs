@@ -37,10 +37,10 @@ fn run_perceptron_test(path: &str, size: usize) {
 
 #[test]
 fn test_perceptron() {
-    run_perceptron_test("onnx/perceptron.onnx", 10);
+    run_perceptron_test("onnx/mlp/perceptron.onnx", 10);
 }
 
 #[test]
 fn test_perceptron_2() {
-    run_perceptron_test("onnx/perceptron_2.onnx", 4);
+    run_perceptron_test("onnx/mlp/perceptron_2.onnx", 4);
 }

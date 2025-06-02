@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn test_precompile_proof() {
         let mut rng = test_rng();
-        let mut program = ONNXProgram::new("onnx/perceptron_2.onnx", None);
+        let mut program = ONNXProgram::new("onnx/mlp/perceptron_2.onnx", None);
         let pp = PrecompilePreprocessing::preprocess(&program.decode());
         let input = random_floatvec(&mut rng, 4);
         program.set_input(input);

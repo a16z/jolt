@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_perceptron() {
         test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&ONNXProgram::new(
-            "onnx/perceptron.onnx",
+            "onnx/mlp/perceptron.onnx",
             Some(random_floatvec(&mut test_rng(), 10)),
         ))
     }
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_perceptron_2() {
         test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&ONNXProgram::new(
-            "onnx/perceptron_2.onnx",
+            "onnx/mlp/perceptron_2.onnx",
             Some(random_floatvec(&mut test_rng(), 4)),
         ))
     }
