@@ -352,10 +352,8 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     let input_array = *(input as *const [u32; 16]);
     let state_array = *(state as *const [u32; 8]);
-    let result = tracer::instruction::precompile_sha256::execute_sha256_compression(
-        state_array,
-        input_array,
-    );
+    let result =
+        tracer::instruction::inline_sha256::execute_sha256_compression(state_array, input_array);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
@@ -398,6 +396,6 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
 #[cfg(feature = "host")]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     let input = *(input as *const [u32; 16]);
-    let result = tracer::instruction::precompile_sha256::execute_sha256_compression_initial(input);
+    let result = tracer::instruction::inline_sha256::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }

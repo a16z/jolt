@@ -5,47 +5,57 @@ use crate::declare_riscv_instr;
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::InstructionFormat;
-use crate::instruction::precompile_sha256::{
-    execute_sha256_compression_initial, Sha256SequenceBuilder, NEEDED_REGISTERS,
+use crate::instruction::inline_sha256::{
+    execute_sha256_compression, Sha256SequenceBuilder, NEEDED_REGISTERS,
 };
 use crate::instruction::{
     RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
 };
 
 declare_riscv_instr!(
-    name   = SHA256INIT,
+    name   = SHA256,
     mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
-    match  = 0x0000100b,  // funct7=0x00, funct3=0x1, opcode=0x0B (custom-0)
+    match  = 0x0000000b,  // funct7=0x00, funct3=0x0, opcode=0x0B (custom-0)
     format = FormatR,
     ram    = ()
 );
 
-impl SHA256INIT {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SHA256INIT as RISCVInstruction>::RAMAccess) {
+impl SHA256 {
+    fn exec(&self, cpu: &mut Cpu, _ram_access: &mut <SHA256 as RISCVInstruction>::RAMAccess) {
         // Load 16 input words from memory at rs1
         let mut input = [0u32; 16];
         for (i, word) in input.iter_mut().enumerate() {
             *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
-                .expect("SHA256INIT: Failed to load input word")
+                .expect("SHA256: Failed to load input word")
                 .0;
         }
 
-        // Execute compression with default initial state and store result
-        let result = execute_sha256_compression_initial(input);
+        // Load 8 initial state words from memory at rs2
+        let mut iv = [0u32; 8];
+        for (i, word) in iv.iter_mut().enumerate() {
+            *word = cpu
+                .mmu
+                .load_word(cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64)
+                .expect("SHA256: Failed to load initial state")
+                .0;
+        }
+
+        // Execute compression and store result at rs2
+        let result = execute_sha256_compression(iv, input);
         for (i, &word) in result.iter().enumerate() {
             cpu.mmu
                 .store_word(
-                    cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                    cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64,
                     word,
                 )
-                .expect("SHA256INIT: Failed to store result");
+                .expect("SHA256: Failed to store result");
         }
     }
 }
 
-impl RISCVTrace for SHA256INIT {
+impl RISCVTrace for SHA256 {
     fn trace(&self, cpu: &mut Cpu) {
         let virtual_sequence = self.virtual_sequence();
 
@@ -55,7 +65,7 @@ impl RISCVTrace for SHA256INIT {
     }
 }
 
-impl VirtualInstructionSequence for SHA256INIT {
+impl VirtualInstructionSequence for SHA256 {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];
@@ -67,7 +77,7 @@ impl VirtualInstructionSequence for SHA256INIT {
             vr,
             self.operands.rs1,
             self.operands.rs2,
-            true, // initial - uses BLOCK constants
+            false, // not initial - uses custom IV from rs2
         );
         builder.build()
     }
