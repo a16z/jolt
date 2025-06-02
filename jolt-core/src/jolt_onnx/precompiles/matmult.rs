@@ -138,6 +138,7 @@ where
                 A_rx[j] += F::from_i64(a.data[i * k + j] as i64) * eq_rx[i];
             }
         }
+        // We index B as if it were transposed, i.e., B[i][j] = b.data[j * k + i]
         let mut B_ry = vec![F::zero(); k];
         for i in 0..n {
             for j in 0..k {
