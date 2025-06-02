@@ -153,4 +153,12 @@ mod tests {
             Some(random_floatvec(&mut test_rng(), 4)),
         ))
     }
+
+    #[test]
+    fn test_accuracy() {
+        test_e2e_with::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(&ONNXProgram::new(
+            "onnx/mlp/accuracy.onnx",
+            Some(random_floatvec(&mut test_rng(), 41)),
+        ))
+    }
 }
