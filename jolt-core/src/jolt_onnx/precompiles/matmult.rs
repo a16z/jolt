@@ -1,4 +1,4 @@
-//! A sum-check precompile for matrix multiplication.
+//! A sum-check precompile for matrix multiplication (where the rhs matrix is implicitly transposed).
 //! Used when proving correctness of ONNX operators that do matrix multiplication.
 
 use crate::{
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::sumcheck_engine::BatchableSumcheckInstance;
 
-/// This struct represents a precompile for matrix multiplication.
+/// This struct represents a precompile for matrix multiplication (where we implicitly transpose B).
 /// Used to generate the witness for matrix multiplication in Jolt's ONNX execution.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MatMultPrecompile {
@@ -110,6 +110,9 @@ where
     /// and also compute the input claim C(rx, ry) = A(rx, k) * B(ry, k).
     ///
     /// These A(rx, k) and B(ry, k) evaluations serve as the witness for the matrix multiplication precompile.
+    ///
+    /// # Note: we implicitly transpose the rhs matrix B in the multiplication.
+    ///         This is because the ONNX genneral matmul operator (GEMM) transposes the second matrix.
     pub fn initialize<ProofTranscript>(
         input: &MatMultPrecompile,
         transcript: &mut ProofTranscript,
