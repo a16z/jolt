@@ -13,22 +13,22 @@ use crate::instruction::{
 };
 
 declare_riscv_instr!(
-    name   = SHA256COMPRESSI,
+    name   = SHA256INIT,
     mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
     match  = 0x0000100b,  // funct7=0x00, funct3=0x1, opcode=0x0B (custom-0)
     format = FormatR,
     ram    = ()
 );
 
-impl SHA256COMPRESSI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SHA256COMPRESSI as RISCVInstruction>::RAMAccess) {
+impl SHA256INIT {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SHA256INIT as RISCVInstruction>::RAMAccess) {
         // Load 16 input words from memory at rs1
         let mut input = [0u32; 16];
         for (i, word) in input.iter_mut().enumerate() {
             *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
-                .expect("SHA256COMPRESSI: Failed to load input word")
+                .expect("SHA256INIT: Failed to load input word")
                 .0;
         }
 
@@ -40,12 +40,12 @@ impl SHA256COMPRESSI {
                     cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
                     word,
                 )
-                .expect("SHA256COMPRESSI: Failed to store result");
+                .expect("SHA256INIT: Failed to store result");
         }
     }
 }
 
-impl RISCVTrace for SHA256COMPRESSI {
+impl RISCVTrace for SHA256INIT {
     fn trace(&self, cpu: &mut Cpu) {
         let virtual_sequence = self.virtual_sequence();
 
@@ -55,7 +55,7 @@ impl RISCVTrace for SHA256COMPRESSI {
     }
 }
 
-impl VirtualInstructionSequence for SHA256COMPRESSI {
+impl VirtualInstructionSequence for SHA256INIT {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];

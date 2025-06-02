@@ -13,26 +13,22 @@ use crate::instruction::{
 };
 
 declare_riscv_instr!(
-    name   = SHA256COMPRESS,
+    name   = SHA256,
     mask   = 0xfe00707f,  // Mask for funct7 + funct3 + opcode
     match  = 0x0000000b,  // funct7=0x00, funct3=0x0, opcode=0x0B (custom-0)
     format = FormatR,
     ram    = ()
 );
 
-impl SHA256COMPRESS {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _ram_access: &mut <SHA256COMPRESS as RISCVInstruction>::RAMAccess,
-    ) {
+impl SHA256 {
+    fn exec(&self, cpu: &mut Cpu, _ram_access: &mut <SHA256 as RISCVInstruction>::RAMAccess) {
         // Load 16 input words from memory at rs1
         let mut input = [0u32; 16];
         for (i, word) in input.iter_mut().enumerate() {
             *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs1].wrapping_add((i * 4) as i64) as u64)
-                .expect("SHA256COMPRESS: Failed to load input word")
+                .expect("SHA256: Failed to load input word")
                 .0;
         }
 
@@ -42,7 +38,7 @@ impl SHA256COMPRESS {
             *word = cpu
                 .mmu
                 .load_word(cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64)
-                .expect("SHA256COMPRESS: Failed to load initial state")
+                .expect("SHA256: Failed to load initial state")
                 .0;
         }
 
@@ -54,12 +50,12 @@ impl SHA256COMPRESS {
                     cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64,
                     word,
                 )
-                .expect("SHA256COMPRESS: Failed to store result");
+                .expect("SHA256: Failed to store result");
         }
     }
 }
 
-impl RISCVTrace for SHA256COMPRESS {
+impl RISCVTrace for SHA256 {
     fn trace(&self, cpu: &mut Cpu) {
         let virtual_sequence = self.virtual_sequence();
 
@@ -69,7 +65,7 @@ impl RISCVTrace for SHA256COMPRESS {
     }
 }
 
-impl VirtualInstructionSequence for SHA256COMPRESS {
+impl VirtualInstructionSequence for SHA256 {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used as a scratch space
         let mut vr = [0; NEEDED_REGISTERS];

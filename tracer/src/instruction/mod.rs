@@ -52,8 +52,8 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
-use precompile_sha256::sha256compress::SHA256COMPRESS;
-use precompile_sha256::sha256compressi::SHA256COMPRESSI;
+use precompile_sha256::sha256::SHA256;
+use precompile_sha256::sha256init::SHA256INIT;
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -377,7 +377,7 @@ define_rv32im_enums! {
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // Extension
-        SHA256COMPRESS, SHA256COMPRESSI,
+        SHA256, SHA256INIT,
     ]
 }
 
@@ -572,8 +572,8 @@ impl RV32IMInstruction {
                 let funct7 = (instr >> 25) & 0x7f;
                 if funct7 == 0x00 {
                     match funct3 {
-                        0x0 => Ok(SHA256COMPRESS::new(instr, address, true).into()),
-                        0x1 => Ok(SHA256COMPRESSI::new(instr, address, true).into()),
+                        0x0 => Ok(SHA256::new(instr, address, true).into()),
+                        0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
                         _ => Err("Unknown funct3 for custom SHA256 instruction"),
                     }
                 } else {

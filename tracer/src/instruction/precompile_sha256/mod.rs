@@ -16,8 +16,8 @@ use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
 use crate::instruction::RV32IMInstruction;
 
-pub mod sha256compress;
-pub mod sha256compressi;
+pub mod sha256;
+pub mod sha256init;
 
 /// SHA-256 initial hash values
 pub const BLOCK: [u64; 8] = [
