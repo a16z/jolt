@@ -33,9 +33,9 @@ impl QuantizedONNXModel {
     /// Parse the ONNX model & quantize it from `model_path`.
     /// Given a path output a [`QuantizedONNXModel`] type.
     pub fn parse(model_path: &PathBuf) -> Self {
-        // Use tract to parse the ONNX model and a [`GraphProto`] type.
-        // This is the raw ONNX model type, i.e. it is not optimized.
-        // We will use this raw tract ONNX model type to help parse the model own model type.
+        // Use tract to parse the ONNX model into a [`GraphProto`] type.
+        // This  [`GraphProto`] is the raw ONNX model type, i.e. it is not optimized.
+        // We will use this raw tract ONNX model type to help parse the model into our own model type.
         let graph = computational_graph(model_path);
 
         // Get constant-values of the graph.
