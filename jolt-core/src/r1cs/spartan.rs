@@ -3,6 +3,7 @@ use tracer::instruction::RV32IMCycle;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
+use crate::jolt::vm::JoltCommitments;
 use crate::jolt::vm::JoltProverPreprocessing;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -10,6 +11,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::r1cs::inputs::ALL_R1CS_INPUTS;
+use crate::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -285,25 +287,44 @@ where
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, rx_step);
 
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis),
-        //     rx_step.to_vec(),
-        //     &claimed_witness_evals,
-        //     transcript,
-        // );
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof. Virtual polynomial openings
+        // are proven in some subsequent sumcheck.
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| &input_polys[input.to_index()])
+            .collect();
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+
+        opening_accumulator.append(
+            &committed_polys,
+            DensePolynomial::new(chis),
+            rx_step.to_vec(),
+            &committed_poly_claims,
+            transcript,
+        );
 
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, &shift_sumcheck_r);
 
-        // opening_accumulator.append(
-        //     &flattened_polys_ref,
-        //     DensePolynomial::new(chis2),
-        //     shift_sumcheck_r.to_vec(),
-        //     &shift_sumcheck_witness_evals,
-        //     transcript,
-        // );
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof. Virtual polynomial openings
+        // are proven in some subsequent sumcheck.
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| shift_sumcheck_witness_evals[input.to_index()])
+            .collect();
+        opening_accumulator.append(
+            &committed_polys,
+            DensePolynomial::new(chis2),
+            shift_sumcheck_r.to_vec(),
+            &committed_poly_claims,
+            transcript,
+        );
 
         // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
@@ -327,7 +348,7 @@ where
     pub fn verify<PCS>(
         &self,
         key: &UniformSpartanKey<F>,
-        // commitments: &JoltCommitments<PCS, ProofTranscript>,
+        commitments: &JoltCommitments<F, PCS, ProofTranscript>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
@@ -434,26 +455,34 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        // TODO(moodlezoup): Openings
+        // TODO(moodlezoup): Relies on ordering of commitments
+        let r1cs_input_commitments = &commitments
+            .commitments
+            .iter()
+            .take(COMMITTED_R1CS_INPUTS.len())
+            .collect::<Vec<_>>();
 
-        // let flattened_commitments: Vec<_> = I::flatten()
-        //     .iter()
-        //     .map(|var| var.get_ref(commitments))
-        //     .collect();
+        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| &self.claimed_witness_evals[input.to_index()])
+            .collect();
+        opening_accumulator.append(
+            &r1cs_input_commitments,
+            rx_step.to_vec(),
+            &claims,
+            transcript,
+        );
 
-        // opening_accumulator.append(
-        //     &flattened_commitments,
-        //     rx_step.to_vec(),
-        //     &self.claimed_witness_evals.iter().collect::<Vec<_>>(),
-        //     transcript,
-        // );
-
-        // opening_accumulator.append(
-        //     &flattened_commitments,
-        //     shift_sumcheck_r.to_vec(),
-        //     &self.shift_sumcheck_witness_evals.iter().collect::<Vec<_>>(),
-        //     transcript,
-        // );
+        let claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| &self.shift_sumcheck_witness_evals[input.to_index()])
+            .collect();
+        opening_accumulator.append(
+            &r1cs_input_commitments,
+            shift_sumcheck_r.to_vec(),
+            &claims,
+            transcript,
+        );
 
         Ok(())
     }
