@@ -37,7 +37,7 @@ impl SHA256INIT {
         for (i, &word) in result.iter().enumerate() {
             cpu.mmu
                 .store_word(
-                    cpu.x[self.operands.rs1].wrapping_add(((i + 16) * 4) as i64) as u64,
+                    cpu.x[self.operands.rs2].wrapping_add((i * 4) as i64) as u64,
                     word,
                 )
                 .expect("SHA256INIT: Failed to store result");
