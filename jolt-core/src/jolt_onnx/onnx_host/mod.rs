@@ -2,6 +2,8 @@
 //! It includes functionality to parse ONNX models, quantize them, and generate execution traces.
 //! The ONNX program can be used to run inference on ONNX models and verify the results using Jolt's proof system.
 
+use crate::jolt_onnx::common::onnx_trace::ONNXTraceRow;
+
 use super::{
     common::onnx_trace::JoltONNXDevice,
     tracer::{self, model::QuantizedONNXModel},
@@ -45,7 +47,7 @@ impl ONNXProgram {
         let (raw_trace, io_device) = tracer::trace(&self.model, self.input.as_ref().unwrap());
         let trace = raw_trace
             .iter()
-            .flat_map(|row| row.to_trace_step())
+            .flat_map(ONNXTraceRow::to_trace_step)
             .collect();
         (io_device, trace)
     }
