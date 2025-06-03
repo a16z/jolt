@@ -1,3 +1,5 @@
+//! ReLU instruction for Jolt ONNX
+
 use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
@@ -7,6 +9,7 @@ use ark_std::log2;
 use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 
+/// Represents a ReLU instruction in Jolt ONNX
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ReLUInstruction(pub u64);
 
