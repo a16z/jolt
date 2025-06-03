@@ -314,26 +314,26 @@ impl Sha256SequenceBuilder {
         self.xor(Reg(rd), Reg(ss), rd);
     }
 
-    fn lw(&mut self, rs1: usize, imm: i64, rd: usize) {
+    fn lw(&mut self, rs1: usize, offset: i64, rd: usize) {
         let lw = LW {
             address: self.address,
             operands: FormatLoad {
                 rd,
                 rs1,
-                imm: imm * 4,
+                imm: offset * 4,
             },
             virtual_sequence_remaining: Some(0),
         };
         self.sequence.push(lw.into());
     }
 
-    fn sw(&mut self, rs1: usize, rs2: usize, imm: i64) {
+    fn sw(&mut self, rs1: usize, rs2: usize, offset: i64) {
         let sw = SW {
             address: self.address,
             operands: FormatS {
                 rs1,
                 rs2,
-                imm: imm * 4,
+                imm: offset * 4,
             },
             virtual_sequence_remaining: Some(0),
         };
