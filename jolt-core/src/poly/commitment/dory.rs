@@ -12,11 +12,12 @@ use crate::{
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
+use ark_ec::pairing::PairingOutput;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
-use ark_bn254::{Fq12, Fr};
+use ark_bn254::{Bn254, Fq12, Fr};
 use ark_std::rand::thread_rng;
 use dory::{
     commit,
@@ -146,7 +147,7 @@ pub struct DorySetup {
 /// Commitment structure
 #[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryCommitment {
-    pub commitment: Fq12, // this is GT
+    pub commitment: PairingOutput<Bn254>, // this is GT
 }
 
 /// Proof structure storing the serializable DoryProof data and other data
@@ -173,7 +174,7 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    type Field = F;
+    type Field = Fr;
     type Setup = DorySetup;
     type Commitment = DoryCommitment;
     type Proof = DoryProof<F>;
@@ -189,6 +190,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         // Extract polynomial coefficients
         let field_coeffs = extract_field_coefficients(poly);
@@ -207,11 +209,13 @@ where
         let commitment =
             commit::<ArkBn254Pairing, OptimizedMsmG1>(&coeffs, 0, sigma, &setup.prover_setup);
 
-        DoryCommitment { commitment }
+        DoryCommitment {
+            commitment: PairingOutput(commitment),
+        }
     }
 
     // @TODO: Implement linear combination batching
-    fn batch_commit<U>(polys: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(_polys: &[U], _setup: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
@@ -219,6 +223,7 @@ where
     }
 
     // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
@@ -274,7 +279,6 @@ where
         _opening: &Self::Field, // we use the opening directly from Dory's Proof object.
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        
         // Convert opening point to arkworks Fr
         let point: Vec<Fr> = opening_point
             .iter()
@@ -291,7 +295,7 @@ where
         // Use Dory's verify function with the proof builder
         let verify_result =
             verify::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2, DummyMsm<Fq12>>(
-                commitment.commitment,
+                commitment.commitment.0,
                 proof.evaluation,
                 &point,
                 verifier_builder,
@@ -303,6 +307,20 @@ where
         match verify_result {
             Ok(()) => Ok(()),
             Err(_) => Err(ProofVerifyError::InternalError),
+        }
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: PairingOutput<Bn254> = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.commitment * coeff)
+            .sum();
+        DoryCommitment {
+            commitment: combined_commitment,
         }
     }
 

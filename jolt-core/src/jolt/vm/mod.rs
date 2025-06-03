@@ -2,17 +2,19 @@
 #![allow(dead_code)]
 
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
+use crate::utils::math::Math;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytecode::{BytecodePreprocessing, BytecodeShoutProof};
 use common::jolt_device::MemoryLayout;
 use instruction_lookups::LookupsProof;
 use ram::{RAMPreprocessing, RAMTwistProof};
+use rayon::prelude::*;
 use registers::RegistersTwistProof;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -20,7 +22,6 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
-use strum::EnumCount;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use tracer::JoltDevice;
 
@@ -124,37 +125,19 @@ where
     pub ram: RAMTwistProof<F, ProofTranscript>,
     pub registers: RegistersTwistProof<F, ProofTranscript>,
     pub r1cs: UniformSpartanProof<F, ProofTranscript>,
-    // pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    pub commitments: JoltCommitments<F, PCS, ProofTranscript>,
 }
 
-// impl<F: JoltField> JoltPolynomials<F> {
-//     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-//     pub fn commit<const C: usize, PCS, ProofTranscript>(
-//         &self,
-//         preprocessing: &JoltPreprocessing<C, F, PCS, ProofTranscript>,
-//     ) -> JoltCommitments<PCS, ProofTranscript>
-//     where
-//         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//         ProofTranscript: Transcript,
-//     {
-//         let span = tracing::span!(tracing::Level::INFO, "commit::initialize");
-//         let _guard = span.enter();
-//         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
-//         drop(_guard);
-//         drop(span);
-
-//         let trace_polys = self.read_write_values();
-//         let trace_commitments = PCS::batch_commit(&trace_polys, &preprocessing.generators);
-
-//         commitments
-//             .read_write_values_mut()
-//             .into_iter()
-//             .zip(trace_commitments.into_iter())
-//             .for_each(|(dest, src)| *dest = src);
-
-//         commitments
-//     }
-// }
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltCommitments<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub commitments: Vec<PCS::Commitment>,
+}
 
 pub trait Jolt<const WORD_SIZE: usize, F, PCS, ProofTranscript>
 where
@@ -175,8 +158,6 @@ where
     ) -> JoltVerifierPreprocessing<F, PCS, ProofTranscript> {
         icicle::icicle_init();
 
-        // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
-
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
@@ -189,7 +170,7 @@ where
         .into_iter()
         .max()
         .unwrap();
-        let generators = PCS::setup(max_poly_len);
+        let generators = PCS::setup(max_poly_len.log_2());
 
         JoltVerifierPreprocessing {
             generators,
@@ -260,14 +241,17 @@ where
             trace_length,
         );
 
-        // jolt_commitments
-        //     .read_write_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-        // jolt_commitments
-        //     .init_final_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
+        let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
+            .par_iter()
+            .map(|poly| poly.generate_witness::<F>(&trace))
+            .collect();
+        let commitments: Vec<_> = committed_polys
+            .par_iter()
+            .map(|poly| PCS::commit(poly, &preprocessing.shared.generators))
+            .collect();
+        for commitment in commitments.iter() {
+            transcript.append_serializable(commitment);
+        }
 
         let constraint_builder = Self::Constraints::construct_constraints(padded_trace_length);
         let spartan_key = UniformSpartanProof::<F, ProofTranscript>::setup(
@@ -310,8 +294,8 @@ where
             BytecodeShoutProof::prove(&preprocessing.shared.bytecode, &trace, &mut transcript);
 
         // Batch-prove all openings
-        // let opening_proof =
-        //     opening_accumulator.reduce_and_prove::<PCS>(&preprocessing.generators, &mut transcript);
+        let opening_proof = opening_accumulator
+            .reduce_and_prove::<PCS>(&preprocessing.shared.generators, &mut transcript);
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -320,7 +304,8 @@ where
             ram: ram_proof,
             registers: registers_proof,
             r1cs: r1cs_proof,
-            // opening_proof,
+            opening_proof,
+            commitments: JoltCommitments { commitments },
         };
 
         #[cfg(test)]
@@ -337,7 +322,6 @@ where
     fn verify(
         mut preprocessing: JoltVerifierPreprocessing<F, PCS, ProofTranscript>,
         proof: JoltProof<WORD_SIZE, F, PCS, ProofTranscript>,
-        // commitments: JoltCommitments<PCS, ProofTranscript>,
         program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> Result<(), ProofVerifyError> {
@@ -359,6 +343,10 @@ where
             proof.trace_length,
         );
 
+        for commitment in proof.commitments.commitments.iter() {
+            transcript.append_serializable(commitment);
+        }
+
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
         let r1cs_builder = Self::Constraints::construct_constraints(padded_trace_length);
@@ -366,18 +354,14 @@ where
             UniformSpartanProof::<F, ProofTranscript>::setup(&r1cs_builder, padded_trace_length);
         transcript.append_scalar(&spartan_key.vk_digest);
 
-        // commitments
-        //     .read_write_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-        // commitments
-        //     .init_final_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-
         proof
             .r1cs
-            .verify(&spartan_key, &mut opening_accumulator, &mut transcript)
+            .verify(
+                &spartan_key,
+                &proof.commitments,
+                &mut opening_accumulator,
+                &mut transcript,
+            )
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
         proof
             .instruction_lookups
@@ -399,11 +383,11 @@ where
         )?;
 
         // Batch-verify all openings
-        // opening_accumulator.reduce_and_verify(
-        //     &preprocessing.generators,
-        //     &proof.opening_proof,
-        //     &mut transcript,
-        // )?;
+        opening_accumulator.reduce_and_verify(
+            &preprocessing.generators,
+            &proof.opening_proof,
+            &mut transcript,
+        )?;
 
         Ok(())
     }
