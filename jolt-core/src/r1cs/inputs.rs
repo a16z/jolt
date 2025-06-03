@@ -7,9 +7,9 @@
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::jolt::vm::JoltProverPreprocessing;
+use crate::jolt::witness::CommittedPolynomials;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::utils::transcript::Transcript;
 
 use super::key::UniformSpartanKey;
@@ -38,20 +38,20 @@ pub enum JoltR1CSInputs {
     RamAddress,                // Virtual (RAM raf)
     Rs1Value,                  // Virtual (registers rv)
     Rs2Value,                  // Virtual (registers rv)
-    RdWriteValue,
-    RamReadValue, // Virtual (RAM rv)
-    RamWriteValue,
-    LeftInstructionInput,  // to_lookup_query -> to_instruction_operands
-    RightInstructionInput, // to_lookup_query -> to_instruction_operands
-    LeftLookupOperand,     // Virtual (instruction raf)
-    RightLookupOperand,    // Virtual (instruction raf)
-    Product,               // LeftInstructionOperand * RightInstructionOperand
+    RdWriteValue,              // Virtual (registers wv)
+    RamReadValue,              // Virtual (RAM rv)
+    RamWriteValue,             // Virtual (RAM wv)
+    LeftInstructionInput,      // to_lookup_query -> to_instruction_operands
+    RightInstructionInput,     // to_lookup_query -> to_instruction_operands
+    LeftLookupOperand,         // Virtual (instruction raf)
+    RightLookupOperand,        // Virtual (instruction raf)
+    Product,                   // LeftInstructionOperand * RightInstructionOperand
     WriteLookupOutputToRD,
     WritePCtoRD,
     ShouldBranch,
     NextPC,
-    LookupOutput, // Virtual (instruction rv)
-    OpFlags(CircuitFlags),
+    LookupOutput,          // Virtual (instruction rv)
+    OpFlags(CircuitFlags), // Virtual (bytecode rv)
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
@@ -93,6 +93,18 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdatePC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
+];
+
+/// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
+/// the inputs are virtual polynomials.
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
+    JoltR1CSInputs::LeftInstructionInput,
+    JoltR1CSInputs::RightInstructionInput,
+    JoltR1CSInputs::Product,
+    JoltR1CSInputs::WriteLookupOutputToRD,
+    JoltR1CSInputs::WritePCtoRD,
+    JoltR1CSInputs::ShouldBranch,
+    JoltR1CSInputs::NextPC,
 ];
 
 impl JoltR1CSInputs {
@@ -204,18 +216,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LeftInstructionInput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).0)
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::LeftInstructionInput.generate_witness(trace)
             }
             JoltR1CSInputs::RightInstructionInput => {
-                let coeffs: Vec<i64> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<32>::to_instruction_inputs(cycle).1)
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::RightInstructionInput.generate_witness(trace)
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
@@ -231,37 +235,12 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::Product => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let (left_input, right_input) =
-                            LookupQuery::<32>::to_instruction_inputs(cycle);
-                        left_input * right_input as u64
-                    })
-                    .collect();
-                coeffs.into()
-            }
+            JoltR1CSInputs::Product => CommittedPolynomials::Product.generate_witness(trace),
             JoltR1CSInputs::WriteLookupOutputToRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()
-                            [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.rd_write().0 as u8) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::WriteLookupOutputToRD.generate_witness(trace)
             }
             JoltR1CSInputs::WritePCtoRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                        (cycle.rd_write().0 as u8) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::WritePCtoRD.generate_witness(trace)
             }
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
@@ -270,45 +249,9 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::NextPC => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let is_branch =
-                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        let should_branch =
-                            is_branch && LookupQuery::<32>::to_lookup_output(cycle) != 0;
-                        let instr = cycle.instruction().normalize();
-                        if should_branch {
-                            (instr.address as i64 + instr.operands.imm) as u64
-                        } else {
-                            // JoltR1CSInputs::NextPCJump
-                            let is_jump =
-                                cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                            let do_not_update_pc = cycle.instruction().circuit_flags()
-                                [CircuitFlags::DoNotUpdatePC as usize];
-                            if is_jump {
-                                LookupQuery::<32>::to_lookup_output(cycle)
-                            } else if do_not_update_pc {
-                                instr.address as u64
-                            } else {
-                                instr.address as u64 + 4
-                            }
-                        }
-                    })
-                    .collect();
-                coeffs.into()
-            }
+            JoltR1CSInputs::NextPC => CommittedPolynomials::NextPC.generate_witness(trace),
             JoltR1CSInputs::ShouldBranch => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let is_branch =
-                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        (LookupQuery::<32>::to_lookup_output(cycle) as u8) * is_branch as u8
-                    })
-                    .collect();
-                coeffs.into()
+                CommittedPolynomials::ShouldBranch.generate_witness(trace)
             }
             JoltR1CSInputs::OpFlags(flag) => {
                 // TODO(moodlezoup): Boolean polynomial

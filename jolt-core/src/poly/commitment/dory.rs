@@ -10,7 +10,7 @@ use ark_ec::bn::{G1Prepared, G2Prepared};
 type BnG1Prepared = G1Prepared<ark_bn254::Config>;
 type BnG2Prepared = G2Prepared<ark_bn254::Config>;
 use ark_ec::{
-    pairing::{MillerLoopOutput, Pairing as ArkPairing},
+    pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     CurveGroup,
 };
 use ark_ff::{Field, One, PrimeField, UniformRand};
@@ -111,6 +111,18 @@ where
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGTWrapper<P: ArkPairing>(pub P::TargetField);
+
+impl<P: ArkPairing> From<PairingOutput<P>> for JoltGTWrapper<P> {
+    fn from(value: PairingOutput<P>) -> Self {
+        Self(value.0)
+    }
+}
+
+impl<P: ArkPairing> Into<PairingOutput<P>> for JoltGTWrapper<P> {
+    fn into(self) -> PairingOutput<P> {
+        PairingOutput(self.0)
+    }
+}
 
 impl<P> DoryGroup for JoltGTWrapper<P>
 where
@@ -791,6 +803,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
@@ -806,6 +819,8 @@ where
         todo!("Batch commit not yet implemented for Dory")
     }
 
+    // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
@@ -878,6 +893,21 @@ where
             Ok(()) => Ok(()),
             Err(e) => Err(ProofVerifyError::DoryError(format!("{:?}", e))),
         }
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: PairingOutput<_> = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| {
+                let g: PairingOutput<_> = commitment.0.clone().into();
+                g * coeff
+            })
+            .sum();
+        DoryCommitment(JoltGTWrapper::from(combined_commitment))
     }
 
     fn protocol_name() -> &'static [u8] {
