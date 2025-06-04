@@ -179,11 +179,7 @@ impl QuantizedONNXModel {
 
                 Operator::Relu => {
                     let a = io_map.get(&instr.inputs[0]).unwrap();
-                    let relu_data = a
-                        .data
-                        .iter()
-                        .map(|&x| if x < 0 { 0 } else { x })
-                        .collect_vec();
+                    let relu_data = a.data.iter().map(|&x| x.max(0)).collect_vec();
                     let output_tensor = QuantizedTensor {
                         shape: a.shape.clone(),
                         data: relu_data,

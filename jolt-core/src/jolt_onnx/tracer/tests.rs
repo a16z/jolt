@@ -38,6 +38,12 @@ fn run_perceptron_test(path: &str, size: usize) {
 }
 
 #[test]
+fn test_1l_conv() {
+    let path = PathBuf::from("onnx/conv/1l_conv.onnx");
+    let mut model = QuantizedONNXModel::parse(&path);
+}
+
+#[test]
 fn test_perceptron() {
     run_perceptron_test("onnx/mlp/perceptron.onnx", 10);
 }
