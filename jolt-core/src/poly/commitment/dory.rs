@@ -1,11 +1,4 @@
 //! Implements the Jolt CommitmentScheme trait for Dory as a light wrapper
-//! This is (currently) coupled to the use of arkworks bn254
-//! That is, the underlying wrappers expect Fr, G1, G2 from arkworks -- Undefined Behavior otherwise.
-//! This can be changed in the future with some NewType refactoring.
-//!
-//! TODOs:
-//! 1. think about  Fr <> poly coefficient optimizations
-//! 2. batching (batching here means multiple poly evals over single point)
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
@@ -13,12 +6,14 @@ use crate::{
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::rand::RngCore;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 use ark_bn254::{Fq12, Fr};
 use ark_std::rand::thread_rng;
 use dory::{
+    arithmetic::Field,
     commit,
     curve::{ArkBn254Pairing, DummyMsm, OptimizedMsmG1, OptimizedMsmG2},
     evaluate, setup,
@@ -26,73 +21,123 @@ use dory::{
     verify, DoryProof as DoryProofData, DoryProofBuilder, ProverSetup, VerifierSetup,
 };
 
-/// Newtype wrapper adapting Jolt Transcript to Dory Transcript
-///
-/// # Safety Requirements
-///
-/// This implementation uses unsafe transmutes to convert `&[u8]` to `&'static [u8]`.
-/// @TODO(markosg04): better solution than unsafe usage?
-/// @TODO(markosg04): We also don't need labels appended, but for now it doesn't hurt.
-/// This is only safe if:
-/// 1. All labels passed to this transcript outlive the transcript itself
-/// 2. The transcript is not used after the labels are deallocated
-/// 3. The labels are typically string literals or other actually-static data
-///
-/// Using this with dynamically allocated labels is UNDEFINED BEHAVIOR.
-
-#[derive(Clone)]
-pub struct JoltToDoryTranscript<T: Transcript>(pub T);
-
-impl<T: Transcript> JoltToDoryTranscript<T> {
-    pub fn new(transcript: T) -> Self {
-        Self(transcript)
+/// Newtype wrapper that adapts any JoltField to Dory's Field trait
+#[derive(Clone, Copy, PartialEq, Eq, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltToDoryField<F: JoltField>(pub F);
+impl<F: JoltField> JoltToDoryField<F> {
+    pub fn new(value: F) -> Self {
+        Self(value)
     }
 
-    /// # Safety
-    /// The caller must ensure that `label` outlives this transcript
-    unsafe fn transmute_label(label: &[u8]) -> &'static [u8] {
-        std::mem::transmute(label)
+    pub fn inner(&self) -> &F {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> F {
+        self.0
     }
 }
 
-impl<T: Transcript> DoryTranscript for JoltToDoryTranscript<T> {
+impl<F: JoltField> Field for JoltToDoryField<F> {
+    fn zero() -> Self {
+        JoltToDoryField(F::zero())
+    }
+
+    fn one() -> Self {
+        JoltToDoryField(F::one())
+    }
+
+    fn add(&self, rhs: &Self) -> Self {
+        JoltToDoryField(self.0 + rhs.0)
+    }
+
+    fn sub(&self, rhs: &Self) -> Self {
+        JoltToDoryField(self.0 - rhs.0)
+    }
+
+    fn mul(&self, rhs: &Self) -> Self {
+        JoltToDoryField(self.0 * rhs.0)
+    }
+
+    fn inv(&self) -> Option<Self> {
+        self.0.inverse().map(JoltToDoryField)
+    }
+
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        JoltToDoryField(F::random(rng))
+    }
+}
+
+// Helper functions to convert collections
+impl<F: JoltField> JoltToDoryField<F> {
+    /// Convert a slice of JoltField elements to wrapped elements
+    pub fn wrap_slice(slice: &[F]) -> Vec<Self> {
+        slice.iter().copied().map(Self).collect()
+    }
+
+    /// Convert a slice of wrapped elements back to JoltField elements
+    pub fn unwrap_slice(slice: &[Self]) -> Vec<F> {
+        slice.iter().map(|w| w.0).collect()
+    }
+}
+
+
+/// Newtype wrapper adapting Jolt Transcript to Dory Transcript
+/// We use this Option mut ref thing so that we can avoid cloning in Prove and Verify.
+#[derive(Default)]
+pub struct JoltToDoryTranscriptRef<'a, T: Transcript> {
+    transcript: Option<&'a mut T>,
+}
+
+impl<'a, T: Transcript> JoltToDoryTranscriptRef<'a, T> {
+    pub fn new(transcript: &'a mut T) -> Self {
+        JoltToDoryTranscriptRef { transcript: Some(transcript) }
+    }
+}
+
+impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, T> {
     type Scalar = Fr;
 
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-        let label_str = unsafe { Self::transmute_label(label) };
-        self.0.append_message(label_str);
-        self.0.append_bytes(bytes);
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
+        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
+        transcript.append_message(label_str);
+        transcript.append_bytes(bytes);
     }
 
     fn append_field(&mut self, label: &[u8], x: &Self::Scalar) {
-        let label_str = unsafe { Self::transmute_label(label) };
-        self.0.append_message(label_str);
-        self.0.append_serializable(x);
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
+        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
+        transcript.append_message(label_str);
+        transcript.append_serializable(x);
     }
 
     fn append_group<G: CanonicalSerialize>(&mut self, label: &[u8], g: &G) {
-        let label_str = unsafe { Self::transmute_label(label) };
-        self.0.append_message(label_str);
-        self.0.append_serializable(g);
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
+        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
+        transcript.append_message(label_str);
+        transcript.append_serializable(g);
     }
 
     fn append_serde<S: serde::Serialize>(&mut self, label: &[u8], s: &S) {
-        let label_str = unsafe { Self::transmute_label(label) };
-        self.0.append_message(label_str);
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
+        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
+        transcript.append_message(label_str);
         let bytes = postcard::to_allocvec(s).unwrap_or_default();
-        self.0.append_bytes(&bytes);
+        transcript.append_bytes(&bytes);
     }
 
     fn challenge_scalar(&mut self, label: &[u8]) -> Self::Scalar {
-        let label_str = unsafe { Self::transmute_label(label) };
-        self.0.append_message(label_str);
-        self.0.challenge_scalar::<Fr>()
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
+        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
+        transcript.append_message(label_str);
+        transcript.challenge_scalar::<Fr>()
     }
 
     fn reset(&mut self, domain_label: &[u8]) {
-        let label_str = unsafe { Self::transmute_label(domain_label) };
-        self.0 = T::new(label_str);
-    }
+        let _ = domain_label;
+        panic!("We do not want to ever reset JoltToDoryTranscript.")
+        }
 }
 
 // Helper function to convert multilinear polynomial to field coefficients
@@ -179,13 +224,14 @@ where
     type Proof = DoryProof<F>;
     type BatchedProof = DoryBatchedProof<F>;
 
-    fn setup(max_log_n: usize) -> Self::Setup {
-        let (prover_setup, verifier_setup) = setup::<ArkBn254Pairing, _>(thread_rng(), max_log_n);
+    // @TODO: we use `max_num_vars`, but others might not. We want other PCS to use this instead of `max_len`.
+    fn setup(max_num_vars: usize) -> Self::Setup {
+        let (prover_setup, verifier_setup) = setup::<ArkBn254Pairing, _>(thread_rng(), max_num_vars);
 
         DorySetup {
             prover_setup,
             verifier_setup,
-            max_log_n,
+            max_log_n: max_num_vars,
         }
     }
 
@@ -219,11 +265,11 @@ where
     }
 
     // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
-    fn prove(
+    fn prove<'a>(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
-        transcript: &mut ProofTranscript,
+        transcript: &'a mut ProofTranscript,
     ) -> Self::Proof {
         // extract as JoltField transmutable to arkworks Fr
         let field_coeffs = extract_field_coefficients(poly);
@@ -243,7 +289,7 @@ where
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
 
-        let dory_transcript_prover = JoltToDoryTranscript::new(transcript.clone());
+        let dory_transcript_prover = JoltToDoryTranscriptRef::new(transcript);
 
         let (evaluation, proof_builder) =
             evaluate::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2>(
@@ -266,15 +312,14 @@ where
         }
     }
 
-    fn verify(
+    fn verify<'a>(
         proof: &Self::Proof,
         setup: &Self::Setup,
-        transcript: &mut ProofTranscript,
+        transcript: &'a mut ProofTranscript,
         opening_point: &[Self::Field],
         _opening: &Self::Field, // we use the opening directly from Dory's Proof object.
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        
         // Convert opening point to arkworks Fr
         let point: Vec<Fr> = opening_point
             .iter()
@@ -282,11 +327,11 @@ where
             .collect();
 
         // Create JoltToDoryTranscript wrapper around the provided transcript
-        let dory_transcript = JoltToDoryTranscript::new(transcript.clone());
+        let dory_transcript = JoltToDoryTranscriptRef::new(transcript);
 
         // Create a proof builder from the DoryProof
-        let verifier_builder =
-            DoryProofBuilder::from_proof(proof.dory_proof_data.clone(), dory_transcript.clone());
+        let verifier_proof_builder =
+            DoryProofBuilder::from_proof_no_transcript(proof.dory_proof_data.clone());
 
         // Use Dory's verify function with the proof builder
         let verify_result =
@@ -294,7 +339,7 @@ where
                 commitment.commitment,
                 proof.evaluation,
                 &point,
-                verifier_builder,
+                verifier_proof_builder,
                 proof.sigma,
                 &setup.verifier_setup,
                 dory_transcript,
@@ -302,7 +347,7 @@ where
 
         match verify_result {
             Ok(()) => Ok(()),
-            Err(_) => Err(ProofVerifyError::InternalError),
+            Err(_) => Err(ProofVerifyError::InvalidOpeningProof),
         }
     }
 
@@ -332,8 +377,8 @@ mod tests {
         use std::time::Instant;
 
         // Create a random polynomial and other related preliminaries
-        let max_log_n = 22; // This will support polynomials up to 2^22 coefficients
-        let num_vars = 22;
+        let max_log_n = 18; // This will support polynomials up to 2^18 coefficients
+        let num_vars = 18;
         let num_coeffs = 1 << num_vars;
         let sigma = (num_vars + 1) / 2;
 
@@ -353,7 +398,7 @@ mod tests {
         // Setup timing
         let setup_start = Instant::now();
 
-        // the commitment key is actually size sqrt(max_log_n) = 11 here
+        // the commitment key is actually size sqrt(max_log_n) = 9 here
         let setup = DoryCommitmentScheme::<Fr, KeccakTranscript>::setup(max_log_n);
         let setup_time = setup_start.elapsed();
         println!("Setup time: {:?}", setup_time);
