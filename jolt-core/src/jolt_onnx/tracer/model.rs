@@ -5,6 +5,7 @@ use super::trace::Tracer;
 use crate::jolt_onnx::common::onnx_trace::{ONNXInstruction, Operator};
 use crate::jolt_onnx::utils::create_tensor;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::{path::PathBuf, str::FromStr};
@@ -17,7 +18,7 @@ use tract_onnx::{
 
 /// Represents a topologically-sorted ONNX model, i.e. we store the operators in the order they are executed.
 /// We also store the initializers of the model, which are the constant values used in the model.
-#[derive(Debug)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QuantizedONNXModel {
     /// Stores the instructions of the model, i.e. the operators and their attributes.
     pub instrs: Vec<ONNXInstruction>,
@@ -26,7 +27,7 @@ pub struct QuantizedONNXModel {
     /// Helps track the i/o shapes of the model layers.
     input_shape: Vec<usize>,
     /// Captures the execution trace of the model
-    pub tracer: Tracer,
+    pub tracer: Tracer, // TODO: probably should not be part of the model.
 }
 
 impl QuantizedONNXModel {
@@ -236,7 +237,7 @@ impl FromStr for Operator {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
 pub struct ONNXInitializerMap(HashMap<String, QuantizedTensor>);
 

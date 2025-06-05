@@ -41,6 +41,7 @@ fn run_perceptron_test(path: &str, size: usize) {
 fn test_1l_conv() {
     let path = PathBuf::from("onnx/conv/1l_conv.onnx");
     let mut model = QuantizedONNXModel::parse(&path);
+    // model.execute_quantized(input)
 }
 
 #[test]
