@@ -119,11 +119,12 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        /* Sumcheck 1: Outer sumcheck */
+        /* Sumcheck 1: Outer sumcheck 
+           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+           Only uses uniform constraints, making A, B, C block-diagonal with blocks A_small, B_small, C_small
+        */
 
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        // For the first sumcheck, we only use uniform constraints (no cross-step constraints)
-        // This makes A block-diagonal with blocks being A_small
         let uniform_constraints_only_padded = constraint_builder.uniform_builder.constraints.len().next_power_of_two();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
@@ -137,8 +138,6 @@ where
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
-        // claims from the end of sum-check
-        // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) = (
             outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
@@ -146,12 +145,9 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-            RLC of claims Az, Bz, Cz
-            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                                + A_shift(..) * z_shift(..)
-            and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
-            - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-            - z_shift(y_var || rx_step) = \sum_t z(y_var || t) * eq_plus_one(rx_step, t)
+           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz = 
+                   \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
+           Uses only uniform constraints (A_small, B_small, C_small)
         */
 
         let num_cycles = key.num_steps;
@@ -166,17 +162,14 @@ where
 
         let (eq_r_cycle, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
-        /* Compute the two polynomials provided as input to the second sumcheck:
-           - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
-           - poly_z: z(y_var || rx_step), z_shift(..)
-        */
-
+        // Evaluate A_small, B_small, C_small combined with RLC at point r_var
         let poly_abc_small =
             DensePolynomial::new(key.evaluate_small_matrix_rlc(r_var, inner_sumcheck_RLC));
 
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
 
+        // Bind witness polynomials z at point r_cycle
         let mut bind_z = vec![F::zero(); num_vars_uniform];
 
         input_polys
@@ -308,7 +301,6 @@ where
         //     transcript,
         // );
 
-        // Outer sumcheck claims: [A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],
             outer_sumcheck_claims[1],
@@ -341,6 +333,7 @@ where
         let num_rounds_x = key.num_rows_total().log_2();
 
         /* Sumcheck 1: Outer sumcheck
+           Verifies: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
          */
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
 
@@ -369,10 +362,8 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-           - claim is an RLC of claims_Az, Bz, Cz
-           where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                               + A_shift(..) * z_shift(..)
-           - verifying it involves computing each term with randomness ry_var
+           Verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz = 
+                    (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
         */
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
@@ -393,8 +384,7 @@ where
         let eval_z =
             key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
-        // For the verifier, we need to evaluate A(rx_constr, ry_var), B(rx_constr, ry_var), C(rx_constr, ry_var)
-        // Since we removed cross-step constraints, we only evaluate the uniform part
+        // Evaluate uniform matrices A_small, B_small, C_small at point (rx_constr, ry_var)
         let eval_a = key.evaluate_uniform_a_at_point(rx_constr, &ry_var);
         let eval_b = key.evaluate_uniform_b_at_point(rx_constr, &ry_var);
         let eval_c = key.evaluate_uniform_c_at_point(rx_constr, &ry_var);
