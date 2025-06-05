@@ -431,7 +431,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         num_rounds: usize,
         padded_num_constraints: usize,
         uniform_constraints: &[Constraint],
-        cross_step_constraints: &[OffsetEqConstraint],
         flattened_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -445,7 +444,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
                 padded_num_constraints,
                 uniform_constraints,
-                cross_step_constraints,
                 flattened_polys,
                 tau,
             );
