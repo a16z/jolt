@@ -192,7 +192,7 @@ impl QuantizedONNXModel {
                     io_map.insert(instr.outputs[0].to_string(), output_tensor);
                 }
                 Operator::Conv => {
-                    todo!()
+                    println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
                 }
             }
             self.tracer.capture_post_state(&io_map);
