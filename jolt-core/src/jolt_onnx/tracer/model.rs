@@ -67,6 +67,8 @@ impl QuantizedONNXModel {
     pub fn execute_quantized(&mut self, input: &[f32]) -> QuantizedTensor {
         // Stores all input and output tensors of the model. Each tensor has a unique name that we can map its values to.
         let mut io_map = HashMap::<String, QuantizedTensor>::new();
+
+        // TODO: Allow higher rank inputs
         let input = QuantizedTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
         io_map.insert(
             "input".to_string(), // TODO: Make this more robust (I do not think it is guaranteed that the input will be named "input")
