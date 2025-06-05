@@ -357,7 +357,7 @@ where
             + inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + inner_sumcheck_RLC.square() * self.outer_sumcheck_claims.2;
 
-        let num_rounds_inner_sumcheck = (2 * key.num_vars_uniform_padded()).log_2() + 1; // +1 for shift evals
+        let num_rounds_inner_sumcheck = (2 * key.num_vars_uniform_padded()).log_2();
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
@@ -367,28 +367,28 @@ where
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
-        let r_is_cross_step = inner_sumcheck_r[0];
-        let ry_var = inner_sumcheck_r[1..].to_vec();
+        let ry_var = inner_sumcheck_r.to_vec();
         let eval_z =
             key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
-        let (eval_a, eval_b, eval_c) =
-            key.evaluate_matrix_mle_full(rx_constr, &ry_var, &r_is_cross_step);
+        // For the verifier, we need to evaluate A(rx_constr, ry_var), B(rx_constr, ry_var), C(rx_constr, ry_var)
+        // Since we removed cross-step constraints, we only evaluate the uniform part
+        let eval_a = key.evaluate_uniform_a_at_point(rx_constr, &ry_var);
+        let eval_b = key.evaluate_uniform_b_at_point(rx_constr, &ry_var);
+        let eval_c = key.evaluate_uniform_c_at_point(rx_constr, &ry_var);
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;
-        let right_expected =
-            (F::one() - r_is_cross_step) * eval_z + r_is_cross_step * self.shift_sumcheck_claim;
 
-        let claim_inner_final_expected = left_expected * right_expected;
+        let claim_inner_final_expected = left_expected * eval_z;
         if claim_inner_final != claim_inner_final_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        /* Sumcheck 3: Shift sumcheck
-            - claim = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
-            - verifying it involves checking that claim = z(ry_var || r_t) * eq_plus_one(rx_step, r_t)
-            where r_t = shift_sumcheck_r
+        /* Sumcheck 3: PC Next sumcheck
+            - claim = pc_next(r_cycle) = \sum_j pc(j) * eq_plus_one(r_cycle, j)
+            - verifying it involves checking that claim = pc(r_j) * eq_plus_one(r_cycle, r_j)
+            where r_j = shift_sumcheck_r
         */
 
         let num_rounds_shift_sumcheck = num_steps_bits;
@@ -402,14 +402,13 @@ where
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        let eval_z_shift_sumcheck = key.evaluate_z_mle_with_segment_evals(
-            &self.shift_sumcheck_witness_evals,
-            &ry_var,
-            false,
-        );
+        // Extract PC evaluation from shift_sumcheck_witness_evals
+        // PC is at index 1 (RealInstructionAddress)
+        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];
+        
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
-        let claim_shift_sumcheck_expected = eval_z_shift_sumcheck * eq_plus_one_shift_sumcheck;
+        let claim_shift_sumcheck_expected = eval_pc_at_shift_r * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
