@@ -191,11 +191,14 @@ impl<F: JoltField> UniformSpartanKey<F> {
         );
 
         let eq_rx_constr = EqPolynomial::evals(r_constr);
-        let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
+        let num_vars_padded = self.uniform_r1cs.num_vars.next_power_of_two();
+        // The constant column is at position num_vars (within the padded allocation)
+        let constant_column = self.uniform_r1cs.num_vars;
 
         // Helper function to evaluate a single small matrix
         let evaluate_small_matrix = |constraints: &SparseConstraints<F>| -> Vec<F> {
-            let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two());
+            // Allocate vector with power-of-2 size
+            let mut evals = unsafe_allocate_zero_vec(num_vars_padded);
             
             // Evaluate non-constant terms
             for (row, col, val) in constraints.vars.iter() {
@@ -311,28 +314,27 @@ impl<F: JoltField> UniformSpartanKey<F> {
         with_const: bool,
     ) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
-        assert_eq!(r.len(), self.num_vars_uniform_padded().log_2() + 1);
+        assert_eq!(r.len(), self.num_vars_uniform_padded().log_2());
 
         // Variables vector is [vars, ..., 1, ...] where ... denotes padding to power of 2
         let num_vars = self.num_vars_uniform_padded();
         let var_bits = num_vars.log_2();
-        let var_and_const_bits = var_bits + 1;
 
-        let r_const = r[0];
-        let r_var = &r[1..var_bits + 1];
-
-        let eq_ry_var = EqPolynomial::evals(r_var);
+        let eq_ry_var = EqPolynomial::evals(r);
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();
 
-        let eq_const = EqPolynomial::new(r[..var_and_const_bits].to_vec()).evaluate(
-            &index_to_field_bitvector(1 << (var_and_const_bits - 1), var_and_const_bits),
-        );
+        // Evaluate at the constant position if it exists within the padded space
+        let const_eval = if self.uniform_r1cs.num_vars < num_vars && with_const {
+            let const_position_bits = index_to_field_bitvector(self.uniform_r1cs.num_vars as u64, var_bits);
+            let eq_const = EqPolynomial::new(r.to_vec()).evaluate(&const_position_bits);
+            eq_const
+        } else {
+            F::zero()
+        };
 
-        let const_coeff = if with_const { F::one() } else { F::zero() };
-
-        ((F::one() - r_const) * eval_variables) + eq_const * const_coeff
+        eval_variables + const_eval
     }
 
     /// (Verifier) Evaluates uniform and cross-step matrix MLEs with all variables fixed.
@@ -482,7 +484,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         }
         
         // Evaluate constant terms
-        let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
+        let constant_column = self.uniform_r1cs.num_vars;
         let const_col_bits = index_to_field_bitvector(constant_column as u64, ry_var.len());
         let eq_ry_const = eq_ry_var.evaluate(&const_col_bits);
         
