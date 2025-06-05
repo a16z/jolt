@@ -52,6 +52,8 @@ use sw::SW;
 use xor::XOR;
 use xori::XORI;
 
+use inline_sha256::sha256::SHA256;
+use inline_sha256::sha256init::SHA256INIT;
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -64,6 +66,7 @@ use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2i::VirtualPow2I;
+use virtual_rotri::VirtualROTRI;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sra::VirtualSRA;
@@ -94,6 +97,7 @@ pub mod div;
 pub mod divu;
 pub mod ecall;
 pub mod fence;
+pub mod inline_sha256;
 pub mod jal;
 pub mod jalr;
 pub mod lb;
@@ -136,6 +140,7 @@ pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
+pub mod virtual_rotri;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
@@ -345,6 +350,16 @@ macro_rules! define_rv32im_enums {
                     )*
                 }
             }
+
+            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<usize>) {
+                match self {
+                    RV32IMInstruction::NoOp => (),
+                    RV32IMInstruction::UNIMPL => (),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
+                    )*
+                }
+            }
         }
     };
 }
@@ -358,9 +373,11 @@ define_rv32im_enums! {
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
-        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        // Extension
+        SHA256, SHA256INIT,
     ]
 }
 
@@ -544,9 +561,29 @@ impl RV32IMInstruction {
             0b1110011 => {
                 // For now this only (potentially) maps to ECALL.
                 if instr == ECALL::MATCH {
-                    return Ok(ECALL::new(instr, address, true).into());
+                    Ok(ECALL::new(instr, address, true).into())
                 } else {
-                    return Err("Unsupported SYSTEM instruction");
+                    Err("Unsupported SYSTEM instruction")
+                }
+            }
+            // 0x0B is reserved for RISC-V extension
+            // In attempt to standardize this space for precompiles and inlines,
+            // each new type of operation should be placed under different funct7,
+            // while funct3 should hold all necessary instructions for that operation.
+            // funct7:
+            // - 0x00: SHA256
+            0b0001011 => {
+                // Custom-0 opcode: SHA256 compression instructions
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                if funct7 == 0x00 {
+                    match funct3 {
+                        0x0 => Ok(SHA256::new(instr, address, true).into()),
+                        0x1 => Ok(SHA256INIT::new(instr, address, true).into()),
+                        _ => Err("Unknown funct3 for custom SHA256 instruction"),
+                    }
+                } else {
+                    Err("Unknown funct7 for custom-0 opcode")
                 }
             }
             _ => Err("Unknown opcode"),

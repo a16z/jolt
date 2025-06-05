@@ -163,7 +163,7 @@ define_rv32im_trait_impls! {
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualROTRI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
     ]
 }
@@ -207,6 +207,7 @@ pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
+pub mod virtual_rotri;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sra;
