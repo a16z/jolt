@@ -111,11 +111,11 @@ impl QuantizedONNXModel {
 
     /// Execute the model with quantization on a given input
     pub fn execute_quantized(&mut self, input: &[f32]) -> QuantizedTensor {
-        //
+        // Stores all input and output tensors of the model. Each tensor has a unique name that we can map its values to.
         let mut io_map = HashMap::<String, QuantizedTensor>::new();
         let input = QuantizedTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
         io_map.insert(
-            "input".to_string(), // TODO: Make this more robust
+            "input".to_string(), // TODO: Make this more robust (I do not think it is guaranteed that the input will be named "input")
             input.clone(),
         );
         for (key, value) in self.initializer_map.iter() {
@@ -156,7 +156,6 @@ impl QuantizedONNXModel {
                                 let b_val = b.data[j * k + t] as i32;
                                 acc += a_val * b_val;
                             }
-
                             let bias = if beta != 0 {
                                 beta * c.data[j] as i32
                             } else {
@@ -192,7 +191,9 @@ impl QuantizedONNXModel {
                     io_map.insert(instr.outputs[0].to_string(), output_tensor);
                 }
                 Operator::Conv => {
+                    let input = io_map.get(&instr.inputs[0]).unwrap();
                     println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
+                    io_map.insert(instr.outputs[0].to_string(), input.clone());
                 }
             }
             self.tracer.capture_post_state(&io_map);
