@@ -223,7 +223,8 @@ where
         drop_in_background_thread(polys);
 
         /*  Sumcheck 3: Shift sumcheck with RLC
-            sumcheck claim is: (pc_next + c * virtual_sequence)(r_cycle) = \sum_j (pc(j) + c * virtual_seq(j)) * eq_plus_one(r_cycle, j)
+            sumcheck claim is: VirtualInstructionAddress(r_cycle) + r * PCNEXT(r_cycle) = 
+                              \sum_t (VirtualInstructionAddress(t) + 1 + r * PC(t)) * eq_plus_one(r_cycle, t)
         */
         let span = span!(Level::INFO, "shift_sumcheck_rlc");
         let _guard = span.enter();
@@ -235,9 +236,16 @@ where
         let virtual_seq_poly = &input_polys[0]; // VirtualInstructionAddress is at index 0
         let pc_poly = &input_polys[1];          // RealInstructionAddress is at index 1
         
-        // Create RLC polynomial: pc + shift_rlc_coeff * virtual_seq
+        // Create polynomial for the sumcheck: (VirtualInstructionAddress(t) + 1 + r * PC(t))
+        // We need to add 1 to each element of virtual_seq
+        let virtual_seq_plus_one: Vec<F> = (0..virtual_seq_poly.len())
+            .map(|i| virtual_seq_poly.get_coeff(i) + F::one())
+            .collect();
+        let virtual_seq_plus_one_poly = MultilinearPolynomial::from(virtual_seq_plus_one);
+        
+        // Create RLC polynomial: (virtual_seq + 1) + shift_rlc_coeff * pc
         let rlc_poly = MultilinearPolynomial::linear_combination(
-            &[pc_poly, virtual_seq_poly],
+            &[&virtual_seq_plus_one_poly, pc_poly],
             &[F::one(), shift_rlc_coeff],
         );
         
@@ -400,9 +408,10 @@ where
         }
 
         /* Sumcheck 3: Shift sumcheck with RLC
-            - claim = (pc_next + c * virtual_sequence)(r_cycle) = \sum_j (pc(j) + c * virtual_seq(j)) * eq_plus_one(r_cycle, j)
-            - verifying it involves checking that claim = (pc(r_j) + c * virtual_seq(r_j)) * eq_plus_one(r_cycle, r_j)
-            where r_j = shift_sumcheck_r
+            - claim = VirtualInstructionAddress(r_cycle) + r * PCNEXT(r_cycle) = 
+                     \sum_t (VirtualInstructionAddress(t) + 1 + r * PC(t)) * eq_plus_one(r_cycle, t)
+            - verifying it involves checking that claim = (virtual_seq(r_t) + 1 + r * pc(r_t)) * eq_plus_one(r_cycle, r_t)
+            where r_t = shift_sumcheck_r
         */
 
         // Get the same RLC coefficient from transcript
@@ -423,8 +432,8 @@ where
         let eval_virtual_seq_at_shift_r = self.shift_sumcheck_witness_evals[0]; // VirtualInstructionAddress
         let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];         // RealInstructionAddress
         
-        // Compute RLC evaluation: pc(r_j) + c * virtual_seq(r_j)
-        let eval_rlc_at_shift_r = eval_pc_at_shift_r + shift_rlc_coeff * eval_virtual_seq_at_shift_r;
+        // Compute RLC evaluation: (virtual_seq(r_t) + 1) + r * pc(r_t)
+        let eval_rlc_at_shift_r = (eval_virtual_seq_at_shift_r + F::one()) + shift_rlc_coeff * eval_pc_at_shift_r;
         
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
