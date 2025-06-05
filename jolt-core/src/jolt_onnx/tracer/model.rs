@@ -96,7 +96,26 @@ impl QuantizedONNXModel {
                     input_shape.clone() // Output shape is same as input shape
                 }
                 Operator::Conv => {
-                    todo!()
+                    // Conv: Y = conv(X, W) + B
+                    // X: [N, C, H, W], W: [M, C, KH, KW], B: [M]
+                    // Output shape is [N, M, H', W'] where H' and W' depend on the stride and padding.
+                    // For simplicity, we assume stride=1 and padding=0.
+                    let x_shape = input_shape.clone();
+                    let w_shape = self
+                        .initializer_map
+                        .get(&instr.inputs[1])
+                        .unwrap()
+                        .shape
+                        .clone();
+                    let n = x_shape[0]; // Batch size
+                    let m = w_shape[0]; // Number of output channels
+                    let h = x_shape[2]; // Input height
+                    let w = x_shape[3]; // Input width
+                    let kh = w_shape[2]; // Kernel height
+                    let kw = w_shape[3]; // Kernel width
+                    let h_out = h - kh + 1; // Output height (assuming stride=1, padding=0)
+                    let w_out = w - kw + 1; // Output width (assuming stride=1, padding=0)
+                    vec![n, m, h_out, w_out] // Output shape is [N, M, H', W']
                 }
             };
 
@@ -192,6 +211,12 @@ impl QuantizedONNXModel {
                 }
                 Operator::Conv => {
                     let input = io_map.get(&instr.inputs[0]).unwrap();
+                    let weight = io_map.get(&instr.inputs[1]).unwrap();
+                    let bias = io_map.get(&instr.inputs[2]).unwrap();
+
+                    println!("input: {input:#?}");
+                    println!("weight: {weight:#?}");
+                    println!("bias: {bias:#?}");
                     println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
                     io_map.insert(instr.outputs[0].to_string(), input.clone());
                 }
