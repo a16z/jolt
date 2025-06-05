@@ -15,7 +15,7 @@ pub struct FormatU {
     pub imm: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatU {
     pub rd: (u64, u64), // (old_value, new_value)
 }
