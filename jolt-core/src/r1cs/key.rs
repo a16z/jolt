@@ -447,6 +447,53 @@ impl<F: JoltField> UniformSpartanKey<F> {
         (a_mle, b_mle, c_mle)
     }
 
+    /// Evaluate uniform matrix A at a specific point (rx_constr, ry_var)
+    pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+        self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.a, rx_constr, ry_var)
+    }
+
+    /// Evaluate uniform matrix B at a specific point (rx_constr, ry_var)
+    pub fn evaluate_uniform_b_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+        self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.b, rx_constr, ry_var)
+    }
+
+    /// Evaluate uniform matrix C at a specific point (rx_constr, ry_var)
+    pub fn evaluate_uniform_c_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+        self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.c, rx_constr, ry_var)
+    }
+
+    /// Helper function to evaluate a uniform matrix at a specific point
+    fn evaluate_uniform_matrix_at_point(
+        &self,
+        constraints: &SparseConstraints<F>,
+        rx_constr: &[F],
+        ry_var: &[F],
+    ) -> F {
+        let eq_rx_constr = EqPolynomial::new(rx_constr.to_vec());
+        let eq_ry_var = EqPolynomial::new(ry_var.to_vec());
+        
+        let mut eval = F::zero();
+        
+        // Evaluate non-constant terms
+        for (row, col, val) in constraints.vars.iter() {
+            let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
+            let col_bits = index_to_field_bitvector(*col as u64, ry_var.len());
+            eval += *val * eq_rx_constr.evaluate(&row_bits) * eq_ry_var.evaluate(&col_bits);
+        }
+        
+        // Evaluate constant terms
+        let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
+        let const_col_bits = index_to_field_bitvector(constant_column as u64, ry_var.len());
+        let eq_ry_const = eq_ry_var.evaluate(&const_col_bits);
+        
+        for (row, val) in constraints.consts.iter() {
+            let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
+            eval += *val * eq_rx_constr.evaluate(&row_bits) * eq_ry_const;
+        }
+        
+        eval
+    }
+
     /// Returns the digest of the r1cs shape
     fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &CrossStepR1CS<F>, num_steps: usize) -> F {
         let mut hash_bytes = Vec::new();
