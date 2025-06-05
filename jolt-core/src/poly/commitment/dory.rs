@@ -8,12 +8,13 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
 use std::borrow::Borrow;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use ark_bn254::{Fq12, Fr};
+use ark_bn254::Fr;
 use ark_std::rand::thread_rng;
 use dory::{
-    arithmetic::Field,
+    arithmetic::{Field, MultiScalarMul, Pairing},
     commit,
     curve::{ArkBn254Pairing, DummyMsm, OptimizedMsmG1, OptimizedMsmG2},
     evaluate, setup,
@@ -66,7 +67,12 @@ impl<F: JoltField> Field for JoltToDoryField<F> {
     fn random<R: RngCore>(rng: &mut R) -> Self {
         JoltToDoryField(F::random(rng))
     }
+    
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
 }
+
 
 // Helper functions to convert collections
 impl<F: JoltField> JoltToDoryField<F> {
@@ -81,22 +87,40 @@ impl<F: JoltField> JoltToDoryField<F> {
     }
 }
 
+// Conversion from Fr to JoltToDoryField<Fr> 
+impl From<Fr> for JoltToDoryField<Fr> {
+    fn from(value: Fr) -> Self {
+        JoltToDoryField(value)
+    }
+}
+
+// Conversion from JoltToDoryField<Fr> to Fr
+impl From<JoltToDoryField<Fr>> for Fr {
+    fn from(value: JoltToDoryField<Fr>) -> Self {
+        value.0
+    }
+}
+
 
 /// Newtype wrapper adapting Jolt Transcript to Dory Transcript
 /// We use this Option mut ref thing so that we can avoid cloning in Prove and Verify.
 #[derive(Default)]
-pub struct JoltToDoryTranscriptRef<'a, T: Transcript> {
+pub struct JoltToDoryTranscriptRef<'a, F: JoltField, T: Transcript> {
     transcript: Option<&'a mut T>,
+    _phantom: PhantomData<F>,
 }
 
-impl<'a, T: Transcript> JoltToDoryTranscriptRef<'a, T> {
+impl<'a, F: JoltField, T: Transcript> JoltToDoryTranscriptRef<'a, F, T> {
     pub fn new(transcript: &'a mut T) -> Self {
-        JoltToDoryTranscriptRef { transcript: Some(transcript) }
+        JoltToDoryTranscriptRef { 
+            transcript: Some(transcript),
+            _phantom: PhantomData,
+        }
     }
 }
 
-impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, T> {
-    type Scalar = Fr;
+impl<'a, F: JoltField, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, F, T> {
+    type Scalar = JoltToDoryField<F>;
 
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
         let transcript = self.transcript.as_mut().expect("Transcript not initialized");
@@ -109,7 +133,7 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, T> {
         let transcript = self.transcript.as_mut().expect("Transcript not initialized");
         let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
         transcript.append_message(label_str);
-        transcript.append_serializable(x);
+        transcript.append_serializable(&x.0);
     }
 
     fn append_group<G: CanonicalSerialize>(&mut self, label: &[u8], g: &G) {
@@ -131,7 +155,8 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, T> {
         let transcript = self.transcript.as_mut().expect("Transcript not initialized");
         let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
         transcript.append_message(label_str);
-        transcript.challenge_scalar::<Fr>()
+        let challenge: F = transcript.challenge_scalar::<F>();
+        JoltToDoryField(challenge)
     }
 
     fn reset(&mut self, domain_label: &[u8]) {
@@ -142,7 +167,6 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, T> {
 
 // Helper function to convert multilinear polynomial to field coefficients
 // This can be non-zero cost for large polys so will want a better solution, eventually
-// For now this is needed since we want arkworks Fr
 fn extract_field_coefficients<F: JoltField>(poly: &MultilinearPolynomial<F>) -> Vec<F> {
     match poly {
         MultilinearPolynomial::LargeScalars(dense_poly) => dense_poly.Z.clone(),
@@ -174,59 +198,86 @@ fn extract_field_coefficients<F: JoltField>(poly: &MultilinearPolynomial<F>) -> 
 
 /// Dory commitment scheme implementation
 #[derive(Clone, Debug)]
-pub struct DoryCommitmentScheme<F: JoltField, ProofTranscript: Transcript> {
+pub struct DoryCommitmentScheme<F: JoltField, ProofTranscript: Transcript, P: Pairing> {
     _phantom_field: PhantomData<F>,
     _phantom_transcript: PhantomData<ProofTranscript>,
+    _phantom_pairing: PhantomData<P>,
 }
 
 /// Setup structure containing both prover and verifier parameters.
 /// Dory API exposes an SRS to disk option, but is not (yet) utilized here.
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DorySetup {
-    pub prover_setup: ProverSetup<ArkBn254Pairing>,
-    pub verifier_setup: VerifierSetup<ArkBn254Pairing>,
+pub struct DorySetup<P>
+where
+    P: Pairing + Debug,
+{
+    pub prover_setup: ProverSetup<P>,
+    pub verifier_setup: VerifierSetup<P>,
     pub max_log_n: usize,
 }
 
 /// Commitment structure
 #[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryCommitment {
-    pub commitment: Fq12, // this is GT
+pub struct DoryCommitment<P>
+where
+    P: Pairing,
+    P::GT: Clone + Debug + Default + PartialEq,
+{
+    pub commitment: P::GT,
 }
 
 /// Proof structure storing the serializable DoryProof data and other data
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryProof<F: JoltField> {
-    pub evaluation: Fr,
-    pub opening_point: Vec<Fr>,
+pub struct DoryProof<F: JoltField, P>
+where
+    P: Pairing,
+    P::G1: Debug,
+    P::G2: Debug,
+    P::GT: Debug,
+{
+    pub evaluation: F,
+    pub opening_point: Vec<F>,
     pub sigma: usize,
     // Store the serializable DoryProof from the DoryProofBuilder
-    pub dory_proof_data: DoryProofData<ark_bn254::G1Affine, dory::curve::G2AffineWrapper, Fq12>,
+    pub dory_proof_data: DoryProofData<P::G1, P::G2, P::GT>,
     _phantom: PhantomData<F>,
 }
 
 /// Batched proof structure
 /// @TODO: this is not yet fully implemented.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryBatchedProof<F: JoltField> {
-    proofs: Vec<DoryProof<F>>,
+pub struct DoryBatchedProof<F: JoltField, P>
+where
+    P: Pairing,
+    P::G1: Debug,
+    P::G2: Debug,
+    P::GT: Debug,
+{
+    proofs: Vec<DoryProof<F, P>>,
 }
 
-impl<F, ProofTranscript> CommitmentScheme<ProofTranscript>
-    for DoryCommitmentScheme<F, ProofTranscript>
+impl<F, ProofTranscript, P> CommitmentScheme<ProofTranscript>
+    for DoryCommitmentScheme<F, ProofTranscript, P>
 where
     F: JoltField,
     ProofTranscript: Transcript,
+    P: Pairing + Clone + 'static + Debug + Default + PartialEq,
+    P::G1: dory::arithmetic::Group<Scalar = JoltToDoryField<F>> + Debug,
+    P::G2: dory::arithmetic::Group<Scalar = JoltToDoryField<F>> + Debug,
+    P::GT: dory::arithmetic::Group<Scalar = JoltToDoryField<F>> + Clone + Debug + Default,
+    OptimizedMsmG1: MultiScalarMul<P::G1>,
+    OptimizedMsmG2: MultiScalarMul<P::G2>,
+    DummyMsm<P::GT>: MultiScalarMul<P::GT>,
 {
     type Field = F;
-    type Setup = DorySetup;
-    type Commitment = DoryCommitment;
-    type Proof = DoryProof<F>;
-    type BatchedProof = DoryBatchedProof<F>;
+    type Setup = DorySetup<P>;
+    type Commitment = DoryCommitment<P>;
+    type Proof = DoryProof<F, P>;
+    type BatchedProof = DoryBatchedProof<F, P>;
 
     // @TODO: we use `max_num_vars`, but others might not. We want other PCS to use this instead of `max_len`.
     fn setup(max_num_vars: usize) -> Self::Setup {
-        let (prover_setup, verifier_setup) = setup::<ArkBn254Pairing, _>(thread_rng(), max_num_vars);
+        let (prover_setup, verifier_setup) = setup::<P, _>(thread_rng(), max_num_vars);
 
         DorySetup {
             prover_setup,
@@ -239,19 +290,15 @@ where
         // Extract polynomial coefficients
         let field_coeffs = extract_field_coefficients(poly);
 
-        // Convert JoltField coefficients to Fr
-        // This assumes F is Fr or can be safely transmuted to Fr
-        let coeffs: Vec<Fr> = field_coeffs
-            .iter()
-            .map(|&coeff| unsafe { std::mem::transmute_copy(&coeff) })
-            .collect();
+        // Convert JoltField coefficients to JoltToDoryField
+        let coeffs = JoltToDoryField::wrap_slice(&field_coeffs);
 
         // For Dory, sigma is the number of columns in the matrix representation
         // we use sigma = ceil(num_vars / 2) so we have a nice square matrix.
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
         let commitment =
-            commit::<ArkBn254Pairing, OptimizedMsmG1>(&coeffs, 0, sigma, &setup.prover_setup);
+            commit::<P, OptimizedMsmG1>(&coeffs, 0, sigma, &setup.prover_setup);
 
         DoryCommitment { commitment }
     }
@@ -271,28 +318,20 @@ where
         opening_point: &[Self::Field],
         transcript: &'a mut ProofTranscript,
     ) -> Self::Proof {
-        // extract as JoltField transmutable to arkworks Fr
+        // Extract polynomial coefficients and convert to JoltToDoryField
         let field_coeffs = extract_field_coefficients(poly);
+        let coeffs = JoltToDoryField::wrap_slice(&field_coeffs);
 
-        // Convert to arkworks Fr
-        let coeffs: Vec<Fr> = field_coeffs
-            .iter()
-            .map(|&coeff| unsafe { std::mem::transmute_copy(&coeff) })
-            .collect();
-
-        // Convert opening point to arkworks Fr
-        let point: Vec<Fr> = opening_point
-            .iter()
-            .map(|&p| unsafe { std::mem::transmute_copy(&p) })
-            .collect();
+        // Convert opening point to JoltToDoryField
+        let point = JoltToDoryField::wrap_slice(opening_point);
 
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
 
-        let dory_transcript_prover = JoltToDoryTranscriptRef::new(transcript);
+        let dory_transcript_prover = JoltToDoryTranscriptRef::<Self::Field, ProofTranscript>::new(transcript);
 
         let (evaluation, proof_builder) =
-            evaluate::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2>(
+            evaluate::<P, _, OptimizedMsmG1, OptimizedMsmG2>(
                 &coeffs,
                 &point,
                 sigma,
@@ -304,8 +343,8 @@ where
         let dory_proof = proof_builder.build();
 
         DoryProof {
-            evaluation,
-            opening_point: point,
+            evaluation: evaluation.into_inner(),
+            opening_point: JoltToDoryField::unwrap_slice(&point),
             sigma,
             dory_proof_data: dory_proof,
             _phantom: PhantomData,
@@ -320,14 +359,11 @@ where
         _opening: &Self::Field, // we use the opening directly from Dory's Proof object.
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        // Convert opening point to arkworks Fr
-        let point: Vec<Fr> = opening_point
-            .iter()
-            .map(|&p| unsafe { std::mem::transmute_copy(&p) })
-            .collect();
+        // Convert opening point to JoltToDoryField
+        let point = JoltToDoryField::wrap_slice(opening_point);
 
         // Create JoltToDoryTranscript wrapper around the provided transcript
-        let dory_transcript = JoltToDoryTranscriptRef::new(transcript);
+        let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, ProofTranscript>::new(transcript);
 
         // Create a proof builder from the DoryProof
         let verifier_proof_builder =
@@ -335,9 +371,9 @@ where
 
         // Use Dory's verify function with the proof builder
         let verify_result =
-            verify::<ArkBn254Pairing, _, OptimizedMsmG1, OptimizedMsmG2, DummyMsm<Fq12>>(
-                commitment.commitment,
-                proof.evaluation,
+            verify::<P, _, OptimizedMsmG1, OptimizedMsmG2, DummyMsm<P::GT>>(
+                commitment.commitment.clone(),
+                JoltToDoryField::new(proof.evaluation),
                 &point,
                 verifier_proof_builder,
                 proof.sigma,
@@ -357,7 +393,11 @@ where
 }
 
 // Implement AppendToTranscript for DoryCommitment
-impl crate::utils::transcript::AppendToTranscript for DoryCommitment {
+impl<P> crate::utils::transcript::AppendToTranscript for DoryCommitment<P>
+where
+    P: Pairing,
+    P::GT: CanonicalSerialize + Clone + Debug + Default + PartialEq,
+{
     fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
         transcript.append_serializable(&self.commitment);
     }
@@ -388,24 +428,24 @@ mod tests {
         );
 
         let mut rng = thread_rng();
-        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| (Fr::rand(&mut rng))).collect();
 
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
         // Generate random opening point
-        let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+        let opening_point: Vec<JoltToDoryField<Fr>> = (0..num_vars).map(|_| JoltToDoryField::new(Fr::rand(&mut rng))).collect();
 
         // Setup timing
         let setup_start = Instant::now();
 
         // the commitment key is actually size sqrt(max_log_n) = 9 here
-        let setup = DoryCommitmentScheme::<Fr, KeccakTranscript>::setup(max_log_n);
+        let setup = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::setup(max_log_n);
         let setup_time = setup_start.elapsed();
         println!("Setup time: {:?}", setup_time);
 
         // Commit timing
         let commit_start = Instant::now();
-        let commitment = DoryCommitmentScheme::<Fr, KeccakTranscript>::commit(&poly, &setup);
+        let commitment = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::commit(&poly, &setup);
         let commit_time = commit_start.elapsed();
         println!("Commit time: {:?}", commit_time);
 
@@ -414,7 +454,7 @@ mod tests {
 
         // Prove timing
         let prove_start = Instant::now();
-        let proof = DoryCommitmentScheme::<Fr, KeccakTranscript>::prove(
+        let proof = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::prove(
             &setup,
             &poly,
             &opening_point,
@@ -427,7 +467,7 @@ mod tests {
 
         // Verify timing
         let verify_start = Instant::now();
-        let verification_result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+        let verification_result = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::verify(
             &proof,
             &setup,
             &mut verify_transcript,
@@ -472,16 +512,16 @@ mod tests {
 
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
-        let setup = DoryCommitmentScheme::<Fr, KeccakTranscript>::setup(max_log_n);
+        let setup = DoryCommitmentScheme::<JoltToDoryField<Fr>, KeccakTranscript, ArkBn254Pairing>::setup(max_log_n);
 
         // Commit to the polynomial
-        let commitment = DoryCommitmentScheme::<Fr, KeccakTranscript>::commit(&poly, &setup);
+        let commitment = DoryCommitmentScheme::<JoltToDoryField<Fr>, KeccakTranscript, ArkBn254Pairing>::commit(&poly, &setup);
 
         let mut prove_transcript =
-            KeccakTranscript::new(DoryCommitmentScheme::<Fr, KeccakTranscript>::protocol_name());
+            KeccakTranscript::new(DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::protocol_name());
 
         // Generate the proof
-        let proof = DoryCommitmentScheme::<Fr, KeccakTranscript>::prove(
+        let proof = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::prove(
             &setup,
             &poly,
             &opening_point,
@@ -498,8 +538,9 @@ mod tests {
             let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
                 Fr,
                 KeccakTranscript,
+                ArkBn254Pairing,
             >::protocol_name());
-            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::verify(
                 &tampered_proof,
                 &setup,
                 &mut verify_transcript,
@@ -523,8 +564,9 @@ mod tests {
             let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
                 Fr,
                 KeccakTranscript,
+                ArkBn254Pairing,
             >::protocol_name());
-            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::verify(
                 &proof,
                 &setup,
                 &mut verify_transcript,
@@ -552,8 +594,9 @@ mod tests {
             let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
                 Fr,
                 KeccakTranscript,
+                ArkBn254Pairing,
             >::protocol_name());
-            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::verify(
                 &proof,
                 &setup,
                 &mut verify_transcript,
@@ -572,7 +615,7 @@ mod tests {
         // Test 4: Use wrong domain in transcript
         {
             let mut verify_transcript = KeccakTranscript::new(b"wrong_domain");
-            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::verify(
                 &proof,
                 &setup,
                 &mut verify_transcript,
@@ -593,8 +636,9 @@ mod tests {
             let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<
                 Fr,
                 KeccakTranscript,
+                ArkBn254Pairing,
             >::protocol_name());
-            let result = DoryCommitmentScheme::<Fr, KeccakTranscript>::verify(
+            let result = DoryCommitmentScheme::<Fr, KeccakTranscript, ArkBn254Pairing>::verify(
                 &proof,
                 &setup,
                 &mut verify_transcript,
