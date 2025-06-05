@@ -23,9 +23,9 @@ pub struct QuantizedONNXModel {
     /// Stores the instructions of the model, i.e. the operators and their attributes.
     pub instrs: Vec<ONNXInstruction>,
     /// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
-    initializer_map: ONNXInitializerMap,
+    pub initializer_map: ONNXInitializerMap,
     /// Helps track the i/o shapes of the model layers.
-    input_shape: Vec<usize>,
+    pub input_shape: Vec<usize>,
     /// Captures the execution trace of the model
     pub tracer: Tracer, // TODO: probably should not be part of the model.
 }
@@ -61,6 +61,90 @@ impl QuantizedONNXModel {
             instrs,
             input_shape(&graph).expect("ONNX model should have a valid input shape"),
         )
+    }
+
+    /// Execute the model with quantization on a given input
+    pub fn execute_quantized(&mut self, input: &[f32]) -> QuantizedTensor {
+        // Stores all input and output tensors of the model. Each tensor has a unique name that we can map its values to.
+        let mut io_map = HashMap::<String, QuantizedTensor>::new();
+        let input = QuantizedTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
+        io_map.insert(
+            "input".to_string(), // TODO: Make this more robust (I do not think it is guaranteed that the input will be named "input")
+            input.clone(),
+        );
+        for (key, value) in self.initializer_map.iter() {
+            io_map.insert(key.clone(), value.clone());
+        }
+
+        for instr in self.instrs.iter() {
+            self.tracer.start_instruction(instr.clone());
+            self.tracer.capture_pre_state(&io_map);
+            match instr.opcode {
+                Operator::MatMul => {
+                    // --- Gemm ---
+                    // Y = alpha * A * B^T + beta * C
+                    // A: [M, K], B: [N, K], C: [N]
+
+                    // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
+                    let a = io_map.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
+                    let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
+
+                    // TODO: Handle bias, alpha, and beta operations in a separate operator (similar to virtual instructions)
+                    let _bias = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    let (_alpha, _beta) = {
+                        let attributes = instr.attributes.as_ref().unwrap();
+                        (
+                            f32::from_bits(attributes.get("alpha").unwrap()[0].to_owned() as u32),
+                            f32::from_bits(attributes.get("beta").unwrap()[0].to_owned() as u32),
+                        )
+                    };
+
+                    // EvalOp
+                    let (result, shape) = a.matmul_rhs_transposed(b);
+
+                    // TODO: Use lookups to prove correctness of requantization?
+                    // Requantize back to i8
+                    let output_scale = a.scale * b.scale;
+                    let quantized_result: Vec<i8> = result
+                        .iter()
+                        .map(|&x| (x as f32 / output_scale).round().clamp(-128.0, 127.0) as i8)
+                        .collect();
+                    let output_tensor = QuantizedTensor::new(shape, quantized_result, output_scale);
+                    io_map.insert(instr.outputs[0].to_string(), output_tensor);
+                }
+
+                Operator::Relu => {
+                    let a = io_map.get(&instr.inputs[0]).unwrap();
+                    let relu_data = a.data.iter().map(|&x| x.max(0)).collect_vec();
+                    let output_tensor = QuantizedTensor {
+                        shape: a.shape.clone(),
+                        data: relu_data,
+                        scale: a.scale,
+                    };
+                    io_map.insert(instr.outputs[0].to_string(), output_tensor);
+                }
+                Operator::Conv => {
+                    let input = io_map.get(&instr.inputs[0]).unwrap();
+                    let weight = io_map.get(&instr.inputs[1]).unwrap();
+                    let bias = io_map.get(&instr.inputs[2]).unwrap();
+
+                    println!("input: {input:#?}");
+                    println!("weight: {weight:#?}");
+                    println!("bias: {bias:#?}");
+                    println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
+                    io_map.insert(instr.outputs[0].to_string(), input.clone());
+                }
+            }
+            self.tracer.capture_post_state(&io_map);
+        }
+
+        // Get the output tensor
+        // TODO: Make this more robust, i.e. it is not guaranteed that the last instruction will have a single output
+        // and that the output will be the first output.
+        // For now, we assume that the last instruction has a single output and that it is the first output.
+        // This is a hacky way to get the output tensor, we should improve this in the future.
+        let output_tensor = io_map.get(&self.instrs.last().unwrap().outputs[0]).unwrap();
+        output_tensor.clone()
     }
 
     /// Given the parsed ONNX model, store the input and output shapes of the model at each layer.
@@ -130,90 +214,6 @@ impl QuantizedONNXModel {
         io_shapes
     }
 
-    /// Execute the model with quantization on a given input
-    pub fn execute_quantized(&mut self, input: &[f32]) -> QuantizedTensor {
-        // Stores all input and output tensors of the model. Each tensor has a unique name that we can map its values to.
-        let mut io_map = HashMap::<String, QuantizedTensor>::new();
-        let input = QuantizedTensor::from(Tensor::from_shape(&[1, input.len()], input).unwrap());
-        io_map.insert(
-            "input".to_string(), // TODO: Make this more robust (I do not think it is guaranteed that the input will be named "input")
-            input.clone(),
-        );
-        for (key, value) in self.initializer_map.iter() {
-            io_map.insert(key.clone(), value.clone());
-        }
-
-        for instr in self.instrs.iter() {
-            self.tracer.start_instruction(instr.clone());
-            self.tracer.capture_pre_state(&io_map);
-            match instr.opcode {
-                Operator::MatMul => {
-                    // --- Gemm ---
-                    // Y = alpha * A * B^T + beta * C
-                    // A: [M, K], B: [N, K], C: [N]
-
-                    // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
-                    let a = io_map.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
-                    let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
-
-                    // TODO: Handle bias, alpha, and beta operations in a separate operator (similar to virtual instructions)
-                    let _bias = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
-                    let (_alpha, _beta) = {
-                        let attributes = instr.attributes.as_ref().unwrap();
-                        (
-                            f32::from_bits(attributes.get("alpha").unwrap_or(&1).to_owned() as u32),
-                            f32::from_bits(attributes.get("beta").unwrap_or(&0).to_owned() as u32),
-                        )
-                    };
-
-                    // EvalOp
-                    let (result, shape) = a.matmul_rhs_transposed(b);
-
-                    // TODO: Use lookups to prove correctness of requantization?
-                    // Requantize back to i8
-                    let output_scale = a.scale * b.scale;
-                    let quantized_result: Vec<i8> = result
-                        .iter()
-                        .map(|&x| (x as f32 / output_scale).round().clamp(-128.0, 127.0) as i8)
-                        .collect();
-                    let output_tensor = QuantizedTensor::new(shape, quantized_result, output_scale);
-                    io_map.insert(instr.outputs[0].to_string(), output_tensor);
-                }
-
-                Operator::Relu => {
-                    let a = io_map.get(&instr.inputs[0]).unwrap();
-                    let relu_data = a.data.iter().map(|&x| x.max(0)).collect_vec();
-                    let output_tensor = QuantizedTensor {
-                        shape: a.shape.clone(),
-                        data: relu_data,
-                        scale: a.scale,
-                    };
-                    io_map.insert(instr.outputs[0].to_string(), output_tensor);
-                }
-                Operator::Conv => {
-                    let input = io_map.get(&instr.inputs[0]).unwrap();
-                    let weight = io_map.get(&instr.inputs[1]).unwrap();
-                    let bias = io_map.get(&instr.inputs[2]).unwrap();
-
-                    println!("input: {input:#?}");
-                    println!("weight: {weight:#?}");
-                    println!("bias: {bias:#?}");
-                    println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
-                    io_map.insert(instr.outputs[0].to_string(), input.clone());
-                }
-            }
-            self.tracer.capture_post_state(&io_map);
-        }
-
-        // Get the output tensor
-        // TODO: Make this more robust, i.e. it is not guaranteed that the last instruction will have a single output
-        // and that the output will be the first output.
-        // For now, we assume that the last instruction has a single output and that it is the first output.
-        // This is a hacky way to get the output tensor, we should improve this in the future.
-        let output_tensor = io_map.get(&self.instrs.last().unwrap().outputs[0]).unwrap();
-        output_tensor.clone()
-    }
-
     /// Create a new instance of [`QuantizedONNXModel`]
     pub fn new(
         initializer_map: ONNXInitializerMap,
@@ -246,7 +246,7 @@ impl FromStr for Operator {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Stores the constant-inputs of the computational graph; represents the initializers in the ONNX model.
-pub struct ONNXInitializerMap(HashMap<String, QuantizedTensor>);
+pub struct ONNXInitializerMap(pub HashMap<String, QuantizedTensor>);
 
 impl Deref for ONNXInitializerMap {
     type Target = HashMap<String, QuantizedTensor>;

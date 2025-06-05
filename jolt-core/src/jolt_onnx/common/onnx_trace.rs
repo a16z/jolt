@@ -32,7 +32,7 @@ pub struct ONNXInstruction {
     /// The operator that this instruction represents
     pub opcode: Operator,
     /// Optional attributes for the operator, such as alpha and beta for MatMul
-    pub attributes: Option<HashMap<String, u64>>,
+    pub attributes: Option<HashMap<String, Vec<u64>>>,
     /// The inputs to the operator, which are the names of the tensors
     pub inputs: Vec<String>,
     /// The outputs of the operator, which are the names of the tensors
@@ -71,8 +71,8 @@ impl ONNXInstruction {
     fn decorate_matmul(&mut self, node_proto: &NodeProto) {
         let (alpha, beta) = alpha_beta(node_proto);
         self.attributes = Some(HashMap::from([
-            ("alpha".to_string(), alpha.to_bits() as u64),
-            ("beta".to_string(), beta.to_bits() as u64),
+            ("alpha".to_string(), vec![alpha.to_bits() as u64]),
+            ("beta".to_string(), vec![beta.to_bits() as u64]),
         ]));
     }
 
