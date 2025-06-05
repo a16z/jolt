@@ -122,12 +122,14 @@ where
         /* Sumcheck 1: Outer sumcheck */
 
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
+        // For the first sumcheck, we only use uniform constraints (no cross-step constraints)
+        // This makes A block-diagonal with blocks being A_small
+        let uniform_constraints_only_padded = constraint_builder.uniform_builder.constraints.len().next_power_of_two();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
                 num_rounds_x,
-                constraint_builder.padded_rows_per_step(),
+                uniform_constraints_only_padded,
                 &constraint_builder.uniform_builder.constraints,
-                &constraint_builder.offset_equality_constraints,
                 &input_polys,
                 &tau,
                 transcript,
