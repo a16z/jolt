@@ -218,39 +218,25 @@ where
 
         drop_in_background_thread(polys);
 
-        /*  Sumcheck 3: Shift sumcheck
-            sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
+        /*  Sumcheck 3: PC Next sumcheck
+            sumcheck claim is pc_next(r_cycle) = \sum_j pc(j) * eq_plus_one(r_cycle, j)
         */
-
-        let ry_var = inner_sumcheck_r[1..].to_vec();
-        let eq_ry_var = EqPolynomial::evals(&ry_var);
-        let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
-
-        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_cycles);
-
-        let span = span!(Level::INFO, "bind_z_ry_var");
+        let span = span!(Level::INFO, "pcnext_shift_sumcheck");
         let _guard = span.enter();
-        let num_steps_unpadded = constraint_builder.uniform_repeat();
-        (0..num_steps_unpadded) // unpadded number of steps is sufficient
-            .into_par_iter()
-            .map(|t| {
-                input_polys
-                    .iter()
-                    .enumerate()
-                    .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
-                    .sum()
-            })
-            .collect_into_vec(&mut bind_z_ry_var);
-        drop(_guard);
-        drop(span);
-
+        
+        // Extract the PC polynomial (RealInstructionAddress is at index 1)
+        let pc_poly = &input_polys[1];
+        
         let num_rounds_shift_sumcheck = num_cycles_bits;
-        assert_eq!(bind_z_ry_var.len(), eq_plus_one_r_cycle.len());
-
+        
+        // For the pcnext sumcheck, we only need the PC polynomial and eq_plus_one
         let mut shift_sumcheck_polys = vec![
-            MultilinearPolynomial::from(bind_z_ry_var),
+            pc_poly.clone(),
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
+        
+        drop(_guard);
+        drop(span);
 
         let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
             .into_par_iter()
