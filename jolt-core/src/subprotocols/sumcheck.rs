@@ -7,7 +7,7 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
-use crate::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::builder::Constraint;
 use crate::utils::errors::ProofVerifyError;
@@ -29,17 +29,17 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
+    fn compute_cubic(&self, eq_poly: &GruenSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
     fn final_claims(&self) -> (F, F);
 
     #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F);
+    fn sumcheck_sanity_check(&self, eq_poly: &GruenSplitEqPolynomial<F>, round_claim: F);
 
     #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
     fn prove_sumcheck(
         &mut self,
         claim: &F,
-        eq_poly: &mut SplitEqPolynomial<F>,
+        eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F)) {
         let num_rounds = eq_poly.get_num_vars();

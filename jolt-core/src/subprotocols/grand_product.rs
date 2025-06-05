@@ -5,7 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use crate::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
@@ -205,7 +205,7 @@ where
         r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> BatchedGrandProductLayerProof<F, ProofTranscript> {
-        let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
+        let mut eq_poly = GruenSplitEqPolynomial::new(r_grand_product);
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(claim, &mut eq_poly, transcript);

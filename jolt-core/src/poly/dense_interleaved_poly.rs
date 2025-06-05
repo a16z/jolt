@@ -10,7 +10,7 @@ use rayon::{prelude::*, slice::Chunks};
 
 #[cfg(test)]
 use super::dense_mlpoly::DensePolynomial;
-use super::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
+use super::{split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly};
 
 /// Represents a single layer of a grand product circuit.
 ///
@@ -182,7 +182,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     for DenseInterleavedPolynomial<F>
 {
     #[cfg(test)]
-    fn sumcheck_sanity_check(&self, eq_poly: &SplitEqPolynomial<F>, round_claim: F) {
+    fn sumcheck_sanity_check(&self, eq_poly: &GruenSplitEqPolynomial<F>, round_claim: F) {
         let (left, right) = self.uninterleave();
         let merged_eq = eq_poly.merge();
         let expected: F = left
@@ -209,16 +209,139 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
     ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
     ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::compute_cubic")]
-    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
-        // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
-        // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
-        let cubic_evals = if eq_poly.E1_len == 1 {
-            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
-            // would without the Dao-Thaler optimization, using the standard linear-time
-            // sumcheck algorithm.
+    fn compute_cubic(&self, eq_poly: &GruenSplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F> {
+        // We use the Dao-Thaler and Gruen optimizations for the EQ polynomial, so there are two
+        // cases we must handle. For details, refer to Section 3 of
+        // https://eprint.iacr.org/2024/1210.pdf
+        let quadratic_evals = if eq_poly.E_in_vec.is_empty() {
+            // If `eq_poly.E_in` has been fully bound, we compute the cubic polynomial as we would
+            // without the Dao-Thaler optimization, using the standard linear-time sumcheck
+            // algorithm.
             self.par_chunks(4)
-                .zip(eq_poly.E2.par_chunks(2))
-                .map(|(layer_chunk, eq_chunk)| {
+                .zip(eq_poly.E_out_current())
+                .map(|(layer_chunk, E_out_eval)| {
+                    let left = (
+                        *layer_chunk.first().unwrap_or(&F::zero()),
+                        *layer_chunk.get(2).unwrap_or(&F::zero()),
+                    );
+                    let right = (
+                        *layer_chunk.get(1).unwrap_or(&F::zero()),
+                        *layer_chunk.get(3).unwrap_or(&F::zero()),
+                    );
+
+                    let left_eval_at_infty = left.1 - left.0;
+                    let right_eval_at_infty = right.1 - right.0;
+
+                    (
+                        *E_out_eval * left.0 * right.0,
+                        *E_out_eval * left_eval_at_infty * right_eval_at_infty,
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                )
+        } else {
+            // If `eq_poly.E_in` has NOT been fully bound, we compute the cubic polynomial using
+            // the nested summation approach described in Section 3 of
+            // https://eprint.iacr.org/2024/1210.pdf
+            //
+            // Note, however, that we reverse the inner/outer summation compared to the
+            // description in the paper. I.e. instead of:
+            //
+            // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * (\sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            //
+            // we do:
+            //
+            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            //
+            // because it has better memory locality.
+            let chunk_size = (self.len.next_power_of_two() / eq_poly.E_out_current_len()).max(1);
+            eq_poly.E_out_current()
+                .par_iter()
+                .zip(self.par_chunks(chunk_size))
+                .map(|(E_out_eval, P_x_out)| {
+                    // The for-loop below corresponds to the inner sum:
+                    // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
+                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                    for (E_in_eval, P_chunk) in eq_poly.E_in_current().iter().zip(P_x_out.chunks(4)) {
+                        let left = (
+                            *P_chunk.first().unwrap_or(&F::zero()),
+                            *P_chunk.get(2).unwrap_or(&F::zero()),
+                        );
+                        let right = (
+                            *P_chunk.get(1).unwrap_or(&F::zero()),
+                            *P_chunk.get(3).unwrap_or(&F::zero()),
+                        );
+                        let left_eval_at_infty = left.1 - left.0;
+                        let right_eval_at_infty = right.1 - right.0;
+
+                        inner_sum.0 += *E_in_eval * left.0 * right.0;
+                        inner_sum.1 += *E_in_eval * left_eval_at_infty * right_eval_at_infty;
+                    }
+
+                    // Multiply the inner sum by E2[x2]
+                    (
+                        *E_out_eval * inner_sum.0,
+                        *E_out_eval * inner_sum.1,
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                )
+        };
+
+        #[cfg(test)]
+        {
+            let eq_evals = crate::poly::eq_poly::EqPolynomial::evals(&eq_poly.w[..eq_poly.current_index - 1]);
+            let naive_quadratic_evals = self.par_chunks(4)
+                .zip(eq_evals.par_iter())
+                .map(|(layer_chunk, eq_eval)| {
+                    let left = (
+                        *layer_chunk.first().unwrap_or(&F::zero()),
+                        *layer_chunk.get(2).unwrap_or(&F::zero()),
+                    );
+                    let right = (
+                        *layer_chunk.get(1).unwrap_or(&F::zero()),
+                        *layer_chunk.get(3).unwrap_or(&F::zero()),
+                    );
+
+                    let left_eval_at_infty = left.1 - left.0;
+                    let right_eval_at_infty = right.1 - right.0;
+
+                    (
+                        *eq_eval * left.0 * right.0,
+                        *eq_eval * left_eval_at_infty * right_eval_at_infty,
+                    )
+                })
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                );
+            assert_eq!(quadratic_evals, naive_quadratic_evals, "Failed at round {}", eq_poly.w.len() - eq_poly.current_index)
+        }
+
+        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+
+        let cubic = UniPoly::from_linear_times_quadratic_with_hint(
+            // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
+            [
+                eq_poly.current_scalar - scalar_times_w_i,
+                scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+            ],
+            quadratic_evals.0,
+            quadratic_evals.1,
+            previous_round_claim,
+        );
+
+        #[cfg(test)]
+        {
+            let eq_merged = eq_poly.merge();
+            let naive_cubic_evals = self.coeffs
+                .par_chunks(4)
+                .zip(eq_merged.evals().par_chunks(2))
+                .map(|(self_chunk, eq_chunk)| {
                     let eq_evals = {
                         let eval_point_0 = eq_chunk[0];
                         let m_eq = eq_chunk[1] - eq_chunk[0];
@@ -227,12 +350,12 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                         (eval_point_0, eval_point_2, eval_point_3)
                     };
                     let left = (
-                        *layer_chunk.first().unwrap_or(&F::zero()),
-                        *layer_chunk.get(2).unwrap_or(&F::zero()),
+                        *self_chunk.get(0).unwrap_or(&F::zero()),
+                        *self_chunk.get(2).unwrap_or(&F::zero()),
                     );
                     let right = (
-                        *layer_chunk.get(1).unwrap_or(&F::zero()),
-                        *layer_chunk.get(3).unwrap_or(&F::zero()),
+                        *self_chunk.get(1).unwrap_or(&F::zero()),
+                        *self_chunk.get(3).unwrap_or(&F::zero()),
                     );
 
                     let m_left = left.1 - left.0;
@@ -253,86 +376,18 @@ impl<F: JoltField, ProofTranscript: Transcript> BatchedCubicSumcheck<F, ProofTra
                 .reduce(
                     || (F::zero(), F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
-        } else {
-            // If `eq_poly.E1` has NOT been fully bound, we compute the cubic polynomial
-            // using the nested summation approach described in Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
-            //
-            // Note, however, that we reverse the inner/outer summation compared to the
-            // description in the paper. I.e. instead of:
-            //
-            // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * (\sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
-            //
-            // we do:
-            //
-            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
-            //
-            // because it has better memory locality.
+                );
+            let naive_cubic_evals = [
+                naive_cubic_evals.0,
+                previous_round_claim - naive_cubic_evals.0,
+                naive_cubic_evals.1,
+                naive_cubic_evals.2,
+            ];
+            let naive_cubic = UniPoly::from_evals(&naive_cubic_evals);
+            assert_eq!(naive_cubic, cubic, "Failed at round {}", eq_poly.w.len() - eq_poly.current_index);
+        }
 
-            // We start by computing the E1 evals:
-            // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
-                .par_chunks(2)
-                .map(|E1_chunk| {
-                    let eval_point_0 = E1_chunk[0];
-                    let m_eq = E1_chunk[1] - E1_chunk[0];
-                    let eval_point_2 = E1_chunk[1] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
-
-            let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
-            eq_poly.E2[..eq_poly.E2_len]
-                .par_iter()
-                .zip(self.par_chunks(chunk_size))
-                .map(|(E2_eval, P_x2)| {
-                    // The for-loop below corresponds to the inner sum:
-                    // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
-                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
-                    for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
-                        let left = (
-                            *P_chunk.first().unwrap_or(&F::zero()),
-                            *P_chunk.get(2).unwrap_or(&F::zero()),
-                        );
-                        let right = (
-                            *P_chunk.get(1).unwrap_or(&F::zero()),
-                            *P_chunk.get(3).unwrap_or(&F::zero()),
-                        );
-                        let m_left = left.1 - left.0;
-                        let m_right = right.1 - right.0;
-
-                        let left_eval_2 = left.1 + m_left;
-                        let left_eval_3 = left_eval_2 + m_left;
-
-                        let right_eval_2 = right.1 + m_right;
-                        let right_eval_3 = right_eval_2 + m_right;
-
-                        inner_sum.0 += E1_evals.0 * left.0 * right.0;
-                        inner_sum.1 += E1_evals.1 * left_eval_2 * right_eval_2;
-                        inner_sum.2 += E1_evals.2 * left_eval_3 * right_eval_3;
-                    }
-
-                    // Multiply the inner sum by E2[x2]
-                    (
-                        *E2_eval * inner_sum.0,
-                        *E2_eval * inner_sum.1,
-                        *E2_eval * inner_sum.2,
-                    )
-                })
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
-        };
-
-        let cubic_evals = [
-            cubic_evals.0,
-            previous_round_claim - cubic_evals.0,
-            cubic_evals.1,
-            cubic_evals.2,
-        ];
-        UniPoly::from_evals(&cubic_evals)
+        cubic
     }
 
     fn final_claims(&self) -> (F, F) {
