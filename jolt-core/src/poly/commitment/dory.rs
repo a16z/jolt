@@ -9,22 +9,25 @@
 use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
+    msm::VariableBaseMSM,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
-use ark_ec::pairing::PairingOutput;
+use ark_ec::{pairing::PairingOutput, PrimeGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
-use ark_bn254::{Bn254, Fq12, Fr};
+use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective};
 use ark_std::rand::thread_rng;
+use dory::arithmetic::{Field as DoryField, Group as DoryGroup};
 use dory::{
     commit,
     curve::{ArkBn254Pairing, DummyMsm, OptimizedMsmG1, OptimizedMsmG2},
     evaluate, setup,
     transcript::Transcript as DoryTranscript,
-    verify, DoryProof as DoryProofData, DoryProofBuilder, ProverSetup, VerifierSetup,
+    verify, DoryProof as DoryProofData, DoryProofBuilder, Polynomial as DoryPolynomial,
+    ProverSetup, VerifierSetup,
 };
 
 /// Newtype wrapper adapting Jolt Transcript to Dory Transcript
@@ -192,22 +195,26 @@ where
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::commit")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        // Extract polynomial coefficients
-        let field_coeffs = extract_field_coefficients(poly);
+        // // Extract polynomial coefficients
+        // let field_coeffs = extract_field_coefficients(poly);
 
-        // Convert JoltField coefficients to Fr
-        // This assumes F is Fr or can be safely transmuted to Fr
-        let coeffs: Vec<Fr> = field_coeffs
-            .iter()
-            .map(|&coeff| unsafe { std::mem::transmute_copy(&coeff) })
-            .collect();
+        // // Convert JoltField coefficients to Fr
+        // // This assumes F is Fr or can be safely transmuted to Fr
+        // let coeffs: Vec<Fr> = field_coeffs
+        //     .iter()
+        //     .map(|&coeff| unsafe { std::mem::transmute_copy(&coeff) })
+        //     .collect();
 
         // For Dory, sigma is the number of columns in the matrix representation
         // we use sigma = ceil(num_vars / 2) so we have a nice square matrix.
         let num_vars = poly.get_num_vars();
         let sigma = (num_vars + 1) / 2;
-        let commitment =
-            commit::<ArkBn254Pairing, OptimizedMsmG1>(&coeffs, 0, sigma, &setup.prover_setup);
+        let commitment = commit::<ArkBn254Pairing, _, _, Fr, OptimizedMsmG1, _>(
+            poly,
+            0,
+            sigma,
+            &setup.prover_setup,
+        );
 
         DoryCommitment {
             commitment: PairingOutput(commitment),
@@ -326,6 +333,29 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"dory_commitment_scheme"
+    }
+}
+
+impl<F, G1> DoryPolynomial<F, G1> for MultilinearPolynomial<F>
+where
+    F: JoltField + DoryField,
+    G1: DoryGroup<Scalar = F> + VariableBaseMSM,
+    <G1 as PrimeGroup>::ScalarField: JoltField,
+{
+    fn len(&self) -> usize {
+        todo!()
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        todo!()
+    }
+
+    fn commit_rows(&self, g1_generators: &[G1], row_len: usize) -> Vec<G1> {
+        todo!()
+    }
+
+    fn vector_matrix_product(&self, l_vec: &[F]) -> Vec<F> {
+        todo!()
     }
 }
 
