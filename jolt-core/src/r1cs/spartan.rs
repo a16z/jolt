@@ -152,42 +152,36 @@ where
             - z_shift(y_var || rx_step) = \sum_t z(y_var || t) * eq_plus_one(rx_step, t)
         */
 
-        let num_steps = key.num_steps;
-        let num_steps_bits = num_steps.ilog2() as usize;
+        let num_cycles = key.num_steps;
+        let num_cycles_bits = num_cycles.ilog2() as usize;
         let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint =
             claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
 
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+        let (r_cycle, r_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
+        let (eq_r_cycle, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
         /* Compute the two polynomials provided as input to the second sumcheck:
            - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
            - poly_z: z(y_var || rx_step), z_shift(..)
         */
 
-        let poly_ABC = DensePolynomial::new(key.evaluate_matrix_mle_partial(
-            rx_constr,
-            rx_step,
-            inner_sumcheck_RLC,
-        ));
+        let poly_abc_small =
+            DensePolynomial::new(key.evaluate_small_matrix_rlc(r_var, inner_sumcheck_RLC));
 
-        // Binding z and z_shift polynomials at point rx_step
-        let span = span!(Level::INFO, "binding_z_and_shift_z");
+        let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
 
         let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
-        let mut bind_shift_z = vec![F::zero(); num_vars_uniform * 2];
 
         input_polys
             .par_iter()
-            .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
-            .for_each(|(poly, (eval, eval_shifted))| {
-                *eval = poly.dot_product(&eq_rx_step);
-                *eval_shifted = poly.dot_product(&eq_plus_one_rx_step);
+            .zip(bind_z.par_iter_mut())
+            .for_each(|(poly, eval)| {
+                *eval = poly.dot_product(&eq_r_cycle);
             });
 
         bind_z[num_vars_uniform] = F::one();
@@ -195,14 +189,13 @@ where
         drop(_guard);
         drop(span);
 
-        let poly_z =
-            DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
-        assert_eq!(poly_z.len(), poly_ABC.len());
+        let poly_z = DensePolynomial::new(bind_z);
+        assert_eq!(poly_z.len(), poly_abc_small.len());
 
-        let num_rounds_inner_sumcheck = poly_ABC.len().log_2();
+        let num_rounds_inner_sumcheck = poly_abc_small.len().log_2();
 
         let mut polys = vec![
-            MultilinearPolynomial::LargeScalars(poly_ABC),
+            MultilinearPolynomial::LargeScalars(poly_abc_small),
             MultilinearPolynomial::LargeScalars(poly_z),
         ];
 
@@ -231,7 +224,7 @@ where
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
-        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_steps);
+        let mut bind_z_ry_var: Vec<F> = Vec::with_capacity(num_cycles);
 
         let span = span!(Level::INFO, "bind_z_ry_var");
         let _guard = span.enter();
@@ -249,12 +242,12 @@ where
         drop(_guard);
         drop(span);
 
-        let num_rounds_shift_sumcheck = num_steps_bits;
-        assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
+        let num_rounds_shift_sumcheck = num_cycles_bits;
+        assert_eq!(bind_z_ry_var.len(), eq_plus_one_r_cycle.len());
 
         let mut shift_sumcheck_polys = vec![
             MultilinearPolynomial::from(bind_z_ry_var),
-            MultilinearPolynomial::from(eq_plus_one_rx_step),
+            MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
 
         let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
@@ -283,7 +276,7 @@ where
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
         // Inner sumcheck evaluations: evaluate z on rx_step
         let (claimed_witness_evals, _chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, rx_step);
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
 
         // opening_accumulator.append(
         //     &flattened_polys_ref,

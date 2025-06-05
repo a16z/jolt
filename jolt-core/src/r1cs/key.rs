@@ -181,6 +181,50 @@ impl<F: JoltField> UniformSpartanKey<F> {
         row_count.next_power_of_two().log_2()
     }
 
+    /// Evaluate the RLC of A_small, B_small, C_small matrices at (r_constr, y_var)
+    /// This function only handles uniform constraints, ignoring cross-step constraints
+    /// Returns evaluations for each y_var
+    pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F], r_rlc: F) -> Vec<F> {
+        assert_eq!(
+            r_constr.len(),
+            (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2()
+        );
+
+        let eq_rx_constr = EqPolynomial::evals(r_constr);
+        let constant_column = self.uniform_r1cs.num_vars.next_power_of_two();
+
+        // Helper function to evaluate a single small matrix
+        let evaluate_small_matrix = |constraints: &SparseConstraints<F>| -> Vec<F> {
+            let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars.next_power_of_two());
+            
+            // Evaluate non-constant terms
+            for (row, col, val) in constraints.vars.iter() {
+                evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
+            }
+            
+            // Evaluate constant terms
+            for (row, val) in constraints.consts.iter() {
+                evals[constant_column] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
+            }
+            
+            evals
+        };
+
+        // Evaluate A_small, B_small, C_small
+        let a_small_evals = evaluate_small_matrix(&self.uniform_r1cs.a);
+        let b_small_evals = evaluate_small_matrix(&self.uniform_r1cs.b);
+        let c_small_evals = evaluate_small_matrix(&self.uniform_r1cs.c);
+
+        // Compute RLC: A_small + r_rlc * B_small + r_rlc^2 * C_small
+        let r_rlc_sq = r_rlc.square();
+        a_small_evals
+            .iter()
+            .zip(b_small_evals.iter())
+            .zip(c_small_evals.iter())
+            .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
+            .collect()
+    }
+
     /// (Prover) Evaluates RLC over A, B, C of: [A(r_x, y_var || r_x_step), A_shift(..)] for all y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_mle_rlc")]
     pub fn evaluate_matrix_mle_partial(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
