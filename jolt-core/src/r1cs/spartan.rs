@@ -177,16 +177,20 @@ where
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
 
-        let mut bind_z = vec![F::zero(); num_vars_uniform * 2];
+        let mut bind_z = vec![F::zero(); num_vars_uniform];
 
         input_polys
             .par_iter()
+            .take(num_vars_uniform)
             .zip(bind_z.par_iter_mut())
             .for_each(|(poly, eval)| {
                 *eval = poly.dot_product(&eq_r_cycle);
             });
 
-        bind_z[num_vars_uniform] = F::one();
+        // Set the constant value at the appropriate position
+        if key.uniform_r1cs.num_vars < num_vars_uniform {
+            bind_z[key.uniform_r1cs.num_vars] = F::one();
+        }
 
         drop(_guard);
         drop(span);
@@ -357,7 +361,7 @@ where
             + inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + inner_sumcheck_RLC.square() * self.outer_sumcheck_claims.2;
 
-        let num_rounds_inner_sumcheck = (2 * key.num_vars_uniform_padded()).log_2();
+        let num_rounds_inner_sumcheck = key.num_vars_uniform_padded().log_2();
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
