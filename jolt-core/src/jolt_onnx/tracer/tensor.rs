@@ -17,6 +17,16 @@ pub struct QuantizedTensor {
 }
 
 impl QuantizedTensor {
+    /// Create a new instance of [`QuantizedTensor`] from the given shape, and float data.
+    /// # Note:
+    /// - The data is quantized to i8 using the [`quantize`] function.
+    pub fn new(shape: Vec<usize>, data: Vec<f32>) -> Self {
+        // Quantize the data to i8 and get the scale factor.
+        let (data, scale) = quantize(&data);
+        // Create a new QuantizedTensor with the given shape, quantized data, and scale.
+        Self { shape, data, scale }
+    }
+
     /// Dequantize the tensor back to a vector of f32 values.
     pub fn dequantized_data(&self) -> Vec<f32> {
         // Dequantize the data by multiplying each quantized value by the scale factor.

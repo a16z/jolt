@@ -96,6 +96,8 @@ impl QuantizedONNXModel {
                     input_shape.clone() // Output shape is same as input shape
                 }
                 Operator::Conv => {
+                    println!("\x1b[33mwarning\x1b[0m: unimplemented instruction: {instr:?}");
+
                     // Conv: Y = conv(X, W) + B
                     // X: [N, C, H, W], W: [M, C, KH, KW], B: [M]
                     // Output shape is [N, M, H', W'] where H' and W' depend on the stride and padding.
@@ -276,7 +278,7 @@ impl Deref for ONNXInitializerMap {
 
 impl ONNXInitializerMap {
     /// Create a new instance of [`ONNXInitializerMap`].
-    /// We convert the raw data from the initializers into `QuantizedTensor` types.
+    /// We convert the raw data from the initializers into [`QuantizedTensor`] types.
     pub fn new(initializers: &[TensorProto]) -> Self {
         let mut initializers_map = HashMap::new();
         for initializer in initializers.iter() {
@@ -300,7 +302,9 @@ fn computational_graph(model_path: &PathBuf) -> GraphProto {
     model.graph.unwrap()
 }
 
-// TODO: Allow for dynamic batch sizes
+// TODO:
+//      1. Allow for dynamic batch sizes
+//      2. Allow for higher rank inputs
 
 /// Get the input shape from a graph, or None if anything is missing/unsupported.
 /// We still only support batch-size=1 and a static 2nd dim.
