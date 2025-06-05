@@ -222,20 +222,30 @@ where
 
         drop_in_background_thread(polys);
 
-        /*  Sumcheck 3: PC Next sumcheck
-            sumcheck claim is pc_next(r_cycle) = \sum_j pc(j) * eq_plus_one(r_cycle, j)
+        /*  Sumcheck 3: Shift sumcheck with RLC
+            sumcheck claim is: (pc_next + c * virtual_sequence)(r_cycle) = \sum_j (pc(j) + c * virtual_seq(j)) * eq_plus_one(r_cycle, j)
         */
-        let span = span!(Level::INFO, "pcnext_shift_sumcheck");
+        let span = span!(Level::INFO, "shift_sumcheck_rlc");
         let _guard = span.enter();
         
-        // Extract the PC polynomial (RealInstructionAddress is at index 1)
-        let pc_poly = &input_polys[1];
+        // Get RLC coefficient from transcript
+        let shift_rlc_coeff: F = transcript.challenge_scalar();
+        
+        // Extract the polynomials
+        let virtual_seq_poly = &input_polys[0]; // VirtualInstructionAddress is at index 0
+        let pc_poly = &input_polys[1];          // RealInstructionAddress is at index 1
+        
+        // Create RLC polynomial: pc + shift_rlc_coeff * virtual_seq
+        let rlc_poly = MultilinearPolynomial::linear_combination(
+            &[pc_poly, virtual_seq_poly],
+            &[F::one(), shift_rlc_coeff],
+        );
         
         let num_rounds_shift_sumcheck = num_cycles_bits;
         
-        // For the pcnext sumcheck, we only need the PC polynomial and eq_plus_one
+        // For the shift sumcheck, we use the RLC polynomial and eq_plus_one
         let mut shift_sumcheck_polys = vec![
-            pc_poly.clone(),
+            rlc_poly,
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
         
@@ -389,11 +399,14 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        /* Sumcheck 3: PC Next sumcheck
-            - claim = pc_next(r_cycle) = \sum_j pc(j) * eq_plus_one(r_cycle, j)
-            - verifying it involves checking that claim = pc(r_j) * eq_plus_one(r_cycle, r_j)
+        /* Sumcheck 3: Shift sumcheck with RLC
+            - claim = (pc_next + c * virtual_sequence)(r_cycle) = \sum_j (pc(j) + c * virtual_seq(j)) * eq_plus_one(r_cycle, j)
+            - verifying it involves checking that claim = (pc(r_j) + c * virtual_seq(r_j)) * eq_plus_one(r_cycle, r_j)
             where r_j = shift_sumcheck_r
         */
+
+        // Get the same RLC coefficient from transcript
+        let shift_rlc_coeff: F = transcript.challenge_scalar();
 
         let num_rounds_shift_sumcheck = num_steps_bits;
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
@@ -406,13 +419,16 @@ where
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        // Extract PC evaluation from shift_sumcheck_witness_evals
-        // PC is at index 1 (RealInstructionAddress)
-        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];
+        // Extract evaluations from shift_sumcheck_witness_evals
+        let eval_virtual_seq_at_shift_r = self.shift_sumcheck_witness_evals[0]; // VirtualInstructionAddress
+        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];         // RealInstructionAddress
+        
+        // Compute RLC evaluation: pc(r_j) + c * virtual_seq(r_j)
+        let eval_rlc_at_shift_r = eval_pc_at_shift_r + shift_rlc_coeff * eval_virtual_seq_at_shift_r;
         
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
-        let claim_shift_sumcheck_expected = eval_pc_at_shift_r * eq_plus_one_shift_sumcheck;
+        let claim_shift_sumcheck_expected = eval_rlc_at_shift_r * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
