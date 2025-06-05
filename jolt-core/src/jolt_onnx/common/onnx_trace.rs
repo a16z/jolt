@@ -59,6 +59,9 @@ impl ONNXInstruction {
                 self.decorate_matmul(node_proto);
             }
             Operator::Relu => {}
+            Operator::Conv => {
+                self.decorate_conv(node_proto);
+            }
         }
     }
 
@@ -66,6 +69,24 @@ impl ONNXInstruction {
     fn decorate_matmul(&mut self, node_proto: &NodeProto) {
         let (alpha, beta) = alpha_beta(node_proto);
         self.attributes = Some(vec![alpha, beta]);
+    }
+
+    ///
+    fn decorate_conv(&mut self, node_proto: &NodeProto) {
+        let get_attr = |name: &str| -> Vec<i64> {
+            node_proto
+                .attribute
+                .iter()
+                .find(|x| x.name.contains(name))
+                .map_or_else(Vec::new, |x| x.ints.clone())
+        };
+
+        let (strides, pads, _kernel_shape, dilations) = (
+            get_attr("strides"),
+            get_attr("pads"),
+            get_attr("kernel_shape"),
+            get_attr("dilations"),
+        );
     }
 }
 
@@ -78,6 +99,8 @@ pub enum Operator {
     /// This is a non-linear activation function that outputs the input directly if it is positive;
     /// otherwise, it outputs zero.
     Relu,
+    /// Convolution operator
+    Conv,
 }
 
 /// Used to decorate the matmul operator with its attributes.

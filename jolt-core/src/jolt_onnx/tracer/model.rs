@@ -94,6 +94,9 @@ impl QuantizedONNXModel {
                     // Relu: Y = max(0, X)
                     input_shape.clone() // Output shape is same as input shape
                 }
+                Operator::Conv => {
+                    todo!()
+                }
             };
 
             // Store the input and output shapes for the current layer
@@ -187,6 +190,9 @@ impl QuantizedONNXModel {
                     };
                     io_map.insert(instr.outputs[0].to_string(), output_tensor);
                 }
+                Operator::Conv => {
+                    todo!()
+                }
             }
             self.tracer.capture_post_state(&io_map);
         }
@@ -222,6 +228,7 @@ impl FromStr for Operator {
         match op {
             "Gemm" => Ok(Operator::MatMul),
             "Relu" => Ok(Operator::Relu),
+            "Conv" => Ok(Operator::Conv),
             _ => Err(format!(
                 "Could not match instruction {op} to ONNX operator set."
             )),
