@@ -155,49 +155,28 @@ impl QuantizedONNXModel {
                     // TODO: I do not think it is guaranteed that instr.inputs[0] will be a, and instr.inputs[1] will be b, etc...
                     let a = io_map.get(&instr.inputs[0]).unwrap(); // shape: [M, K]
                     let b = io_map.get(&instr.inputs[1]).unwrap(); // shape: [N, K]
-                    let c = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
-                    let (alpha, beta) = {
+
+                    // TODO: Handle bias, alpha, and beta operations in a separate operator (similar to virtual instructions)
+                    let _bias = io_map.get(&instr.inputs[2]).unwrap(); // shape: [N]
+                    let (_alpha, _beta) = {
                         let attributes = instr.attributes.as_ref().unwrap();
-                        (attributes[0] as i32, attributes[1] as i32)
+                        (
+                            f32::from_bits(attributes.get("alpha").unwrap_or(&1).to_owned() as u32),
+                            f32::from_bits(attributes.get("beta").unwrap_or(&0).to_owned() as u32),
+                        )
                     };
-                    // rows in A
-                    let m = a.shape[0];
-                    // cols in A == cols in B^T
-                    let k = a.shape[1];
-                    // rows in B == output cols
-                    let n = b.shape[0];
 
-                    // Output shape is [M, N]
-                    let mut result = vec![0i32; m * n];
-                    for i in 0..m {
-                        for j in 0..n {
-                            let mut acc = 0i32;
-                            for t in 0..k {
-                                let a_val = a.data[i * k + t] as i32;
-                                let b_val = b.data[j * k + t] as i32;
-                                acc += a_val * b_val;
-                            }
-                            let bias = if beta != 0 {
-                                beta * c.data[j] as i32
-                            } else {
-                                0
-                            };
-                            result[i * n + j] = alpha * acc + bias;
-                        }
-                    }
+                    // EvalOp
+                    let (result, shape) = a.matmul_rhs_transposed(b);
 
+                    // TODO: Use lookups to prove correctness of requantization?
                     // Requantize back to i8
                     let output_scale = a.scale * b.scale;
-                    // TODO: Figure out a way around this otherwise we will have to prove this computation is correct
                     let quantized_result: Vec<i8> = result
                         .iter()
                         .map(|&x| (x as f32 / output_scale).round().clamp(-128.0, 127.0) as i8)
                         .collect();
-                    let output_tensor = QuantizedTensor {
-                        shape: vec![m, n],
-                        data: quantized_result,
-                        scale: output_scale,
-                    };
+                    let output_tensor = QuantizedTensor::new(shape, quantized_result, output_scale);
                     io_map.insert(instr.outputs[0].to_string(), output_tensor);
                 }
 

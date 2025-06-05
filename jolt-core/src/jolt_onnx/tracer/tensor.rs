@@ -17,10 +17,22 @@ pub struct QuantizedTensor {
 }
 
 impl QuantizedTensor {
+    /// Create a new instance of [`QuantizedTensor`].
+    /// # Panics:
+    /// - Panics if the shape and data length do not match.
+    pub fn new(shape: Vec<usize>, data: Vec<i8>, scale: f32) -> Self {
+        // Ensure the shape and data are compatible.
+        assert_eq!(
+            shape.iter().product::<usize>(),
+            data.len(),
+            "Shape and data length mismatch"
+        );
+        Self { shape, data, scale }
+    }
     /// Create a new instance of [`QuantizedTensor`] from the given shape, and float data.
     /// # Note:
     /// - The data is quantized to i8 using the [`quantize`] function.
-    pub fn new(shape: Vec<usize>, data: Vec<f32>) -> Self {
+    pub fn from_float_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
         // Quantize the data to i8 and get the scale factor.
         let (data, scale) = quantize(&data);
         // Create a new QuantizedTensor with the given shape, quantized data, and scale.
@@ -28,16 +40,22 @@ impl QuantizedTensor {
     }
 
     /// Dequantize the tensor back to a vector of f32 values.
+    /// Takes in [`QuantizedTensor`] and returns a vector of f32 values.
     pub fn dequantized_data(&self) -> Vec<f32> {
         // Dequantize the data by multiplying each quantized value by the scale factor.
         self.data.iter().map(|&x| x as f32 * self.scale).collect()
     }
 
     /// Matrix multiplication of two quantized tensors.
-    /// Implicitly transposes the rhs matrix.
     ///
     /// # Note:
+    ///
+    /// - Implicitly transposes the rhs matrix before multiplication.
     /// - Intermediate results are stored as i32 to prevent overflow.
+    ///
+    /// # Panics:
+    ///
+    /// - Panics if the inner dimensions of the matrices do not match.
     pub fn matmul_rhs_transposed(&self, other: &QuantizedTensor) -> (Vec<i32>, Vec<usize>) {
         // Ensure the inner dimensions match for matrix multiplication (B is transposed)
         assert_eq!(
@@ -53,7 +71,6 @@ impl QuantizedTensor {
 
         // Output shape is [M, N]
         let mut result = vec![0i32; m * n];
-
         for i in 0..m {
             for j in 0..n {
                 let mut acc = 0i32;

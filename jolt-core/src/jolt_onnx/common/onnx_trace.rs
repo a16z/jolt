@@ -1,5 +1,7 @@
 //! This module provides the types that are used to construct the execution trace from an ONNX runtime context.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use tract_onnx::pb::NodeProto;
 
@@ -30,7 +32,7 @@ pub struct ONNXInstruction {
     /// The operator that this instruction represents
     pub opcode: Operator,
     /// Optional attributes for the operator, such as alpha and beta for MatMul
-    pub attributes: Option<Vec<f32>>,
+    pub attributes: Option<HashMap<String, u64>>,
     /// The inputs to the operator, which are the names of the tensors
     pub inputs: Vec<String>,
     /// The outputs of the operator, which are the names of the tensors
@@ -68,7 +70,10 @@ impl ONNXInstruction {
     /// Add the alpha and beta values to the instruction's attributes
     fn decorate_matmul(&mut self, node_proto: &NodeProto) {
         let (alpha, beta) = alpha_beta(node_proto);
-        self.attributes = Some(vec![alpha, beta]);
+        self.attributes = Some(HashMap::from([
+            ("alpha".to_string(), alpha.to_bits() as u64),
+            ("beta".to_string(), beta.to_bits() as u64),
+        ]));
     }
 
     ///

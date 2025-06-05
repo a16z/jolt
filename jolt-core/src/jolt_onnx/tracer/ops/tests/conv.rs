@@ -9,7 +9,7 @@ use crate::jolt_onnx::{
 fn test_conv_simple() {
     let mut instrs: Vec<ONNXInstruction> = Vec::new();
     instrs.push(ONNXInstruction::new(Operator::from_str("Conv").unwrap()));
-    let weight = QuantizedTensor::new(
+    let weight = QuantizedTensor::from_float_data(
         vec![1, 1, 3, 3],
         vec![
             1.0, 0.0, -1.0, // Kernel row 1
@@ -17,5 +17,5 @@ fn test_conv_simple() {
             1.0, 0.0, -1.0, // Kernel row 3
         ],
     );
-    let bias = QuantizedTensor::new(vec![1], vec![0.0]); // No bias
+    let bias = QuantizedTensor::from_float_data(vec![1], vec![0.0]); // No bias
 }
