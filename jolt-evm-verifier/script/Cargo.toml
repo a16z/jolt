@@ -6,15 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy-primitives = "0.7.6"
-alloy-sol-types = "0.7.6"
-ark-bn254 = "0.5.0"
-ark-ff = "0.5.0"
-ark-serialize = "0.5.0"
-ark-ec = "0.5.0"
-ark-std = "0.5.0"
-jolt-core = { path = "../../jolt-core", package = "jolt-core"}
-rand_core = "0.6.4"
+alloy-primitives = { version = "0.7.6", default-features = false }
+alloy-sol-types = { version = "0.7.6", default-features = false }
+ark-bn254 = { version = "0.5.0", default-features = false }
+ark-ff = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-std = { version = "0.5.0", default-features = false }
+jolt-core = { path = "../../jolt-core", package = "jolt-core" }
+rand_core = { version = "0.6.4", default-features = false }
 rand_chacha = { version = "0.3.0", default-features = false }
 
 [patch.crates-io]
