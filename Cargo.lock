@@ -1125,6 +1125,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?rev=50d6ed1f9f7479b8357acfa5d4c62e3d6e2f7907#50d6ed1f9f7479b8357acfa5d4c62e3d6e2f7907"
 dependencies = [
  "ark-bn254",
  "ark-ec",

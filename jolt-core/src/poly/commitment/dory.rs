@@ -228,7 +228,7 @@ where
 
         match scalars {
             DoryMultilinearPolynomial::LargeScalars(coeffs) => {
-                // For large scalars, use parallel reduction with chunking
+
                 let chunk_size = (coeffs.len() / rayon::current_num_threads()).max(32);
 
                 bases
@@ -246,14 +246,13 @@ where
                     .reduce(JoltGTWrapper::<P>::identity, |a, b| a.add(&b))
             }
             DoryMultilinearPolynomial::U8Scalars(coeffs) => {
-                // For small scalars, use bucketing strategy
                 msm_gt_small::<P, u8>(bases, coeffs)
             }
             DoryMultilinearPolynomial::U16Scalars(coeffs) => msm_gt_small::<P, u16>(bases, coeffs),
             DoryMultilinearPolynomial::U32Scalars(coeffs) => msm_gt_small::<P, u32>(bases, coeffs),
             DoryMultilinearPolynomial::U64Scalars(coeffs) => msm_gt_small::<P, u64>(bases, coeffs),
             DoryMultilinearPolynomial::I64Scalars(coeffs) => {
-                // Convert to field elements and process
+
                 let field_coeffs: Vec<JoltFieldWrapper<P::ScalarField>> = coeffs
                     .iter()
                     .map(|&x| JoltFieldWrapper(P::ScalarField::from_i64(x)))
@@ -300,7 +299,6 @@ where
             return Self::GT::identity();
         }
 
-        // Extract inner curve points from wrappers
         let g1_inner: Vec<E::G1> = ps.iter().map(|p| p.inner).collect();
         let g2_inner: Vec<E::G2> = qs.iter().map(|q| q.inner).collect();
 
@@ -360,7 +358,7 @@ impl<'a, F: JoltField> From<&DoryMultilinearPolynomial<'a, JoltFieldWrapper<F>>>
                     std::slice::from_raw_parts(scalars.as_ptr() as *const F, scalars.len())
                 };
                 // Note: This still allocates because DensePolynomial owns its data.
-                // For true zero-cost, you'd need DensePolynomial to support borrowed data.
+                // @TODO(markosg04) For true zero-cost, DensePolynomial needs to be refactored slightly.
                 MultilinearPolynomial::LargeScalars(DensePolynomial::new(
                     field_scalars_slice.to_vec(),
                 ))
@@ -394,7 +392,8 @@ impl<'a, F: JoltField> From<&'a MultilinearPolynomial<F>>
 
         match src {
             MultilinearPolynomial::LargeScalars(dense) => {
-                // SAFETY: JoltFieldWrapper is #[repr(transparent)] over F
+                // SAFETY: JoltFieldWrapper is #[repr(transparent)] over F,
+                // hence always the same memory layout
                 let wrapped: &'a [JoltFieldWrapper<F>] =
                     unsafe { std::slice::from_raw_parts(dense.Z.as_ptr().cast(), dense.Z.len()) };
                 Dory::LargeScalars(wrapped)
@@ -541,7 +540,7 @@ pub struct DoryCommitmentScheme<ProofTranscript: Transcript> {
 pub struct DorySetup {
     pub prover_setup: ProverSetup<JoltBn254>,
     pub verifier_setup: VerifierSetup<JoltBn254>,
-    pub max_log_n: usize,
+    pub max_num_vars: usize,
 }
 
 /// Commitment to a polynomial
@@ -578,14 +577,14 @@ where
     type Proof = DoryProofData<Self::Field>;
     type BatchedProof = DoryBatchedProof<Self::Field>;
 
-    fn setup(max_log_n: usize) -> Self::Setup {
+    fn setup(max_num_vars: usize) -> Self::Setup {
         let (prover_setup, verifier_setup) =
-            dory_setup::<JoltBn254, _>(ark_std::rand::thread_rng(), max_log_n);
+            dory_setup::<JoltBn254, _>(ark_std::rand::thread_rng(), max_num_vars);
 
         DorySetup {
             prover_setup,
             verifier_setup,
-            max_log_n,
+            max_num_vars,
         }
     }
 
@@ -624,7 +623,7 @@ where
         let sigma = (num_vars + 1) / 2;
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
-        let (eval_wrapper, proof_builder) = dory_evaluate::<
+        let (claimed_evaluation, proof_builder) = dory_evaluate::<
             JoltBn254,
             JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
             JoltG1MSM,
@@ -640,7 +639,7 @@ where
         let dory_proof = proof_builder.build();
 
         DoryProofData {
-            evaluation: eval_wrapper.0,
+            evaluation: claimed_evaluation.0,
             opening_point: opening_point.to_vec(),
             sigma,
             dory_proof_data: dory_proof,
@@ -656,13 +655,13 @@ where
         _opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let point_dory: Vec<JoltFieldWrapper<Self::Field>> = proof
+        let opening_point: Vec<JoltFieldWrapper<Self::Field>> = proof
             .opening_point
             .iter()
             .map(|&p| JoltFieldWrapper(p))
             .collect();
 
-        let eval_wrapper = JoltFieldWrapper(proof.evaluation);
+        let claimed_opening = JoltFieldWrapper(proof.evaluation);
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
         let verifier_builder =
             DoryProofBuilder::from_proof_no_transcript(proof.dory_proof_data.clone());
@@ -675,8 +674,8 @@ where
             JoltGTMSM,
         >(
             commitment.commitment.clone(),
-            eval_wrapper,
-            &point_dory,
+            claimed_opening,
+            &opening_point,
             verifier_builder,
             proof.sigma,
             &setup.verifier_setup,
@@ -700,82 +699,295 @@ impl crate::utils::transcript::AppendToTranscript for DoryCommitment {
     }
 }
 
+
 // ===== Tests =====
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::utils::transcript::KeccakTranscript;
+    use crate::poly::compact_polynomial::CompactPolynomial;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
     use std::time::Instant;
 
-    #[test]
-    fn test_dory_commitment_scheme() {
-        let max_log_n = 22;
-        let num_vars = 22;
-        let num_coeffs = 1 << num_vars;
-        let sigma = (num_vars + 1) / 2;
+    /// Test setup helper that creates a setup once and reuses it
+    fn create_test_setup(max_num_vars: usize) -> DorySetup {
+        DoryCommitmentScheme::<KeccakTranscript>::setup(max_num_vars)
+    }
+
+    /// Helper function to run the full commitment scheme test
+    fn test_commitment_scheme_with_poly(
+        poly: MultilinearPolynomial<Fr>,
+        poly_type_name: &str,
+        setup: &DorySetup,
+    ) -> (std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration) {
+        let num_vars = poly.get_num_vars();
+        let num_coeffs = match &poly {
+            MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
+            MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
+        };
 
         println!(
-            "Testing Dory PCS with {} variables, {} coefficients, sigma = {}",
-            num_vars, num_coeffs, sigma
+            "Testing Dory PCS ({}) with {} variables, {} coefficients",
+            poly_type_name, num_vars, num_coeffs
         );
 
         let mut rng = thread_rng();
-        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
         let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
-        let setup_start = Instant::now();
-        let setup = DoryCommitmentScheme::<KeccakTranscript>::setup(max_log_n);
-        let setup_time = setup_start.elapsed();
-        println!("Setup time: {:?}", setup_time);
-
         let commit_start = Instant::now();
-        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, &setup);
+        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, setup);
         let commit_time = commit_start.elapsed();
-        println!("Commit time: {:?}", commit_time);
+        println!("  Commit time: {:?}", commit_time);
 
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::<KeccakTranscript>::prove(
-            &setup,
+            setup,
             &poly,
             &opening_point,
             &mut prove_transcript,
         );
         let prove_time = prove_start.elapsed();
-        println!("Prove time: {:?}", prove_time);
+        println!("  Prove time: {:?}", prove_time);
 
         let mut verify_transcript = KeccakTranscript::new(b"dory_test");
         let verify_start = Instant::now();
         let verification_result = DoryCommitmentScheme::<KeccakTranscript>::verify(
             &proof,
-            &setup,
+            setup,
             &mut verify_transcript,
             &opening_point,
             &proof.evaluation,
             &commitment,
         );
         let verify_time = verify_start.elapsed();
-        println!("Verify time: {:?}", verify_time);
+        println!("  Verify time: {:?}", verify_time);
 
-        let total_time = setup_time + commit_time + prove_time + verify_time;
-        println!("Total time: {:?}", total_time);
+        let total_time = commit_time + prove_time + verify_time;
+        println!("  Total time (without setup): {:?}", total_time);
 
         assert!(
             verification_result.is_ok(),
-            "Dory verification failed: {:?}",
+            "Dory verification failed for {}: {:?}",
+            poly_type_name,
             verification_result
         );
 
-        println!("✅ Dory commitment scheme test passed!");
-        println!(
-            "   - Polynomial size: 2^{} = {} coefficients",
-            num_vars, num_coeffs
+        println!("  ✅ {} test passed!\n", poly_type_name);
+
+        (commit_time, prove_time, verify_time, total_time)
+    }
+
+    #[test]
+    fn test_dory_commitment_scheme_all_polynomial_types() {
+        let max_num_vars = 18;
+        let num_vars = 18;
+        let num_coeffs = 1 << num_vars;
+
+        println!("Setting up Dory PCS with max_num_vars = {}", max_num_vars);
+        let setup_start = Instant::now();
+        let setup = create_test_setup(max_num_vars);
+        let setup_time = setup_start.elapsed();
+        println!("Setup time: {:?}\n", setup_time);
+
+        let mut rng = thread_rng();
+
+        // Test 1: LargeScalars (Field elements)
+        let coeffs_large: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+        let poly_large = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs_large));
+        let (commit_large, prove_large, verify_large, total_large) =
+            test_commitment_scheme_with_poly(poly_large, "LargeScalars", &setup);
+
+        // Test 2: U8Scalars
+        let coeffs_u8: Vec<u8> = (0..num_coeffs).map(|_| rng.next_u32() as u8).collect();
+        let poly_u8 = MultilinearPolynomial::U8Scalars(CompactPolynomial::from_coeffs(coeffs_u8));
+        let (commit_u8, prove_u8, verify_u8, total_u8) =
+            test_commitment_scheme_with_poly(poly_u8, "U8Scalars", &setup);
+
+        // Test 3: U16Scalars
+        let coeffs_u16: Vec<u16> = (0..num_coeffs).map(|_| rng.next_u32() as u16).collect();
+        let poly_u16 = MultilinearPolynomial::U16Scalars(CompactPolynomial::from_coeffs(coeffs_u16));
+        let (commit_u16, prove_u16, verify_u16, total_u16) =
+            test_commitment_scheme_with_poly(poly_u16, "U16Scalars", &setup);
+
+        // Test 4: U32Scalars
+        let coeffs_u32: Vec<u32> = (0..num_coeffs).map(|_| rng.next_u32()).collect();
+        let poly_u32 = MultilinearPolynomial::U32Scalars(CompactPolynomial::from_coeffs(coeffs_u32));
+        let (commit_u32, prove_u32, verify_u32, total_u32) =
+            test_commitment_scheme_with_poly(poly_u32, "U32Scalars", &setup);
+
+        // Test 5: U64Scalars
+        let coeffs_u64: Vec<u64> = (0..num_coeffs).map(|_| rng.next_u64()).collect();
+        let poly_u64 = MultilinearPolynomial::U64Scalars(CompactPolynomial::from_coeffs(coeffs_u64));
+        let (commit_u64, prove_u64, verify_u64, total_u64) =
+            test_commitment_scheme_with_poly(poly_u64, "U64Scalars", &setup);
+
+        // Test 6: I64Scalars
+        let coeffs_i64: Vec<i64> = (0..num_coeffs).map(|_| rng.next_u64() as i64).collect();
+        let poly_i64 = MultilinearPolynomial::I64Scalars(CompactPolynomial::from_coeffs(coeffs_i64));
+        let (commit_i64, prove_i64, verify_i64, total_i64) =
+            test_commitment_scheme_with_poly(poly_i64, "I64Scalars", &setup);
+
+        // Summary of results
+        println!("========== PERFORMANCE SUMMARY ==========");
+        println!("Setup time: {:?}", setup_time);
+        println!();
+        println!("Polynomial Type | Commit Time | Prove Time  | Verify Time | Total Time");
+        println!("----------------|-------------|-------------|-------------|------------");
+        println!("LargeScalars    | {:>11?} | {:>11?} | {:>11?} | {:>10?}", commit_large, prove_large, verify_large, total_large);
+        println!("U8Scalars       | {:>11?} | {:>11?} | {:>11?} | {:>10?}", commit_u8, prove_u8, verify_u8, total_u8);
+        println!("U16Scalars      | {:>11?} | {:>11?} | {:>11?} | {:>10?}", commit_u16, prove_u16, verify_u16, total_u16);
+        println!("U32Scalars      | {:>11?} | {:>11?} | {:>11?} | {:>10?}", commit_u32, prove_u32, verify_u32, total_u32);
+        println!("U64Scalars      | {:>11?} | {:>11?} | {:>11?} | {:>10?}", commit_u64, prove_u64, verify_u64, total_u64);
+        println!("I64Scalars      | {:>11?} | {:>11?} | {:>11?} | {:>10?}", commit_i64, prove_i64, verify_i64, total_i64);
+        println!("==========================================");
+    }
+
+    #[test]
+    fn test_dory_soundness() {
+        use ark_std::UniformRand;
+
+        // Test setup
+        let num_vars = 10;
+        let max_num_vars = 10;
+        let num_coeffs = 1 << num_vars;
+
+        let mut rng = thread_rng();
+        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+
+        let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+
+        let setup = DoryCommitmentScheme::<KeccakTranscript>::setup(max_num_vars);
+
+        // Commit to the polynomial
+        let commitment = DoryCommitmentScheme::<KeccakTranscript>::commit(&poly, &setup);
+
+        let mut prove_transcript =
+            KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
+
+        // Generate the proof
+        let proof = DoryCommitmentScheme::<KeccakTranscript>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            &mut prove_transcript,
         );
-        println!("   - Commitment: {:?}", commitment.commitment.inner);
-        println!("   - Evaluation: {:?}", proof.evaluation);
+
+        // Now we consider 4 cases of tampering, which Dory should reject.
+
+        // Test 1: Tamper with the evaluation
+        {
+            let mut tampered_proof = proof.clone();
+            tampered_proof.evaluation = Fr::rand(&mut rng); // Random wrong evaluation
+
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
+            let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
+                &tampered_proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation, // Use original evaluation as expected
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with tampered evaluation"
+            );
+            println!("✅ Test 1 passed: Tampered evaluation correctly rejected");
+        }
+
+        // Test 2: Tamper with the opening point
+        {
+            let mut tampered_proof = proof.clone();
+            tampered_proof.opening_point = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
+            let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
+                &tampered_proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point, // Use original opening point
+                &proof.evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with tampered opening point"
+            );
+            println!("✅ Test 2 passed: Tampered opening point correctly rejected");
+        }
+
+        // Test 3: Use wrong commitment
+        {
+            // Create a different polynomial and its commitment
+            let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
+            let wrong_poly =
+                MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
+            let wrong_commitment =
+                DoryCommitmentScheme::<KeccakTranscript>::commit(&wrong_poly, &setup);
+
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
+            let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation,
+                &wrong_commitment, // Wrong commitment
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with wrong commitment"
+            );
+            println!("✅ Test 3 passed: Wrong commitment correctly rejected");
+        }
+
+        // Test 4: Use wrong domain in transcript
+        {
+            let mut verify_transcript = KeccakTranscript::new(b"wrong_domain");
+            let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with wrong transcript domain"
+            );
+            println!("✅ Test 4 passed: Wrong transcript domain correctly rejected");
+        }
+
+        // Test 5: Verify that correct proof still passes
+        {
+            let mut verify_transcript = KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
+            let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
+                &proof,
+                &setup,
+                &mut verify_transcript,
+                &opening_point,
+                &proof.evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_ok(),
+                "Verification should succeed with correct proof"
+            );
+            println!("✅ Test 5 passed: Correct proof indeed verifies successfully");
+        }
     }
 }
