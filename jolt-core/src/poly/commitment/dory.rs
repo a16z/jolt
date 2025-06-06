@@ -570,13 +570,6 @@ pub struct DoryBatchedProof<F: JoltField> {
 impl<ProofTranscript> CommitmentScheme<ProofTranscript> for DoryCommitmentScheme<ProofTranscript>
 where
     ProofTranscript: Transcript,
-    P: Pairing + Clone + 'static + Debug + Default + PartialEq,
-    P::G1: dory::arithmetic::Group<Scalar = JoltToDoryField<F>> + Debug,
-    P::G2: dory::arithmetic::Group<Scalar = JoltToDoryField<F>> + Debug,
-    P::GT: dory::arithmetic::Group<Scalar = JoltToDoryField<F>> + Clone + Debug + Default,
-    OptimizedMsmG1: MultiScalarMul<P::G1>,
-    OptimizedMsmG2: MultiScalarMul<P::G2>,
-    DummyMsm<P::GT>: MultiScalarMul<P::GT>,
 {
     type Field = Fr;
     type Setup = DorySetup;
@@ -620,7 +613,7 @@ where
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
-        transcript: &'a mut ProofTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let dory_poly: DoryMultilinearPolynomial<'_, JoltFieldWrapper<Self::Field>> = poly.into();
         let point_dory: Vec<JoltFieldWrapper<Self::Field>> =
@@ -654,7 +647,7 @@ where
         }
     }
 
-    fn verify<'a>(
+    fn verify(
         proof: &Self::Proof,
         setup: &Self::Setup,
         transcript: &mut ProofTranscript,
@@ -691,7 +684,7 @@ where
 
         match verify_result {
             Ok(()) => Ok(()),
-            Err(_) => Err(ProofVerifyError::InvalidOpeningProof),
+            Err(_) => Err(ProofVerifyError::InternalError),
         }
     }
 
