@@ -65,8 +65,8 @@ impl ONNXTraceRow {
                     .input_vals
                     .as_ref()
                     .expect("input values should be present");
-                let a = inputs[0].clone().pad();
-                let b = inputs[1].clone().pad();
+                let a = inputs[0].pad();
+                let b = inputs[1].pad();
                 Some(PrecompileOperators::MatMult(MatMultPrecompile::new(a, b)))
             }
             _ => None,
