@@ -90,7 +90,7 @@ rand_distr = "0.4.3"
 anyhow = "1.0.97"
 derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
-dory = { path = "/Users/mgeorghiades/a16z/clean-dory" }
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", rev = "50d6ed1f9f7479b8357acfa5d4c62e3d6e2f7907" }
 lazy_static = "1.5.0"
 
 [dev-dependencies]
