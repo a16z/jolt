@@ -19,8 +19,8 @@ proc-macro = true
 guest-std = []
 
 [dependencies]
-syn = { version = "1.0", features = ["full"] }
-quote = "1.0"
-proc-macro2 = "1.0.79"
+syn = { version = "1.0", default-features = false, features = ["full"] }
+quote = { version = "1.0", default-features = false }
+proc-macro2 = { version = "1.0.79", default-features = false }
 
 common = { path = "../../common" }

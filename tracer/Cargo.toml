@@ -21,20 +21,15 @@ std = ["common/std", "fnv/std", "object/std", "tracing/std"]
 
 [dependencies]
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.36.7", features = [
-    "build_core",
-    "elf",
-], default-features = false }
-tracing = { version = "0.1.41", features = [
-    "attributes",
-], default-features = false }
-ark-serialize = { version = "0.5.0", features = ["derive"] }
-derive_more = { version = "2.0.1", features = ["from"] }
-serde = { version = "1.0.193", features = ["derive"] }
-serde_json = "1.0.108"
-strum_macros = "0.26.4"
-strum = "0.26.3"
-rand = "0.7.3"
-paste = "1.0.15"
+object = { version = "0.36.7", default-features = false, features = ["build_core", "elf"] }
+tracing = { version = "0.1.41", default-features = false, features = ["attributes"] }
+ark-serialize = { version = "0.5.0", default-features = false, features = ["derive"] }
+derive_more = { version = "2.0.1", default-features = false, features = ["from"] }
+serde = { version = "1.0.193", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.108", default-features = false }
+strum_macros = { version = "0.26.4", default-features = false }
+strum = { version = "0.26.3", default-features = false }
+rand = { version = "0.7.3", default-features = false }
+paste = { version = "1.0.15", default-features = false }
 
 common = { path = "../common", default-features = false }
