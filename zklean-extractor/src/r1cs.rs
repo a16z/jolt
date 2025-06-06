@@ -32,7 +32,7 @@ where
 
         // XXX Make max input/output sizes configurable?
         let uniform_constraints = {
-            let memory_layout = MemoryLayout::new(J::MAX_INPUT_SIZE, J::MAX_OUTPUT_SIZE);
+            let memory_layout = MemoryLayout::new(&J::MEMORY_CONFIG);
 
             let mut r1cs_builder = R1CSBuilder::<{ J::C }, F, JoltR1CSInputs>::new();
             CS::uniform_constraints(&mut r1cs_builder, memory_layout.input_start);
