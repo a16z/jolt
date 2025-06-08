@@ -652,45 +652,6 @@ impl ElfAnalyzer {
         map
     }
 
-    /// Finds a program data section whose name is .tohost. If found this method
-    /// returns an address of the section.
-    ///
-    /// # Arguments
-    /// * `program_data_section_headers`
-    /// * `string_table_section_headers`
-    pub fn find_tohost_addr(
-        &self,
-        program_data_section_headers: &Vec<&SectionHeader>,
-        string_table_section_headers: &Vec<&SectionHeader>,
-    ) -> Option<u64> {
-        let tohost_values = [0x2e, 0x74, 0x6f, 0x68, 0x6f, 0x73, 0x74, 0x00]; // ".tohost\null"
-        for program_data_header in program_data_section_headers {
-            let sh_addr = program_data_header.sh_addr;
-            let sh_name = program_data_header.sh_name as u64;
-            // Find all string sections so far.
-            // @TODO: Is there a way to know which string table section
-            //        sh_name of program data section points to?
-            for string_table_header in string_table_section_headers {
-                let sh_offset = string_table_header.sh_offset;
-                let sh_size = string_table_header.sh_size;
-                let mut found = true;
-                for k in 0..tohost_values.len() as u64 {
-                    let addr = sh_offset + sh_name + k;
-                    if addr >= sh_offset + sh_size
-                        || self.read_byte(addr as usize) != tohost_values[k as usize]
-                    {
-                        found = false;
-                        break;
-                    }
-                }
-                if found {
-                    return Some(sh_addr);
-                }
-            }
-        }
-        None
-    }
-
     /// Reads a byte from ELF file content
     ///
     /// # Arguments
