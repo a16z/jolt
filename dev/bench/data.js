@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749420178722,
+  "lastUpdate": 1749420302198,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -5806,6 +5806,138 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 7028912,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zouguangxian@gmail.com",
+            "name": "Zou Guangxian",
+            "username": "zouguangxian"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "574dc265cea8ae525cfb039acd7a64a9840fced9",
+          "message": "feat: add RISC-V emulator with ELF file execution and signature generation (#686)\n\n* feat: add RISC-V emulator with ELF file execution and signature generation\n\nThis commit introduces a new RISC-V emulator in the `tracer` crate, allowing execution of ELF files and optional signature file generation. Key changes include:\n\n- New `jolt-emu` binary defined in `Cargo.toml`.\n- Implementation of the emulator logic in `src/main.rs`, including command-line argument parsing using `clap`.\n- Updates to `Cargo.lock` to include new dependencies: `clap` and `tracing-subscriber`.\n- Refactoring of the `Emulator` struct to manage signature addresses and implement a method for writing signatures.\n- Enhancements to ELF section handling in `elf_analyzer.rs` for improved section address retrieval.\n\nThis feature expands the functionality of the project, enabling users to run RISC-V programs and capture execution signatures.\n\n* refactor: remove unused `find_section_addr` method from `elf_analyzer.rs`\n\n* doc: explain signatures in emulator",
+          "timestamp": "2025-06-08T17:27:27-04:00",
+          "tree_id": "b09e594434944d384c09ec31b59f5fbbe418bf5d",
+          "url": "https://github.com/a16z/jolt/commit/574dc265cea8ae525cfb039acd7a64a9840fced9"
+        },
+        "date": 1749420301113,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.6908,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 4594464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.6216,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 4587816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5706,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 4589932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.5516,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 4587556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.5275,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 6970480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 44.4251,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9274692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 2.1735,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 4590824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.8143,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 4588664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 1.8771,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 7058272,
             "unit": "KB",
             "extra": ""
           }
