@@ -3,6 +3,7 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rayon::prelude::*;
+use std::ops::Deref;
 use strum_macros::EnumIter;
 
 use super::{
