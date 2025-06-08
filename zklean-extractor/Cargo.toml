@@ -14,17 +14,17 @@ edition = "2021"
 build-fs-tree = "0.7.1"
 
 [dependencies]
-ark-std = { version = "0.5.0" }
-ark-bn254 = "0.5.0"
-ark-serialize = { version = "0.5.0", default-features = false, features = ["derive"] }
-clap = { version = "4.3.10", features = ["derive"] }
-rand_core = { version = "0.6.4", default-features = false }
-regex = "1.11.1"
-strum = "0.26.3"
-build-fs-tree = "0.7.1"
+ark-std = { version = "0.5.0", default-features = true }
+ark-bn254 = { version = "0.5.0", default-features = true }
+ark-serialize = { version = "0.5.0", default-features = true, features = ["derive"] }
+clap = { version = "4.3.10", default-features = true, features = ["derive"] }
+rand_core = { version = "0.6.4", default-features = true }
+regex = { version = "1.11.1", default-features = true }
+strum = { version = "0.26.3", default-features = true }
+build-fs-tree = { version = "0.7.1", default-features = true }
 
 jolt-core = { path = "../jolt-core" }
 common = { path = "../common" }
 
 [dev-dependencies]
-proptest = "1.6.0"
+proptest = { version = "1.6.0", default-features = true }
