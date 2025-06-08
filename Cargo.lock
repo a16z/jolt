@@ -4014,6 +4014,7 @@ name = "tracer"
 version = "0.2.0"
 dependencies = [
  "ark-serialize 0.5.0",
+ "clap",
  "common",
  "derive_more 2.0.1",
  "fnv",
@@ -4026,6 +4027,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

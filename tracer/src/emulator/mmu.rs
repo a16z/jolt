@@ -464,7 +464,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `p_address` Physical address
-    fn load_raw(&mut self, p_address: u64) -> u8 {
+    pub fn load_raw(&mut self, p_address: u64) -> u8 {
         let effective_address = self.get_effective_address(p_address);
         self.assert_effective_load_address(effective_address);
         // @TODO: Mapping should be configurable with dtb
@@ -695,7 +695,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `p_address` Physical address
-    fn load_doubleword_raw(&mut self, p_address: u64) -> u64 {
+    pub fn load_doubleword_raw(&mut self, p_address: u64) -> u64 {
         let effective_address = self.get_effective_address(p_address);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(7) > effective_address
