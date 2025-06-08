@@ -18,6 +18,8 @@ use super::sumcheck_engine::BatchableSumcheckInstance;
 
 /// This struct represents a precompile for matrix multiplication (where we implicitly transpose B).
 /// Used to generate the witness for matrix multiplication in Jolt's ONNX execution.
+///
+/// # Note: We assume tensors are appropriately padded here.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MatMultPrecompile {
     a: QuantizedTensor,
@@ -107,7 +109,7 @@ where
     #[tracing::instrument(skip_all)]
     /// Create a new instance of [`MatMultProverState`].
     /// We compute the evaluations of the polynomials A(rx, k) and B(ry, k) over the boolean hypercube,
-    /// and also compute the input claim C(rx, ry) = A(rx, k) * B(ry, k).
+    /// and also compute the input claim C(rx, ry) = Σₖ A(rx, k) * B(ry, k).
     ///
     /// These A(rx, k) and B(ry, k) evaluations serve as the witness for the matrix multiplication precompile.
     ///
