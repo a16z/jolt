@@ -192,7 +192,6 @@ where
         bases: &[JoltGTWrapper<P>],
         scalars: &[JoltFieldWrapper<P::ScalarField>],
     ) -> JoltGTWrapper<P> {
-       
         let chunk_size = (scalars.len() / rayon::current_num_threads()).max(32);
 
         bases
@@ -269,81 +268,23 @@ where
 // Dory's Poly trait: right now it uses default implementations for the poly utilities. We will want to override them
 // for the sparse case or for further optimizations.
 // We implement get() and len() since they do not have default implementations.
-
 impl<F, G> DoryPolynomial<JoltFieldWrapper<F>, JoltGroupWrapper<G>> for MultilinearPolynomial<F>
 where
     F: JoltField + PrimeField,
     G: CurveGroup<ScalarField = F> + VariableBaseMSM,
 {
     fn get(&self, index: usize) -> JoltFieldWrapper<F> {
-        match self {
-            MultilinearPolynomial::LargeScalars(dense) => {
-                assert!(
-                    index < dense.Z.len(),
-                    "Polynomial index out of bounds: {} >= {}",
-                    index,
-                    dense.Z.len()
-                );
-
-                JoltFieldWrapper(dense.Z[index])
-            }
-            MultilinearPolynomial::U8Scalars(compact) => {
-                assert!(
-                    index < compact.coeffs.len(),
-                    "Polynomial index out of bounds: {} >= {}",
-                    index,
-                    compact.coeffs.len()
-                );
-                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index] as u64))
-            }
-            MultilinearPolynomial::U16Scalars(compact) => {
-                assert!(
-                    index < compact.coeffs.len(),
-                    "Polynomial index out of bounds: {} >= {}",
-                    index,
-                    compact.coeffs.len()
-                );
-                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index] as u64))
-            }
-            MultilinearPolynomial::U32Scalars(compact) => {
-                assert!(
-                    index < compact.coeffs.len(),
-                    "Polynomial index out of bounds: {} >= {}",
-                    index,
-                    compact.coeffs.len()
-                );
-                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index] as u64))
-            }
-            MultilinearPolynomial::U64Scalars(compact) => {
-                assert!(
-                    index < compact.coeffs.len(),
-                    "Polynomial index out of bounds: {} >= {}",
-                    index,
-                    compact.coeffs.len()
-                );
-                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index]))
-            }
-            MultilinearPolynomial::I64Scalars(compact) => {
-                assert!(
-                    index < compact.coeffs.len(),
-                    "Polynomial index out of bounds: {} >= {}",
-                    index,
-                    compact.coeffs.len()
-                );
-                JoltFieldWrapper(F::from_i64(compact.coeffs[index]))
-            }
-        }
+        assert!(
+            index < self.len(),
+            "Polynomial index out of bounds: {} >= {}",
+            index,
+            self.len()
+        );
+        JoltFieldWrapper(self.get_coeff(index))
     }
 
     fn len(&self) -> usize {
-        match self {
-            MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
-            MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
-        }
+        self.len()
     }
 }
 
@@ -366,54 +307,44 @@ impl<'a, F: JoltField, T: Transcript> JoltToDoryTranscriptRef<'a, F, T> {
 impl<'a, F: JoltField, T: Transcript> DoryTranscript for JoltToDoryTranscriptRef<'a, F, T> {
     type Scalar = JoltFieldWrapper<F>;
 
-    fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+    fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
         let transcript = self
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
-        transcript.append_message(label_str);
         transcript.append_bytes(bytes);
     }
 
-    fn append_field(&mut self, label: &[u8], x: &Self::Scalar) {
+    fn append_field(&mut self, _label: &[u8], x: &Self::Scalar) {
         let transcript = self
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
-        transcript.append_message(label_str);
         transcript.append_scalar(&x.0);
     }
 
-    fn append_group<G: CanonicalSerialize>(&mut self, label: &[u8], g: &G) {
+    fn append_group<G: CanonicalSerialize>(&mut self, _label: &[u8], g: &G) {
         let transcript = self
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
-        transcript.append_message(label_str);
         transcript.append_serializable(g);
     }
 
-    fn append_serde<S: serde::Serialize>(&mut self, label: &[u8], s: &S) {
+    fn append_serde<S: serde::Serialize>(&mut self, _label: &[u8], s: &S) {
         let transcript = self
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
-        transcript.append_message(label_str);
         let bytes = postcard::to_allocvec(s).unwrap_or_default();
         transcript.append_bytes(&bytes);
     }
 
-    fn challenge_scalar(&mut self, label: &[u8]) -> Self::Scalar {
+    fn challenge_scalar(&mut self, _label: &[u8]) -> Self::Scalar {
         let transcript = self
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        let label_str: &'static [u8] = Box::leak(label.to_vec().into_boxed_slice());
-        transcript.append_message(label_str);
         JoltFieldWrapper(transcript.challenge_scalar::<F>())
     }
 
@@ -443,16 +374,14 @@ pub struct DorySetup {
 pub struct DoryCommitment(pub JoltGTBn254);
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryProofData<F: JoltField> {
-    pub evaluation: F,
-    pub opening_point: Vec<F>,
+pub struct DoryProofData {
     pub sigma: usize,
     pub dory_proof_data: DoryProof<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254>,
 }
 
 #[derive(Default, Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DoryBatchedProof<F: JoltField> {
-    proofs: Vec<DoryProofData<F>>,
+pub struct DoryBatchedProof {
+    proofs: Vec<DoryProofData>,
 }
 
 impl<ProofTranscript> CommitmentScheme<ProofTranscript> for DoryCommitmentScheme<ProofTranscript>
@@ -462,8 +391,8 @@ where
     type Field = Fr;
     type Setup = DorySetup;
     type Commitment = DoryCommitment;
-    type Proof = DoryProofData<Self::Field>;
-    type BatchedProof = DoryBatchedProof<Self::Field>;
+    type Proof = DoryProofData;
+    type BatchedProof = DoryBatchedProof;
 
     fn setup(max_num_vars: usize) -> Self::Setup {
         let (prover_setup, verifier_setup) =
@@ -504,7 +433,8 @@ where
         let sigma = (num_vars + 1) / 2;
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
-        let (claimed_evaluation, proof_builder) = evaluate::<
+        // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
+        let (_claimed_evaluation, proof_builder) = evaluate::<
             JoltBn254,
             JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
             JoltMSM,
@@ -521,8 +451,6 @@ where
         let dory_proof = proof_builder.build();
 
         DoryProofData {
-            evaluation: claimed_evaluation.0,
-            opening_point: opening_point.to_vec(),
             sigma,
             dory_proof_data: dory_proof,
         }
@@ -532,17 +460,14 @@ where
         proof: &Self::Proof,
         setup: &Self::Setup,
         transcript: &mut ProofTranscript,
-        _opening_point: &[Self::Field],
-        _opening: &Self::Field,
+        opening_point: &[Self::Field],
+        opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        let opening_point: Vec<JoltFieldWrapper<Self::Field>> = proof
-            .opening_point
-            .iter()
-            .map(|&p| JoltFieldWrapper(p))
-            .collect();
+        let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> =
+            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
 
-        let claimed_opening = JoltFieldWrapper(proof.evaluation);
+        let claimed_opening = JoltFieldWrapper(*opening);
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
         let verifier_builder =
             DoryProofBuilder::from_proof_no_transcript(proof.dory_proof_data.clone());
@@ -556,7 +481,7 @@ where
         >(
             commitment.0.clone(),
             claimed_opening,
-            &opening_point,
+            &opening_point_dory,
             verifier_builder,
             proof.sigma,
             &setup.verifier_setup,
@@ -628,6 +553,15 @@ mod tests {
 
         println!(" Commit time: {:?}", commit_time);
 
+        // Compute the evaluation using the DoryPolynomial trait's evaluate method
+        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> =
+            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        let evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
+            JoltFieldWrapper<Fr>,
+            JoltGroupWrapper<G1Projective>,
+        >>::evaluate(&poly, &opening_point_dory)
+        .0;
+
         let mut prove_transcript = KeccakTranscript::new(b"dory_test");
         let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::<KeccakTranscript>::prove(
@@ -647,15 +581,13 @@ mod tests {
             setup,
             &mut verify_transcript,
             &opening_point,
-            &proof.evaluation,
+            &evaluation,
             &commitment,
         );
         let verify_time = verify_start.elapsed();
 
         println!(" Verify time: {:?}", verify_time);
-
         let total_time = commit_time + prove_time + verify_time;
-
         println!(" Total time (without setup): {:?}", total_time);
 
         assert!(
@@ -664,7 +596,6 @@ mod tests {
             poly_type_name,
             verification_result
         );
-
         println!(" ✅ {} test passed!\n", poly_type_name);
 
         (commit_time, prove_time, verify_time, total_time)
@@ -781,6 +712,15 @@ mod tests {
         let mut prove_transcript =
             KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
 
+        // Compute the correct evaluation
+        let opening_point_dory: Vec<JoltFieldWrapper<Fr>> =
+            opening_point.iter().map(|&p| JoltFieldWrapper(p)).collect();
+        let correct_evaluation = <MultilinearPolynomial<Fr> as DoryPolynomial<
+            JoltFieldWrapper<Fr>,
+            JoltGroupWrapper<G1Projective>,
+        >>::evaluate(&poly, &opening_point_dory)
+        .0;
+
         let proof = DoryCommitmentScheme::<KeccakTranscript>::prove(
             &setup,
             &poly,
@@ -790,18 +730,16 @@ mod tests {
 
         // Test 1: Tamper with the evaluation
         {
-            let mut tampered_proof = proof.clone();
-
-            tampered_proof.evaluation = Fr::rand(&mut rng);
+            let tampered_evaluation = Fr::rand(&mut rng);
 
             let mut verify_transcript =
                 KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
-                &tampered_proof,
+                &proof,
                 &setup,
                 &mut verify_transcript,
                 &opening_point,
-                &proof.evaluation,
+                &tampered_evaluation,
                 &commitment,
             );
 
@@ -814,17 +752,17 @@ mod tests {
 
         // Test 2: Tamper with the opening point
         {
-            let mut tampered_proof = proof.clone();
-            tampered_proof.opening_point = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+            let tampered_opening_point: Vec<Fr> =
+                (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
             let mut verify_transcript =
                 KeccakTranscript::new(DoryCommitmentScheme::<KeccakTranscript>::protocol_name());
             let result = DoryCommitmentScheme::<KeccakTranscript>::verify(
-                &tampered_proof,
+                &proof,
                 &setup,
                 &mut verify_transcript,
-                &opening_point,
-                &proof.evaluation,
+                &tampered_opening_point,
+                &correct_evaluation,
                 &commitment,
             );
 
@@ -851,7 +789,7 @@ mod tests {
                 &setup,
                 &mut verify_transcript,
                 &opening_point,
-                &proof.evaluation,
+                &correct_evaluation,
                 &wrong_commitment,
             );
 
@@ -870,7 +808,7 @@ mod tests {
                 &setup,
                 &mut verify_transcript,
                 &opening_point,
-                &proof.evaluation,
+                &correct_evaluation,
                 &commitment,
             );
 
@@ -890,7 +828,7 @@ mod tests {
                 &setup,
                 &mut verify_transcript,
                 &opening_point,
-                &proof.evaluation,
+                &correct_evaluation,
                 &commitment,
             );
 
