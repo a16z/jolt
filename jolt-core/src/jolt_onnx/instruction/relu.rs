@@ -19,6 +19,12 @@ impl JoltInstruction for ReLUInstruction {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        // println!("Combine lookups for ReLUInstruction");
+        // println!("vals: {:?}", vals);
+        // println!("C: {:?}", C);
+        // println!("M: {:?}", M);
+        // println!("vals.len(): {:?}", vals.len());
+        // println!("log2(M): {:?}", log2(M));
         // The output is the ReLU(most significant chunk) || identity of other chunks
         vals[0] * concatenate_lookups(&vals[1..vals.len()], C, log2(M) as usize)
     }
@@ -30,8 +36,11 @@ impl JoltInstruction for ReLUInstruction {
     fn subtables<F: JoltField>(
         &self,
         C: usize,
-        _: usize,
+        M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        // println!("Subtables for ReLUInstruction");
+        // println!("C: {:?}", C);
+        // println!("M: {:?}", M);
         vec![
             (
                 Box::new(IsPosSubtable::<F>::new()),
@@ -73,6 +82,8 @@ impl JoltInstruction for ReLUInstruction {
     where
         F: JoltField,
     {
+        println!("Evaluate MLE for ReLUInstruction");
+        println!("point: {:?}", point);
         let mut result = F::zero();
         for i in 0..point.len() - 1 {
             result += F::from_u64(1u64 << i) * point[point.len() - 1 - i];

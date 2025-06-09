@@ -35,6 +35,7 @@ macro_rules! jolt_instruction_test {
         let mut subtable_values: Vec<Fr> = vec![];
         for (subtable, dimension_indices) in $instr.subtables::<Fr>(C, M) {
             let materialized_subtable = subtable.materialize(M);
+            println!("materialized_subtable: {:?}", materialized_subtable);
             for i in dimension_indices.iter() {
                 subtable_values.push(Fr::from_u64(
                     materialized_subtable[subtable_lookup_indices[i]] as u64,
@@ -44,6 +45,8 @@ macro_rules! jolt_instruction_test {
 
         let actual = $instr.combine_lookups(&subtable_values, C, M);
         let expected = Fr::from_u64($instr.lookup_entry());
+        println!("actual: {:?}", actual);
+        println!("expected: {:?}", expected);
         assert_eq!(actual, expected, "{:?}", $instr);
     };
 }
