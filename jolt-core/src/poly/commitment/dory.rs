@@ -212,7 +212,6 @@ where
 }
 
 #[derive(Clone)]
-
 pub struct JoltPairing<E: ArkPairing>(PhantomData<E>);
 
 impl<E> DoryPairing for JoltPairing<E>
