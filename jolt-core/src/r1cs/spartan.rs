@@ -119,13 +119,17 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        /* Sumcheck 1: Outer sumcheck 
+        /* Sumcheck 1: Outer sumcheck
            Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
            Only uses uniform constraints, making A, B, C block-diagonal with blocks A_small, B_small, C_small
         */
 
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
-        let uniform_constraints_only_padded = constraint_builder.uniform_builder.constraints.len().next_power_of_two();
+        let uniform_constraints_only_padded = constraint_builder
+            .uniform_builder
+            .constraints
+            .len()
+            .next_power_of_two();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
                 num_rounds_x,
@@ -145,7 +149,7 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz = 
+           Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                    \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
            Uses only uniform constraints (A_small, B_small, C_small)
         */
@@ -226,22 +230,22 @@ where
         */
         let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
-        
+
         // Extract the polynomials
-        let pc_poly = &input_polys[1];          // RealInstructionAddress/PC is at index 1
-        let next_pc_poly = &input_polys[18];    // NextPC is at index 18
-        
+        let pc_poly = &input_polys[1]; // RealInstructionAddress/PC is at index 1
+        let next_pc_poly = &input_polys[18]; // NextPC is at index 18
+
         let num_rounds_shift_sumcheck = num_cycles_bits;
-        
+
         // The claim is the sum itself (not NextPC(r_cycle))
         // This is because we're proving the sumcheck relation directly
-        
+
         // For the shift sumcheck, we use PC polynomial and eq_plus_one
         let mut shift_sumcheck_polys = vec![
             pc_poly.clone(),
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
-        
+
         drop(_guard);
         drop(span);
 
@@ -280,7 +284,7 @@ where
         let shift_polys_to_evaluate = vec![&input_polys[1]]; // PC only
         let (shift_sumcheck_witness_evals_partial, chis2) =
             MultilinearPolynomial::batch_evaluate(&shift_polys_to_evaluate, &shift_sumcheck_r);
-        
+
         // Pad with zeros for compatibility with existing proof structure
         let mut shift_sumcheck_witness_evals = vec![F::zero(); input_polys.len()];
         shift_sumcheck_witness_evals[1] = shift_sumcheck_witness_evals_partial[0]; // PC at index 1
@@ -325,8 +329,8 @@ where
         let num_rounds_x = key.num_rows_total().log_2();
 
         /* Sumcheck 1: Outer sumcheck
-           Verifies: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
-         */
+          Verifies: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
+        */
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
 
         let (claim_outer_final, outer_sumcheck_r) = self
@@ -354,7 +358,7 @@ where
         );
 
         /* Sumcheck 2: Inner sumcheck
-           Verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz = 
+           Verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
         */
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
@@ -407,8 +411,8 @@ where
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // Extract PC evaluation from shift_sumcheck_witness_evals
-        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];          // PC
-        
+        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1]; // PC
+
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
         let claim_shift_sumcheck_expected = eval_pc_at_shift_r * eq_plus_one_shift_sumcheck;

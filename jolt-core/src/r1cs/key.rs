@@ -200,17 +200,17 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let evaluate_small_matrix = |constraints: &SparseConstraints<F>| -> Vec<F> {
             // Allocate vector with power-of-2 size
             let mut evals = unsafe_allocate_zero_vec(num_vars_padded);
-            
+
             // Evaluate non-constant terms
             for (row, col, val) in constraints.vars.iter() {
                 evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
             }
-            
+
             // Evaluate constant terms
             for (row, val) in constraints.consts.iter() {
                 evals[constant_column] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
             }
-            
+
             evals
         };
 
@@ -228,7 +228,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
             .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
             .collect()
     }
-
 
     /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
     #[tracing::instrument(
@@ -255,7 +254,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // Evaluate at the constant position if it exists within the padded space
         let const_eval = if self.uniform_r1cs.num_vars < num_vars && with_const {
-            let const_position_bits = index_to_field_bitvector(self.uniform_r1cs.num_vars as u64, var_bits);
+            let const_position_bits =
+                index_to_field_bitvector(self.uniform_r1cs.num_vars as u64, var_bits);
             let eq_const = EqPolynomial::new(r.to_vec()).evaluate(&const_position_bits);
             eq_const
         } else {
@@ -264,7 +264,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         eval_variables + const_eval
     }
-
 
     /// Evaluate uniform matrix A at a specific point (rx_constr, ry_var)
     pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
@@ -290,26 +289,26 @@ impl<F: JoltField> UniformSpartanKey<F> {
     ) -> F {
         let eq_rx_constr = EqPolynomial::new(rx_constr.to_vec());
         let eq_ry_var = EqPolynomial::new(ry_var.to_vec());
-        
+
         let mut eval = F::zero();
-        
+
         // Evaluate non-constant terms
         for (row, col, val) in constraints.vars.iter() {
             let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
             let col_bits = index_to_field_bitvector(*col as u64, ry_var.len());
             eval += *val * eq_rx_constr.evaluate(&row_bits) * eq_ry_var.evaluate(&col_bits);
         }
-        
+
         // Evaluate constant terms
         let constant_column = self.uniform_r1cs.num_vars;
         let const_col_bits = index_to_field_bitvector(constant_column as u64, ry_var.len());
         let eq_ry_const = eq_ry_var.evaluate(&const_col_bits);
-        
+
         for (row, val) in constraints.consts.iter() {
             let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
             eval += *val * eq_rx_constr.evaluate(&row_bits) * eq_ry_const;
         }
-        
+
         eval
     }
 
