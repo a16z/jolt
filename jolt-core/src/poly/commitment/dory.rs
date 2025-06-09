@@ -7,7 +7,7 @@ use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
-    poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::MultilinearPolynomial},
+    poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 
@@ -196,23 +196,20 @@ where
     ) -> JoltGroupWrapper<G> {
         // 1) convert group wrappers → Affine points
         let mut affines = Vec::with_capacity(bases.len());
+
         for w in bases {
             affines.push(w.inner.into_affine());
         }
 
         // 2) reinterpret &[JoltFieldWrapper<F>] as &[F]
         let raw_scalars: &[G::ScalarField] = unsafe {
-            std::slice::from_raw_parts(
-                scalars.as_ptr() as *const G::ScalarField,
-                scalars.len(),
-            )
+            std::slice::from_raw_parts(scalars.as_ptr() as *const G::ScalarField, scalars.len())
         };
         let inner = G::msm_field_elements(&affines, None, raw_scalars, None, false)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper { inner }
     }
-    
 }
 
 impl<P> DoryMultiScalarMul<JoltGTWrapper<P>> for JoltMSM
@@ -326,69 +323,74 @@ where
     F: JoltField + PrimeField,
     G: CurveGroup<ScalarField = F> + VariableBaseMSM,
 {
-}
-
-// Note: For compact polynomial types (U8, U16, U32, U64, I64), this implementation
-// requires allocation and is not zero-cost. Only LargeScalars can be converted without allocation.
-// The allocated memory is leaked to provide a stable reference, which is acceptable for
-// commitment operations that happen a limited number of times.
-impl<F> std::ops::Deref for MultilinearPolynomial<F>
-where
-    F: JoltField + Clone,
-{
-    type Target = [JoltFieldWrapper<F>];
-
-    fn deref(&self) -> &Self::Target {
+    fn get(&self, index: usize) -> JoltFieldWrapper<F> {
         match self {
             MultilinearPolynomial::LargeScalars(dense) => {
+                assert!(
+                    index < dense.Z.len(),
+                    "Polynomial index out of bounds: {} >= {}",
+                    index,
+                    dense.Z.len()
+                );
                 // SAFETY: JoltFieldWrapper<F> is repr(transparent) with same memory layout as F
-                unsafe { std::mem::transmute::<&[F], &[JoltFieldWrapper<F>]>(&dense.Z) }
+                unsafe { std::mem::transmute_copy(&dense.Z[index]) }
             }
             MultilinearPolynomial::U8Scalars(compact) => {
-                // Note: This allocates and leaks memory - not zero-cost
-                let coeffs: Vec<JoltFieldWrapper<F>> = compact
-                    .coeffs
-                    .iter()
-                    .map(|&c| JoltFieldWrapper(F::from_u64(c as u64)))
-                    .collect();
-                Box::leak(coeffs.into_boxed_slice())
+                assert!(
+                    index < compact.coeffs.len(),
+                    "Polynomial index out of bounds: {} >= {}",
+                    index,
+                    compact.coeffs.len()
+                );
+                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index] as u64))
             }
             MultilinearPolynomial::U16Scalars(compact) => {
-                // Note: This allocates and leaks memory - not zero-cost
-                let coeffs: Vec<JoltFieldWrapper<F>> = compact
-                    .coeffs
-                    .iter()
-                    .map(|&c| JoltFieldWrapper(F::from_u64(c as u64)))
-                    .collect();
-                Box::leak(coeffs.into_boxed_slice())
+                assert!(
+                    index < compact.coeffs.len(),
+                    "Polynomial index out of bounds: {} >= {}",
+                    index,
+                    compact.coeffs.len()
+                );
+                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index] as u64))
             }
             MultilinearPolynomial::U32Scalars(compact) => {
-                // Note: This allocates and leaks memory - not zero-cost
-                let coeffs: Vec<JoltFieldWrapper<F>> = compact
-                    .coeffs
-                    .iter()
-                    .map(|&c| JoltFieldWrapper(F::from_u64(c as u64)))
-                    .collect();
-                Box::leak(coeffs.into_boxed_slice())
+                assert!(
+                    index < compact.coeffs.len(),
+                    "Polynomial index out of bounds: {} >= {}",
+                    index,
+                    compact.coeffs.len()
+                );
+                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index] as u64))
             }
             MultilinearPolynomial::U64Scalars(compact) => {
-                // Note: This allocates and leaks memory - not zero-cost
-                let coeffs: Vec<JoltFieldWrapper<F>> = compact
-                    .coeffs
-                    .iter()
-                    .map(|&c| JoltFieldWrapper(F::from_u64(c)))
-                    .collect();
-                Box::leak(coeffs.into_boxed_slice())
+                assert!(
+                    index < compact.coeffs.len(),
+                    "Polynomial index out of bounds: {} >= {}",
+                    index,
+                    compact.coeffs.len()
+                );
+                JoltFieldWrapper(<F as JoltField>::from_u64(compact.coeffs[index]))
             }
             MultilinearPolynomial::I64Scalars(compact) => {
-                // Note: This allocates and leaks memory - not zero-cost
-                let coeffs: Vec<JoltFieldWrapper<F>> = compact
-                    .coeffs
-                    .iter()
-                    .map(|&c| JoltFieldWrapper(F::from_i64(c)))
-                    .collect();
-                Box::leak(coeffs.into_boxed_slice())
+                assert!(
+                    index < compact.coeffs.len(),
+                    "Polynomial index out of bounds: {} >= {}",
+                    index,
+                    compact.coeffs.len()
+                );
+                JoltFieldWrapper(F::from_i64(compact.coeffs[index]))
             }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
+            MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
         }
     }
 }
