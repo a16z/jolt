@@ -567,6 +567,8 @@ mod tests {
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
+            MultilinearPolynomial::Sparse(_) => todo!(),
+            MultilinearPolynomial::OneHot(_) => todo!(),
         };
 
         println!(
