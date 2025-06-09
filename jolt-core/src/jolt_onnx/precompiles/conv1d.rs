@@ -15,6 +15,38 @@ pub struct Conv1DPrecompile {
     kernel: Tensor,
 }
 
+impl Conv1DPrecompile {
+    /// Create a new instance of [`Conv1DPrecompile`].
+    pub fn new(image: Tensor, kernel: Tensor) -> Self {
+        Self { image, kernel }
+    }
+
+    /// # Returns
+    /// - `w_in`: Input spatial dimension
+    /// - `k_w`: Kernel spatial dimension
+    /// - `w_out`: Output spatial dimension
+    fn dims(&self) -> (usize, usize, usize) {
+        // Extract input spatial dimension
+        let w_in = self.image.shape[2];
+        // Extract kernel spatial dimension
+        let k_w = self.kernel.shape[2];
+        // Compute output spatial dimension
+        let w_out = w_in - k_w + 1; // TODO: Padding?
+        (w_in, k_w, w_out)
+    }
+
+    fn y_poly<F>(&self) -> DensePolynomial<F>
+    where
+        F: JoltField,
+    {
+        let (mut y, _) = conv1d_simple(&self.image, &self.kernel);
+        let new_y_len = y.len().next_power_of_two();
+        // Pad y to the next power of two
+        y.resize(new_y_len, 0);
+        DensePolynomial::new(y.iter().map(|&x| F::from_i64(x as i64)).collect_vec())
+    }
+}
+
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct Conv1DProverState<F>
 where
@@ -48,44 +80,49 @@ where
         ProofTranscript: Transcript,
     {
         // --- Calculate the evaluation's for X(r, m) over the boolean hypercube ---
-        //
-        // Extract input spatial dimension
-        let w_in = input.image.shape[2];
-        // Extract kernel spatial dimension
-        let k_w = input.kernel.shape[2];
-        // Compute output spatial dimension
-        let w_out = w_in - k_w + 1; // TODO: Padding?
-        let mut X_r = vec![F::zero(); k_w];
-        let r: Vec<F> = transcript.challenge_scalar_powers(w_out.log_2());
-        let eq_r_evals = EqPolynomial::evals(&r);
-        for j in 0..w_out {
-            for k in 0..k_w {
-                let x = input.image.data[j + k];
-                X_r[k] += eq_r_evals[j] * F::from_i64(x as i64);
-            }
-        }
-        let X_r = DensePolynomial::new(X_r);
-        let k = DensePolynomial::new(
-            input
-                .kernel
-                .data
-                .iter()
-                .map(|d| F::from_i64(*d as i64))
-                .collect_vec(),
-        );
-        let input_claim = {
-            let (y, _) = conv1d_simple(&input.image, &input.kernel);
-            let y_poly =
-                DensePolynomial::new(y.iter().map(|&x| F::from_i64(x as i64)).collect_vec());
-            y_poly.evaluate(&r)
-        };
+        let (_w_in, k_w, w_out) = input.dims();
+        let r: Vec<F> = transcript.challenge_scalar_powers(w_out.next_power_of_two().log_2());
+        let X_r = Self::X_bounded(&input.image, &r, w_out, k_w);
+        let k = Self::kernel_polynomial(&input.kernel);
+        let input_claim = Self::input_claim(input, &r);
         transcript.append_scalar(&input_claim);
+        #[cfg(test)]
+        {
+            let sum: F = X_r.Z.iter().zip_eq(k.Z.iter()).map(|(x, k)| *x * k).sum();
+            assert_eq!(sum, input_claim)
+        }
         Self {
             X: X_r,
             k,
             input_claim,
             num_rounds: k_w.log_2(),
         }
+    }
+
+    fn input_claim(input: &Conv1DPrecompile, r: &[F]) -> F {
+        input.y_poly().evaluate(r)
+    }
+
+    fn X_bounded(X: &Tensor, r: &[F], w_out: usize, k_w: usize) -> DensePolynomial<F> {
+        let mut X_r = vec![F::zero(); k_w];
+        let eq_r_evals = EqPolynomial::evals(r);
+        for j in 0..w_out {
+            for k in 0..k_w {
+                let x = X.data[j + k];
+                X_r[k] += eq_r_evals[j] * F::from_i64(x as i64);
+            }
+        }
+        DensePolynomial::new(X_r)
+    }
+
+    fn kernel_polynomial(kernel: &Tensor) -> DensePolynomial<F> {
+        DensePolynomial::new(
+            kernel
+                .data
+                .iter()
+                .map(|d| F::from_i64(*d as i64))
+                .collect_vec(),
+        )
     }
 }
 
@@ -126,10 +163,6 @@ pub mod computation {
         let w_out = w_in - k_w + 1;
 
         // Create output tensor with correct shape and zero-initialized data
-        // let mut output = Tensor {
-        //     shape: vec![1, 1, w_out],
-        //     data: ,
-        // };
         let mut output = vec![0i32; w_out];
 
         // Perform the convolution operation
@@ -140,5 +173,36 @@ pub mod computation {
         }
         let shape = vec![1, 1, w_out];
         (output, shape)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use crate::{
+        jolt_onnx::precompiles::{
+            conv::computation::Tensor,
+            conv1d::{Conv1DPrecompile, Conv1DProverState},
+        },
+        utils::transcript::{KeccakTranscript, Transcript},
+    };
+
+    #[test]
+    fn test_conv2d() {
+        // Input: shape [1, 1, 8]
+        let input = Tensor {
+            data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            shape: vec![1, 1, 8],
+        };
+
+        // Kernel: shape [1, 1, 2]
+        let weight = Tensor {
+            data: vec![9, 10],
+            shape: vec![1, 1, 2],
+        };
+        let mut ptranscript = KeccakTranscript::new(b"test");
+        let precompile = Conv1DPrecompile::new(input.clone(), weight.clone());
+        let prover = Conv1DProverState::<Fr>::initialize(&precompile, &mut ptranscript);
     }
 }
