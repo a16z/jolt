@@ -20,4 +20,6 @@ pub enum ProofVerifyError {
     InvalidKeyLength(usize),
     #[error("Invalid opening proof -- the proof failed to verify")]
     InvalidOpeningProof,
+    #[error("Dory proof verification failed: {0}")]
+    DoryError(String),
 }
