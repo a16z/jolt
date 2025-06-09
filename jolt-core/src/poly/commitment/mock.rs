@@ -47,6 +47,11 @@ where
     type BatchedProof = MockProof<F>;
 
     fn setup(_max_poly_len: usize) -> Self::Setup {}
+
+    fn srs_size(_setup: &Self::Setup) -> usize {
+        1 << 10
+    }
+
     fn commit(poly: &MultilinearPolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment { poly: poly.clone() }
     }

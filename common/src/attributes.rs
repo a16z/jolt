@@ -5,7 +5,8 @@ use syn::{Lit, Meta, MetaNameValue, NestedMeta};
 
 #[cfg(feature = "std")]
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    DEFAULT_MAX_BYTECODE_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
+    DEFAULT_MAX_TRACE_LENGTH, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
 };
 
 pub struct Attributes {
@@ -14,6 +15,8 @@ pub struct Attributes {
     pub stack_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
+    pub max_bytecode_size: u64,
+    pub max_trace_length: u64,
 }
 
 #[cfg(feature = "std")]
@@ -34,6 +37,8 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
                     "stack_size" => attributes.insert("stack_size", value),
                     "max_input_size" => attributes.insert("max_input_size", value),
                     "max_output_size" => attributes.insert("max_output_size", value),
+                    "max_bytecode_size" => attributes.insert("max_bytecode_size", value),
+                    "max_trace_length" => attributes.insert("max_trace_length", value),
                     _ => panic!("invalid attribute"),
                 };
             }
@@ -54,6 +59,12 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let max_output_size = *attributes
         .get("max_output_size")
         .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
+    let max_bytecode_size = *attributes
+        .get("max_bytecode_size")
+        .unwrap_or(&DEFAULT_MAX_BYTECODE_SIZE);
+    let max_trace_length = *attributes
+        .get("max_trace_length")
+        .unwrap_or(&DEFAULT_MAX_TRACE_LENGTH);
 
     Attributes {
         wasm,
@@ -61,5 +72,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         stack_size,
         max_input_size,
         max_output_size,
+        max_bytecode_size,
+        max_trace_length,
     }
 }
