@@ -42,6 +42,7 @@ use self::terminal::Terminal;
 /// // Go!
 /// emulator.run();
 /// ```
+#[derive(Clone)]
 pub struct Emulator {
     cpu: Cpu,
 
@@ -57,6 +58,9 @@ pub struct Emulator {
     /// The address where data will be sent to terminal
     tohost_addr: u64,
 }
+
+// type alias EmulatorState to Emulator for now
+pub type EmulatorState = Emulator;
 
 impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
@@ -76,21 +80,13 @@ impl Emulator {
         }
     }
 
-    /// Runs program set by `setup_program()`. Calls `run_test()` if the program
-    /// is [`riscv-tests`](https://github.com/riscv/riscv-tests).
-    /// Otherwise calls `run_program()`.
-    pub fn run(&mut self) {
-        match self.is_test {
-            true => self.run_test(),
-            false => self.run_program(),
-        };
+    // Create a new Emulator from a saved state.
+    pub fn from_state(state: &EmulatorState) -> Self {
+        state.clone()
     }
 
-    /// Runs program set by `setup_program()`. The emulator won't stop forever.
-    pub fn run_program(&mut self) {
-        loop {
-            self.tick();
-        }
+    pub fn save_state(&self) -> EmulatorState {
+        self.clone()
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
@@ -104,9 +100,9 @@ impl Emulator {
         println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
-            println!("{}", disas);
+            println!("{disas}");
 
-            self.tick();
+            self.tick(false);
 
             // It seems in riscv-tests ends with end code
             // written to a certain physical memory address
@@ -117,8 +113,8 @@ impl Emulator {
             let endcode = self.cpu.get_mut_mmu().load_word_raw(self.tohost_addr);
             if endcode != 0 {
                 match endcode {
-                    1 => println!("Test Passed with {:X}\n", endcode),
-                    _ => println!("Test Failed with {:X}\n", endcode),
+                    1 => println!("Test Passed with {endcode:X}\n"),
+                    _ => println!("Test Failed with {endcode:X}\n"),
                 };
                 break;
             }
@@ -126,8 +122,8 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self) {
-        self.cpu.tick();
+    pub fn tick(&mut self, tracing: bool) {
+        self.cpu.tick(tracing);
     }
 
     /// Sets up program run by the program. This method analyzes the passed content

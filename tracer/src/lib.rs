@@ -12,7 +12,7 @@ use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
-    Emulator,
+    Emulator, EmulatorState,
 };
 
 use instruction::{RV32IMCycle, RV32IMInstruction};
@@ -23,12 +23,120 @@ pub mod instruction;
 
 pub use common::jolt_device::JoltDevice;
 
+pub type Checkpoint = EmulatorState;
+/// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
+///
+/// # Details
+/// The function performs these steps:
+/// 1. Sets up an emulator with the provided program and configuration
+/// 2. Runs the program to completion while:
+///    - Collecting execution traces of each instruction
+///    - Optionally saving periodic checkpoints of the emulator state
+///
+/// # Arguments
+///
+/// * `elf_contents`
+/// * `inputs`
+/// * `memory_config`
+/// * `checkpoint_interval` - Optional interval (n) at which to save emulator state checkpoints
+///                          If None, no checkpoints will be saved
+///
+/// # Returns
+///
+/// Returns a tuple containing:
+/// * `Vec<RV32IMCycle>` - Complete execution trace
+/// * `JoltDevice`
+/// * `Option<Vec<Emulator>>` - If checkpoint_interval was Some(n), contains emulator states saved
+///                            every n steps. Otherwise None.
+///
 #[tracing::instrument(skip_all)]
 pub fn trace(
     elf_contents: Vec<u8>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<RV32IMCycle>, JoltDevice) {
+    checkpoint_interval: Option<usize>,
+) -> (Vec<RV32IMCycle>, JoltDevice, Option<Vec<Checkpoint>>) {
+    let mut emulator = setup_emulator(elf_contents, inputs, memory_config);
+    // checkpoints are emulator states
+    let checkpoints = run_and_get_checkpoints(&mut emulator, checkpoint_interval);
+    let execution_trace = std::mem::take(&mut emulator.get_mut_cpu().trace);
+    let device = std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
+    return (execution_trace, device, checkpoints);
+}
+
+#[tracing::instrument(skip_all)]
+fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, tracing: bool) -> bool {
+    let pc = emulator.get_cpu().read_pc();
+    // This is a trick to see if the program has terminated by throwing itself
+    // into an infinite loop. It seems to be a good heuristic for now but we
+    // should eventually migrate to an explicit shutdown signal.
+    if *prev_pc == pc {
+        return true;
+    }
+    emulator.tick(tracing);
+    *prev_pc = pc;
+    false
+}
+
+/// Executes a RISC-V program while collecting periodic checkpoints of the emulator state.
+///
+/// This function runs the emulator until program completion, optionally saving snapshots
+/// of the emulator state at regular intervals.
+///
+/// # Arguments
+///
+/// * `emulator` - Mutable reference to an initialized emulator containing the program to run
+/// * `checkpoint_interval` - Optional interval at which to save emulator state:
+///   * `Some(n)` - Save a checkpoint every `n` instructions
+///   * `None` - Run to completion without saving checkpoints
+///
+/// # Returns
+///
+/// Returns `Option<Vec<Emulator>>`:
+/// * `Some(vec)` - If `checkpoint_interval` was `Some(n)`, contains vector of emulator
+///                 states saved at each interval
+/// * `None` - If `checkpoint_interval` was `None`
+///
+/// # Notes
+///
+/// - The emulator's state is cloned at each checkpoint, which can be memory-intensive
+///   for long-running programs with frequent checkpoints
+/// - Program termination is detected via an infinite loop heuristic rather than
+///   an explicit shutdown signal
+/// - Tracing is always enabled during execution. This can be changed if tracing is not needed during checkpointing.
+#[tracing::instrument(skip_all)]
+pub fn run_and_get_checkpoints(
+    emulator: &mut Emulator,
+    checkpoint_interval: Option<usize>,
+) -> Option<Vec<Checkpoint>> {
+    let mut prev_pc: u64 = 0;
+    let mut checkpoints = Vec::new();
+
+    match checkpoint_interval {
+        Some(interval) => {
+            let mut count = 0;
+            loop {
+                if count % interval == 0 {
+                    checkpoints.push(emulator.save_state());
+                }
+                count += 1;
+                if step_emulator(emulator, &mut prev_pc, true) {
+                    break;
+                }
+            }
+        }
+        None => loop {
+            if step_emulator(emulator, &mut prev_pc, true) {
+                break;
+            }
+        },
+    }
+
+    checkpoint_interval.map(|_| checkpoints)
+}
+
+#[tracing::instrument(skip_all)]
+fn setup_emulator(elf_contents: Vec<u8>, inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
@@ -38,26 +146,68 @@ pub fn trace(
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
 
     emulator.setup_program(elf_contents);
+    return emulator;
+}
 
-    let mut prev_pc = 0;
-    loop {
-        let pc = emulator.get_cpu().read_pc();
-        emulator.tick();
+/// An iterator that lazily generates execution traces from a RISC-V emulator checkpoint.
+///
+/// This iterator produces instruction traces one at a time, executing the emulator
+/// as needed rather than generating the entire trace upfront. It buffers traces
+/// in `current_traces` since some instructions generate multiple trace entries.
+/// When the `current_traces` buffer is exhausted, it executes another emulator tick
+/// to generate more.
+///
+/// # Fields
+///
+/// * `emulator` - Clone of the checkpoint emulator state to execute from
+/// * `prev_pc` - Previous program counter value, used for termination detection
+/// * `current_traces` - Buffer of trace entries from the most recent emulator tick
+pub struct LazyTraceIterator {
+    emulator: Emulator,
+    prev_pc: u64,
+    current_traces: Vec<RV32IMCycle>,
+}
 
-        // This is a trick to see if the program has terminated by throwing itself
-        // into an infinite loop. It seems to be a good heuristic for now but we
-        // should eventually migrate to an explicit shutdown signal.
-        if prev_pc == pc {
-            break;
+impl Iterator for LazyTraceIterator {
+    type Item = RV32IMCycle;
+    /// Advances the iterator and returns the next trace entry.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(RV32IMCycle)` - The next instruction trace in the execution sequence
+    /// * `None` - If program execution has completed.
+    ///
+    /// # Details
+    ///
+    /// The function follows this sequence:
+    /// 1. Returns any remaining traces from the previous emulator tick
+    /// 2. If buffer `current_traces` is empty, executes another emulator tick
+    /// 3. Checks for program termination using the heuristic of PC not changing
+    /// 4. Buffers new traces in FIFO order
+    /// 5. Returns the next trace or None if execution is complete
+    fn next(&mut self) -> Option<Self::Item> {
+        //Iterate over t returning in FIFO order before calling tick() again.
+        if let Some(trace) = self.current_traces.pop() {
+            return Some(trace);
         }
 
-        prev_pc = pc;
+        if step_emulator(&mut self.emulator, &mut self.prev_pc, true) {
+            return None;
+        }
+
+        self.current_traces = std::mem::take(&mut self.emulator.get_mut_cpu().trace);
+        self.current_traces.reverse();
+        self.current_traces.pop()
     }
+}
 
-    let execution_trace = std::mem::take(&mut emulator.get_mut_cpu().trace);
-    let device = std::mem::take(&mut emulator.get_mut_cpu().get_mut_mmu().jolt_device);
-
-    (execution_trace, device)
+#[tracing::instrument(skip_all)]
+pub fn trace_from_checkpoint(checkpoint: &Checkpoint) -> LazyTraceIterator {
+    LazyTraceIterator {
+        emulator: Emulator::from_state(checkpoint),
+        prev_pc: 0,
+        current_traces: Vec::new(),
+    }
 }
 
 #[tracing::instrument(skip_all)]

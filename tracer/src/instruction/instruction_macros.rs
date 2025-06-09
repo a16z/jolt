@@ -9,7 +9,7 @@ macro_rules! declare_riscv_instr {
       $(, is_virtual = $virt:tt)?
         $(,)?
   ) => {
-        #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
             pub operands: $format,

@@ -23,7 +23,7 @@ pub struct NormalizedOperands {
 }
 
 pub trait InstructionFormat: Default + Debug {
-    type RegisterState: InstructionRegisterState;
+    type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
