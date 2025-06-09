@@ -179,7 +179,7 @@ where
 }
 
 /// Batchable sum-check instance for matrix multiplication precompile.
-/// Used to construct the [`PrecompileProof`] by passing in these instrances into [`BatchedSumcheck`].
+/// Used to construct the [`PrecompileProof`] by passing in these instances into [`BatchedSumcheck`].
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
 pub struct MatMultSumcheck<F>
 where

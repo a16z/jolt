@@ -199,6 +199,14 @@ pub mod computation {
 
             self.data[index] = value;
         }
+
+        /// Return an randomly initialized quantized tensor with the given shape.
+        pub fn random(mut rng: impl rand_core::RngCore, shape: Vec<usize>) -> Self {
+            // Generate random f32 data for the tensor.
+            let size = shape.iter().product::<usize>();
+            let data: Vec<i8> = (0..size).map(|_| rng.next_u32() as i8).collect();
+            Self { shape, data }
+        }
     }
 
     #[cfg(test)]

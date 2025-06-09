@@ -1,12 +1,20 @@
 use crate::{
     field::JoltField,
-    jolt_onnx::precompiles::{conv::computation::Tensor, conv1d::computation::conv1d_simple},
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    jolt_onnx::precompiles::{
+        conv::computation::Tensor, conv1d::computation::conv1d_simple,
+        sumcheck_engine::BatchableSumcheckInstance,
+    },
+    poly::{
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, multilinear_polynomial::BindingOrder,
+    },
     utils::{math::Math, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+
+pub type Conv1DPrecompileDims = (usize, usize);
 
 /// # Note: We assume tensors are appropriately padded here
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -31,7 +39,7 @@ impl Conv1DPrecompile {
         // Extract kernel spatial dimension
         let k_w = self.kernel.shape[2];
         // Compute output spatial dimension
-        let w_out = w_in - k_w + 1; // TODO: Padding?
+        let w_out = w_in - k_w + 1;
         (w_in, k_w, w_out)
     }
 
@@ -53,7 +61,7 @@ where
     F: JoltField,
 {
     /// X(r, m) evaluations over the boolean hypercube
-    pub X: DensePolynomial<F>,
+    pub x: DensePolynomial<F>,
     /// k multilinear polynomial
     pub k: DensePolynomial<F>,
     /// Evaluation at point r for multilinear polynomial Y
@@ -92,7 +100,7 @@ where
             assert_eq!(sum, input_claim)
         }
         Self {
-            X: X_r,
+            x: X_r,
             k,
             input_claim,
             num_rounds: k_w.log_2(),
@@ -123,6 +131,154 @@ where
                 .map(|d| F::from_i64(*d as i64))
                 .collect_vec(),
         )
+    }
+}
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv1DVerifierState<F>
+where
+    F: JoltField,
+{
+    num_rounds: usize,
+    input_claim: F,
+}
+
+impl<F> Conv1DVerifierState<F>
+where
+    F: JoltField,
+{
+    #[tracing::instrument(skip_all)]
+    /// Create a new instance of [`Conv1DVerifierState`].
+    /// # Note: we mainly update the state by computing the necessary challenges used in the sum-check conv protocol.
+    ///         We also append the input claim to the transcript.
+    pub fn initialize<ProofTranscript>(
+        k_w: usize,
+        w_out: usize,
+        input_claim: F,
+        transcript: &mut ProofTranscript,
+    ) -> Self
+    where
+        ProofTranscript: Transcript,
+    {
+        let num_rounds = k_w.log_2();
+        let _r: Vec<F> = transcript.challenge_scalar_powers(w_out.next_power_of_two().log_2());
+        transcript.append_scalar(&input_claim);
+        Self {
+            num_rounds,
+            input_claim,
+        }
+    }
+}
+
+/// The final claims for the conv sum-check precompile.
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv1DClaims<F>
+where
+    F: JoltField,
+{
+    x: F,
+    k: F,
+}
+
+/// Batchable sum-check instance for conv precompile.
+/// Used to construct the [`PrecompileProof`] by passing in these instances into [`BatchedSumcheck`].
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Debug, Serialize, Deserialize)]
+pub struct Conv1DSumcheck<F>
+where
+    F: JoltField,
+{
+    /// Handles state for prover portion of the sum-check protocol.
+    pub prover_state: Option<Conv1DProverState<F>>,
+    /// Handles state for verifier portion of the sum-check protocol.
+    pub verifier_state: Option<Conv1DVerifierState<F>>,
+    /// Holds the final claims for the conv sum-check precompile.
+    pub claims: Option<Conv1DClaims<F>>,
+}
+
+impl<F> Conv1DSumcheck<F>
+where
+    F: JoltField,
+{
+    /// Create a new instance of [`Conv1DSumcheck`]
+    pub fn new(
+        prover_state: Option<Conv1DProverState<F>>,
+        verifier_state: Option<Conv1DVerifierState<F>>,
+        claims: Option<Conv1DClaims<F>>,
+    ) -> Self {
+        Self {
+            prover_state,
+            verifier_state,
+            claims,
+        }
+    }
+}
+
+impl<F, ProofTranscript> BatchableSumcheckInstance<F, ProofTranscript> for Conv1DSumcheck<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+{
+    #[inline(always)]
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        if self.prover_state.is_some() {
+            self.prover_state.as_ref().unwrap().num_rounds
+        } else if self.verifier_state.is_some() {
+            self.verifier_state.as_ref().unwrap().num_rounds
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
+
+    fn input_claim(&self) -> F {
+        if self.prover_state.is_some() {
+            self.prover_state.as_ref().unwrap().input_claim
+        } else if self.verifier_state.is_some() {
+            self.verifier_state.as_ref().unwrap().input_claim
+        } else {
+            panic!("Neither prover state nor verifier state is initialized");
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn compute_prover_message(&self, _: usize) -> Vec<F> {
+        let Conv1DProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
+        let len = x.len() / 2;
+        let univariate_poly_evals: [F; 2] = (0..len)
+            .into_par_iter()
+            .map(|i| {
+                let poly_X_bound_point = x[i + len] + x[i + len] - x[i];
+                let poly_K_bound_point = k[i + len] + k[i + len] - k[i];
+                [x[i] * k[i], poly_X_bound_point * poly_K_bound_point]
+            })
+            .reduce(
+                || [F::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            );
+        univariate_poly_evals.to_vec()
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn bind(&mut self, r_j: F, _: usize) {
+        let Conv1DProverState { x, k, .. } = self.prover_state.as_mut().unwrap();
+        rayon::join(
+            || x.bind_parallel(r_j, BindingOrder::HighToLow),
+            || k.bind_parallel(r_j, BindingOrder::HighToLow),
+        );
+    }
+
+    fn cache_openings(&mut self) {
+        debug_assert!(self.claims.is_none());
+        let Conv1DProverState { x, k, .. } = self.prover_state.as_ref().unwrap();
+        self.claims = Some(Conv1DClaims { x: x[0], k: k[0] });
+    }
+
+    fn expected_output_claim(&self, _: &[F]) -> F {
+        let Conv1DClaims { x, k } = self.claims.as_ref().unwrap();
+        *x * k
     }
 }
 
@@ -179,30 +335,75 @@ pub mod computation {
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use itertools::Itertools;
+    use rand_core::RngCore;
 
     use crate::{
         jolt_onnx::precompiles::{
             conv::computation::Tensor,
-            conv1d::{Conv1DPrecompile, Conv1DProverState},
+            conv1d::{
+                Conv1DPrecompile, Conv1DPrecompileDims, Conv1DProverState, Conv1DSumcheck,
+                Conv1DVerifierState,
+            },
+            sumcheck_engine::{BatchableSumcheckInstance, BatchedSumcheck},
         },
         utils::transcript::{KeccakTranscript, Transcript},
     };
 
     #[test]
-    fn test_conv2d() {
-        // Input: shape [1, 1, 8]
-        let input = Tensor {
-            data: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            shape: vec![1, 1, 8],
-        };
-
-        // Kernel: shape [1, 1, 2]
-        let weight = Tensor {
-            data: vec![9, 10],
-            shape: vec![1, 1, 2],
-        };
+    fn test_random_execution_trace() {
+        let mut rng = test_rng();
+        let trace_length = 10;
+        let mut pp: Vec<Conv1DPrecompileDims> = Vec::with_capacity(trace_length);
         let mut ptranscript = KeccakTranscript::new(b"test");
-        let precompile = Conv1DPrecompile::new(input.clone(), weight.clone());
-        let prover = Conv1DProverState::<Fr>::initialize(&precompile, &mut ptranscript);
+        let mut sumcheck_instances = Vec::with_capacity(trace_length);
+        for _ in 0..trace_length {
+            let w_in = (rng.next_u32() as usize % 100 + 100).next_power_of_two();
+            let k_w = (rng.next_u32() as usize % 10 + 1).next_power_of_two();
+            let w_out = w_in - k_w + 1;
+            pp.push((k_w, w_out));
+            let image = Tensor::random(&mut rng, vec![1, 1, w_in]);
+            let kernel = Tensor::random(&mut rng, vec![1, 1, k_w]);
+            let precompile = Conv1DPrecompile::new(image, kernel);
+            let prover_state = Conv1DProverState::<Fr>::initialize(&precompile, &mut ptranscript);
+            let sumcheck_instance = Conv1DSumcheck::new(Some(prover_state), None, None);
+            sumcheck_instances.push(sumcheck_instance);
+        }
+        let init_claims = sumcheck_instances
+            .iter()
+            .map(|p| p.prover_state.as_ref().unwrap().input_claim)
+            .collect_vec();
+        let trait_objects: Vec<&mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            sumcheck_instances
+                .iter_mut()
+                .map(|p| p as &mut dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let (sumcheck_proof, _rsc) = BatchedSumcheck::prove(trait_objects, &mut ptranscript);
+        let final_claims = sumcheck_instances
+            .iter()
+            .map(|p| p.claims.as_ref().unwrap().clone())
+            .collect_vec();
+        let mut vtranscript = KeccakTranscript::new(b"test");
+        let mut vsumcheck_instances = Vec::with_capacity(trace_length);
+        for (((k_w, w_out), init_claim), final_claim) in pp
+            .iter()
+            .zip_eq(init_claims.iter())
+            .zip_eq(final_claims.iter())
+        {
+            let verifier_state =
+                Conv1DVerifierState::<Fr>::initialize(*k_w, *w_out, *init_claim, &mut vtranscript);
+            vsumcheck_instances.push(Conv1DSumcheck::new(
+                None,
+                Some(verifier_state),
+                Some(final_claim.clone()),
+            ))
+        }
+        let trait_objects: Vec<&dyn BatchableSumcheckInstance<Fr, KeccakTranscript>> =
+            vsumcheck_instances
+                .iter()
+                .map(|p| p as &dyn BatchableSumcheckInstance<Fr, KeccakTranscript>)
+                .collect();
+        let _r = BatchedSumcheck::verify(&sumcheck_proof, trait_objects, &mut vtranscript).unwrap();
     }
 }
