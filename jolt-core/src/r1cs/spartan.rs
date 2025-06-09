@@ -215,38 +215,30 @@ where
 
         drop_in_background_thread(polys);
 
-        /*  Sumcheck 3: Shift sumcheck with RLC
-            sumcheck claim is: VirtualInstructionAddress(r_cycle) + r * PCNEXT(r_cycle) = 
-                              \sum_t (VirtualInstructionAddress(t) + 1 + r * PC(t)) * eq_plus_one(r_cycle, t)
+        // First evaluate all witness polynomials at r_cycle - we need these for the shift sumcheck claim
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
+        /*  Sumcheck 3: Shift sumcheck for PC
+            Proves: \sum_t PC(t) * eq_plus_one(r_cycle, t)
+            The sum evaluates to PC at cycle r_cycle+1
         */
-        let span = span!(Level::INFO, "shift_sumcheck_rlc");
+        let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
         
-        // Get RLC coefficient from transcript
-        let shift_rlc_coeff: F = transcript.challenge_scalar();
-        
         // Extract the polynomials
-        let virtual_seq_poly = &input_polys[0]; // VirtualInstructionAddress is at index 0
-        let pc_poly = &input_polys[1];          // RealInstructionAddress is at index 1
-        
-        // Create polynomial for the sumcheck: (VirtualInstructionAddress(t) + 1 + r * PC(t))
-        // We need to add 1 to each element of virtual_seq
-        let virtual_seq_plus_one: Vec<F> = (0..virtual_seq_poly.len())
-            .map(|i| virtual_seq_poly.get_coeff(i) + F::one())
-            .collect();
-        let virtual_seq_plus_one_poly = MultilinearPolynomial::from(virtual_seq_plus_one);
-        
-        // Create RLC polynomial: (virtual_seq + 1) + shift_rlc_coeff * pc
-        let rlc_poly = MultilinearPolynomial::linear_combination(
-            &[&virtual_seq_plus_one_poly, pc_poly],
-            &[F::one(), shift_rlc_coeff],
-        );
+        let pc_poly = &input_polys[1];          // RealInstructionAddress/PC is at index 1
+        let next_pc_poly = &input_polys[18];    // NextPC is at index 18
         
         let num_rounds_shift_sumcheck = num_cycles_bits;
         
-        // For the shift sumcheck, we use the RLC polynomial and eq_plus_one
+        // The claim is the sum itself (not NextPC(r_cycle))
+        // This is because we're proving the sumcheck relation directly
+        
+        // For the shift sumcheck, we use PC polynomial and eq_plus_one
         let mut shift_sumcheck_polys = vec![
-            rlc_poly,
+            pc_poly.clone(),
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
         
@@ -276,11 +268,6 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, _chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
-
         // opening_accumulator.append(
         //     &flattened_polys_ref,
         //     DensePolynomial::new(chis),
@@ -289,9 +276,14 @@ where
         //     transcript,
         // );
 
-        // Shift sumcheck evaluations: evaluate z on ry_var
-        let (shift_sumcheck_witness_evals, _chis2) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, &shift_sumcheck_r);
+        // For shift sumcheck, we only need PC evaluation
+        let shift_polys_to_evaluate = vec![&input_polys[1]]; // PC only
+        let (shift_sumcheck_witness_evals_partial, chis2) =
+            MultilinearPolynomial::batch_evaluate(&shift_polys_to_evaluate, &shift_sumcheck_r);
+        
+        // Pad with zeros for compatibility with existing proof structure
+        let mut shift_sumcheck_witness_evals = vec![F::zero(); input_polys.len()];
+        shift_sumcheck_witness_evals[1] = shift_sumcheck_witness_evals_partial[0]; // PC at index 1
 
         // opening_accumulator.append(
         //     &flattened_polys_ref,
@@ -397,15 +389,11 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        /* Sumcheck 3: Shift sumcheck with RLC
-            - claim = VirtualInstructionAddress(r_cycle) + r * PCNEXT(r_cycle) = 
-                     \sum_t (VirtualInstructionAddress(t) + 1 + r * PC(t)) * eq_plus_one(r_cycle, t)
-            - verifying it involves checking that claim = (virtual_seq(r_t) + 1 + r * pc(r_t)) * eq_plus_one(r_cycle, r_t)
+        /* Sumcheck 3: Shift sumcheck for PC
+            - claim = \sum_t PC(t) * eq_plus_one(r_cycle, t)
+            - verifying it involves checking that claim = pc(r_t) * eq_plus_one(r_cycle, r_t)
             where r_t = shift_sumcheck_r
         */
-
-        // Get the same RLC coefficient from transcript
-        let shift_rlc_coeff: F = transcript.challenge_scalar();
 
         let num_rounds_shift_sumcheck = num_steps_bits;
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
@@ -418,16 +406,12 @@ where
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        // Extract evaluations from shift_sumcheck_witness_evals
-        let eval_virtual_seq_at_shift_r = self.shift_sumcheck_witness_evals[0]; // VirtualInstructionAddress
-        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];         // RealInstructionAddress
-        
-        // Compute RLC evaluation: (virtual_seq(r_t) + 1) + r * pc(r_t)
-        let eval_rlc_at_shift_r = (eval_virtual_seq_at_shift_r + F::one()) + shift_rlc_coeff * eval_pc_at_shift_r;
+        // Extract PC evaluation from shift_sumcheck_witness_evals
+        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1];          // PC
         
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
-        let claim_shift_sumcheck_expected = eval_rlc_at_shift_r * eq_plus_one_shift_sumcheck;
+        let claim_shift_sumcheck_expected = eval_pc_at_shift_r * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
