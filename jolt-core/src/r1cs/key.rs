@@ -16,8 +16,6 @@ use crate::utils::math::Math;
 pub struct UniformSpartanKey<F: JoltField> {
     pub uniform_r1cs: UniformR1CS<F>,
 
-    pub offset_eq_r1cs: CrossStepR1CS<F>,
-
     /// Number of constraints across all steps padded to nearest power of 2
     pub num_cons_total: usize,
 
@@ -65,54 +63,6 @@ pub struct UniformR1CS<F: JoltField> {
     pub num_rows: usize,
 }
 
-/// CrossStepR1CSConstraint only supports a single additional equality constraint. 'a' holds the equality (something minus something),
-/// 'b' holds the condition. 'a' * 'b' == 0. Each SparseEqualityItem stores a uniform_column (pointing to a variable) and an offset
-/// suggesting which other step to point to.
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CrossStepR1CSConstraint<F: JoltField> {
-    pub eq: SparseEqualityItem<F>,
-    pub condition: SparseEqualityItem<F>,
-}
-
-impl<F: JoltField> CrossStepR1CSConstraint<F> {
-    pub fn new(eq: SparseEqualityItem<F>, condition: SparseEqualityItem<F>) -> Self {
-        Self { eq, condition }
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            eq: SparseEqualityItem::empty(),
-            condition: SparseEqualityItem::empty(),
-        }
-    }
-}
-
-/// CrossStepR1CS stores a vector of CrossStepR1CSConstraint
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct CrossStepR1CS<F: JoltField> {
-    pub constraints: Vec<CrossStepR1CSConstraint<F>>,
-}
-
-impl<F: JoltField> CrossStepR1CS<F> {
-    /// Returns a tuple of (eq_constants, condition_constants)
-    fn constants(&self) -> (Vec<F>, Vec<F>) {
-        let mut eq_constants = Vec::with_capacity(self.constraints.len());
-        let mut condition_constants = Vec::with_capacity(self.constraints.len());
-
-        for constraint in &self.constraints {
-            eq_constants.push(constraint.eq.constant);
-            condition_constants.push(constraint.condition.constant);
-        }
-
-        (eq_constants, condition_constants)
-    }
-
-    /// Unpadded number of cross-step constraints.
-    fn num_constraints(&self) -> usize {
-        self.constraints.len()
-    }
-}
-
 /// Represents a single constraint row where the variables are either from the current step (offset = false)
 /// or from the proceeding step (offset = true).
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, PartialEq)]
@@ -135,16 +85,14 @@ impl<F: JoltField> SparseEqualityItem<F> {
 impl<F: JoltField> UniformSpartanKey<F> {
     pub fn from_builder(constraint_builder: &CombinedUniformBuilder<F>) -> Self {
         let uniform_r1cs = constraint_builder.materialize_uniform();
-        let offset_eq_r1cs = constraint_builder.materialize_offset_eq();
 
         let total_rows = constraint_builder.constraint_rows().next_power_of_two();
         let num_steps = constraint_builder.uniform_repeat().next_power_of_two(); // TODO(JP): Number of steps no longer need to be padded.
 
-        let vk_digest = Self::digest(&uniform_r1cs, &offset_eq_r1cs, num_steps);
+        let vk_digest = Self::digest(&uniform_r1cs, num_steps);
 
         Self {
             uniform_r1cs,
-            offset_eq_r1cs,
             num_cons_total: total_rows,
             num_steps,
             vk_digest,
@@ -172,7 +120,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// Padded number of constraint rows per step.
     pub fn padded_row_constraint_per_step(&self) -> usize {
         // JP: This is redundant with `padded_rows_per_step`. Can we reuse that instead?
-        (self.uniform_r1cs.num_rows + self.offset_eq_r1cs.num_constraints()).next_power_of_two()
+        self.uniform_r1cs.num_rows.next_power_of_two()
     }
 
     /// Number of bits needed for all rows.
@@ -313,14 +261,9 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Returns the digest of the r1cs shape
-    fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &CrossStepR1CS<F>, num_steps: usize) -> F {
+    fn digest(uniform_r1cs: &UniformR1CS<F>, num_steps: usize) -> F {
         let mut hash_bytes = Vec::new();
         uniform_r1cs.serialize_compressed(&mut hash_bytes).unwrap();
-        let mut offset_eq_bytes = Vec::new();
-        offset_eq
-            .serialize_compressed(&mut offset_eq_bytes)
-            .unwrap();
-        hash_bytes.extend(offset_eq_bytes);
         hash_bytes.extend(num_steps.to_be_bytes().to_vec());
         let mut hasher = Sha3_256::new();
         hasher.update(hash_bytes);
