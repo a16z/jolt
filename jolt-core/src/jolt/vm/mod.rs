@@ -243,12 +243,16 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         let padding = padded_trace_length - trace_length;
         let last_address = trace.last().unwrap().instruction().normalize().address;
-        // Since the last instruction JAL doesn't increase the PC, we keep the same PC for the
-        // first NoOp
-        trace.extend((0..padding - 1).map(|i| RV32IMCycle::NoOp(last_address + 4 * i)));
-        trace.push(RV32IMCycle::JALR(
-            tracer::instruction::RISCVCycle::last_jalr((last_address + 4 * (padding - 1)) as u64),
-        ));
+        if padding != 0 {
+            // Pad the trace with NoOp instructions followed by a final JALR
+            trace.extend((0..padding - 1).map(|i| RV32IMCycle::NoOp(last_address + 4 * i)));
+            trace.push(RV32IMCycle::last_jalr(last_address + 4 * (padding - 1)));
+        } else {
+            // In case we have a perfect power of two instructions, just replace last JAL one with JALR
+            // to set the last PC to 0.
+            assert!(matches!(trace.last().unwrap(), RV32IMCycle::JAL(_)));
+            *trace.last_mut().unwrap() = RV32IMCycle::last_jalr(last_address);
+        }
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
