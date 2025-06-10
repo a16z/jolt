@@ -1213,7 +1213,52 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                 }
             });
 
-            MultilinearPolynomial::from(val)
+            let mut register_content_inc = vec![0; K];
+            let mut register_content_val = vec![0; K];
+            for j in 0..T - 1 {
+                register_content_inc[write_addresses[j]] += write_increments[j];
+                register_content_val[write_addresses[j]] = write_values[j];
+            }
+            for k in 0..K {
+                assert_eq!(register_content_inc[k] as u32, register_content_val[k]);
+                assert_eq!(
+                    register_content_val[k],
+                    old_val[(k + 1) * T - 1],
+                    "k: {:?}, register_content_val: {:?}, old_val: {:?}",
+                    k,
+                    register_content_val,
+                    old_val
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| i % T == T - 1)
+                        .map(|(_, v)| *v)
+                        .collect::<Vec<u32>>(),
+                );
+            }
+            for k in 0..K {
+                assert_eq!(register_content_inc[k] as u32, register_content_val[k]);
+                assert_eq!(
+                    register_content_val[k],
+                    val[val.len() - K + k],
+                    "k: {:?}, register_content_val: {:?}, test_val: {:?}",
+                    k,
+                    register_content_val,
+                    val,
+                );
+            }
+            let val = MultilinearPolynomial::from(val);
+            for k in 0..K {
+                assert_eq!(register_content_inc[k] as u32, register_content_val[k]);
+                assert_eq!(
+                    F::from_u32(register_content_val[k]),
+                    val.get_coeff(val.len() - K + k),
+                    "k: {:?}, register_content_val: {:?}, test_val: {:?}",
+                    k,
+                    register_content_val,
+                    val,
+                );
+            }
+            val
         };
         test_val
     };
@@ -1233,6 +1278,10 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
     }
 
     for round in 0..K.log_2() {
+        // Evaluation of the sum-check polynomial at 1.
+        #[cfg(test)]
+        let mut eval_1 = F::zero();
+        // Evaluation of the sum-check polynomial at 0 and 2.
         let mut acc = [F::zero(); 2];
         let mut write_acc = [F::zero(); 2];
 
@@ -1243,32 +1292,100 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             // Lowest round digits of addr
             let read_addr_bounded = read_arr & !(!0 << round);
 
-            // TODO: should we instantiate all write increments as field elements before?
-            C_k[read_addr_unbounded] +=
-                eq_r_k.0[read_addr_bounded] * F::from_i64(write_increments[j]);
-            let read_prod = eq_r_k.0[read_addr_bounded] * C_k[read_addr_unbounded] * B.0[j];
-            acc[read_addr_unbounded % 2] += read_prod;
-
             let write_arr = write_addresses[j];
             let write_addr_unbounded = write_arr >> round;
             let write_addr_bounded = write_arr & !(!0 << round);
 
-            let write_prod = z_eq_r.get_coeff(write_addr_unbounded)
-                * eq_r_k.0[write_addr_bounded]
-                * (F::from_u32(write_values[j]) - C_k[write_addr_unbounded])
-                * B.0[j];
-            write_acc[write_addr_unbounded % 2] += write_prod;
+            // TODO: should we instantiate all write increments as field elements before?
+
+            let read_prod = if read_addr_unbounded % 2 == 0 {
+                eq_r_k.0[read_addr_bounded] * C_k[read_addr_unbounded] * B.0[j]
+            } else {
+                // TODO: this is not correct.
+                (eq_r_k.0[read_addr_bounded] + eq_r_k.0[read_addr_bounded])
+                    * (C_k[read_addr_unbounded] + C_k[read_addr_unbounded]
+                        - C_k[read_addr_unbounded - 1])
+                    * B.0[j]
+            };
+
+            #[cfg(test)]
+            {
+                if read_addr_unbounded % 2 == 1 {
+                    eval_1 += eq_r_k.0[read_addr_bounded] * C_k[read_addr_unbounded] * B.0[j];
+                }
+            }
+
+            if j != T - 1 {
+                C_k[write_addr_unbounded] +=
+                    eq_r_k.0[read_addr_bounded] * F::from_i64(write_increments[j]);
+            }
+
+            acc[read_addr_unbounded % 2] += read_prod;
+
+            // let write_prod = z_eq_r.get_coeff(write_addr_unbounded)
+            //     * eq_r_k.0[write_addr_bounded]
+            //     * (F::from_u32(write_values[j]) - C_k[write_addr_unbounded])
+            //     * B.0[j];
+            // write_acc[write_addr_unbounded % 2] += write_prod;
         }
 
-        let diff = acc[1] - acc[0];
-        let eval_1 = acc[1] + diff;
-        let eval_2 = eval_1 + diff;
+        #[cfg(test)]
+        let test_univariate_poly = {
+            let test_evals = (0..T * (K / (round + 1).pow2()))
+                .into_par_iter()
+                .map(|idx| {
+                    let t = idx >> (K.log_2() - round - 1);
+                    let B_val = B.0[t];
+                    let ra_evals = test_ra
+                        .sumcheck_evals(idx, 2, BindingOrder::LowToHigh)
+                        .into_iter()
+                        .map(|val| val * B_val)
+                        .collect::<Vec<F>>();
+                    let val_evals = test_val.sumcheck_evals(idx, 2, BindingOrder::LowToHigh);
 
-        let univariate_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], eval_1, eval_2]);
+                    [ra_evals[0] * val_evals[0], ra_evals[1] * val_evals[1]]
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                );
 
+            assert_eq!(eval_1 + acc[0], prev_claim);
+            for k in 0..K / round.pow2() {
+                assert_eq!(
+                    C_k[k],
+                    test_val.get_coeff(test_val.len() - (K / round.pow2()) + k),
+                    "C_k: {:?}, test_val: {:?}",
+                    C_k,
+                    (0..K / round.pow2())
+                        .into_par_iter()
+                        .map(|k| { test_val.get_coeff(test_val.len() - (K / round.pow2()) + k) })
+                        .collect::<Vec<F>>(),
+                );
+            }
+            let test_univariate_poly =
+                UniPoly::from_evals(&[test_evals[0], prev_claim - test_evals[0], test_evals[1]]);
+            
+            // TODO: fix evaluation at 2.
+            assert_eq!(test_evals, acc);
+            test_univariate_poly
+        };
+
+        let univariate_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1]]);
         let compressed_poly: CompressedUniPoly<F> = univariate_poly.compress();
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
+
+        #[cfg(test)]
+        {
+            assert_eq!(test_univariate_poly.eval_at_zero(), acc[0]);
+            assert_eq!(test_univariate_poly.eval_at_one(), eval_1);
+            assert_eq!(
+                test_univariate_poly.evaluate(&F::zero())
+                    + test_univariate_poly.evaluate(&F::one()),
+                prev_claim
+            );
+        }
 
         let r_j = transcript.challenge_scalar::<F>();
         prev_claim = univariate_poly.evaluate(&r_j);
@@ -1279,17 +1396,19 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             test_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
             test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-            let test_prev_claim = (0..(T * K / (round + 1).pow2()))
+            let size = T * K / (round).pow2();
+            let test_prev_claim = (0..size / 2)
                 .into_par_iter()
                 .map(|idx| {
-                    let t = idx / (K / (round + 1).pow2());
+                    let t = idx >> (K.log_2() - (round + 1));
                     let ra_eval = test_ra.get_coeff(idx);
                     let wa_eval = test_wa.get_coeff(idx);
-                    let val_eval = test_val.get_coeff(idx);
+                    let val_eval = test_val.get_bound_coeff(idx);
                     ra_eval * val_eval * B.0[t]
                 })
                 .reduce(|| F::zero(), |running, new| running + new);
-            assert_eq!(test_prev_claim, prev_claim,);
+            assert_eq!(test_prev_claim, test_univariate_poly.evaluate(&r_j));
+            assert_eq!(test_prev_claim, prev_claim);
         }
 
         // Update tables and bind variables.
