@@ -6,6 +6,7 @@ use crate::jolt::witness::ALL_COMMITTED_POLYNOMIALS;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
 };
+use crate::poly::sparse_matrix_polynomial::SparseMatrixPolynomial;
 use crate::r1cs::constraints::R1CSConstraints;
 use crate::r1cs::spartan::UniformSpartanProof;
 use crate::utils::math::Math;
@@ -230,6 +231,8 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         trace.resize(padded_trace_length, RV32IMCycle::NoOp);
 
+        SparseMatrixPolynomial::<F>::initialize(1 << 16, padded_trace_length);
+
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
             ProverOpeningAccumulator::new();
@@ -243,7 +246,7 @@ where
 
         let committed_polys: Vec<_> = ALL_COMMITTED_POLYNOMIALS
             .par_iter()
-            .map(|poly| poly.generate_witness::<F>(&trace))
+            .map(|poly| poly.generate_witness(&preprocessing, &trace))
             .collect();
         let commitments: Vec<_> = committed_polys
             .par_iter()

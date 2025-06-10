@@ -3,9 +3,8 @@ use crate::host;
 use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
 use crate::jolt::vm::{Jolt, JoltProverPreprocessing};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryCommitmentScheme;
+use crate::poly::commitment::dory::DoryCommitmentScheme as Dory;
 use crate::poly::commitment::hyperkzg::HyperKZG;
-use crate::poly::commitment::zeromorph::Zeromorph;
 use crate::subprotocols::shout::ShoutProof;
 use crate::subprotocols::twist::{TwistAlgorithm, TwistProof};
 use crate::utils::math::Math;
@@ -18,7 +17,7 @@ use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
-    Zeromorph,
+    Dory,
     HyperKZG,
 }
 
@@ -39,15 +38,11 @@ pub fn benchmarks(
     bench_type: BenchType,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match pcs_type {
-        PCSType::Zeromorph => match bench_type {
-            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>(),
-            BenchType::Sha2Chain => {
-                sha2chain::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
-            BenchType::Fibonacci => {
-                fibonacci::<Fr, Zeromorph<Bn254, KeccakTranscript>, KeccakTranscript>()
-            }
+        PCSType::Dory => match bench_type {
+            BenchType::Sha2 => sha2::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha3 => sha3::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
+            BenchType::Fibonacci => fibonacci::<Fr, Dory<KeccakTranscript>, KeccakTranscript>(),
             BenchType::Shout => shout::<Fr, KeccakTranscript>(),
             BenchType::Twist => twist::<Fr, KeccakTranscript>(),
             BenchType::SparseDenseShout => sparse_dense_shout::<Fr, KeccakTranscript>(),
@@ -57,7 +52,7 @@ pub fn benchmarks(
             BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
             BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>(),
             BenchType::Sha2Chain => {
-                sha2chain::<Fr, DoryCommitmentScheme<KeccakTranscript>, KeccakTranscript>()
+                sha2chain::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()
             }
             BenchType::Fibonacci => {
                 fibonacci::<Fr, HyperKZG<Bn254, KeccakTranscript>, KeccakTranscript>()

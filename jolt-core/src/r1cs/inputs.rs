@@ -216,10 +216,10 @@ impl JoltR1CSInputs {
                 coeffs.into()
             }
             JoltR1CSInputs::LeftInstructionInput => {
-                CommittedPolynomials::LeftInstructionInput.generate_witness(trace)
+                CommittedPolynomials::LeftInstructionInput.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::RightInstructionInput => {
-                CommittedPolynomials::RightInstructionInput.generate_witness(trace)
+                CommittedPolynomials::RightInstructionInput.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
@@ -235,12 +235,14 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::Product => CommittedPolynomials::Product.generate_witness(trace),
+            JoltR1CSInputs::Product => {
+                CommittedPolynomials::Product.generate_witness(preprocessing, trace)
+            }
             JoltR1CSInputs::WriteLookupOutputToRD => {
-                CommittedPolynomials::WriteLookupOutputToRD.generate_witness(trace)
+                CommittedPolynomials::WriteLookupOutputToRD.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::WritePCtoRD => {
-                CommittedPolynomials::WritePCtoRD.generate_witness(trace)
+                CommittedPolynomials::WritePCtoRD.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::LookupOutput => {
                 let coeffs: Vec<u64> = trace
@@ -249,9 +251,11 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::NextPC => CommittedPolynomials::NextPC.generate_witness(trace),
+            JoltR1CSInputs::NextPC => {
+                CommittedPolynomials::NextPC.generate_witness(preprocessing, trace)
+            }
             JoltR1CSInputs::ShouldBranch => {
-                CommittedPolynomials::ShouldBranch.generate_witness(trace)
+                CommittedPolynomials::ShouldBranch.generate_witness(preprocessing, trace)
             }
             JoltR1CSInputs::OpFlags(flag) => {
                 // TODO(moodlezoup): Boolean polynomial
