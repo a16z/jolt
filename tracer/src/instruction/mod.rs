@@ -617,3 +617,16 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
         }
     }
 }
+
+impl RISCVCycle<JALR> {
+    pub fn last_jalr(address: u64) -> Self {
+        Self {
+            instruction: JALR {
+                address,
+                ..Default::default()
+            },
+            ram_access: Default::default(),
+            register_state: Default::default(),
+        }
+    }
+}

@@ -243,7 +243,6 @@ where
         // This is because we're proving the sumcheck relation directly
 
         // For the shift sumcheck, we use PC polynomial and eq_plus_one
-        let eq_plus_one_len = eq_plus_one_r_cycle.len(); // Save length before move
         let mut shift_sumcheck_polys = vec![
             pc_poly.clone(),
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
@@ -252,11 +251,6 @@ where
         drop(_guard);
         drop(span);
 
-        // Debug: Let's trace through the sum computation
-        println!("DEBUG: Computing shift sumcheck claim...");
-        println!("DEBUG: r_cycle = {:?}", r_cycle);
-        println!("DEBUG: eq_plus_one_r_cycle len = {}", eq_plus_one_len);
-        
         let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
             .into_par_iter()
             .map(|i| {
@@ -264,63 +258,9 @@ where
                     .iter()
                     .map(|poly| poly.get_coeff(i))
                     .collect();
-                let result = comb_func(&params);
-                // Debug first few non-zero contributions
-                if !result.is_zero() && i < 10 {
-                    println!("DEBUG: i={}, PC[{}]={:?}, eq_plus_one={:?}, product={:?}", 
-                             i, i, params[0], params[1], result);
-                }
-                result
+                comb_func(&params)
             })
             .reduce(|| F::zero(), |acc, x| acc + x);
-        
-        println!("DEBUG: shift_sumcheck_claim = {:?}", shift_sumcheck_claim);
-        println!("DEBUG: claimed_witness_evals[18] (NextPC at r_cycle) = {:?}", claimed_witness_evals[18]);
-
-        // Debug: Let's verify the constraint holds for concrete values
-        let num_cycles = 1 << num_cycles_bits;
-        println!("DEBUG: Total cycles = {}, PC poly len = {}, NextPC poly len = {}", 
-                 num_cycles, pc_poly.len(), input_polys[18].len());
-        
-        // PC[0] is 
-        println!("DEBUG: PC[0] = {:?}", pc_poly.get_coeff(0));
-        // Check first few cycles
-        for i in 0..num_cycles.min(10) {
-            let next_pc_i = input_polys[18].get_coeff(i);
-            let pc_i_plus_1 = if i + 1 < pc_poly.len() {
-                pc_poly.get_coeff(i + 1)
-            } else {
-                F::zero()
-            };
-            println!("DEBUG: Cycle {}: NextPC = {:?}, PC[{}] = {:?}", 
-                     i, next_pc_i, i+1, pc_i_plus_1);
-            if next_pc_i != pc_i_plus_1 {
-                println!("  MISMATCH!");
-            }
-        }
-
-        
-        // Check last cycle
-        let last = num_cycles - 1;
-        println!("DEBUG: Last cycle {}: NextPC = {:?}, no PC[{}]", 
-                 last, input_polys[18].get_coeff(last), last+1);
-        println!("DEBUG: Pre last cycle PC: {}", pc_poly.get_coeff(last));
-        
-        // Check last 10 cycles
-        for i in last-10..last {
-            let next_pc_i = input_polys[18].get_coeff(i);
-            let pc_i_plus_1 = if i + 1 < pc_poly.len() {
-                pc_poly.get_coeff(i + 1)
-            } else {
-                F::zero()
-            };
-            println!("DEBUG: Cycle {}: NextPC = {:?}, PC[{}] = {:?}", 
-                     i, next_pc_i, i+1, pc_i_plus_1);
-            if next_pc_i != pc_i_plus_1 {
-                println!("  MISMATCH!");
-            }
-        }
-        
         // The third sumcheck proves that NextPC at r_cycle can be computed from PC values
         // We verify that our computed sum equals NextPC(r_cycle) from claimed_witness_evals
         assert_eq!(

@@ -272,7 +272,8 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::NextPC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| {
+                    .enumerate()
+                    .map(|(i, cycle)| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
                         let should_branch =

@@ -243,7 +243,12 @@ where
         let padded_trace_length = trace_length.next_power_of_two();
         let padding = padded_trace_length - trace_length;
         let last_address = trace.last().unwrap().instruction().normalize().address;
-        trace.extend((0..padding).map(|i| RV32IMCycle::NoOp(last_address + 4 * (i + 1))));
+        // Since the last instruction JAL doesn't increase the PC, we keep the same PC for the
+        // first NoOp
+        trace.extend((0..padding - 1).map(|i| RV32IMCycle::NoOp(last_address + 4 * i)));
+        trace.push(RV32IMCycle::JALR(
+            tracer::instruction::RISCVCycle::last_jalr((last_address + 4 * (padding - 1)) as u64),
+        ));
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
