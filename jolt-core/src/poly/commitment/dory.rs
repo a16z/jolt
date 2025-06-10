@@ -3,7 +3,10 @@ use crate::{
     field::JoltField,
     msm::{Icicle, VariableBaseMSM},
     poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{errors::ProofVerifyError, transcript::Transcript},
+    utils::{
+        errors::ProofVerifyError,
+        transcript::{AppendToTranscript, Transcript},
+    },
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::bn::{G1Prepared, G2Prepared};
@@ -684,6 +687,23 @@ where
     fn len(&self) -> usize {
         self.len()
     }
+
+    //     fn commit_rows<M1: DoryMultiScalarMul<JoltGroupWrapper<G>>>(
+    //         &self,
+    //         g1_generators: &[JoltGroupWrapper<G>],
+    //         row_len: usize,
+    //     ) -> Vec<JoltGroupWrapper<G>> {
+    //         todo!()
+    //     }
+
+    //     fn vector_matrix_product(
+    //         &self,
+    //         left_vec: &[JoltFieldWrapper<F>],
+    //         sigma: usize,
+    //         nu: usize,
+    //     ) -> Vec<JoltFieldWrapper<F>> {
+    //         todo!()
+    //     }
 }
 
 // Note that we have this `Option<&'a mut T>` so that we can derive Default, which is required.
@@ -915,7 +935,7 @@ where
     }
 }
 
-impl crate::utils::transcript::AppendToTranscript for DoryCommitment {
+impl AppendToTranscript for DoryCommitment {
     fn append_to_transcript<PT: Transcript>(&self, transcript: &mut PT) {
         transcript.append_serializable(&self.0);
     }
