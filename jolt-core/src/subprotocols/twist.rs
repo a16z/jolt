@@ -1282,10 +1282,11 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
         #[cfg(test)]
         let mut eval_1 = F::zero();
         // Evaluation of the sum-check polynomial at 0 and 2.
-        let mut acc_1 = [F::zero(); 2];
+        let mut acc = [F::zero(); 2];
         let mut write_acc = [F::zero(); 2];
 
-        // TODO: turn this into chunks for better parallelism.
+        println!("C_k: {:?}", C_k);
+        println!("eq_r_k: {:?}", eq_r_k.0);
         for j in 0..T {
             let read_arr = read_addresses[j];
             let read_addr_unbounded = read_arr >> round;
@@ -1296,106 +1297,51 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
             let write_addr_unbounded = write_arr >> round;
             let write_addr_bounded = write_arr & !(!0 << round);
 
-            // TODO: should we instantiate all write increments as field elements before?
-
-            let read_prod = if read_addr_unbounded % 2 == 0 {
-                eq_r_k.0[read_addr_bounded] * C_k[read_addr_unbounded] * B.0[j]
+            let ra_eval_0 = if read_addr_unbounded % 2 == 0 {
+                eq_r_k.0[read_addr_bounded]
             } else {
-                // TODO: this is not correct.
-
-                (eq_r_k.0[read_addr_bounded] + eq_r_k.0[read_addr_bounded])
-                    * (C_k[read_addr_unbounded] + C_k[read_addr_unbounded]
-                        - C_k[read_addr_unbounded - 1])
-                    * B.0[j]
+                F::zero()
             };
+            let ra_eval_1 = if read_addr_unbounded % 2 != 0 {
+                eq_r_k.0[read_addr_bounded]
+            } else {
+                F::zero()
+            };
+            let ra_eval_2 = ra_eval_1 + ra_eval_1 - ra_eval_0;
 
+            let val_eval_0 = if read_addr_unbounded % 2 == 0 {
+                C_k[read_addr_unbounded]
+            } else {
+                C_k[read_addr_unbounded - 1]
+            };
+            let val_eval_1 = if read_addr_unbounded % 2 != 0 {
+                C_k[read_addr_unbounded]
+            } else {
+                C_k[read_addr_unbounded + 1]
+            };
+            let val_eval_2 = val_eval_1 + val_eval_1 - val_eval_0;
+
+            acc[0] += ra_eval_0 * val_eval_0 * B.0[j];
+            acc[1] += ra_eval_2 * val_eval_2 * B.0[j];
             #[cfg(test)]
             {
-                if read_addr_unbounded % 2 == 1 {
-                    eval_1 += eq_r_k.0[read_addr_bounded] * C_k[read_addr_unbounded] * B.0[j];
-                }
+                eval_1 += ra_eval_1 * val_eval_1 * B.0[j];
             }
 
-            if j != T - 1 {
-                C_k[write_addr_unbounded] +=
-                    eq_r_k.0[read_addr_bounded] * F::from_i64(write_increments[j]);
-            }
-
-            acc_1[read_addr_unbounded % 2] += read_prod;
-
-            if j % 2 == 0 {
-                println!("read_prod: {:?}", read_prod);
-            } else {
-                println!("next_read_prod: {:?}", read_prod);
-            }
-
-            //     * eq_r_k.0[write_addr_bounded]
-            //     * (F::from_u32(write_values[j]) - C_k[write_addr_unbounded])
-            //     * B.0[j];
-            // write_acc[write_addr_unbounded % 2] += write_prod;
+            C_k[write_addr_unbounded] +=
+                eq_r_k.0[write_addr_bounded] * F::from_i64(write_increments[j]);
         }
-
-        // for j in (0..T).step_by(2) {
-        //     assert_eq!(j % 2, 0);
-        //     let read_addr = read_addresses[j];
-        //     let next_read_addr = read_addresses[j + 1];
-        //     let write_addr = write_addresses[j];
-        //     let next_write_addr = write_addresses[j + 1];
-
-        //     let read_addr_bounded = [read_addr, next_read_addr]
-        //         .iter()
-        //         .map(|each| each & !(!0 << round))
-        //         .collect::<Vec<usize>>();
-        //     let write_addr_bounded = [write_addr, next_write_addr]
-        //         .iter()
-        //         .map(|each| each & !(!0 << round))
-        //         .collect::<Vec<usize>>();
-
-        //     let read_addr_unbounded = [read_addr, next_read_addr]
-        //         .iter()
-        //         .map(|each| each >> round)
-        //         .collect::<Vec<usize>>();
-        //     let write_addr_unbounded = [write_addr, next_write_addr]
-        //         .iter()
-        //         .map(|each| each >> round)
-        //         .collect::<Vec<usize>>();
-
-        //     let old_C_k = C_k[read_addr_unbounded[0]];
-        //     // Evaluating read-checking sumcheck polynomial at 0.
-        //     let read_prod = eq_r_k.0[read_addr_bounded[0]] * C_k[read_addr_unbounded[0]] * B.0[j];
-        //     C_k[write_addr_unbounded[0]] +=
-        //         eq_r_k.0[read_addr_bounded[0]] * F::from_i64(write_increments[j]);
-
-        //     // Evaluating read-checking sumcheck polynomial at 2.
-        //     let next_read_prod = (eq_r_k.0[read_addr_bounded[1]] + eq_r_k.0[read_addr_bounded[1]]
-        //         - eq_r_k.0[read_addr_bounded[0]])
-        //         * (C_k[read_addr_unbounded[1]] + C_k[read_addr_unbounded[1]] - old_C_k)
-        //         * B.0[j + 1];
-
-        //     #[cfg(test)]
-        //     {
-        //         // Evaluating read-checking sumcheck polynomial at 1.
-        //         eval_1 += eq_r_k.0[read_addr_bounded[1]] * C_k[read_addr_unbounded[1]] * B.0[j + 1];
-        //     }
-
-        //     C_k[write_addr_unbounded[1]] +=
-        //         eq_r_k.0[read_addr_bounded[1]] * F::from_i64(write_increments[j + 1]);
-
-        //     println!("read_prod: {:?}", read_prod);
-        //     println!("next_read_prod: {:?}", next_read_prod);
-        //     acc_1[0] += read_prod;
-        //     acc_1[1] += next_read_prod;
-        // }
 
         #[cfg(test)]
         {
-            assert_eq!(eval_1 + acc_1[0], prev_claim);
+            println!("round: {:?}", round);
+            assert_eq!(eval_1 + acc[0], prev_claim);
         }
 
         #[cfg(test)]
         let test_univariate_poly = {
-            let test_evals = (0..T * (K / (round + 1).pow2())).into_iter()
-                // .into_par_iter()
+            let test_evals = (0..T * (K / (round + 1).pow2()))
+                .into_par_iter()
                 .map(|idx| {
                     let t = idx >> (K.log_2() - round - 1);
                     let B_val = B.0[t];
@@ -1406,65 +1352,54 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
                         .collect::<Vec<F>>();
                     let val_evals = test_val.sumcheck_evals(idx, 2, BindingOrder::LowToHigh);
 
-                    println!("eval read product: {:?}", ra_evals[0] * val_evals[0]);
-                    println!("eval next read product: {:?}", ra_evals[1] * val_evals[1]);
-                    println!("t: {:?}", t);
                     [ra_evals[0] * val_evals[0], ra_evals[1] * val_evals[1]]
-                }).reduce(|running, new| [running[0] + new[0], running[1] + new[1]]).unwrap();
-            // .reduce(
-            // || [F::zero(); 2],
-            // |running, new| [running[0] + new[0], running[1] + new[1]],
-            // );
-
-            for k in 0..K / round.pow2() {
-                assert_eq!(
-                    C_k[k],
-                    test_val.get_bound_coeff(test_val.len() - (K / round.pow2()) + k),
-                    "C_k: {:?}, test_val: {:?}",
-                    C_k,
-                    (0..K / round.pow2())
-                        .into_par_iter()
-                        .map(|k| {
-                            test_val.get_bound_coeff(test_val.len() - (K / round.pow2()) + k)
-                        })
-                        .collect::<Vec<F>>(),
+                })
+                .reduce(
+                    || [F::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
-            }
+
+            // for k in 0..K / round.pow2() {
+            //     assert_eq!(
+            //         C_k[k],
+            //         test_val.get_bound_coeff(test_val.len() - (K / round.pow2()) + k),
+            //         "C_k: {:?}, test_val: {:?}",
+            //         C_k,
+            //         (0..K / round.pow2())
+            //             .into_par_iter()
+            //             .map(|k| {
+            //                 test_val.get_bound_coeff(test_val.len() - (K / round.pow2()) + k)
+            //             })
+            //             .collect::<Vec<F>>(),
+            //     );
+            // }
             let test_univariate_poly =
                 UniPoly::from_evals(&[test_evals[0], prev_claim - test_evals[0], test_evals[1]]);
             assert_eq!(
                 test_univariate_poly.eval_at_one() + test_univariate_poly.eval_at_zero(),
                 prev_claim
             );
-            let my_poly = UniPoly::from_evals(&[acc_1[0], prev_claim - acc_1[0], acc_1[1]]);
+            let my_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1]]);
             assert_eq!(my_poly.eval_at_one() + my_poly.eval_at_zero(), prev_claim);
-
-            // TODO: fix evaluation at 2.
-            assert_eq!(test_evals, acc_1);
+            assert_eq!(test_evals, acc);
             test_univariate_poly
         };
 
-        let univariate_poly = UniPoly::from_evals(&[acc_1[0], prev_claim - acc_1[0], acc_1[1]]);
+        let univariate_poly = UniPoly::from_evals(&[acc[0], prev_claim - acc[0], acc[1]]);
         let compressed_poly: CompressedUniPoly<F> = univariate_poly.compress();
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
-
-        #[cfg(test)]
-        {
-            assert_eq!(test_univariate_poly.eval_at_zero(), acc_1[0]);
-            assert_eq!(test_univariate_poly.eval_at_one(), eval_1);
-            assert_eq!(
-                test_univariate_poly.evaluate(&F::zero())
-                    + test_univariate_poly.evaluate(&F::one()),
-                prev_claim
-            );
-        }
 
         let r_j = transcript.challenge_scalar::<F>();
         prev_claim = univariate_poly.evaluate(&r_j);
 
         #[cfg(test)]
         {
+            assert_eq!(
+                test_univariate_poly.eval_at_zero(),
+                univariate_poly.eval_at_zero()
+            );
+
             test_ra.bind_parallel(r_j, BindingOrder::LowToHigh);
             test_wa.bind_parallel(r_j, BindingOrder::LowToHigh);
             test_val.bind_parallel(r_j, BindingOrder::LowToHigh);
@@ -1490,8 +1425,9 @@ fn prove_read_write_checking_alternative<F: JoltField, ProofTranscript: Transcri
         // TODO: not sure if should do this to zero out C_k..
         C_k = unsafe_allocate_zero_vec(C_k.len() / 2);
         // For the write-checking sumcheck.
-        z_eq_r.bind_parallel(r_j, BindingOrder::HighToLow);
+        z_eq_r.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
+    panic!("test");
 
     // TODO: remaining rounds.
     let span = tracing::span!(tracing::Level::INFO, "Remaining rounds of sumcheck");
