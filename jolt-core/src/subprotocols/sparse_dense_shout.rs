@@ -772,7 +772,7 @@ mod tests {
             RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
-            _ => RV32IMCycle::NoOp,
+            _ => RV32IMCycle::NoOp(0),
         }
     }
 

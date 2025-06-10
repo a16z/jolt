@@ -53,12 +53,15 @@ impl BytecodePreprocessing {
         }
 
         // Bytecode: Prepend a single no-op instruction
-        bytecode.insert(0, RV32IMInstruction::NoOp);
+        bytecode.insert(0, RV32IMInstruction::NoOp(0));
         assert_eq!(virtual_address_map.insert((0, 0), 0), None);
 
         // Bytecode: Pad to nearest power of 2
+        // Get last address
+        let last_address = bytecode.last().unwrap().normalize().address;
         let code_size = bytecode.len().next_power_of_two();
-        bytecode.resize(code_size, RV32IMInstruction::NoOp);
+        let padding = code_size - bytecode.len();
+        bytecode.extend((0..padding).map(|i| RV32IMInstruction::NoOp(last_address + 4 * (i + 1))));
 
         Self {
             bytecode,
