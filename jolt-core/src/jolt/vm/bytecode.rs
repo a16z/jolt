@@ -143,7 +143,7 @@ impl<F: JoltField, ProofTranscript: Transcript> BytecodeShoutProof<F, ProofTrans
                     let k = preprocessing
                         .virtual_address_map
                         .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                        .unwrap();
+                        .unwrap_or(&0);
                     result[*k] += E[j];
                     j += 1;
                 }
@@ -466,7 +466,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             let k = preprocessing
                 .virtual_address_map
                 .get(&(instr.address, instr.virtual_sequence_remaining.unwrap_or(0)))
-                .unwrap();
+                .unwrap_or(&0);
             F[*k]
         })
         .collect();

@@ -128,8 +128,17 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::VirtualInstructionAddress => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .map(|cycle| {
+                    .enumerate()
+                    .map(|(i, cycle)| {
                         let instr = cycle.instruction().normalize();
+                        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp(_))
+                            || i == trace.len() - 1
+                        {
+                            // Padding are not in a virtual cycle regardless, so constraint
+                            // would pass
+                            // And this constraint would be removed later regardless.
+                            return 0;
+                        }
                         *preprocessing
                             .shared
                             .bytecode
@@ -272,8 +281,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::NextPC => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
-                    .enumerate()
-                    .map(|(i, cycle)| {
+                    .map(|cycle| {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
                         let should_branch =
