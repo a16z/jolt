@@ -21,21 +21,16 @@ pub trait Terminal {
 }
 
 /// For the test or whatever.
+#[derive(Default)]
 pub struct DummyTerminal {}
-
-impl DummyTerminal {
-    pub fn new() -> Self {
-        DummyTerminal {}
-    }
-}
 
 impl Terminal for DummyTerminal {
     fn put_byte(&mut self, _value: u8) {}
-    fn get_input(&mut self) -> u8 {
+    fn get_output(&mut self) -> u8 {
         0
     }
     fn put_input(&mut self, _value: u8) {}
-    fn get_output(&mut self) -> u8 {
+    fn get_input(&mut self) -> u8 {
         0
     }
 }

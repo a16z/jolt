@@ -60,8 +60,8 @@ pub struct Emulator {
     /// The address where data will be sent to terminal
     pub tohost_addr: u64,
 
-    /// In RISC-V testing, signatures are memory-stored execution results. They're 
-    /// used to compare a processor's behavior against a trusted reference model 
+    /// In RISC-V testing, signatures are memory-stored execution results. They're
+    /// used to compare a processor's behavior against a trusted reference model
     /// (like SAIL or Spike) to ensure correct and compliant operation.
     /// The address where the signature region begins
     pub begin_signature_addr: u64,

@@ -21,9 +21,9 @@ pub struct Plic {
 const VIRTIO_IRQ: u32 = 1;
 const UART_IRQ: u32 = 10;
 
-impl Plic {
+impl Default for Plic {
     /// Creates a new `Plic`.
-    pub fn new() -> Self {
+    fn default() -> Self {
         Plic {
             clock: 0,
             irq: 0,
@@ -35,7 +35,9 @@ impl Plic {
             virtio_ip_cache: false,
         }
     }
+}
 
+impl Plic {
     /// Runs one cycle. Takes interrupting signals from devices and
     /// raises an interrupt to CPU depending on configuration.
     /// If interrupt occurs a certain bit of `mip` register is risen

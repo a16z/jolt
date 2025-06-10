@@ -116,9 +116,9 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(tracer.clone()),
             dtb,
-            disk: VirtioBlockDisk::new(),
-            plic: Plic::new(),
-            clint: Clint::new(),
+            disk: VirtioBlockDisk::default(),
+            plic: Plic::default(),
+            clint: Clint::default(),
             uart: Uart::new(terminal),
             jolt_device: JoltDevice::new(&MemoryConfig::default()),
             tracer,
@@ -929,14 +929,14 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn validate_address(&mut self, v_address: u64) -> Result<bool, ()> {
+    pub fn validate_address(&mut self, v_address: u64) -> bool {
         // @TODO: Support other access types?
         let p_address = match self.translate_address(v_address, &MemoryAccessType::DontCare) {
             Ok(address) => address,
-            Err(()) => return Err(()),
+            Err(()) => return false,
         };
         let effective_address = self.get_effective_address(p_address);
-        let valid = match effective_address >= DRAM_BASE {
+        match effective_address >= DRAM_BASE {
             true => self.memory.validate_address(effective_address),
             false => matches!(
                 effective_address,
@@ -946,8 +946,7 @@ impl Mmu {
                 0x10000000..=0x100000ff |
                 0x10001000..=0x10001FFF
             ),
-        };
-        Ok(valid)
+        }
     }
 
     fn translate_address(
@@ -1222,7 +1221,7 @@ pub struct MemoryWrapper {
 impl MemoryWrapper {
     fn new(tracer: Rc<Tracer>) -> Self {
         MemoryWrapper {
-            memory: Memory::new(),
+            memory: Memory::default(),
             tracer,
         }
     }
@@ -1317,8 +1316,8 @@ mod test_mmu {
     const MEM_CAPACITY: u64 = 1024 * 1024;
 
     fn setup_mmu(capacity: u64) -> Mmu {
-        let terminal = Box::new(DummyTerminal::new());
-        let tracer = Rc::new(Tracer::new());
+        let terminal = Box::new(DummyTerminal::default());
+        let tracer = Rc::new(Tracer::default());
         let mut mmu = Mmu::new(Xlen::Bit64, terminal, tracer);
 
         mmu.init_memory(capacity);

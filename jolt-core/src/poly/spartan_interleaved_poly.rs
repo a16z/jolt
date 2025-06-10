@@ -129,9 +129,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
         assert!(
             NUM_SVO_ROUNDS <= num_constraint_vars,
-            "NUM_SVO_ROUNDS ({}) cannot exceed total constraint variables ({})",
-            NUM_SVO_ROUNDS,
-            num_constraint_vars
+            "NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) cannot exceed total constraint variables ({num_constraint_vars})",
         );
 
         // Number of constraint variables that are NOT part of the SVO prefix Y.
@@ -140,10 +138,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         assert_eq!(
             num_non_svo_z_vars,
             total_num_vars - NUM_SVO_ROUNDS,
-            "num_non_svo_z_vars ({}) + NUM_SVO_ROUNDS ({}) must be == total_num_vars ({})",
-            num_non_svo_z_vars,
-            NUM_SVO_ROUNDS,
-            total_num_vars
+            "num_non_svo_z_vars ({num_non_svo_z_vars}) + NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) must be == total_num_vars ({total_num_vars})",
         );
 
         // --- Define Iteration Spaces for Non-SVO Z variables (x_out_val, x_in_val) ---
@@ -169,10 +164,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         // TODO: remove this assertion by handling the switchover point more generally
         // Currently, it should not fail with 3 or 4 SVO rounds
         assert!(rem_num_uniform_r1cs_constraints + num_cross_step_constraints < Y_SVO_SPACE_SIZE,
-            "The last block of {} uniform constraints + {} cross step constraints must fit in a single block of size {}",
-            rem_num_uniform_r1cs_constraints,
-            num_cross_step_constraints,
-            Y_SVO_SPACE_SIZE
+            "The last block of {rem_num_uniform_r1cs_constraints} uniform constraints + {num_cross_step_constraints} cross step constraints must fit in a single block of size {Y_SVO_SPACE_SIZE}",
         );
 
         // --- Setup: E_in and E_out tables ---
