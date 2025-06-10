@@ -1,3 +1,5 @@
+//! Sigmoid instruction for Jolt ONNX
+
 use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{LassoSubtable};
@@ -49,7 +51,7 @@ impl JoltInstruction for SigmoidInstruction {
         C: usize,
         _M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        // TODO: Match M
+        // TODO: Maybe match M
         vec![
             (
                 Box::new(IsPosSubtable::new()),
@@ -123,11 +125,12 @@ impl JoltInstruction for SigmoidInstruction {
         f_eval[14] = F::from_u32(4294963712);
         f_eval[15] = F::from_u32(4294965760);
         f_eval[16] = F::from_u32(4294966784);
+
+        // TODO: Add boolean sum
         let mut idx = F::zero();
         for i in 0..point.len() {
             idx += F::from_u64(1u64 << i) * point[point.len() - 1 - i];
         }
-        // TODO: Add boolean sum
         let result = f_eval[idx.to_u64().unwrap() as usize];
         result
     }

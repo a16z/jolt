@@ -185,7 +185,6 @@ pub fn materialize_entry_test<F: JoltField, I: JoltInstruction + Default>() {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10000 {
         let instr = I::default().random(&mut rng);
-        println!("instr: {:?}", instr);
         assert_eq!(
             instr.lookup_entry(),
             instr.materialize_entry(instr.to_lookup_index())
