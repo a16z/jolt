@@ -25,3 +25,5 @@ temp_file
 # ide
 .idea
 .vscode
+
+*.patch

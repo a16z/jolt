@@ -47,9 +47,9 @@ impl<F: JoltField> SparseMatrixPolynomial<F> {
     pub fn initialize(K: usize, T: usize) {
         let num_groups = rayon::current_num_threads() * 64;
         let rows_per_group = std::cmp::max(K / num_groups, 1);
-        ROWS_PER_GROUP.set(rows_per_group);
-        GLOBAL_K.set(K);
-        GLOBAL_T.set(T);
+        let _ = ROWS_PER_GROUP.set(rows_per_group);
+        let _ = GLOBAL_K.set(K);
+        let _ = GLOBAL_T.set(T);
     }
 
     pub fn new(num_rows: usize) -> Self {
@@ -211,6 +211,14 @@ pub struct OneHotPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> OneHotPolynomial<F> {
+    pub fn from_increments(increments: Vec<(usize, i64)>) -> Self {
+        todo!()
+    }
+
+    pub fn from_indices(indices: Vec<usize>) -> Self {
+        todo!()
+    }
+
     fn evaluate(&self, r: &[F]) -> F {
         debug_assert_eq!(self.nonzero_indices.len(), get_T());
 
