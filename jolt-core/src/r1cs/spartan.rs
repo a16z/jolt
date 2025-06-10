@@ -380,9 +380,9 @@ where
             .verify(claim_inner_joint, num_rounds_inner_sumcheck, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        let num_steps_bits = key.num_steps.log_2();
+        let num_cycles_bits = key.num_steps.log_2();
 
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let ry_var = inner_sumcheck_r.to_vec();
         let eval_z =
@@ -407,7 +407,7 @@ where
             where r_t = shift_sumcheck_r
         */
 
-        let num_rounds_shift_sumcheck = num_steps_bits;
+        let num_rounds_shift_sumcheck = num_cycles_bits;
         let (claim_shift_sumcheck, shift_sumcheck_r) = self
             .shift_sumcheck_proof
             .verify(
