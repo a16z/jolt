@@ -252,6 +252,7 @@ macro_rules! define_rv32im_enums {
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize)]
         pub enum RV32IMInstruction {
+            /// No-operation instruction (address)
             NoOp(usize),
             UNIMPL,
             $(
@@ -263,6 +264,7 @@ macro_rules! define_rv32im_enums {
             From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro,
         )]
         pub enum RV32IMCycle {
+            /// No-operation cycle (address)
             NoOp(usize),
             $(
                 $instr(RISCVCycle<$instr>),

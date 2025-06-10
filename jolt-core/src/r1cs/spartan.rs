@@ -9,7 +9,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::opening_proof::VerifierOpeningAccumulator;
-use crate::r1cs::inputs::ALL_R1CS_INPUTS;
+use crate::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -226,15 +226,16 @@ where
         /*  Sumcheck 3: Shift sumcheck for NextPC verification
             Proves: NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
 
-            This sumcheck ensures that NextPC at cycle n = PC at cycle n+1
+            Verifies PC advancement without a separate NextPC opening proof.
         */
         let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
 
         let num_rounds_shift_sumcheck = num_cycles_bits;
 
+        let pc_index = JoltR1CSInputs::RealInstructionAddress.to_index();
         let mut shift_sumcheck_polys = vec![
-            input_polys[1].clone(), // RealInstructionAddress/PC is at index 1
+            input_polys[pc_index].clone(), // RealInstructionAddress/PC
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
 
@@ -265,7 +266,7 @@ where
         drop_in_background_thread(shift_sumcheck_polys);
 
         // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // The verifier will compute z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
         let (claimed_witness_evals, chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
@@ -280,7 +281,7 @@ where
 
         // For shift sumcheck, we need PC evaluation at shift_r
         let (shift_sumcheck_witness_evals_partial, chis2) =
-            MultilinearPolynomial::batch_evaluate(&[&input_polys[1]], &shift_sumcheck_r);
+            MultilinearPolynomial::batch_evaluate(&[&input_polys[pc_index]], &shift_sumcheck_r);
         let shift_sumcheck_witness_eval = shift_sumcheck_witness_evals_partial[0];
 
         // opening_accumulator.append(
