@@ -4,11 +4,7 @@ use std::process::exit;
 
 use clap::Parser;
 
-use emulator::{default_terminal::DefaultTerminal, Emulator};
-
-mod decode;
-mod emulator;
-mod trace;
+use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
 /// RISC-V emulator for Jolt
 #[derive(Parser, Debug)]
@@ -33,7 +29,7 @@ fn main() {
     let elf_content = std::fs::read(elf_path).expect("Failed to read ELF file");
 
     // Create and run the emulator
-    let mut emulator = Emulator::new(Box::new(DefaultTerminal::new()));
+    let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
     emulator.setup_program(elf_content);
     emulator.run();
 

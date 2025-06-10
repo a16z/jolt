@@ -19,6 +19,10 @@ edition = "2021"
 name = "jolt-emu"
 path = "src/main.rs"
 
+[lib]
+name = "tracer"
+path = "src/lib.rs"
+
 [features]
 default = ["std"]
 std = [

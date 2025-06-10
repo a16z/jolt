@@ -7,19 +7,13 @@ use crate::emulator::cpu::Xlen;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
+#[derive(Default)]
 pub struct Tracer {
     pub rows: RefCell<Vec<RVTraceRow>>,
     open: RefCell<bool>,
 }
 
 impl Tracer {
-    pub fn new() -> Self {
-        Self {
-            rows: RefCell::new(Vec::new()),
-            open: RefCell::new(false),
-        }
-    }
-
     pub fn start_instruction(&self, inst: ELFInstruction) {
         let mut inst = inst;
         inst.address = inst.address as u32 as u64;

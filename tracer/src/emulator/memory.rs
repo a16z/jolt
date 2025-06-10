@@ -2,17 +2,13 @@
 use alloc::{vec, vec::Vec};
 
 /// Emulates main memory.
+#[derive(Default)]
 pub struct Memory {
     /// Memory content
     data: Vec<u64>,
 }
 
 impl Memory {
-    /// Creates a new `Memory`
-    pub fn new() -> Self {
-        Memory { data: vec![] }
-    }
-
     /// Initializes memory content.
     /// This method is expected to be called only once.
     ///
