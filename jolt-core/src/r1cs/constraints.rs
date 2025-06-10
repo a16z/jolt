@@ -12,10 +12,7 @@ pub trait R1CSConstraints<F: JoltField> {
         let mut uniform_builder = R1CSBuilder::new();
         Self::uniform_constraints(&mut uniform_builder);
 
-        CombinedUniformBuilder::construct(
-            uniform_builder,
-            padded_trace_length,
-        )
+        CombinedUniformBuilder::construct(uniform_builder, padded_trace_length)
     }
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of
