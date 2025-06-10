@@ -79,7 +79,7 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     pub(crate) shift_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub(crate) shift_sumcheck_claim: F,
     pub(crate) claimed_witness_evals: Vec<F>,
-    pub(crate) shift_sumcheck_witness_evals: Vec<F>,
+    pub(crate) shift_sumcheck_witness_eval: F,
     _marker: PhantomData<ProofTranscript>,
 }
 
@@ -121,7 +121,9 @@ where
 
         /* Sumcheck 1: Outer sumcheck
            Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
-           Only uses uniform constraints, making A, B, C block-diagonal with blocks A_small, B_small, C_small
+
+           The matrices A, B, C have a block-diagonal structure with repeated blocks
+           A_small, B_small, C_small corresponding to the uniform constraints.
         */
 
         let tau: Vec<F> = transcript.challenge_vector(num_rounds_x);
@@ -151,7 +153,9 @@ where
         /* Sumcheck 2: Inner sumcheck
            Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                    \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
-           Uses only uniform constraints (A_small, B_small, C_small)
+
+           Evaluates the uniform constraint matrices A_small, B_small, C_small at the point
+           determined by the outer sumcheck.
         */
 
         let num_cycles = key.num_steps;
@@ -162,13 +166,13 @@ where
         let claim_inner_joint =
             claim_Az + inner_sumcheck_RLC * claim_Bz + inner_sumcheck_RLC.square() * claim_Cz;
 
-        let (r_cycle, r_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let (eq_r_cycle, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(r_cycle, None);
 
         // Evaluate A_small, B_small, C_small combined with RLC at point r_var
         let poly_abc_small =
-            DensePolynomial::new(key.evaluate_small_matrix_rlc(r_var, inner_sumcheck_RLC));
+            DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, inner_sumcheck_RLC));
 
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
         let _guard = span.enter();
@@ -207,7 +211,7 @@ where
             poly_evals[0] * poly_evals[1]
         };
 
-        let (inner_sumcheck_proof, inner_sumcheck_r, claims_inner) =
+        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_arbitrary(
                 &claim_inner_joint,
                 num_rounds_inner_sumcheck,
@@ -219,32 +223,18 @@ where
 
         drop_in_background_thread(polys);
 
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // The verifier will compute z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let (claimed_witness_evals, chis) =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
-
         /*  Sumcheck 3: Shift sumcheck for NextPC verification
             Proves: NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
-            This allows the verifier to verify claimed_witness_evals[18] (NextPC(r_cycle))
-            using only PC(shift_r) without needing a separate opening proof for NextPC
+
+            This sumcheck ensures that NextPC at cycle n = PC at cycle n+1
         */
         let span = span!(Level::INFO, "shift_sumcheck_pc");
         let _guard = span.enter();
 
-        // Extract the polynomials
-        let pc_poly = &input_polys[1]; // RealInstructionAddress/PC is at index 1
-        let next_pc_poly = &input_polys[18]; // NextPC is at index 18
-
         let num_rounds_shift_sumcheck = num_cycles_bits;
 
-        // The claim is the sum itself (not NextPC(r_cycle))
-        // This is because we're proving the sumcheck relation directly
-
-        // For the shift sumcheck, we use PC polynomial and eq_plus_one
         let mut shift_sumcheck_polys = vec![
-            pc_poly.clone(),
+            input_polys[1].clone(), // RealInstructionAddress/PC is at index 1
             MultilinearPolynomial::from(eq_plus_one_r_cycle),
         ];
 
@@ -261,12 +251,6 @@ where
                 comb_func(&params)
             })
             .reduce(|| F::zero(), |acc, x| acc + x);
-        // The third sumcheck proves that NextPC at r_cycle can be computed from PC values
-        // We verify that our computed sum equals NextPC(r_cycle) from claimed_witness_evals
-        assert_eq!(
-            shift_sumcheck_claim, claimed_witness_evals[18],
-            "Shift sumcheck claim (sum of PC(t) * eq_plus_one(r_cycle, t)) should equal NextPC(r_cycle)"
-        );
 
         let (shift_sumcheck_proof, shift_sumcheck_r, _shift_sumcheck_claims) =
             SumcheckInstanceProof::prove_arbitrary(
@@ -280,28 +264,30 @@ where
 
         drop_in_background_thread(shift_sumcheck_polys);
 
+        // Evaluate all witness polynomials P_i at r_cycle for the verifier
+        // The verifier will compute z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
+        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
+        let (claimed_witness_evals, chis) =
+            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+
         // opening_accumulator.append(
         //     &flattened_polys_ref,
         //     DensePolynomial::new(chis),
-        //     rx_step.to_vec(),
+        //     r_cycle.to_vec(),
         //     &claimed_witness_evals,
         //     transcript,
         // );
 
         // For shift sumcheck, we need PC evaluation at shift_r
-        let shift_polys_to_evaluate = vec![&input_polys[1]]; // PC only
         let (shift_sumcheck_witness_evals_partial, chis2) =
-            MultilinearPolynomial::batch_evaluate(&shift_polys_to_evaluate, &shift_sumcheck_r);
-
-        // Pad with zeros for compatibility with existing proof structure
-        let mut shift_sumcheck_witness_evals = vec![F::zero(); input_polys.len()];
-        shift_sumcheck_witness_evals[1] = shift_sumcheck_witness_evals_partial[0]; // PC(shift_r)
+            MultilinearPolynomial::batch_evaluate(&[&input_polys[1]], &shift_sumcheck_r);
+        let shift_sumcheck_witness_eval = shift_sumcheck_witness_evals_partial[0];
 
         // opening_accumulator.append(
         //     &flattened_polys_ref,
         //     DensePolynomial::new(chis2),
         //     shift_sumcheck_r.to_vec(),
-        //     &shift_sumcheck_witness_evals,
+        //     &shift_sumcheck_witness_eval,
         //     transcript,
         // );
 
@@ -317,7 +303,7 @@ where
             shift_sumcheck_proof,
             shift_sumcheck_claim,
             claimed_witness_evals,
-            shift_sumcheck_witness_evals,
+            shift_sumcheck_witness_eval,
             _marker: PhantomData,
         })
     }
@@ -382,16 +368,16 @@ where
 
         let num_cycles_bits = key.num_steps.log_2();
 
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_cycles_bits);
+        let (r_cycle, rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         let ry_var = inner_sumcheck_r.to_vec();
         let eval_z =
             key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, &ry_var, true);
 
         // Evaluate uniform matrices A_small, B_small, C_small at point (rx_constr, ry_var)
-        let eval_a = key.evaluate_uniform_a_at_point(rx_constr, &ry_var);
-        let eval_b = key.evaluate_uniform_b_at_point(rx_constr, &ry_var);
-        let eval_c = key.evaluate_uniform_c_at_point(rx_constr, &ry_var);
+        let eval_a = key.evaluate_uniform_a_at_point(rx_var, &ry_var);
+        let eval_b = key.evaluate_uniform_b_at_point(rx_var, &ry_var);
+        let eval_c = key.evaluate_uniform_c_at_point(rx_var, &ry_var);
 
         let left_expected =
             eval_a + inner_sumcheck_RLC * eval_b + inner_sumcheck_RLC * inner_sumcheck_RLC * eval_c;
@@ -401,10 +387,8 @@ where
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
-        /* Sumcheck 3: Shift sumcheck for PC
-            - claim = \sum_t PC(t) * eq_plus_one(r_cycle, t)
-            - verifying it involves checking that claim = pc(r_t) * eq_plus_one(r_cycle, r_t)
-            where r_t = shift_sumcheck_r
+        /* Sumcheck 3: Shift sumcheck for NextPC verification
+           Verifies the claimed NextPC value by checking the relation with PC values
         */
 
         let num_rounds_shift_sumcheck = num_cycles_bits;
@@ -418,11 +402,10 @@ where
             )
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        // Extract PC evaluation from shift_sumcheck_witness_evals
-        let eval_pc_at_shift_r = self.shift_sumcheck_witness_evals[1]; // PC
+        let eval_pc_at_shift_r = self.shift_sumcheck_witness_eval;
 
         let eq_plus_one_shift_sumcheck =
-            EqPlusOnePolynomial::new(rx_step.to_vec()).evaluate(&shift_sumcheck_r);
+            EqPlusOnePolynomial::new(r_cycle.to_vec()).evaluate(&shift_sumcheck_r);
         let claim_shift_sumcheck_expected = eval_pc_at_shift_r * eq_plus_one_shift_sumcheck;
 
         if claim_shift_sumcheck != claim_shift_sumcheck_expected {
