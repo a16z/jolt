@@ -14,6 +14,8 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// TODO: refactor duplicate code between this module and matmult.rs
+
 pub type Conv1DPrecompileDims = (usize, usize);
 
 /// # Note: We assume tensors are appropriately padded here
