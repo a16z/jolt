@@ -42,8 +42,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for SHInstruction<WORD_S
             AssertHalfwordAlignmentInstruction::<WORD_SIZE>(dest, offset_unsigned).lookup_entry();
         debug_assert_eq!(
             is_aligned, 1,
-            "Unaligned halfword store at addr = {} + offset = {}",
-            dest, offset_unsigned
+            "Unaligned halfword store at addr = {dest} + offset = {offset_unsigned}"
         );
         virtual_trace.push(RVTraceRow {
             instruction: ELFInstruction {
