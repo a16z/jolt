@@ -241,12 +241,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let mut binary_az_block = [0i128; Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block = [0i128; Y_SVO_SPACE_SIZE];
 
-                        // Phase 1: Process Uniform Constraints
+                        // Process Uniform Constraints
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in uniform_constraints.chunks(Y_SVO_SPACE_SIZE).enumerate() {
                             for (idx_in_svo_block, constraint) in uniform_svo_chunk.iter().enumerate() {
-                                let original_uniform_idx_in_step = (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
+                                let constraint_idx_in_step = (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
 
-                                let global_r1cs_idx = 2 * (current_step_idx * padded_num_constraints + original_uniform_idx_in_step);
+                                let global_r1cs_idx = 2 * (current_step_idx * padded_num_constraints + constraint_idx_in_step);
 
                                 if !constraint.a.terms().is_empty() {
                                     let az = constraint
@@ -271,7 +271,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                             // If this is a full block, compute and update tA, then reset Az, Bz blocks
                             // (the last block may not be full, in which case we need to delay
-                            // computation of tA until the offset constraints are processed)
+                            // computation of tA until after processing all constraints in the block)
                             if uniform_svo_chunk.len() == Y_SVO_SPACE_SIZE {
                                 let x_in_val = (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
                                 let E_in_val = &E_in_evals[x_in_val];

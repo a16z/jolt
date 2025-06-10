@@ -160,7 +160,7 @@ where
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
-        let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
+        let num_vars_uniform = key.num_vars_uniform_padded();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint =
