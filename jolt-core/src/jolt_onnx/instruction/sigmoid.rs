@@ -4,10 +4,8 @@ use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::jolt_onnx::subtable::is_max::IsMaxSubtable;
 use crate::jolt_onnx::subtable::is_pos::IsPosSubtable;
 use crate::jolt_onnx::subtable::is_zero::IsZeroSubtable;
-use crate::jolt_onnx::subtable::one::OneSubtable;
 use crate::jolt_onnx::subtable::sigmoid_neg::SigmoidNegSubtable;
 use crate::jolt_onnx::subtable::sigmoid_pos::SigmoidPosSubtable;
-use crate::jolt_onnx::subtable::zero::ZeroSubtable;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 use ark_std::log2;
 use rand::prelude::StdRng;
@@ -20,7 +18,8 @@ pub struct SigmoidInstruction(pub u64);
 
 impl JoltInstruction for SigmoidInstruction {
     fn operands(&self) -> (u64, u64) {
-        (self.0 as i32 as u64, 0)
+        (self.0, 0)
+        // (self.0 as i32 as u64, 0)
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
@@ -95,10 +94,7 @@ impl JoltInstruction for SigmoidInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
-        println!("self.0: {:?}", self.0);
-        let x = self.0 as i32;
-        println!("x: {:?}", x);
-        // if 
+        let x = self.0 as i64;
         let output = 1.0 / (1.0 + (-(x) as f32).exp());
         let quantized_output = (output * (u32::MAX as f32)) as u32;
         quantized_output as u64
@@ -130,43 +126,21 @@ mod test {
     use ark_std::test_rng;
 
     #[test]
-    fn sigmoid_instruction_64_lookup() {
-        for i in 0..100 {
-            let instruction = SigmoidInstruction(i);
-            let lookup_entry = instruction.lookup_entry();
-            println!("lookup_entry for {} : {:?}", i, lookup_entry);
-        }
-        for i in 0..100 {
-            let x = u64::MAX - i;
-            let instruction = SigmoidInstruction(x);
-            let lookup_entry = instruction.lookup_entry();
-            println!("lookup_entry for {} : {:?}", x, lookup_entry);
-        }
-        // assert_eq!(lookup_entry, 1);
-    }
-
-    #[test]
     fn sigmoid_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 8;
 
-        let instruction = SigmoidInstruction((i64::MIN) as u64);
-        let x = -1_i32 as u64;
-        let instruction = SigmoidInstruction(x);
-        jolt_instruction_test!(instruction);
-
         for i in 0..256 {
-            println!("i: {:?}", i);
             let instruction = SigmoidInstruction(i as u64);
             jolt_instruction_test!(instruction);
         }
 
-        // for _ in 0..256 {
-        //     let x = rng.next_u64();
-        //     let instruction = SigmoidInstruction(x);
-        //     jolt_instruction_test!(instruction);
-        // }
+        for _ in 0..256 {
+            let x = rng.next_u32();
+            let instruction = SigmoidInstruction(x as u64);
+            jolt_instruction_test!(instruction);
+        }
 
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
@@ -175,14 +149,13 @@ mod test {
             SigmoidInstruction(8374),
             SigmoidInstruction((-100_i32) as u64),
             SigmoidInstruction((-1_i32) as u64),
-            // SigmoidInstruction(u32_max),
-            // SigmoidInstruction(u32_max + 100),
-            // SigmoidInstruction(u32_max + (1 << 8)),
-            // SigmoidInstruction(1 << 8),
-            // SigmoidInstruction(1 << 30),
+            SigmoidInstruction(u32_max),
+            SigmoidInstruction(u32_max + 100),
+            SigmoidInstruction(u32_max + (1 << 8)),
+            SigmoidInstruction(1 << 8),
+            SigmoidInstruction(1 << 30),
         ];
         for instruction in instructions {
-            println!("instruction: {:?}", instruction);
             jolt_instruction_test!(instruction);
         }
     }

@@ -23,12 +23,17 @@ impl<F: JoltField> LassoSubtable<F> for SigmoidPosSubtable<F> {
         let mut entries = vec![0; M];
         for i in 0..M {
             // println!("i: {:?}", i);
-            let output = 1.0 / (1.0 + (-(i as i32) as f32).exp());
+            let output = 1.0 / (1.0 + (-(i as i64) as f32).exp());
             // println!("output: {:?}", output);
             let quantized_output = (output * (u32::MAX as f32));
             // println!("quantized_output: {:?}", quantized_output);
             entries[i] = quantized_output as u32;
         }
+        // for i in M/2..M {
+        //     let output = 1.0 / (1.0 + ((i - M/2 + 1) as f32).exp());
+        //     let quantized_output = (output * (u32::MAX as f32)) as u32;
+        //     entries[M + M/2 - i - 1] = quantized_output;
+        // }
         entries
     }
 
