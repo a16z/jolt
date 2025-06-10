@@ -22,12 +22,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        // println!("Combine lookups for ADDInstruction");
-        // println!("vals: {:?}", vals);
-        // println!("C: {:?}", C);
-        // println!("M: {:?}", M);
-        // println!("vals.len(): {:?}", vals.len());
-        // println!("log2(M): {:?}", log2(M));
         assert!(vals.len() == C / 2);
         // The output is the identity of lower chunks
         concatenate_lookups(vals, C / 2, log2(M) as usize)
@@ -42,12 +36,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         C: usize,
         M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        // println!("Subtables for ADDInstruction");
-        // println!("C: {:?}", C);
-        // println!("M: {:?}", M);
-        // println!("WORD_SIZE: {:?}", WORD_SIZE);
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-        // println!("msb_chunk_index: {:?}", msb_chunk_index);
         vec![(
             Box::new(IdentitySubtable::new()),
             SubtableIndices::from(msb_chunk_index + 1..C),
@@ -101,6 +90,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         for i in 0..WORD_SIZE {
             result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
         }
+        println!("result: {:?}", result);
         result
     }
 }
