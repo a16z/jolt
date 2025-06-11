@@ -106,7 +106,7 @@ where
         constraint_builder: &CombinedUniformBuilder<F>,
         key: &UniformSpartanKey<F>,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError>
     where
@@ -282,7 +282,7 @@ where
 
         let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
         // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, chis) =
+        let (claimed_witness_evals, _chis) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, rx_step);
 
         // opening_accumulator.append(
@@ -294,7 +294,7 @@ where
         // );
 
         // Shift sumcheck evaluations: evaluate z on ry_var
-        let (shift_sumcheck_witness_evals, chis2) =
+        let (shift_sumcheck_witness_evals, _chis2) =
             MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, &shift_sumcheck_r);
 
         // opening_accumulator.append(
@@ -328,7 +328,7 @@ where
         &self,
         key: &UniformSpartanKey<F>,
         // commitments: &JoltCommitments<PCS, ProofTranscript>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError>
     where

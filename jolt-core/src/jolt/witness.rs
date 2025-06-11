@@ -1,5 +1,6 @@
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 
+#[allow(dead_code)]
 pub struct CommittedPolynomials<F: JoltField> {
     bytecode_ra: MultilinearPolynomial<F>,
     rd_inc: MultilinearPolynomial<F>,

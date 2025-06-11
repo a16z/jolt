@@ -80,13 +80,13 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    pub fn generate_witness(preprocessing: (), lookups: &[LookupTables<WORD_SIZE>]) {}
+    pub fn generate_witness(_preprocessing: (), _lookups: &[LookupTables<WORD_SIZE>]) {}
 
     #[tracing::instrument(skip_all, name = "LookupsProof::prove")]
     pub fn prove(
-        generators: &PCS::Setup,
+        _generators: &PCS::Setup,
         trace: &[RV32IMCycle],
-        opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
+        _opening_accumulator: &mut ProverOpeningAccumulator<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let log_T = trace.len().log_2();
@@ -129,7 +129,7 @@ where
 
     pub fn verify(
         &self,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        _opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_cycle: Vec<F> = transcript.challenge_vector(self.log_T);
@@ -182,7 +182,7 @@ where
         let z_hamming_weight: F = transcript.challenge_scalar();
         let z_hamming_weight_squared: F = z_hamming_weight.square();
         let z_hamming_weight_cubed: F = z_hamming_weight_squared * z_hamming_weight;
-        let (sumcheck_claim, r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
+        let (sumcheck_claim, _r_hamming_weight) = self.hamming_weight_proof.sumcheck_proof.verify(
             F::one() + z_hamming_weight + z_hamming_weight_squared + z_hamming_weight_cubed,
             16,
             1,
