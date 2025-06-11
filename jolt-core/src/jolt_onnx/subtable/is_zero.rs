@@ -26,7 +26,7 @@ impl<F: JoltField> LassoSubtable<F> for IsZeroSubtable<F> {
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        todo!()
+        point.iter().map(|r| (F::one() - r)).product()
     }
 }
 
